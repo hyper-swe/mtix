@@ -152,6 +152,55 @@ Each task carries a change log (field, old and new value for structured fields, 
 
 Never edit history entries in `.mtix/tasks.json` by hand (the checksum covers them), and never turn the switch on to work around a sync problem.
 
+### Removing sensitive text (0.6.0)
+
+These steps clean an editable current field and a fresh snapshot, not every
+retained copy. Coordinate with the team, pause other writers and syncing, and
+resolve any pending auto-import refusal before replacing the board file. Never
+paste secrets into tasks, comments or activity notes, and never print credentials
+while checking cleanup.
+
+1. Replace the affected editable field with a clean value. For example,
+   `mtix update PROJ-1 --description Clean` replaces the description; use the
+   appropriate flag for the affected field and replace `PROJ-1` with its task id.
+   This does not change other fields, comments or activity records. Free-text
+   task-history entries omit old and new text; structured fields retain values.
+2. `history.export` is `false` by default. If it was on, turn it off with
+   `mtix config set history.export false`, then verify `false` with
+   `mtix config get history.export`. This excludes history from a fresh export,
+   not the current fields, comments or activity that the export also carries.
+3. Re-export from the project root to a new private file, then replace
+   `.mtix/tasks.json` only if export succeeds. In a POSIX shell:
+
+   ```sh
+   (umask 077; set -C; mtix export > .mtix/tasks-clean.json) &&
+     mv .mtix/tasks-clean.json .mtix/tasks.json
+   ```
+
+   The temporary name must not already exist; the command refuses to overwrite
+   it. On failure, keep the original board file and do not publish the partial
+   export. On success, the fresh snapshot has no per-task or top-level history.
+   Do not hand-edit history or its checksum, and do not import an edited snapshot
+   expecting it to erase local entries: history import keeps local entries.
+
+The local SQLite store keeps task history even with export off. In 0.6.0, no
+supported command selectively removes a task-history entry. Retention can trim
+old ordinary change entries, but it is not targeted erasure and does not clean
+other copies.
+
+Sync sends task creation and field-change payloads, including free text,
+separately from the history export. Older queued events can still carry sensitive
+text after the current field is cleaned. mtix 0.6.0 cannot erase retained hub
+copies. Coordinate those copies and queued events with the operator before
+resuming sync; a clean snapshot or field does not purge them.
+
+Past Git history, other clones, copied exports and backups are outside mtix's
+reach. A new clean commit leaves past commits intact. Removing sensitive text
+from past commits requires a Git history rewrite and a team-coordinated
+force-push; every existing clone must re-clone from the rewritten repository.
+Do not push old history back. Re-cloning does not erase hub copies. Task-history
+redaction is planned for the protocol-2 release; it is not available in 0.6.0.
+
 ## Requirements checklist
 
 Before setup, confirm each item with the user or the database administrator:

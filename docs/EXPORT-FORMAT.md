@@ -143,6 +143,22 @@ records locally.
   import` fails with `checksum verification failed` and the automatic import
   loads no nodes. That is why the switch is off by default.
 
+### Removing sensitive text (0.6.0)
+
+With `history.export` set to `false` (the default), a fresh snapshot omits both
+per-task and top-level history. Current fields, comments and activity remain in
+the export; replace an affected editable field with clean text first. Follow the
+[manual cleanup routine](../USERMANUAL.md#removing-sensitive-text-060) to verify
+the switch and export to a private file before replacing the snapshot.
+
+This does not erase the local SQLite history or queued sync payloads. Importing
+a snapshot without history keeps local entries. mtix 0.6.0 cannot erase retained
+hub copies, past Git history, other clones or backups. Git history needs a
+team-coordinated rewrite and force-push, and every clone must re-clone; it does
+not clean hub copies. Task-history redaction is planned for the protocol-2
+release, not available in 0.6.0. Do not edit history entries or their checksum to
+try to erase retained copies.
+
 ## Checksum
 
 The checksum is the SHA-256, in lowercase hex, of the JSON document

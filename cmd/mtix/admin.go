@@ -244,15 +244,10 @@ func runImport(filePath string, f importFlags) error {
 
 	// The report is loud whether or not the import applied (ADR-003 §6): always
 	// surface it, and persist the uid-keyed remap when one was produced.
-	if report != nil {
-		fmt.Fprint(os.Stderr, report.String())
-		if writeErr := writeRemapFile(f.remapFile, report); writeErr != nil {
-			if !report.Applied {
-				return nothingWritten(writeErr)
-			}
-			return writeErr
-		}
+	if reportErr := writeImportReport(report, f.remapFile); reportErr != nil {
+		return reportErr
 	}
+
 	if err != nil {
 		// Every import error but ErrImportIncomplete leaves the store
 		// unchanged (MTIX-95.31.1), so the auto-export is skipped for it.

@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Workflow merge conflicts show each side's field history, with bounded text and JSON reports; explicit resolutions preserve both histories and record the choice.
+
 - Host-local wake settings and agent overrides, read-only doctor diagnostics, and additive hop metadata with released-reader compatibility; live control and hop delivery await the wake scanner (MTIX-112.17.10.1).
 
 ### Security

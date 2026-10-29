@@ -372,6 +372,32 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 - **Local changes the hub never received.** Run `mtix sync push` first and check that `mtix sync status` shows `pending` 0. Never discard local state while anything is pending.
 - **The hub itself.** `mtix sync backup --output <new file>` writes a portable SQL dump of every hub table with `pg_dump`. It never overwrites a file, so choose a new path each time. A restore needs the owner: the admin skill has the runbook (restore, `mtix sync init`, a passing `hub-triggers` check, then `mtix sync mark-restored` exactly once). A dump holds no privileges, so grant the writer the list above again afterwards and run `mtix sync doctor` with the writer's DSN.
 
+## Workflow conflict history
+
+When `mtix import .mtix/tasks.json --mode merge` refuses a workflow conflict,
+read each field's local and file history before choosing `--prefer ours|theirs`
+or `--ours ID,ID` / `--theirs ID,ID`. The report shows five entries per side,
+newest first (entry id breaks timestamp ties), and a more count for omitted
+entries. Identical shared entry records form the available common history and
+are omitted; this is an identity comparison, not a wall-clock guess about
+causality. When there is no shared history, every available entry is eligible.
+Missing or empty history is no proof of no changes: the peer may have
+`history.export` off, use an older build, or have trimmed entries. The activity
+hint remains a hint; never infer the correct choice from absent history.
+
+With `--json`, a refused workflow merge writes an object to stdout containing
+`applied: false` and `workflow_conflicts`. Each field contains `local_history`,
+`file_history`, `local_history_more` and `file_history_more`; text guidance
+remains on stderr and the command exits with an error. History values and actor
+identities are quoted in text output; JSON carries their original data.
+Resolving either way keeps the union of both sides' history and adds one
+value-free `resolution` record per task, even when ours leaves its values
+unchanged. Its field is `resolution:<side>:<fields>`, identifying the choice and
+conflicting field names without copying values. The receipt and choice commit
+in one transaction. Repeating an import after the values agree adds no new
+resolution receipt. Ordinary field changes are still recorded separately;
+resolution records are exempt from ordinary change-entry retention. Imports reject valued or malformed resolution records before any write; the refusal names the task and entry, never the values. Ask the source writer to regenerate a valid board; do not hand-edit history or bypass its checksum.
+
 ## When to ask the user
 
 Stop and ask the user, with the exact command, when: setup needs a database role, a grant, a revoke or a password; a DSN or CA bundle must be set; doctor names a fix that only the table owner or a role administrator can run; a repair, a harden `--apply` or a `mtix sync reconcile` is the next step; events stay unacknowledged or held after the fixes above; or the same failure comes back after you fixed it. Give the user the check name, the error line without any credential, and what you already tried.

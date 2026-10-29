@@ -25,7 +25,11 @@ type WakeHoldStore interface {
 // passState carries which registrations were held earlier in one pass. A held event
 // blocks later events of the same registration, so the high-water mark only ever
 // advances over a contiguous prefix of nudged events and a held event is never skipped.
-type passState struct{ blocked map[string]bool }
+type passState struct {
+	blocked map[string]bool
+	// skip names events covered without a send (the recipient's own events).
+	skip map[model.WakeKey]bool
+}
 
 func holdRegistrationID(key model.WakeKey) string {
 	return key.AgentID + "\x00" + key.HostID + "\x00" + key.UID
@@ -108,6 +112,9 @@ func (d *WakeDispatcher) advanced(ctx context.Context, key model.WakeKey) error 
 // send, then mark. The mark moves only over an event that was sent or lost to another
 // claimant; a hold or any error blocks the registration's later events and is retried.
 func (d *WakeDispatcher) passOne(ctx context.Context, key model.WakeKey, st *passState) error {
+	if st.skip[key] {
+		return d.coverSkipped(ctx, key, st)
+	}
 	hop, verdict, err := d.guardWakeHop(ctx, key, st)
 	if err != nil && verdict != verdictHeld {
 		st.blocked[holdRegistrationID(key)] = true
@@ -130,4 +137,19 @@ func (d *WakeDispatcher) passOne(ctx context.Context, key model.WakeKey, st *pas
 	}
 	// A completed send, even a failed one, is terminal in the ledger, so the mark moves.
 	return errors.Join(sendErr, d.advanced(ctx, key))
+}
+
+// coverSkipped moves the mark over an event that must never wake its recipient, but only
+// while the registration is not blocked below it and the event is eligible (above the mark,
+// same epoch, not past a pending hold). It claims and sends nothing.
+func (d *WakeDispatcher) coverSkipped(ctx context.Context, key model.WakeKey, st *passState) error {
+	ok, err := d.eligible(ctx, key, st)
+	if err != nil {
+		st.blocked[holdRegistrationID(key)] = true
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	return d.advanced(ctx, key)
 }

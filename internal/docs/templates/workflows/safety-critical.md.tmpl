@@ -258,7 +258,13 @@ each CLI.
    The backup carries every mtix hub table with its data and
    constraints, but not the trigger functions, so psql reports an
    error for each trigger. `mtix sync init`, run as the table owner,
-   recreates every mtix function and trigger. The `hub-triggers` check
+   recreates every mtix function and trigger. Its separate migration budget
+   defaults to `5m`, including advisory-lock wait. An interrupted schema
+   transaction rolls back; after a timeout retry as the owner with `mtix sync init --migrate-timeout=15m`
+   (increase for the hub's size), then run `mtix sync doctor`. Missing-column
+   and trigger repairs can block reads and writes; index builds block writes.
+   Keep normal sync paused until restore initialization succeeds.
+   The `hub-triggers` check
    of `mtix sync doctor` must then pass; if it names a gap, run its
    `fix` as the table owner. Then run `mtix sync mark-restored` once.
 

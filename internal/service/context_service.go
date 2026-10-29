@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
 )
@@ -239,3 +240,54 @@ func classifyCreator(creator string) string {
 
 // agentIDPattern is the default prefix for identifying LLM agents per FR-12.3a.
 const agentIDPattern = "agent-"
+
+// displayBlockIndent indents continuation lines of stored multi-line text in
+// the terminal rendering of the assembled prompt.
+const displayBlockIndent = "  "
+
+// AssembleDisplayPrompt rebuilds the assembled prompt for a terminal from a
+// GetContext response (MTIX-187.7.13, closing MTIX-187.7.4.1). Every stored
+// value is rendered through the title rule: titles, annotation
+// authors and dependency ids become one line (format.SafeLine); prompts and
+// annotation text keep their lines (format.SafeBlock) with every line,
+// the first included, indented. A stored value therefore cannot start a column-0 heading,
+// attribution marker or separator of its own. The response, and the JSON the
+// caller prints, are untouched.
+func (svc *ContextService) AssembleDisplayPrompt(resp *ContextResponse, maxTokens int) string {
+	chain := make([]ContextEntry, len(resp.Chain))
+	for i, e := range resp.Chain {
+		e.Title = format.SafeLine(e.Title)
+		e.Prompt = indentDisplayBlock(e.Prompt)
+		anns := make([]model.Annotation, len(e.Annotations))
+		for j, a := range e.Annotations {
+			a.Author = format.SafeLine(a.Author)
+			a.Text = indentDisplayBlock(a.Text)
+			anns[j] = a
+		}
+		e.Annotations = anns
+		chain[i] = e
+	}
+	deps := make([]*model.Dependency, len(resp.BlockingDeps))
+	for i, d := range resp.BlockingDeps {
+		c := *d
+		c.FromID = format.SafeLine(c.FromID)
+		deps[i] = &c
+	}
+	if maxTokens > 0 {
+		return truncateAssembledPrompt(chain, maxTokens)
+	}
+	return svc.assemblePrompt(chain, deps)
+}
+
+// indentDisplayBlock renders multi-line stored text with SafeBlock and indents
+// every non-empty line, the first included, so no stored line starts at
+// column 0.
+func indentDisplayBlock(s string) string {
+	lines := strings.Split(format.SafeBlock(s), "\n")
+	for i := range lines {
+		if lines[i] != "" {
+			lines[i] = displayBlockIndent + lines[i]
+		}
+	}
+	return strings.Join(lines, "\n")
+}

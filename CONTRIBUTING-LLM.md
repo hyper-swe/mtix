@@ -496,3 +496,23 @@ Web contributors: never add an inline `<script>` or event-handler attribute to
 and use `web/src/test/hostileFixtures.ts` in tests for any new surface that
 shows an id or ticket text. The policy string is asserted exactly by
 `TestSecurityHeaders_CSPPresent`, so a policy change must update that test.
+
+## Terminal output regression guards (MTIX-187.7.5)
+
+Render human-facing sync event IDs with `internal/format.EventID` and stored
+single-line ticket text with `format.SafeLine`. Preserve structured data;
+apply multiline sanitization at the terminal boundary. Run
+`go test ./cmd/mtix -run '^TestTerminal(Guard|Binary)_' -race` when changing these
+writers. The AST guard scans production Go under `cmd/mtix` and `internal`,
+including platform-specific files, for raw EventID/Title arguments to fmt
+printing, string-formatting and error calls, and follows local aliases.
+`cmd/mtix/terminal_guard_allowlist.txt` contains exact call fingerprints and
+review reasons for data assembly, quoted values and existing safe boundaries;
+never add a file-wide exception. In `cmd/mtix` the guard also covers cobra Print, log, slog and Write sinks and
+the NodeID, Reason, Assignee and UID-family selectors; `oneLine` and
+`displayHoldReason` count as safe. Allowlist reasons for raw prints read
+`tracked: MTIX-187.7.25`. Unknown function returns and cross-function
+aliases require behavioral coverage. The real-binary hostile-board test uses
+the shared `internal/testutil` catalogs and checks stdout and stderr separately,
+including diagnostic failures. C1 checks decode UTF-8: continuation bytes in
+printable Unicode are valid; raw C1 bytes and C1 control runes are forbidden.

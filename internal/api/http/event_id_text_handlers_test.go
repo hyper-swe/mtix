@@ -58,6 +58,8 @@ func isASCIIText(s string) bool {
 
 // assertMessageFieldsSafe walks decoded JSON and requires every human-readable
 // text field to be printable ASCII; other fields carry ids JSON-encoded.
+// Successful responses rarely carry those fields, so the route sweep also
+// calls assertNoControlBytes on the raw body.
 func assertMessageFieldsSafe(t *testing.T, v any, path string) {
 	t.Helper()
 	switch x := v.(type) {
@@ -75,6 +77,18 @@ func assertMessageFieldsSafe(t *testing.T, v any, path string) {
 	}
 }
 
+// assertNoControlBytes requires the raw response body to hold no control
+// bytes other than the whitespace JSON allows between tokens.
+func assertNoControlBytes(t *testing.T, body []byte) {
+	t.Helper()
+	for i, c := range body {
+		if c < 0x20 && c != '\n' && c != '\r' && c != '\t' {
+			assert.Failf(t, "control byte in body", "byte 0x%02x at offset %d", c, i)
+			return
+		}
+	}
+}
+
 func hostileGet(s *serverFixture, path string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	s.Router().ServeHTTP(w, apiRequest(http.MethodGet, path, ""))
@@ -83,7 +97,8 @@ func hostileGet(s *serverFixture, path string) *httptest.ResponseRecorder {
 
 // TestHandlers_HostileUIDAndAnnotationID_MessagesAreSafeAndJSONExact drives
 // every read route with a node whose uid and annotation id are pulled event
-// ids: JSON stays exact, and every message field is printable ASCII.
+// ids: JSON stays exact, every message field is printable ASCII and no body
+// holds a raw control byte.
 func TestHandlers_HostileUIDAndAnnotationID_MessagesAreSafeAndJSONExact(t *testing.T) {
 	s := testServer(t)
 	seedHostileNode(t, s)
@@ -98,6 +113,7 @@ func TestHandlers_HostileUIDAndAnnotationID_MessagesAreSafeAndJSONExact(t *testi
 			w := hostileGet(s, p)
 			var body any
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
+			assertNoControlBytes(t, w.Body.Bytes())
 			assertMessageFieldsSafe(t, body, "$")
 		})
 	}

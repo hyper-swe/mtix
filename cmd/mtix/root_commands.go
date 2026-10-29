@@ -19,6 +19,11 @@ func rootPostRun(cmd *cobra.Command, _ []string) error {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not mirror the hub-connected mark: %v\n", err)
 		}
 	}
+	// MTIX-112.20.1: real activity (a mutation, an addressed send, an agent
+	// heartbeat) restarts the hub-contact window. Waits and reads do not.
+	if kind, ok := commandActivity(cmd); ok && app.mtixDir != "" {
+		recordHubActivity(kind)
+	}
 	// Auto-export after mutation commands per FR-15.3, with the
 	// interval-gated rolling backup riding the same trigger
 	// (FR-26.6).

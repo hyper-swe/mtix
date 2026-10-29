@@ -25,10 +25,29 @@ import (
 // UTF-8 becomes U+FFFD. The stored value is untouched and --json prints it
 // exactly.
 func SafeLine(s string) string {
+	return strings.TrimSpace(strings.ReplaceAll(SafeBlock(s), "\n", " "))
+}
+
+// SafeBlock renders stored multi-line text for a terminal, such as an inbox
+// comment body or a briefing block (MTIX-187.7.13). It strips and converts
+// exactly the characters SafeLine does (they share safeLineRune and
+// StripControlChars), but keeps newlines: CRLF becomes LF, the line and
+// paragraph separators become newlines, tabs become spaces, leading blank
+// lines and trailing whitespace are trimmed. Callers that print it inside a
+// listing should indent its continuation lines so no stored line can start
+// at column 0 and pass for a label or another entry.
+func SafeBlock(s string) string {
 	s = StripControlChars(s)
 	s = strings.Map(safeLineRune, s)
-	s = strings.NewReplacer("\n", " ", "\t", " ").Replace(s)
-	return strings.TrimSpace(s)
+	s = strings.ReplaceAll(s, "\t", " ")
+	s = strings.TrimRightFunc(s, unicode.IsSpace)
+	for {
+		line, rest, found := strings.Cut(s, "\n")
+		if !found || strings.TrimSpace(line) != "" {
+			return s
+		}
+		s = rest
+	}
 }
 
 // safeLineRune drops invisible format characters, turns blank-drawing fillers

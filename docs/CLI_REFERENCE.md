@@ -491,9 +491,15 @@ Create a new node. Use --under to create a child node.
 
 Run this host's event dispatcher: pull from the hub (if configured), then fire hooks — continuously (FR-20)
 
-Run the origin-independent dispatch loop: every interval (default 5s),
-pull new events from the BYO Postgres hub (when one is configured) and
-fire this host's hooks for every journaled event not yet dispatched
+Run the origin-independent dispatch loop. Local work (pending-export
+recovery, relay, hook dispatch) runs every interval (default 5s); the hub is
+contacted only when sync.hub_contact says so: activity (default: only for
+30 minutes after real activity), interval:<duration>, or manual (never). While
+sync.listen is live and a listener holds a lease (a later release; no listener
+exists in this build, so the hold is inert), the hub is also contacted every
+sync.listen_interval until sync.listen_max_idle after the last activity. Each
+contact pulls new events from the BYO Postgres hub (when one is configured) and
+fires this host's hooks for every journaled event not yet dispatched
 here — whoever wrote it and however it arrived (local CLI, MCP,
 sync-arrival, another process). The per-(hook,event) dispatch ledger
 makes firing exactly-once per host; a hook fires on every host whose
@@ -999,6 +1005,14 @@ background task whose harness supports it.
 Both print NOTHING when the inbox is empty, so a wake script's idempotency
 check is: payload=$(mtix inbox --agent X --format prompt); [ -z "$payload" ].
 Reads never ack — acknowledgement stays explicit.
+
+The plain listing prints each entry's author and node id on one line and the
+body with its line breaks, every continuation line indented, after removing
+control characters, escapes, bidirectional overrides and isolates, zero-width
+and other invisible format characters (the directional marks U+200E, U+200F
+and U+061C are kept), so a stored body cannot forge another entry or the ack
+line. --json prints the exact stored text; --format prompt and context quote
+the body.
 
 ### Flags
 

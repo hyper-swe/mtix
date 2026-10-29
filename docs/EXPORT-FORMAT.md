@@ -72,9 +72,14 @@ cascade-delete records) are not part of the export.
 
 ## Task history in the export (experimental)
 
-> **Experimental, off by default.** Until the doctor guard for this switch
-> ships (MTIX-95.31.19.6), do not turn it on for a board that any older
-> mtix binary or daemon reads or writes.
+> **Off by default.** `mtix config set history.export true` is refused while a
+> session registration or daemon heartbeat (seen in the last 30 days) lacks the
+> task-history marker that every build from 0.6.0 writes, and `mtix doctor`
+> shows the `history.export.guard` row (`--json`: blockers and `min_version`).
+> mtix 0.5.4 refuses a 2.1.0 file (`checksum verification failed`, nothing
+> stored). The guard cannot see other
+> machines, CI jobs or clones that read the file through git: confirm
+> `mtix --version` on each before enabling.
 
 The config key `history.export` (`true` or `false`, default `false`)
 decides whether the file carries the per-task change history that mtix

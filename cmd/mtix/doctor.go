@@ -135,6 +135,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	if err := registerHistorySizeCheck(svc); err != nil { // MTIX-95.31.19.4
 		return nil, fmt.Errorf("register history size check: %w", err)
 	}
+	if err := registerHistoryExportGuardCheck(svc); err != nil { // MTIX-95.31.19.6
+		return nil, fmt.Errorf("register history export guard check: %w", err)
+	}
 	if err := registerExportSchemaCheck(svc); err != nil { // MTIX-168
 		return nil, fmt.Errorf("register export schema check: %w", err)
 	}

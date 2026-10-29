@@ -580,9 +580,11 @@ func TestRecover_TableDuplicateRows_ReportPreservesContent(t *testing.T) {
 func seedDuplicateReportContent(t *testing.T, s *Store) {
 	t.Helper()
 	result, err := s.WriteDB().ExecContext(context.Background(),
-		`UPDATE nodes SET description = ?, prompt = ?, acceptance = ?, labels = ?,
+		`UPDATE nodes SET depth = ?, parent_id = ?, agent_state = ?, node_type = ?,
+		description = ?, prompt = ?, acceptance = ?, labels = ?,
 		assignee = ?, creator = ?, progress = ?, estimate_min = ?, actual_min = ?,
 		annotations = ?, code_refs = ?, commit_refs = ?, activity = ?, metadata = ? WHERE id = ?`,
+		1, "RC-1", "idle", string(model.NodeTypeForDepth(1)),
 		"discarded description", "discarded prompt", "discarded acceptance", `["recovery","duplicate"]`,
 		"recovery-agent", "fixture-author", 25, 60, 15,
 		`[{"id":"01J9RCCOMMENT0000000000001","author":"reviewer","text":"discarded review","created_at":"2026-09-01T10:00:00Z"}]`,
@@ -598,6 +600,9 @@ func seedDuplicateReportContent(t *testing.T, s *Store) {
 
 func requireDuplicateReportContent(t *testing.T, n exportNode) {
 	t.Helper()
+	require.Equal(t, 1, n.Depth)
+	require.Equal(t, "RC-1", n.ParentID)
+	require.Equal(t, "idle", n.AgentState)
 	require.Equal(t, "discarded description", n.Description)
 	require.Equal(t, "discarded prompt", n.Prompt)
 	require.Equal(t, "discarded acceptance", n.Acceptance)

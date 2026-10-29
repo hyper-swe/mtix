@@ -64,6 +64,11 @@ func seedMirrorColumnFixture(t *testing.T) (*Store, string) {
 
 	ctx := context.Background()
 	seedRecoveryMachineHash(t, s)
+	// Guard the seed call before any node write can enumerate host interfaces.
+	var cachedHash string
+	require.NoError(t, s.WriteDB().QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`,
+		"meta.sync.machine_hash").Scan(&cachedHash))
+	require.Equal(t, "0123456789abcdef", cachedHash, "identity must be seeded before the first node write")
 	at := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	for i, title := range []string{"reviewed task with a comment", "unaffected neighbour task"} {
 		require.NoError(t, s.CreateNode(ctx, &model.Node{

@@ -2579,6 +2579,13 @@ another process writing the same `.mtix`). A durable per-`(hook, event)`
 **dispatch ledger** makes firing exactly-once per host across restarts,
 concurrent triggers, and out-of-order arrival.
 
+Losing workflow events (claim, unclaim, status transition or defer) are
+skipped by the hook journal: replication records them, but they changed no
+node column and must not report a state change to any adapter. The skip
+decision is saved atomically at ingest and survives restart. A workflow
+event that won at ingest stays eligible even if superseded before dispatch.
+Events ingested by older versions are not retroactively reclassified.
+
 **Placement is designation.** A hook fires on every host whose
 `hooks.yaml` configures it — once per host. Put a wake `exec` only in
 the `hooks.yaml` of the host where the worker should run; hosts without

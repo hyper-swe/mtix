@@ -47,6 +47,7 @@ func collectSyncDoctor(ctx context.Context, req syncDoctorCollection) DoctorRepo
 		report = appendRegistrationChecks(ctx, report)
 	}
 	report = appendAlertsCheck(ctx, report)
+	report = appendHubContactChecks(report) // MTIX-112.20.1
 	if req.Postgres {
 		report = appendDoctorCheck(report, checkHubObjects(ctx, req.DSN, hubReady, req.Options))
 		report = appendDoctorCheck(report, checkHubPrivileges(ctx, req.DSN, hubReady, req.Options))

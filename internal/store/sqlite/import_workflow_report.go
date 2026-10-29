@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/hyper-swe/mtix/internal/format"
 )
 
 // noteWorkflowConflicts records in the report the conflicts of a merge
@@ -42,8 +44,10 @@ func writeWorkflowConflicts(b *strings.Builder, conflicts []WorkflowConflict, ap
 		b.WriteString("\n")
 		for _, f := range c.Fields {
 			fmt.Fprintf(b, "        %s: yours %s, the file's %s\n", f.Field, shownValue(f.Local), shownValue(f.File))
+			writeWorkflowHistory(b, "yours", f.LocalHistory, f.LocalHistoryMore)
+			writeWorkflowHistory(b, "file", f.FileHistory, f.FileHistoryMore)
 		}
-		fmt.Fprintf(b, "        history (a hint, not a verdict): %s\n", c.Hint)
+		fmt.Fprintf(b, "        history (a hint, not a verdict): %s\n", format.SafeLine(c.Hint))
 	}
 	if !applied {
 		b.WriteString("  not applied: nothing was written. Decide per task which values to keep, then rerun the " +
@@ -57,7 +61,7 @@ func shownValue(v string) string {
 	if v == "" {
 		return "(none)"
 	}
-	return v
+	return format.SafeLine(v)
 }
 
 // countIdempotent counts the conflicts that the reconcile had counted as

@@ -52,6 +52,11 @@ type WorkflowFieldDiff struct {
 	Field string `json:"field"`
 	Local string `json:"local"`
 	File  string `json:"file"`
+	// History contains the entries each side has beyond their shared history.
+	LocalHistory     []exportHistoryEntry `json:"local_history"`
+	FileHistory      []exportHistoryEntry `json:"file_history"`
+	LocalHistoryMore int                  `json:"local_history_more"`
+	FileHistoryMore  int                  `json:"file_history_more"`
 }
 
 // WorkflowConflict is a task whose workflow values differ between the local
@@ -176,6 +181,9 @@ func workflowConflictOf(ctx context.Context, tx *sql.Tx, n *exportNode, carries 
 	diffs := workflowDiffs(&local, n)
 	if len(diffs) == 0 {
 		return nil, nil
+	}
+	if err := addWorkflowHistory(ctx, tx, &local, n, diffs); err != nil {
+		return nil, err
 	}
 	return &WorkflowConflict{ID: n.ID, Title: local.Title, Fields: diffs, Hint: activityHint(&local, n, carries),
 		idempotent: n.UID != "" && n.UID == local.UID}, nil

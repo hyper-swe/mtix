@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Workflow merge conflicts show each side's field history, with bounded text and JSON reports; explicit resolutions preserve both histories and record the choice.
+
 - Host-local wake settings and agent overrides, read-only doctor diagnostics, and additive hop metadata with released-reader compatibility; live control and hop delivery await the wake scanner (MTIX-112.17.10.1).
 
 ### Security
@@ -42,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sync event ids in more error and log text are now quoted printable ASCII (MTIX-187.4.4): validator refusals, hub push and collision errors, the registry-index refusal, the relay publisher encode error and divergence refusals (MTIX-187.4.11) and the relay ingest quarantine log field. Control, bidirectional and non-ASCII characters appear as escapes; stored ids, the quarantine event_id column and JSON fields are unchanged.
 - Node ids in the validator node-id refusal are now shown as quoted printable ASCII (MTIX-187.7.12): a node id with a printable non-ASCII character such as an accented letter no longer reaches a terminal or log raw. The stored id and the refusal sentinels are unchanged.
 - Node ids in the duplicate-uid message (REST admin verify `uid_unique_recovery` and `mtix sync doctor`) are now shown as quoted printable ASCII (MTIX-187.7.11); the structured JSON fields and the stored ids are unchanged.
+- Sync documentation (manual, sync skill and plugin mirrors) now says only rows recorded by older versions can show an unquoted event id in validator refusal reasons or local store error text, and drops the stale apply-path follow-up wording (MTIX-187.4.13).
 - The web app build moved from Tailwind CSS 3 to Tailwind CSS 4, using Tailwind's own Vite plugin (`@tailwindcss/vite`) and CSS-first configuration in `web/src/index.css` in place of `tailwind.config.js` and PostCSS. `postcss` and `autoprefixer` are no longer direct dependencies. This clears the last `npm audit` findings (the `braces` chain), so a full `npm audit` of `web/` reports 0 vulnerabilities. The rendered UI is unchanged apart from one Tailwind 4 behaviour: hover styles (underline and opacity changes) now apply only on devices that can hover, so they no longer apply on touch-only devices; the embedded bundle is rebuilt (MTIX-186).
 - Build/tooling (MTIX-178.1): web dev tooling bumped to vite 7.3.7 and vitest 4.1.12 (within their current majors) to pick up upstream advisory fixes. The built web output is unchanged; no application code change.
 - Hardening: how the web UI renders node, annotation and agent content is now covered by regression tests for its main content surfaces, and a structural test guards against new HTML or URL output paths. No behaviour change.

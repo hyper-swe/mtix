@@ -1280,6 +1280,11 @@ This build stores and reports `wake.live` and `wake.max_hop_depth`.
 Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
 when the wake scanner ships. They do not control live delivery in this build.
 
+The wake scan core ships in this build, but nothing constructs or runs it yet:
+no delivery route exists before a later release. So in this build no scan runs,
+no registration is marked stale by a scan and no stale registration is expired by
+one, and no agent is woken live.
+
 **When the scanner is available, stop live wakes on this host with `mtix config set wake.live off`.**
 For one agent use `mtix config set wake.live off --agent worker`.
 The stored live-wake default is on, regardless of session approval mode.
@@ -1418,6 +1423,25 @@ mtix serve --port 8377
 ```
 
 Open `http://127.0.0.1:8377` in your browser.
+
+### Web UI security
+
+Ticket IDs, titles, descriptions, prompts and annotations are untrusted data.
+Plain-text surfaces display them literally, including updates received through
+WebSocket. Activity comment Markdown uses an allowlist sanitizer; raw scripts,
+frames, event handlers and JavaScript URLs are removed. ID-bearing API path
+segments use `encodeURIComponent`; query parameters use `URLSearchParams`.
+Invalid UTF-8 becomes replacement characters at the JSON/browser boundary.
+
+The embedded SPA and API responses carry `Content-Security-Policy` and
+`X-Content-Type-Options: nosniff`. Scripts, fonts and connections are restricted
+to the same origin; inline scripts, evaluation, frames, objects, base URLs and
+form submissions are forbidden. Inline styles remain allowed for the UI's
+React style properties. Images may load from the same origin or HTTPS URLs,
+preserving sanitized Markdown images. External image servers receive those
+requests and can observe the viewer's IP address; avoid external images in
+sensitive comments. The policy is applied by `mtix serve`, including SPA
+fallback routes; the Vite development server does not apply this header.
 
 ### Views
 

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // WakeReevaluator re-checks held wakes after an activity that can lift a hold:
@@ -40,6 +41,8 @@ type reevaluationScope struct {
 // host scope and the scanner's candidate filter are injected, and it skips any agent whose
 // effective wake.live is off or whom the filter rejects (ADR-007 section 2.7).
 func (d *WakeDispatcher) Reevaluate(ctx context.Context, agent string) error {
+	// Re-evaluation never carries a session identity: reading inboxes must not refresh last_seen.
+	ctx = sqlite.WithSessionTouch(ctx, sqlite.SessionTouch{})
 	source, ok := d.store.(WakeHeldCandidates)
 	if !ok {
 		return fmt.Errorf("wake store cannot list held candidates: %w", model.ErrInvalidInput)
@@ -60,7 +63,53 @@ func (d *WakeDispatcher) Reevaluate(ctx context.Context, agent string) error {
 	if len(allowed) == 0 {
 		return gateErr
 	}
-	return errors.Join(gateErr, d.Pass(ctx, allowed))
+	allowed, skip, skipErr := d.ownEvents(ctx, allowed)
+	if skipErr != nil {
+		return errors.Join(gateErr, skipErr) // fail closed: an unjudged author could wake an agent for its own event
+	}
+	return errors.Join(gateErr, d.PassSkipping(ctx, allowed, skip))
+}
+
+// WakeInboxReader lists the events addressed to an agent with their authors.
+type WakeInboxReader interface {
+	InboxList(ctx context.Context, agentID string) ([]sqlite.InboxEvent, error)
+}
+
+// ownEvents returns the candidates to pass and the ones the recipient authored itself:
+// re-evaluation covers those without a send, exactly as a scan does, so no path wakes an
+// agent for its own event. An event whose author cannot be determined (it was acknowledged
+// since the candidate list was taken) is neither sent nor covered: the pass is cut at it,
+// together with every higher event of that registration, so the mark never moves past an
+// unsent event. The next pass retries from the inbox as it then stands.
+func (d *WakeDispatcher) ownEvents(ctx context.Context, keys []model.WakeKey) ([]model.WakeKey, map[model.WakeKey]bool, error) {
+	reader, ok := d.store.(WakeInboxReader)
+	if !ok {
+		return nil, nil, fmt.Errorf("wake store cannot read event authors: %w", model.ErrInvalidInput)
+	}
+	authors := map[string]map[int64]string{}
+	cutAt := map[string]int64{}
+	skip := map[model.WakeKey]bool{}
+	for _, key := range keys {
+		byseq, err := authorsOf(ctx, reader, authors, key.AgentID)
+		if err != nil {
+			return nil, nil, err
+		}
+		author, known := byseq[key.EventSeq]
+		if low, cut := cutAt[key.AgentID]; !known && (!cut || key.EventSeq < low) {
+			cutAt[key.AgentID] = key.EventSeq
+		}
+		if known && author == key.AgentID {
+			skip[key] = true
+		}
+	}
+	kept := make([]model.WakeKey, 0, len(keys))
+	for _, key := range keys {
+		if low, cut := cutAt[key.AgentID]; cut && key.EventSeq >= low {
+			continue
+		}
+		kept = append(kept, key)
+	}
+	return kept, skip, nil
 }
 
 // admitRegistrations keeps only the candidates of registrations that pass the live-wake
@@ -114,4 +163,22 @@ func notifyReevaluator(ctx context.Context, r WakeReevaluator, agent, trigger st
 	if err := r.Reevaluate(ctx, agent); err != nil {
 		slog.Warn("wake re-evaluation failed", "trigger", trigger, "agent", agent, "error", err)
 	}
+}
+
+// authorsOf returns the author of every inbox event of the agent by seq, reading the inbox
+// once per agent and caching the result.
+func authorsOf(ctx context.Context, reader WakeInboxReader, cache map[string]map[int64]string, agent string) (map[int64]string, error) {
+	if byseq, seen := cache[agent]; seen {
+		return byseq, nil
+	}
+	events, err := reader.InboxList(ctx, agent)
+	if err != nil {
+		return nil, fmt.Errorf("read event authors for %q: %w", agent, err)
+	}
+	byseq := make(map[int64]string, len(events))
+	for _, ev := range events {
+		byseq[ev.Seq] = ev.Author
+	}
+	cache[agent] = byseq
+	return byseq, nil
 }

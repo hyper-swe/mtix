@@ -2076,6 +2076,11 @@ Initialize the sync hub for this project (FR-18)
 
 Initialize the BYO Postgres sync hub for this project. Runs the schema
 migration under a PG advisory lock so concurrent first-connects are safe.
+Connect has a 30s budget. Migration has its own --migrate-timeout (default 5m),
+including advisory-lock wait. Index statements block writes until commit even
+when every index already exists; adding missing columns blocks reads too.
+Existing columns skip ALTER. After a migration timeout, retry as the owner with
+the larger --migrate-timeout printed in the error, then run sync doctor.
 
 DSN sources (FR-18.16):
   1. Environment:        MTIX_SYNC_DSN
@@ -2102,6 +2107,7 @@ migrate --yes while the version gate is open, then mtix sync init again.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
+| `--migrate-timeout` |  | Deadline for hub migration, including advisory-lock wait (separate from the 30s connect budget) | 5m0s |
 ---
 
 ## mark-restored

@@ -115,7 +115,7 @@ func ResolveWithBase(local, file *ExportData, base *ImportBase) (*BaseResolution
 	if err := RecomputeExportChecksum(&resolved); err != nil {
 		return nil, err
 	}
-	diff, err := diffReplace(local, &resolved, true)
+	diff, err := diffReplace(local, &resolved, func(*exportNode, *exportNode) bool { return true })
 	if err != nil {
 		return nil, err
 	}

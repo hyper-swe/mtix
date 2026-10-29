@@ -173,6 +173,9 @@ func runMCP(channelAgent string, readOnly bool) error {
 	// After wireMirrorExporter so the mirror keeps on-commit slot 0.
 	defer wireHookDispatch()()
 
+	// MTIX-112.20.1: an agent mutation through MCP is real activity.
+	defer wireHubActivity()()
+
 	srv := mcp.NewServer(os.Stdin, os.Stdout, logger, version)
 	reg := srv.Registry()
 	primary := registerMCPTools(reg)

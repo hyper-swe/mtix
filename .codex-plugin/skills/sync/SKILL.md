@@ -305,14 +305,17 @@ For a development hub on this machine (loopback or a local socket only), `--inse
 `mtix sync init` allows 30 seconds to connect,
 then a separate `--migrate-timeout` (default `5m`, positive Go duration)
 for the entire migration, including waiting for the migration advisory lock.
-Other init callers serialize on that lock; ordinary pushes and pulls do not
-acquire it. Migrations still replay to restore missing functions and triggers.
+Other init callers and admin commands (`mtix sync migrate`,
+`mtix sync repair-uids` and `mtix sync harden --apply`) take this lock too;
+their own deadlines may end the wait first. Ordinary pushes and pulls do
+not acquire it. Migrations still replay to restore missing functions and triggers.
 Migrations 010 and 013 check the column catalog before ALTER: an up-to-date
 `sync_events` takes no `ACCESS EXCLUSIVE` column lock, so event SELECTs can
 continue. Adding a missing column blocks both event reads and writes until
-commit or rollback. Nonconcurrent index statements (including builds of
-014/015) take `SHARE` locks that block event writes until the transaction ends;
-index builds alone allow event SELECTs. Migration 006 skips unchanged, enabled
+commit or rollback. The migration's index statements (including first builds
+of 014/015) take `SHARE` locks that block event writes until the transaction
+ends, even when every index already exists. Index statements alone allow
+event SELECTs. Migration 006 skips unchanged, enabled
 audit/conflict triggers, so an up-to-date hub takes no `ACCESS EXCLUSIVE`
 relation lock. Trigger repair drops and recreates a trigger, blocking reads
 and writes on its table until commit or rollback. Thus init can still delay
@@ -321,9 +324,10 @@ SELECTs wait. Schedule upgrades and restore initialization when a sync pause
 is acceptable.
 
 On migration deadline expiry, init names `--migrate-timeout`. Migration is
-atomic: an interrupted index build rolls back. Retry as the hub owner with
-`mtix sync init --migrate-timeout=15m` (increase further for the hub's size),
-then run `mtix sync doctor`. This also applies to a joiner's first init and
+atomic: an interrupted index build rolls back. Retry as the hub owner using
+the larger budget printed in the error. For a default-budget timeout,
+`mtix sync init --migrate-timeout=15m` is one example; increase it further for
+the hub's size, then run `mtix sync doctor`. This also applies to a joiner's first init and
 the post-restore runbook: repeated short retries cannot finish an index that
 always exceeds the budget. Locks last until commit or rollback, within the
 migration budget plus server cancellation/rollback cleanup; an earlier caller

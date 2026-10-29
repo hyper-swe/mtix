@@ -25,7 +25,30 @@ func migrateSyncInit(ctx context.Context, budget time.Duration, migrate func(con
 	defer cancel()
 	err := migrate(migrateCtx)
 	if err != nil && ctx.Err() == nil && migrateCtx.Err() == context.DeadlineExceeded {
-		return fmt.Errorf("hub migration exceeded --migrate-timeout=%s (including lock wait); retry as the hub owner with mtix sync init --migrate-timeout=15m, then run mtix sync doctor: %w", budget, context.DeadlineExceeded)
+		return syncInitMigrationTimeoutError(budget, err)
 	}
 	return err
+}
+
+// syncInitMigrationTimeoutError keeps both deadline and server context (FR-18.14).
+func syncInitMigrationTimeoutError(budget time.Duration, cause error) error {
+	retry, larger := syncInitMigrationRetryBudget(budget)
+	if !larger {
+		return fmt.Errorf("hub migration exceeded --migrate-timeout=%s (including lock wait); maximum supported duration reached; inspect hub lock holders and server work before retrying, then run mtix sync doctor: %w: %w", budget, context.DeadlineExceeded, cause)
+	}
+	return fmt.Errorf("hub migration exceeded --migrate-timeout=%s (including lock wait); retry as the hub owner with mtix sync init --migrate-timeout=%s, then run mtix sync doctor: %w: %w", budget, retry, context.DeadlineExceeded, cause)
+}
+
+// syncInitMigrationRetryBudget grows the failed budget safely (FR-18.14).
+// Normal budgets double, with at least 15m and at most 1h automatic growth.
+// At the duration limit there is no representable larger recommendation.
+func syncInitMigrationRetryBudget(budget time.Duration) (time.Duration, bool) {
+	const maximum = time.Duration(1<<63 - 1)
+	if budget < 15*time.Minute/2 {
+		return 15 * time.Minute, true
+	}
+	if budget == maximum {
+		return 0, false
+	}
+	return budget + min(budget, time.Hour, maximum-budget), true
 }

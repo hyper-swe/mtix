@@ -106,6 +106,12 @@ func (p *Pool) Migrate(ctx context.Context) error {
 		return fmt.Errorf("migrate: apply schema: %w", err)
 	}
 
+	if p.beforeMigrateCommit != nil {
+		if err := p.beforeMigrateCommit(tx); err != nil {
+			return fmt.Errorf("migrate: before-commit check: %w", err)
+		}
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("migrate: commit: %w", err)
 	}

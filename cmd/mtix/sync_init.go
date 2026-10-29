@@ -71,9 +71,10 @@ func newSyncInitCmd() *cobra.Command {
 		Long: `Initialize the BYO Postgres sync hub for this project. Runs the schema
 migration under a PG advisory lock so concurrent first-connects are safe.
 Connect has a 30s budget. Migration has its own --migrate-timeout (default 5m),
-including advisory-lock wait. Index builds block writes until commit; adding
-missing columns blocks reads too. Existing columns skip ALTER. After a migration
-timeout, retry as the owner with --migrate-timeout=15m, then run sync doctor.
+including advisory-lock wait. Index statements block writes until commit even
+when every index already exists; adding missing columns blocks reads too.
+Existing columns skip ALTER. After a migration timeout, retry as the owner with
+the larger --migrate-timeout printed in the error, then run sync doctor.
 
 DSN sources (FR-18.16):
   1. Environment:        MTIX_SYNC_DSN

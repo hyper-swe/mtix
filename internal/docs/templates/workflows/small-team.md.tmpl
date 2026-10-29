@@ -248,13 +248,13 @@ more for a larger window or recovered changes, and it has no timer of
 its own. After
 upgrading, the hub owner runs `mtix sync init` once with the owner's
 DSN to add the hub indexes the sweep and the pull cursor read by. It
-runs in one transaction. Index builds block writes until commit, while
-an up-to-date hub allows event SELECTs. Adding a missing column blocks
+runs in one transaction. Index statements block writes until commit even
+when every index already exists; an up-to-date hub allows event SELECTs. Adding a missing column blocks
 reads too; repairing an audit/conflict trigger blocks reads and writes on
 its table. Run upgrades when a sync pause is acceptable. Migration has its
 own `--migrate-timeout` (default `5m`, including advisory-lock wait), separate
 from the 30-second connection budget. After a migration timeout, the owner
-retries with `mtix sync init --migrate-timeout=15m`, then runs
+retries with the larger `--migrate-timeout` printed in the error, then runs
 `mtix sync doctor`. Until then pulls fetch the same events,
 only slower: each page the sweep lists scans the hub's event table
 (once per pull for the usual window, and once per page of the one-time

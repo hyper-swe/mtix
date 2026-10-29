@@ -7,9 +7,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/require"
 )
 
@@ -73,4 +76,44 @@ func TestSyncInit_MigratePreservesFailure(t *testing.T) {
 	err := migrateSyncInit(context.Background(), time.Second, func(context.Context) error { return failure })
 	require.ErrorIs(t, err, failure)
 	require.NotContains(t, err.Error(), "--migrate-timeout")
+}
+
+// Exercise long-budget guidance directly without waiting for a long timer.
+func TestSyncInit_MigrationRetryExceedsExpiredBudget(t *testing.T) {
+	const maximum = time.Duration(1<<63 - 1)
+	for _, budget := range []time.Duration{time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute, 2 * time.Hour, maximum - time.Nanosecond} {
+		t.Run(budget.String(), func(t *testing.T) {
+			err := syncInitMigrationTimeoutError(budget, errors.New("apply schema failed"))
+			parts := strings.SplitN(err.Error(), "mtix sync init --migrate-timeout=", 2)
+			require.Len(t, parts, 2)
+			retry, parseErr := time.ParseDuration(strings.SplitN(parts[1], ",", 2)[0])
+			require.NoError(t, parseErr)
+			require.Greater(t, retry, budget)
+			require.GreaterOrEqual(t, retry, 15*time.Minute)
+			if budget >= time.Hour {
+				require.LessOrEqual(t, retry-budget, time.Hour, "automatic growth is capped")
+			}
+		})
+	}
+}
+
+func TestSyncInit_MigrationRetryAtDurationMaximum(t *testing.T) {
+	err := syncInitMigrationTimeoutError(time.Duration(1<<63-1), errors.New("apply schema failed"))
+	require.ErrorContains(t, err, "maximum supported duration")
+	require.NotContains(t, err.Error(), "retry as the hub owner with mtix sync init")
+	require.ErrorContains(t, err, "mtix sync doctor")
+}
+
+func TestSyncInit_MigrationTimeoutPreservesPGCause(t *testing.T) {
+	server := &pgconn.PgError{Code: "57014", Message: "server cancelled statement"}
+	cause := fmt.Errorf("migrate: apply schema: %w", server)
+	err := migrateSyncInit(context.Background(), time.Millisecond, func(ctx context.Context) error {
+		<-ctx.Done()
+		return cause
+	})
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	var actual *pgconn.PgError
+	require.ErrorAs(t, err, &actual)
+	require.Same(t, server, actual)
+	require.ErrorContains(t, err, "migrate: apply schema")
 }

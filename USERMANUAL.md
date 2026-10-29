@@ -2075,6 +2075,41 @@ mtix sync init
 
 Positional DSN arguments are no longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets`.
 
+**Init locking and deadlines.** `mtix sync init` allows 30 seconds to connect,
+then a separate `--migrate-timeout` (default `5m`, positive Go duration)
+for the entire migration, including waiting for the migration advisory lock.
+Other init callers and admin commands (`mtix sync migrate`,
+`mtix sync repair-uids` and `mtix sync harden --apply`) take this lock too;
+their own deadlines may end the wait first. Ordinary pushes and pulls do
+not acquire it. Migrations still replay to restore missing functions and triggers.
+Migrations 010 and 013 check the column catalog before ALTER: an up-to-date
+`sync_events` takes no `ACCESS EXCLUSIVE` column lock, so event SELECTs can
+continue. Adding a missing column blocks both event reads and writes until
+commit or rollback. The migration's index statements (including first builds
+of 014/015) take `SHARE` locks that block event writes until the transaction
+ends, even when every index already exists. Index statements alone allow
+event SELECTs. Migration 006 skips unchanged, enabled
+audit/conflict triggers, so an up-to-date hub takes no `ACCESS EXCLUSIVE`
+relation lock. Trigger repair drops and recreates a trigger, blocking reads
+and writes on its table until commit or rollback. Thus init can still delay
+a push, even on a current hub. A queued exclusive lock can also make later
+SELECTs wait. Schedule upgrades and restore initialization when a sync pause
+is acceptable.
+
+On migration deadline expiry, init names `--migrate-timeout`. Migration is
+atomic: an interrupted index build rolls back. Retry as the hub owner using
+the larger budget printed in the error. For a default-budget timeout,
+`mtix sync init --migrate-timeout=15m` is one example; increase it further for
+the hub's size, then run `mtix sync doctor`. This also applies to a joiner's first init and
+the post-restore runbook: repeated short retries cannot finish an index that
+always exceeds the budget. Locks last until commit or rollback, within the
+migration budget plus server cancellation/rollback cleanup; an earlier caller
+cancellation or server timeout can end the attempt sooner. Waiting pushes and
+pulls have their own statement timeout and retry limits (normally five
+10-second attempts plus backoff), and may fail before init ends. Their queued
+events and pull cursor survive; retry them after init succeeds. After migration,
+registry checks and hub registration get a fresh 30-second budget.
+
 **Never commit the DSN to a tracked yaml.** `mtix sync init` scans
 `.mtix/config.{yaml,yml,json}` for DSN-shaped keys and refuses to
 proceed if any are present (fail-closed).
@@ -2264,14 +2299,13 @@ nothing; it is only recorded as received.
   hub owner's DSN. It adds two indexes on the hub:
   `idx_sync_events_created_at`, so each sweep reads only recent events,
   and `idx_sync_events_lamport_event_id`, so each pull batch reads from
-  its saved position. `mtix sync init` runs in one transaction, and
-  pushes and pulls both wait until it finishes, longer on a large hub
-  while it builds the indexes. A waiting push or pull retries for about
-  50 seconds and normally completes once `mtix sync init` finishes; only
-  if the wait outlasts that does it fail, and then nothing is lost: run
-  it again. Run `mtix sync init` when a pause in sync is acceptable. `mtix sync init` stops after 30 seconds; if building
-  the indexes takes longer it changes nothing, and pulls keep working
-  without them.
+  its saved position. Index statements block event writes until the migration
+  transaction ends even when every index already exists; event SELECTs can
+  continue when the columns already exist.
+  Adding a missing column blocks reads too. Init has a separate five-minute
+  migration deadline; after a timeout, retry as the owner with the larger
+  `--migrate-timeout` printed in the error, then `mtix sync doctor`.
+  See "Init locking and deadlines" above for other locks and retry behavior.
   Until then pulls fetch the same events as with the indexes, only
   slower: each page the sweep lists scans the hub's whole event table
   (once per pull for the usual window, and once per page of the
@@ -4434,7 +4468,7 @@ If mtix reports `database … is truncated`, `integrity check … failed` or `da
 1. **Stop. Do not delete anything** — especially not `mtix.db-wal` or `mtix.db-shm`; the WAL may be the only intact copy of your latest commits.
 2. Copy the entire `.mtix/data/` directory to another volume as evidence.
 3. Run `mtix recover`. It reads the damaged database read-only — salvaging every readable row individually — fills gaps from the `.mtix/tasks.json` mirror, synthesizes placeholders for lost parents, and writes an importable export to `.mtix/recovered-<timestamp>.json` together with a salvage report (recovered / from-mirror / lost IDs). It never modifies the damaged files.
-   A task whose row is readable but whose comments (annotations), activity, `code_refs` or `commit_refs` cannot be parsed (the case `mtix export` and the automatic import report, naming the task, the field and `mtix recover`) is salvaged from the database, and that field is taken from the task's copy in `.mtix/tasks.json` when the copy is usable: the file holds exactly one task under that ID, with the same uid when both carry one; the file's `schema_version` is 2.0.0 or later (a file written before 0.5.4 carries none of these fields); and the copy's times pass the checks import applies. The report then prints, for that task and field, `restored from the mirror <path>` with the number of entries the copy held. The copy is whatever `.mtix/tasks.json` holds: the last export, or a file a `git pull` or checkout put there (for example one whose automatic import was refused), which is another clone's copy of the task and can hold that clone's comments and lack yours. Compare each restored field with the local history (for example `git log -p .mtix/tasks.json`) before you import the salvage file. When the file's checksum does not verify, the copy is still used, as salvage of last resort, and the note ends `(the mirror checksum did not verify)`: the file may have been edited by hand, so check that field with particular care. Otherwise the note says the field is dropped and why (for example `the mirror holds no copy of this node`, or `a different task` when the uids differ), and the task is salvaged without that field. `mtix recover` reads every row by the rowid its primary-key index entry points at, so a row keeps its own ID and the salvage file holds each task once. When a damaged index entry for task A points at task B's row, the report says `node A: the index entry for A points at the row of B` and what happened to that row: it is salvaged once, as B, and not again when another entry already salvaged it. Nothing from that row is salvaged as A. A itself ends up exactly one way: salvaged from the database when another index entry reaches A's own row (counted under from database), taken from `.mtix/tasks.json` when the mirror holds it (counted under from mirror), or listed as lost (on the LOST line). A second index entry for the same task that points at the same row is skipped with a note, so the task is read and counted once. When the table itself holds two rows with the ID of task B, `mtix recover` salvages the first row it reads as B, lists B once, and does not salvage the other row: the report says `node B: the table holds two rows with id B`, names the rowid of each row, and holds the content of the row that is not salvaged as exported JSON, so no row is dropped without a note. Show that note to the user and have them decide which content to keep before importing the salvage file. Check such tasks with particular care before you import the salvage file.
+   A task whose row is readable but whose comments (annotations), activity, `code_refs` or `commit_refs` cannot be parsed (the case `mtix export` and the automatic import report, naming the task, the field and `mtix recover`) is salvaged from the database, and that field is taken from the task's copy in `.mtix/tasks.json` when the copy is usable: the file holds exactly one task under that ID, with the same uid when both carry one; the file's `schema_version` is 2.0.0 or later (a file written before 0.5.4 carries none of these fields); and the copy's times pass the checks import applies. The report then prints, for that task and field, `restored from the mirror <path>` with the number of entries the copy held. The copy is whatever `.mtix/tasks.json` holds: the last export, or a file a `git pull` or checkout put there (for example one whose automatic import was refused), which is another clone's copy of the task and can hold that clone's comments and lack yours. Compare each restored field with the local history (for example `git log -p .mtix/tasks.json`) before you import the salvage file. When the file's checksum does not verify, the copy is still used, as salvage of last resort, and the note ends `(the mirror checksum did not verify)`: the file may have been edited by hand, so check that field with particular care. Otherwise the note says the field is dropped and why (for example `the mirror holds no copy of this node`, or `a different task` when the uids differ), and the task is salvaged without that field. `mtix recover` reads every row by the rowid its primary-key index entry points at, so a row keeps its own ID and the salvage file holds each task once. When a damaged index entry for task A points at task B's row, the report says `node A: the index entry for A points at the row of B` and what happened to that row: it is salvaged once, as B, and not again when another entry already salvaged it. Nothing from that row is salvaged as A. A itself ends up exactly one way: salvaged from the database when another index entry reaches A's own row (counted under from database), taken from `.mtix/tasks.json` when the mirror holds it (counted under from mirror), or listed as lost (on the LOST line). A second index entry for the same task that points at the same row is skipped with a note, so the task is read and counted once. When the table itself holds two rows with the ID of task B, `mtix recover` salvages the first row it reads as B, lists B once, and does not salvage the other row: the report says `node B: the table holds two rows with id B`, names the rowid of each row, and holds the content of the row that is not salvaged as exported JSON, so no row is dropped without a note. The JSON preserves every readable exported field of the second row; any unreadable JSON columns are named separately in the same note. Show that note to the user and have them decide which content to keep before importing the salvage file. Check such tasks with particular care before you import the salvage file.
 4. Review the report, then restore (the replace import needs the ticket count typed at an interactive terminal): `mtix import --mode replace .mtix/recovered-<timestamp>.json` into a fresh `mtix init` project (or this one, after moving the damaged `data/` aside). Alternatively restore a `mtix backup` snapshot if you have a newer one: stop every mtix process, copy the snapshot over `.mtix/data/mtix.db`, delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`, then continue (this is a restore, unlike the corrupted store in step 1, whose WAL you keep).
 5. For hand-reconstructed export files (e.g., rebuilt from session transcripts), `mtix import --recompute-checksum` replaces the stale integrity checksum — loudly — so the standard import accepts them.
 6. `MTIX_SKIP_INTEGRITY_CHECK=1` bypasses the open-time integrity gates (both the truncation check and quick_check) so `mtix verify`, `mtix backup`, and `mtix export` can reach a damaged file during recovery. mtix logs a loud DANGER line while it is set. Never use it to keep writing.

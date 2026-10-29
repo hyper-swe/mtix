@@ -67,14 +67,26 @@ func runConfigGetForAgent(key, agent string) error {
 		return err
 	}
 
+	grandfathered := key == "sync.hub_contact" && cs.HubContactGrandfathered()
 	if app.jsonOutput {
-		data, _ := json.Marshal(map[string]string{"key": key, "value": v})
+		out := map[string]any{"key": key, "value": v}
+		if grandfathered {
+			out["grandfathered"] = true
+		}
+		data, _ := json.Marshal(out)
 		fmt.Println(string(data))
 	} else {
 		fmt.Println(v)
+		if grandfathered {
+			fmt.Fprintln(os.Stderr, grandfatheredConfigNotice)
+		}
 	}
 	return nil
 }
+
+// grandfatheredConfigNotice explains a grandfathered sync.hub_contact value.
+const grandfatheredConfigNotice = "note: grandfathered: this board predates sync.hub_contact, so the daemon " +
+	"keeps contacting the hub at its own --interval; run: mtix config set sync.hub_contact activity"
 
 func runConfigSet(key, value string) error { return runConfigSetForAgent(key, value, "") }
 

@@ -117,3 +117,18 @@ func TestBoardKey_StableAndDistinct(t *testing.T) {
 	require.NotEqual(t, BoardKey("/a/.mtix"), BoardKey("/b/.mtix"))
 	require.Regexp(t, "^[0-9a-f]{16}$", BoardKey("/a/.mtix"))
 }
+
+func TestListenLease_Expired_TTLRefreshAndSkew(t *testing.T) {
+	armed := time.Date(2026, 10, 28, 9, 0, 0, 0, time.UTC)
+	l := ListenLease{PID: 1, StartTime: "s", ArmedAt: armed}
+	require.False(t, l.Expired(armed.Add(ListenLeaseTTL-time.Second)))
+	require.True(t, l.Expired(armed.Add(ListenLeaseTTL)))
+
+	l.RefreshedAt = armed.Add(10 * time.Minute)
+	require.True(t, l.LastSeen().Equal(l.RefreshedAt))
+	require.False(t, l.Expired(armed.Add(ListenLeaseTTL)), "a refresh restarts the TTL")
+	require.True(t, l.Expired(armed.Add(10*time.Minute+ListenLeaseTTL)))
+
+	require.True(t, l.Expired(armed.Add(-time.Hour)), "dated far ahead of the clock is stale")
+	require.Equal(t, ListenLeaseTTL/3, ListenLeaseRefreshEvery)
+}

@@ -602,7 +602,8 @@ re-derives the task's status from its current blockers and never
 overrides a blocker that is still unresolved. No command repairs stale
 progress. A node's progress is recomputed when one of its children is
 created, deleted, undeleted, cancelled, or moved through a status
-transition (`start`, `done`, `defer`, `reopen`). `claim` and `unclaim` do
+transition, such as to in_progress, done, deferred or reopened.
+`claim` and `unclaim` do
 not recompute progress, and neither does the status change that adding a
 blocking dependency makes.
 

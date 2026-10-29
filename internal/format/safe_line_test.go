@@ -80,6 +80,8 @@ func TestSafeLine_Table_ExactResults(t *testing.T) {
 		{"combining grapheme joiner removed", "a\u034fb", "ab"},
 		{"musical format char removed", "a\U0001d173b", "ab"},
 		{"hangul fillers become spaces", "a\u115fb\u3164c", "a b c"},
+		{"hangul jungseong and halfwidth fillers become spaces", "a\u1160b\uffa0c", "a b c"},
+		{"trailing ideographic space trimmed", "title\u3000", "title"},
 		{"outer whitespace trimmed", "  \n title \t\n", "title"},
 		{"invalid utf8 becomes valid", "caf\xc3 bad", "caf\ufffd bad"},
 	}

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -56,7 +57,7 @@ func (svc *NodeService) UnclaimNode(ctx context.Context, id, reason, actor strin
 	if node.Assignee != "" && node.Assignee != actor {
 		if !force {
 			return fmt.Errorf("unclaim node %s: claimed by %s, not %s; pass --force to release it: %w",
-				id, node.Assignee, actor, model.ErrAlreadyClaimed)
+				id, format.SafeLine(node.Assignee), actor, model.ErrAlreadyClaimed)
 		}
 		reason = fmt.Sprintf("forced unclaim by %s of claim held by %s: %s", actor, node.Assignee, reason)
 	}

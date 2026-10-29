@@ -26,6 +26,11 @@ type ConfigService struct {
 	path        string // Path to config file.
 	// historyGuard checks the history.export rollout guard (MTIX-95.31.19.6).
 	historyGuard func() (HistoryGuardReport, error)
+
+	// legacyHubContact is true when an existing config file predates
+	// sync.hub_contact and the operator has not set it since (MTIX-112.20.1).
+	legacyHubContact bool
+	seenInFile       map[string]bool
 }
 
 // NewConfigService creates a ConfigService, loading from the given path.
@@ -47,6 +52,8 @@ func NewConfigService(configPath string) (*ConfigService, error) {
 			if !os.IsNotExist(err) {
 				return nil, fmt.Errorf("load config: %w", err)
 			}
+		} else {
+			cs.legacyHubContact = !cs.seenInFile[hubContactKey]
 		}
 	}
 
@@ -66,6 +73,9 @@ func (cs *ConfigService) Get(key string) (string, error) {
 		)
 	}
 
+	if key == hubContactKey && cs.legacyHubContact {
+		return HubContactMode{Kind: HubContactInterval, Interval: GrandfatherInterval}.String(), nil
+	}
 	if v, ok := cs.values[key]; ok {
 		return v, nil
 	}
@@ -109,6 +119,9 @@ func (cs *ConfigService) Set(key, value string) (string, error) {
 	}
 
 	cs.values[key] = value
+	if key == hubContactKey {
+		cs.legacyHubContact = false
+	}
 
 	if err := cs.saveToFile(); err != nil {
 		return "", fmt.Errorf("save config: %w", err)
@@ -315,6 +328,9 @@ func (cs *ConfigService) saveToFile() error {
 			buf.WriteString("\n" + section + ":\n")
 		}
 		for key, value := range cs.values {
+			if key == hubContactKey && cs.legacyHubContact {
+				continue // keep a pre-existing board grandfathered until set
+			}
 			if section == "" {
 				if !strings.Contains(key, ".") {
 					buf.WriteString(key + ": " + quoteIfNeeded(value) + "\n")
@@ -388,5 +404,9 @@ func (cs *ConfigService) loadWorkspaceKey(key, value string) {
 	}
 	if validConfigKeys[key] {
 		cs.values[key] = value
+		if cs.seenInFile == nil {
+			cs.seenInFile = map[string]bool{}
+		}
+		cs.seenInFile[key] = true
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -50,7 +51,13 @@ func TestDoctorHubIdentityChanged_Warns(t *testing.T) {
 	require.ErrorIs(t, runSyncDoctor(t.Context(), &out, nil, transport.Options{}), errDoctorChecksFailed)
 	assert.Contains(t, out.String(), "[WARN] board.hub-identity-changed")
 	assert.NotContains(t, out.String(), "mtix setup")
-	assert.NotContains(t, out.String(), "mtix config set")
+	// Scoped to the identity row: other rows (sync.hub-contact, MTIX-112.20.1)
+	// legitimately name 'mtix config set' as their fix.
+	for _, line := range strings.Split(out.String(), "\n") {
+		if strings.Contains(line, "board.hub-identity-changed") {
+			assert.NotContains(t, line, "mtix config set")
+		}
+	}
 	grants, _, err := state.BoardGrants()
 	require.NoError(t, err)
 	assert.Equal(t, original, grants[0].Hub)

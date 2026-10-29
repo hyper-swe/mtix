@@ -6,6 +6,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -34,12 +35,70 @@ type JournalEvent struct {
 // ReadJournalSince returns journaled events with rowid greater than cursor,
 // oldest first, up to limit. Synced is derived from applied_events (an event
 // applied from the hub is recorded there; a locally-emitted one is not), so the
-// dispatcher can honor a hook's include-synced opt-in (FR-19 §3).
+// dispatcher can identify replicated events (FR-19 §3). Workflow events that
+// lost at ingest are excluded: replication evidence is not a state change.
 func (s *Store) ReadJournalSince(ctx context.Context, cursor int64, limit int) ([]JournalEvent, error) {
 	if limit <= 0 {
 		limit = 500
 	}
-	rows, err := s.readDB.QueryContext(ctx, `
+	// One read transaction, so the schema check and the page see the same snapshot.
+	tx, err := s.readDB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("read journal since %d: begin: %w", cursor, err)
+	}
+	defer func() { _ = tx.Rollback() }() //nolint:errcheck // read-only snapshot; nothing to commit
+
+	query := journalSinceSQL
+	hasMarkers, err := hookMarkersTableExists(ctx, tx)
+	if err != nil {
+		return nil, fmt.Errorf("read journal since %d: %w", cursor, err)
+	}
+	if !hasMarkers {
+		// A store opened read-only on an older database never ran init, so it
+		// has no skip decisions to apply: show every event rather than fail.
+		query = journalSinceNoMarkersSQL
+	}
+	rows, err := tx.QueryContext(ctx, query, cursor, limit)
+	if err != nil {
+		return nil, fmt.Errorf("read journal since %d: %w", cursor, err)
+	}
+	defer func() { _ = rows.Close() }()
+	return scanJournalRows(rows)
+}
+
+// hookMarkersTableExists reports whether the skip-decision table is present.
+func hookMarkersTableExists(ctx context.Context, tx *sql.Tx) (bool, error) {
+	var one int
+	// Look the table up by name in the schema catalog; absent means a legacy store.
+	err := tx.QueryRowContext(ctx,
+		`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?`,
+		"hook_suppressed_events").Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect hook skip table: %w", err)
+	}
+	return true, nil
+}
+
+// Page of journal events after a cursor, oldest first. The NOT EXISTS clause
+// drops losing workflow events (hook_suppressed_events) before LIMIT applies,
+// so a page of skipped events never starves the winners behind them.
+const journalSinceSQL = `
+		SELECT e.rowid, e.event_id, e.op_type, e.node_id, e.author_id, e.payload,
+		       e.created_at, (a.event_id IS NOT NULL) AS synced,
+		       COALESCE(o.via_hook, '') AS via_hook
+		  FROM sync_events e
+		  LEFT JOIN applied_events a ON a.event_id = e.event_id
+		  LEFT JOIN hook_event_origin o ON o.event_id = e.event_id
+		 WHERE e.rowid > ?
+		   AND NOT EXISTS (SELECT 1 FROM hook_suppressed_events h WHERE h.event_id = e.event_id)
+		 ORDER BY e.rowid ASC
+		 LIMIT ?`
+
+// Same page without the skip filter, for a store that lacks the marker table.
+const journalSinceNoMarkersSQL = `
 		SELECT e.rowid, e.event_id, e.op_type, e.node_id, e.author_id, e.payload,
 		       e.created_at, (a.event_id IS NOT NULL) AS synced,
 		       COALESCE(o.via_hook, '') AS via_hook
@@ -48,12 +107,10 @@ func (s *Store) ReadJournalSince(ctx context.Context, cursor int64, limit int) (
 		  LEFT JOIN hook_event_origin o ON o.event_id = e.event_id
 		 WHERE e.rowid > ?
 		 ORDER BY e.rowid ASC
-		 LIMIT ?`, cursor, limit)
-	if err != nil {
-		return nil, fmt.Errorf("read journal since %d: %w", cursor, err)
-	}
-	defer func() { _ = rows.Close() }()
+		 LIMIT ?`
 
+// scanJournalRows reads the rows of a journal page into events.
+func scanJournalRows(rows *sql.Rows) ([]JournalEvent, error) {
 	var out []JournalEvent
 	for rows.Next() {
 		var (

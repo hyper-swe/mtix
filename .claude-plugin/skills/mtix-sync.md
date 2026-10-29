@@ -165,6 +165,8 @@ while checking cleanup.
    appropriate flag for the affected field and replace `PROJ-1` with its task id.
    This does not change other fields, comments or activity records. Free-text
    task-history entries omit old and new text; structured fields retain values.
+   Overwriting labels or assignee leaves the old value in local history and,
+   while `history.export` is on, in exported history.
 2. `history.export` is `false` by default. If it was on, turn it off with
    `mtix config set history.export false`, then verify `false` with
    `mtix config get history.export`. This excludes history from a fresh export,

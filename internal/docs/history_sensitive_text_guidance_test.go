@@ -24,6 +24,7 @@ func sensitiveTextGuideSection(t *testing.T, path string) string {
 	if end := regexp.MustCompile(`(?m)^#{1,4} `).FindStringIndex(body); end != nil {
 		body = body[:end[0]]
 	}
+	body = strings.TrimSuffix(strings.TrimSpace(body), "\n---")
 	return strings.ToLower(strings.Join(strings.Fields(body), " "))
 }
 
@@ -40,7 +41,21 @@ func TestHistorySensitiveTextGuidance(t *testing.T) {
 			require.Regexp(t, `no supported command[^.]*selectively[^.]*history`, body)
 			require.Regexp(t, `cannot erase[^.]*hub`, body)
 			require.Regexp(t, `retention[^.]*not[^.]*erasure`, body)
+			require.Regexp(t, "`history\\.export` is `false` by default", body)
+			for _, term := range []string{"never print credentials", "keep the original board file", "do not publish the partial export", "do not push old history back", "re-cloning does not erase hub copies", "do not hand-edit history or its checksum", "do not import an edited snapshot expecting it to erase local entries", "history import keeps local entries", "structured fields retain values", "overwriting labels or assignee leaves the old value in local history", "while `history.export` is on, in exported history"} {
+				require.Contains(t, body, term)
+			}
+			for _, term := range []string{"free-text task-history entries omit old and new text", "this excludes history from a fresh export, not the current fields, comments or activity", "older queued events can still carry sensitive text after the current field is cleaned"} {
+				require.Contains(t, body, term)
+			}
 		})
+	}
+}
+
+func TestHistorySensitiveTextGuidanceParity(t *testing.T) {
+	want := sensitiveTextGuideSection(t, "USERMANUAL.md")
+	for _, path := range []string{"internal/docs/templates/skills/sync.md.tmpl", ".claude-plugin/skills/mtix-sync.md", ".codex-plugin/skills/sync/SKILL.md"} {
+		require.Equal(t, want, sensitiveTextGuideSection(t, path), path)
 	}
 }
 
@@ -49,4 +64,6 @@ func TestHistorySensitiveTextExportBoundary(t *testing.T) {
 	for _, term := range []string{"history.export", "false", "current fields", "local sqlite", "hub", "git history", "other clones", "protocol-2", "../usermanual.md#removing-sensitive-text-060"} {
 		require.Contains(t, body, term)
 	}
+	require.Regexp(t, "with `history\\.export` set to `false` \\(the default\\)", body)
+	require.Contains(t, body, "current fields, comments and activity remain in the export")
 }

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,7 +47,24 @@ func parsedCleanupCommand(args []string) (string, error) {
 	if err := cmd.ValidateArgs(cmd.Flags().Args()); err != nil {
 		return "", err
 	}
+	if err := cleanupConfigArguments(cmd.CommandPath(), cmd.Flags().Args()); err != nil {
+		return "", err
+	}
 	return cmd.CommandPath(), nil
+}
+
+func cleanupConfigArguments(command string, args []string) error {
+	switch command {
+	case "mtix config get":
+		if len(args) != 1 || args[0] != "history.export" {
+			return fmt.Errorf("cleanup config get must read history.export")
+		}
+	case "mtix config set":
+		if len(args) != 2 || args[0] != "history.export" || args[1] != "false" {
+			return fmt.Errorf("cleanup config set must set history.export to false")
+		}
+	}
+	return nil
 }
 
 func TestHistorySensitiveTextCommands_ParseInThisBuild(t *testing.T) {
@@ -73,7 +91,7 @@ func TestHistorySensitiveTextCommands_ParserRejectsInvalidSyntax(t *testing.T) {
 		_, err := parsedCleanupCommand(args)
 		require.NoError(t, err)
 	}
-	for _, args := range [][]string{{"unsupported-history-command"}, {"export", "--no-such-export-flag"}, {"export", "extra.json"}, {"config", "get"}} {
+	for _, args := range [][]string{{"unsupported-history-command"}, {"export", "--no-such-export-flag"}, {"export", "extra.json"}, {"config", "get"}, {"config", "get", "history.exports"}, {"config", "set", "history.exports", "false"}, {"config", "set", "history.export", "off"}, {"config", "set", "history.export", "true"}} {
 		_, err := parsedCleanupCommand(args)
 		require.Error(t, err)
 	}

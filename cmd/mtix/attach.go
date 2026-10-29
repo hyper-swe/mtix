@@ -196,6 +196,7 @@ func runAttachVerb(ctx context.Context, deps attachDeps, req attach.VerbRequest,
 		markGlue(ctx, deps, req, requested)
 	}
 	req.Protocol = requested
+	recordGlueActivity(req.Verb) // MTIX-112.20.1: session start and prompt submit are activity
 	runAttachAdapter(ctx, deps, req)
 }
 

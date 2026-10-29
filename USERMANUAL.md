@@ -4258,6 +4258,19 @@ moved node may have external references (a commit, a PR) that need
 updating — `collisions resolve` reports the old and new number so you can
 fix them.
 
+The hub must accept the winner before mtix renumbers locally. If the hub refuses
+(for example, `permission denied for table sync_node_collisions`), the local
+store stays unchanged. Resolve with a role allowed to UPDATE that table.
+If acceptance succeeds but local completion fails, mtix reports
+`hub accepted collision <id> but local completion failed` and prints the exact
+recovery command: `mtix sync collisions resolve <id> --winner held|incoming`
+(with the original winner filled in). Fix the reported cause, then run that
+command on the client that owns the losing node, with the same hub configured.
+The decision is already recorded on the hub, so it may be absent from
+`collisions list`. Retry resumes the move; if the move already committed, it
+records its new number without moving it again. A completed resolve is a no-op
+when repeated. A different winner is refused without changing the local store.
+
 While a collision is open, only that one node is blocked. Every other
 node keeps syncing normally; one unresolved collision never wedges the
 team's sync stream.

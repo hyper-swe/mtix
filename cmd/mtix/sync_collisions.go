@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
@@ -173,12 +172,19 @@ func runSyncCollisionsResolve(ctx context.Context, stdout, stderr io.Writer,
 	}
 	defer pool.Close()
 
-	c, err := pool.GetOpenCollision(ctx, collisionID)
+	if err := resolveConnectedCollision(ctx, stdout, pool, collisionID, winner); err != nil {
+		return wrapSyncErr(stderr, "resolve collision", err)
+	}
+	return nil
+}
+
+func resolveConnectedCollision(ctx context.Context, stdout io.Writer, pool *transport.Pool, collisionID int64, winner string) error {
+	c, decision, completedPath, err := pool.GetCollision(ctx, collisionID)
 	if err != nil {
-		return wrapSyncErr(stderr, "load collision", err)
+		return fmt.Errorf("load collision: %w", err)
 	}
 	if c.CollisionID == 0 {
-		return fmt.Errorf("mtix sync collisions resolve: no open collision with id %d", collisionID)
+		return fmt.Errorf("mtix sync collisions resolve: no collision with id %d", collisionID)
 	}
 
 	// Pick winner/loser. The loser renumbers locally; no create is deleted.
@@ -187,30 +193,25 @@ func runSyncCollisionsResolve(ctx context.Context, stdout, stderr io.Writer,
 		winnerEventID, loserUID = c.IncomingEventID, c.HeldUID
 	}
 
-	// Renumber the loser's subtree to the next free number under its parent
-	// (Store.RenumberSubtree via the ordinary renumber path, MTIX-30.5/30.7).
-	// The loser node must exist in THIS client's local store — run resolve on
-	// the client that owns the loser. No node is lost: the create is re-stamped
-	// to the new path and re-queued, never deleted.
-	loserNewPath, err := app.store.RenumberForHubRejection(ctx, loserUID)
-	if err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			return fmt.Errorf(
-				"mtix sync collisions resolve: the losing node (uid %s) is not in this local store; "+
-					"run resolve on the client that owns it", loserUID)
-		}
-		return wrapSyncErr(stderr, "renumber loser", err)
+	if decision != "" && decision != winnerEventID {
+		return fmt.Errorf("collision %d was resolved with a different winner; local store unchanged", collisionID)
 	}
-
-	resolved, err := pool.ResolveCollision(ctx, collisionID, winnerEventID, loserNewPath, syncActor())
-	if err != nil {
-		return wrapSyncErr(stderr, "resolve collision", err)
-	}
-	if !resolved {
-		fmt.Fprintf(stderr,
-			"warning: collision %d was already resolved by another operator; the local renumber to %s still stands\n",
-			collisionID, loserNewPath)
+	if completedPath != "" {
+		fmt.Fprintf(stdout, "collision %d already resolved; loser renumbered to %s (no-op)\n", collisionID, completedPath)
 		return nil
+	}
+	move := collisionMove{
+		accept: func(ctx context.Context) error { return acceptCollision(ctx, pool, collisionID, winnerEventID) },
+		renumber: func(ctx context.Context, uid string) (string, error) {
+			return renumberCollisionLoser(ctx, uid, c.DisplayPath)
+		},
+		finish: func(ctx context.Context, path string) error {
+			return pool.CompleteCollisionMove(ctx, collisionID, winnerEventID, path)
+		},
+	}
+	loserNewPath, err := resolveCollisionMove(ctx, c, winner, loserUID, move)
+	if err != nil {
+		return err
 	}
 
 	fmt.Fprintf(stdout,

@@ -405,10 +405,10 @@ planner can serve the query from it. Migrations run in `mtix sync init`
 with the hub owner's DSN, so an existing hub gets the index the next
 time its owner runs `mtix sync init`. Every migration runs in one
 transaction (see [Migration single-flight](#migration-single-flight)),
-so the index is built inside it, not concurrently, and `sync_events`
-stays locked until that transaction commits: pushes and pulls both wait
-for `mtix sync init` to finish. Run it when a pause in sync is
-acceptable. Until the index exists, pulls return the same events, but
+so the index is built inside it, not concurrently. Its SHARE lock blocks
+writers until commit, but allows event SELECTs when no missing column or
+other exclusive DDL needs adding. See the locking and deadline details below.
+Until the index exists, pulls return the same events, but
 each page scans and sorts `sync_events`.
 
 The Lamport clock is stamped by the client that wrote the event, not by
@@ -931,24 +931,40 @@ only one runs the DDL, the others see the schema is current and return
 cleanly. See `internal/store/postgres/transport/migrate.go` and
 `TestMigrate_ConcurrentSingleFlight`.
 
-Every migration file runs in that one transaction, so an index a
-migration adds (014, 015) is built inside it, not concurrently. The
-transaction also re-runs the `ALTER TABLE sync_events ADD COLUMN IF NOT
-EXISTS` of migrations 010 and 013, which take an `ACCESS EXCLUSIVE` lock
-on `sync_events` even when the column exists, and hold it until the
-transaction commits. So while `mtix sync init` migrates, pushes and
-pulls both wait for it. A push or pull whose statement waits past its
-10-second statement timeout is retried, up to 5 attempts in all (about
-50 seconds, `DefaultRetryConfig` in `transport/retry.go`), so it
-normally completes once `mtix sync init` finishes. It fails only if the
-wait outlasts its retries; a push then keeps its events queued and a
-pull keeps its cursor, and the next one succeeds. Run `mtix sync init`
-when a pause in sync is acceptable.
-On a large hub the first build of an index makes that pause longer;
-once the index exists its `CREATE INDEX IF NOT EXISTS` only checks for
-it. `mtix sync init` gives the connection and the whole migration 30
-seconds; a migration that takes longer is rolled back, and the hub
-keeps working without the new index (pulls stay correct, only slower).
+**Init locking and deadlines.** `mtix sync init` allows 30 seconds to connect,
+then a separate `--migrate-timeout` (default `5m`, positive Go duration)
+for the entire migration, including waiting for the migration advisory lock.
+Other init callers and admin commands (`mtix sync migrate`,
+`mtix sync repair-uids` and `mtix sync harden --apply`) take this lock too;
+their own deadlines may end the wait first. Ordinary pushes and pulls do
+not acquire it. Migrations still replay to restore missing functions and triggers.
+Migrations 010 and 013 check the column catalog before ALTER: an up-to-date
+`sync_events` takes no `ACCESS EXCLUSIVE` column lock, so event SELECTs can
+continue. Adding a missing column blocks both event reads and writes until
+commit or rollback. The migration's index statements (including first builds
+of 014/015) take `SHARE` locks that block event writes until the transaction
+ends, even when every index already exists. Index statements alone allow
+event SELECTs. Migration 006 skips unchanged, enabled
+audit/conflict triggers, so an up-to-date hub takes no `ACCESS EXCLUSIVE`
+relation lock. Trigger repair drops and recreates a trigger, blocking reads
+and writes on its table until commit or rollback. Thus init can still delay
+a push, even on a current hub. A queued exclusive lock can also make later
+SELECTs wait. Schedule upgrades and restore initialization when a sync pause
+is acceptable.
+
+On migration deadline expiry, init names `--migrate-timeout`. Migration is
+atomic: an interrupted index build rolls back. Retry as the hub owner using
+the larger budget printed in the error. For a default-budget timeout,
+`mtix sync init --migrate-timeout=15m` is one example; increase it further for
+the hub's size, then run `mtix sync doctor`. This also applies to a joiner's first init and
+the post-restore runbook: repeated short retries cannot finish an index that
+always exceeds the budget. Locks last until commit or rollback, within the
+migration budget plus server cancellation/rollback cleanup; an earlier caller
+cancellation or server timeout can end the attempt sooner. Waiting pushes and
+pulls have their own statement timeout and retry limits (normally five
+10-second attempts plus backoff), and may fail before init ends. Their queued
+events and pull cursor survive; retry them after init succeeds. After migration,
+registry checks and hub registration get a fresh 30-second budget.
 
 ## Transport security
 

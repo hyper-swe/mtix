@@ -95,6 +95,10 @@ func (s *Store) RemoveDependency(ctx context.Context, fromID, toID string, depTy
 				fromID, toID, depType, model.ErrNotFound)
 		}
 
+		if err := s.recordDependencyRemoval(ctx, tx, fromID, toID, depType); err != nil {
+			return err
+		}
+
 		// FR-3.8: Auto-unblock if this was the last blocker.
 		if depType == model.DepTypeBlocks {
 			if err := autoUnblockNode(ctx, tx, s, toID); err != nil {

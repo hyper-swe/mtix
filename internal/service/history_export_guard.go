@@ -23,7 +23,7 @@ const HistoryGuardWindow = 30 * 24 * time.Hour
 // the refusal never read as a proof that nothing else touches the board.
 const HistoryGuardBlindSpot = "mtix cannot see other machines, CI jobs or clones that read .mtix/tasks.json through git: " +
 	"mtix 0.5.4 records no session registration and the file names no writer while the switch is off; " +
-	"run mtix --version on each of them and upgrade any older than " + FirstHistoryVersion + " before turning the switch on"
+	"check `mtix --version` on each of them and upgrade any older than " + FirstHistoryVersion + " before turning the switch on"
 
 // GuardSignal is the service's own record of a build that has touched the
 // board: a session registration or a daemon heartbeat. The service maps the

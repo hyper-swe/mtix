@@ -118,7 +118,12 @@ type serveInboxCall struct {
 	exited  chan struct{}
 }
 
-type serveInboxBackend struct{ started chan *serveInboxCall }
+type serveInboxBackend struct {
+	started chan *serveInboxCall
+	// startDelay holds each wait back before it reports as started, which
+	// models a slow runner where workers reach the backend late.
+	startDelay time.Duration
+}
 
 func (*serveInboxBackend) InboxList(context.Context, string) ([]sqlite.InboxEvent, error) {
 	return []sqlite.InboxEvent{{Seq: 9, Body: "ordinary inbox response"}}, nil
@@ -127,6 +132,9 @@ func (*serveInboxBackend) InboxAck(context.Context, string, int64) error { retur
 func (b *serveInboxBackend) InboxWait(ctx context.Context, agent string, timeout time.Duration) ([]sqlite.InboxEvent, error) {
 	call := &serveInboxCall{agent: agent, timeout: timeout, ctx: ctx, event: make(chan struct{}), exited: make(chan struct{})}
 	defer close(call.exited)
+	if b.startDelay > 0 {
+		time.Sleep(b.startDelay)
+	}
 	b.started <- call
 	select {
 	case <-ctx.Done():
@@ -154,8 +162,13 @@ func newServeInboxHarness(t *testing.T) *serveInboxHarness {
 
 func newServeInboxHarnessWithWriter(t *testing.T, writer io.Writer) *serveInboxHarness {
 	t.Helper()
+	return newServeInboxHarnessWith(t, writer, 0)
+}
+
+func newServeInboxHarnessWith(t *testing.T, writer io.Writer, startDelay time.Duration) *serveInboxHarness {
+	t.Helper()
 	testutil.OperatorState(t)
-	h := &serveInboxHarness{in: newServeInboxInput(), out: &serveInboxOutput{frames: make(chan []byte, 1024)}, backend: &serveInboxBackend{started: make(chan *serveInboxCall, 256)}, done: make(chan error, 1)}
+	h := &serveInboxHarness{in: newServeInboxInput(), out: &serveInboxOutput{frames: make(chan []byte, 1024)}, backend: &serveInboxBackend{started: make(chan *serveInboxCall, 256), startDelay: startDelay}, done: make(chan error, 1)}
 	if writer == nil {
 		writer = h.out
 	}
@@ -455,7 +468,15 @@ func TestInboxWaitServe_FiniteDefaultAndCappedContracts(t *testing.T) {
 func serveInboxInt(n int) *int { return &n }
 
 func TestInboxWaitServe_AdmissionBoundKeepsPingResponsiveAndJoinsWorkers(t *testing.T) {
-	h := newServeInboxHarness(t)
+	requireAdmissionBound(t, newServeInboxHarness(t))
+}
+
+func TestInboxWaitServe_AdmissionBoundSlowBackendStillObservesWorkers(t *testing.T) {
+	requireAdmissionBound(t, newServeInboxHarnessWith(t, nil, 50*time.Millisecond))
+}
+
+func requireAdmissionBound(t *testing.T, h *serveInboxHarness) {
+	t.Helper()
 	// This is a resource ceiling rather than a prescribed internal pool size.
 	// A smaller limit is valid; accepting all 128 indefinite waits is not.
 	for id := 1; id <= 128; id++ {

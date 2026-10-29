@@ -11,6 +11,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
@@ -177,6 +178,7 @@ func repointIndexEntries(t *testing.T, dbPath string, repoint map[string]string)
 type damagedIndexCase struct {
 	name          string
 	editMirror    func(t *testing.T, m *ExportData)
+	seedContent   func(t *testing.T, s *Store)
 	patches       map[string]indexPatch
 	renameRows    map[string]string // ids of table rows to rewrite (renameTableRows)
 	rc4           bool              // also seed RC-4
@@ -214,6 +216,9 @@ func damagedIndexFixture(t *testing.T, tc *damagedIndexCase) (dbPath, mirrorPath
 			Status: model.StatusOpen, Priority: model.PriorityMedium, Weight: 1.0,
 			NodeType: model.NodeTypeIssue, ContentHash: "h", CreatedAt: at, UpdatedAt: at,
 		}))
+	}
+	if tc.seedContent != nil {
+		tc.seedContent(t, s)
 	}
 	mirrorPath, _ = exportMirrorOf(t, s, func(t *testing.T, m *ExportData) {
 		mirrorNodeOf(t, m, "RC-2").Annotations = []model.Annotation{{
@@ -528,4 +533,88 @@ func TestRecover_TableDuplicateRowWithTornColumn_NoteNamesTheColumn(t *testing.T
 	assert.Contains(t, dup[0], "the row at rowid 3 is not salvaged; its content is ")
 	assert.Contains(t, dup[0], "; its annotations column could not be read: ")
 	assert.Equal(t, []string{"RC-1", "RC-2"}, res.RecoveredIDs, "the id is listed once")
+}
+
+// TestRecover_TableDuplicateRows_ReportPreservesContent checks the complete
+// second row, rather than just its title, for both index paths (MTIX-107.78).
+func TestRecover_TableDuplicateRows_ReportPreservesContent(t *testing.T) {
+	for _, ownEntry := range []bool{true, false} {
+		t.Run(fmt.Sprintf("own_entry=%t", ownEntry), func(t *testing.T) {
+			tc := &damagedIndexCase{
+				patches: map[string]indexPatch{}, renameRows: map[string]string{"RC-3": "RC-2"},
+				seedContent: seedDuplicateReportContent,
+			}
+			if ownEntry {
+				tc.patches["RC-3"] = indexPatch{renameTo: "RC-2"}
+			}
+			dbPath, mirrorPath := damagedIndexFixture(t, tc)
+			db, err := sql.Open("sqlite", dbPath+"?mode=ro")
+			require.NoError(t, err)
+			second, err := readSalvageRow(context.Background(), db, salvageKey{rowid: 3})
+			require.NoError(t, err)
+			require.NoError(t, db.Close())
+			requireDuplicateReportContent(t, second.node)
+
+			res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", slog.Default())
+			require.NoError(t, err)
+			notes := notesContaining(res.Notes, "the row at rowid 3 is not salvaged; its content is ")
+			require.Len(t, notes, 1)
+			assert.Contains(t, notes[0], "the table holds two rows with id RC-2: the row at rowid 2 is salvaged")
+			_, content, ok := strings.Cut(notes[0], "its content is ")
+			require.True(t, ok)
+			var reported exportNode
+			require.NoError(t, json.Unmarshal([]byte(content), &reported))
+			assert.Equal(t, second.node, reported, "every readable field of the second row survives in the report")
+			assert.Equal(t, []string{"RC-1", "RC-2"}, res.RecoveredIDs)
+			assert.Equal(t, "unaffected neighbour task", recoveredNode(t, res, "RC-2").Title)
+			fresh, err := New(filepath.Join(t.TempDir(), "fresh.db"), slog.Default())
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, fresh.Close()) })
+			_, err = fresh.Import(context.Background(), res.Export, ImportModeReplace, false)
+			require.NoError(t, err)
+		})
+	}
+}
+
+// seedDuplicateReportContent makes lost scalar and JSON fields observable.
+func seedDuplicateReportContent(t *testing.T, s *Store) {
+	t.Helper()
+	result, err := s.WriteDB().ExecContext(context.Background(),
+		`UPDATE nodes SET depth = ?, parent_id = ?, agent_state = ?, node_type = ?,
+		description = ?, prompt = ?, acceptance = ?, labels = ?,
+		assignee = ?, creator = ?, progress = ?, estimate_min = ?, actual_min = ?,
+		annotations = ?, code_refs = ?, commit_refs = ?, activity = ?, metadata = ? WHERE id = ?`,
+		1, "RC-1", "idle", string(model.NodeTypeForDepth(1)),
+		"discarded description", "discarded prompt", "discarded acceptance", `["recovery","duplicate"]`,
+		"recovery-agent", "fixture-author", 25, 60, 15,
+		`[{"id":"01J9RCCOMMENT0000000000001","author":"reviewer","text":"discarded review","created_at":"2026-09-01T10:00:00Z"}]`,
+		`[{"file":"internal/store/sqlite/recover.go","line":71,"function":"Recover"}]`,
+		`["abc1234"]`,
+		`[{"id":"01J9RCACTIVITY000000000001","type":"comment","author":"reviewer","text":"discarded activity","created_at":"2026-09-01T10:00:00Z"}]`,
+		`{"source":"duplicate-row","keep":true}`, "RC-3")
+	require.NoError(t, err)
+	rows, err := result.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows)
+}
+
+func requireDuplicateReportContent(t *testing.T, n exportNode) {
+	t.Helper()
+	require.Equal(t, 1, n.Depth)
+	require.Equal(t, "RC-1", n.ParentID)
+	require.Equal(t, "idle", n.AgentState)
+	require.Equal(t, "discarded description", n.Description)
+	require.Equal(t, "discarded prompt", n.Prompt)
+	require.Equal(t, "discarded acceptance", n.Acceptance)
+	require.NotEmpty(t, n.Labels)
+	require.Equal(t, "recovery-agent", n.Assignee)
+	require.Equal(t, "fixture-author", n.Creator)
+	require.Equal(t, float64(25), n.Progress)
+	require.NotNil(t, n.EstimateMin)
+	require.NotNil(t, n.ActualMin)
+	require.Len(t, n.Annotations, 1)
+	require.Len(t, n.CodeRefs, 1)
+	require.Len(t, n.CommitRefs, 1)
+	require.Len(t, n.Activity, 1)
+	require.JSONEq(t, `{"source":"duplicate-row","keep":true}`, n.Metadata)
 }

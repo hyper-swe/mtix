@@ -41,6 +41,16 @@ func TestCLI_CollisionsResolve_LocalFailureRetry(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "hub accepted")
 	require.Contains(t, err.Error(), "mtix sync collisions resolve "+strconv.FormatInt(id, 10)+" --winner incoming")
+	// The accepted but incomplete collision is discoverable: it left the open
+	// list but collisions list shows it as pending, with the resume command.
+	pending, err := pool.ListPendingCollisionMoves(ctx, "TEST")
+	require.NoError(t, err)
+	require.Len(t, pending, 1)
+	require.Equal(t, id, pending[0].CollisionID)
+	var listed bytes.Buffer
+	require.NoError(t, runSyncCollisionsList(ctx, &listed, &bytes.Buffer{}, nil, transport.Options{InsecureTLS: true}, ""))
+	require.Contains(t, listed.String(), "waiting for the local move")
+	require.Contains(t, listed.String(), "mtix sync collisions resolve "+strconv.FormatInt(id, 10)+" --winner incoming")
 	winner, path := hubCollisionDecision(t, dsn, id)
 	require.Equal(t, open[0].IncomingEventID, winner)
 	require.Empty(t, path)
@@ -52,6 +62,9 @@ func TestCLI_CollisionsResolve_LocalFailureRetry(t *testing.T) {
 	}))
 	require.NoError(t, run())
 	require.NoError(t, run())
+	pending, err = pool.ListPendingCollisionMoves(ctx, "TEST")
+	require.NoError(t, err)
+	require.Empty(t, pending, "a completed collision is no longer pending")
 	_, path = hubCollisionDecision(t, dsn, id)
 	require.NotEqual(t, "TEST-1.1", path)
 	_, err = app.store.GetNode(ctx, path)

@@ -1765,9 +1765,13 @@ keeps the contested number:
   held      the create that currently holds the number on the hub keeps it
   incoming  the blocked (queued) create keeps it
 
-The LOSER renumbers to the next free number under its parent via
-Store.RenumberSubtree (no create event is deleted, no node is lost). The
-moved node may have external references that need updating.
+The hub accepts the choice first; only then does the LOSER renumber to the
+next free number under its parent via Store.RenumberSubtree (no create event
+is deleted, no node is lost). A hub that refuses the update leaves this local
+store unchanged. If the local move fails after the hub accepted, the command
+prints the exact command to run again on the client that owns the losing task;
+a repeat is safe and a completed collision is a no-op. The moved node may have
+external references that need updating.
 
 ### Flags
 

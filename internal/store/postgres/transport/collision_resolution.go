@@ -55,3 +55,47 @@ func (p *Pool) CompleteCollisionMove(ctx context.Context, id int64, winner, path
 	}
 	return nil
 }
+
+// PendingCollisionMove is a collision the hub has accepted (status resolved,
+// winner recorded) whose local move was never recorded, for example after a
+// crash between the hub accept and the local renumber (MTIX-107.46).
+type PendingCollisionMove struct {
+	OpenCollision
+	WinnerEventID string `json:"winner_event_id"`
+}
+
+// ListPendingCollisionMoves returns the accepted collisions of a project that
+// still have no recorded local move, oldest first, so an operator can find and
+// finish them. Parameterized SQL; errors redact any DSN.
+func (p *Pool) ListPendingCollisionMoves(ctx context.Context, project string) ([]PendingCollisionMove, error) {
+	if p == nil || p.p == nil {
+		return nil, fmt.Errorf("ListPendingCollisionMoves: pool not open")
+	}
+	// Accepted rows whose local move is not recorded yet.
+	rows, err := p.p.Query(ctx, `
+		SELECT `+openCollisionCols+`, COALESCE(winner_event_id, '')
+		  FROM sync_node_collisions
+		 WHERE status = 'resolved' AND COALESCE(loser_new_path, '') = '' AND project_prefix = $1
+		 ORDER BY detected_at, collision_id`, project)
+	if err != nil {
+		return nil, fmt.Errorf("list pending collision moves for %s: %s", project, redact.DSN(err.Error()))
+	}
+	defer rows.Close()
+	var out []PendingCollisionMove
+	for rows.Next() {
+		var m PendingCollisionMove
+		c := &m.OpenCollision
+		if scanErr := rows.Scan(
+			&c.CollisionID, &c.ProjectPrefix, &c.DisplayPath,
+			&c.HeldEventID, &c.HeldUID, &c.HeldEpoch, &c.HeldWallClockTS,
+			&c.IncomingEventID, &c.IncomingUID, &c.IncomingWallClockTS,
+			&c.DetectedEpoch, &m.WinnerEventID); scanErr != nil {
+			return nil, fmt.Errorf("scan pending collision row: %s", redact.DSN(scanErr.Error()))
+		}
+		out = append(out, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate pending collision moves: %s", redact.DSN(err.Error()))
+	}
+	return out, nil
+}

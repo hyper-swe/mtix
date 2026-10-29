@@ -87,9 +87,13 @@ keeps the contested number:
   held      the create that currently holds the number on the hub keeps it
   incoming  the blocked (queued) create keeps it
 
-The LOSER renumbers to the next free number under its parent via
-Store.RenumberSubtree (no create event is deleted, no node is lost). The
-moved node may have external references that need updating.`,
+The hub accepts the choice first; only then does the LOSER renumber to the
+next free number under its parent via Store.RenumberSubtree (no create event
+is deleted, no node is lost). A hub that refuses the update leaves this local
+store unchanged. If the local move fails after the hub accepted, the command
+prints the exact command to run again on the client that owns the losing task;
+a repeat is safe and a completed collision is a no-op. The moved node may have
+external references that need updating.`,
 		Args: syncExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncCollisionsResolve(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
@@ -130,13 +134,51 @@ func runSyncCollisionsList(ctx context.Context, stdout, stderr io.Writer,
 	if err != nil {
 		return wrapSyncErr(stderr, "list collisions", err)
 	}
-	return writeCollisions(stdout, open, app.jsonOutput)
+	pending, err := pool.ListPendingCollisionMoves(ctx, prefix)
+	if err != nil {
+		return wrapSyncErr(stderr, "list pending collision moves", err)
+	}
+	return writeCollisionList(stdout, open, pending, app.jsonOutput)
 }
 
-// writeCollisions preserves exact ids in JSON and renders them safely in text.
+// collisionListEntry is one row of `collisions list --json`: an open collision
+// (no extra fields, as before) or an accepted one whose local move is pending.
+type collisionListEntry struct {
+	transport.OpenCollision
+	PendingLocalMove bool   `json:"pending_local_move,omitempty"`
+	Winner           string `json:"winner,omitempty"`
+}
+
+// pendingWinnerChoice maps the recorded winning event to the --winner value
+// that resumes the move ("" when it matches neither side).
+func pendingWinnerChoice(m transport.PendingCollisionMove) string {
+	switch m.WinnerEventID {
+	case m.HeldEventID:
+		return collisionWinnerHeld
+	case m.IncomingEventID:
+		return collisionWinnerIncoming
+	}
+	return ""
+}
+
+// writeCollisions lists open collisions only.
 func writeCollisions(stdout io.Writer, open []transport.OpenCollision, jsonOutput bool) error {
+	return writeCollisionList(stdout, open, nil, jsonOutput)
+}
+
+// writeCollisionList preserves exact ids in JSON and renders them safely in
+// text. Accepted collisions whose local move is still pending are listed after
+// the open ones, with the command that finishes them.
+func writeCollisionList(stdout io.Writer, open []transport.OpenCollision, pending []transport.PendingCollisionMove, jsonOutput bool) error {
 	if jsonOutput {
-		body, mErr := json.MarshalIndent(open, "", "  ")
+		var entries []collisionListEntry // nil stays null in JSON, as before
+		for _, c := range open {
+			entries = append(entries, collisionListEntry{OpenCollision: c})
+		}
+		for _, m := range pending {
+			entries = append(entries, collisionListEntry{OpenCollision: m.OpenCollision, PendingLocalMove: true, Winner: pendingWinnerChoice(m)})
+		}
+		body, mErr := json.MarshalIndent(entries, "", "  ")
 		if mErr != nil {
 			return mErr
 		}
@@ -144,7 +186,25 @@ func writeCollisions(stdout io.Writer, open []transport.OpenCollision, jsonOutpu
 		return err
 	}
 	printCollisions(stdout, open)
+	printPendingCollisionMoves(stdout, pending)
 	return nil
+}
+
+// printPendingCollisionMoves lists accepted collisions that wait for the local
+// move, each with the exact command to run on the client that owns the loser.
+func printPendingCollisionMoves(w io.Writer, pending []transport.PendingCollisionMove) {
+	if len(pending) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "\n%d accepted collision(s) waiting for the local move — run the command on the client that owns the losing task:\n", len(pending))
+	for _, m := range pending {
+		choice := pendingWinnerChoice(m)
+		if choice == "" {
+			choice = "held|incoming"
+		}
+		fmt.Fprintf(w, "[%d] %s: mtix sync collisions resolve %d --winner %s\n",
+			m.CollisionID, format.EventID(m.DisplayPath), m.CollisionID, choice)
+	}
 }
 
 func runSyncCollisionsResolve(ctx context.Context, stdout, stderr io.Writer,
@@ -178,8 +238,8 @@ func runSyncCollisionsResolve(ctx context.Context, stdout, stderr io.Writer,
 	return nil
 }
 
-func resolveConnectedCollision(ctx context.Context, stdout io.Writer, pool *transport.Pool, collisionID int64, winner string) error {
-	c, decision, completedPath, err := pool.GetCollision(ctx, collisionID)
+func resolveConnectedCollision(ctx context.Context, stdout io.Writer, hub collisionHub, collisionID int64, winner string) error {
+	c, decision, completedPath, err := hub.GetCollision(ctx, collisionID)
 	if err != nil {
 		return fmt.Errorf("load collision: %w", err)
 	}
@@ -200,13 +260,18 @@ func resolveConnectedCollision(ctx context.Context, stdout io.Writer, pool *tran
 		fmt.Fprintf(stdout, "collision %d already resolved; loser renumbered to %s (no-op)\n", collisionID, completedPath)
 		return nil
 	}
+	// Check read-only that this client holds the loser BEFORE the hub row is
+	// touched: a run on the wrong client must leave the collision open.
+	if _, locateErr := locateCollisionLoser(ctx, loserUID); locateErr != nil {
+		return locateErr
+	}
 	move := collisionMove{
-		accept: func(ctx context.Context) error { return acceptCollision(ctx, pool, collisionID, winnerEventID) },
+		accept: func(ctx context.Context) error { return acceptCollision(ctx, hub, collisionID, winnerEventID) },
 		renumber: func(ctx context.Context, uid string) (string, error) {
 			return renumberCollisionLoser(ctx, uid, c.DisplayPath)
 		},
 		finish: func(ctx context.Context, path string) error {
-			return pool.CompleteCollisionMove(ctx, collisionID, winnerEventID, path)
+			return hub.CompleteCollisionMove(ctx, collisionID, winnerEventID, path)
 		},
 	}
 	loserNewPath, err := resolveCollisionMove(ctx, c, winner, loserUID, move)

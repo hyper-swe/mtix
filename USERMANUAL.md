@@ -4266,8 +4266,12 @@ If acceptance succeeds but local completion fails, mtix reports
 recovery command: `mtix sync collisions resolve <id> --winner held|incoming`
 (with the original winner filled in). Fix the reported cause, then run that
 command on the client that owns the losing node, with the same hub configured.
-The decision is already recorded on the hub, so it may be absent from
-`collisions list`. Retry resumes the move; if the move already committed, it
+The decision is already recorded on the hub, so the collision no longer shows
+as open; `collisions list` shows it as accepted with the local move pending
+(text, and `--json` with `pending_local_move` and `winner`) together with the
+same command, so it can be found again after a crash. A client that does not
+hold the losing task is refused before the hub is touched, and the collision
+stays open. Retry resumes the move; if the move already committed, it
 records its new number without moving it again. A completed resolve is a no-op
 when repeated. A different winner is refused without changing the local store.
 

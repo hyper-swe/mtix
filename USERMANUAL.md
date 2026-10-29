@@ -627,7 +627,7 @@ Available strategies:
 - `delete` — soft-delete descendants for fresh start
 - `review` — mark for manual review
 
-`--strategy delete` invalidates and deletes each descendant separately, emitting one sync delete event per node. Each direct child and its descendants share a recovery group: `mtix undelete CHILD_ID` restores that child and the descendants removed by the rerun. Other direct child subtrees and previously deleted descendants stay deleted. Restored nodes remain `invalidated`; use `mtix restore` on each node to return it to its previous status. This recovery is local; undelete does not emit sync events.
+`--strategy delete` invalidates and deletes each descendant separately, emitting one sync delete event per node. Each direct child and its descendants share a recovery group: `mtix undelete CHILD_ID` restores that child and the descendants removed by the rerun. Other direct child subtrees and previously deleted descendants stay deleted. Restored nodes remain `invalidated`; use `mtix restore` on each node to return it to its previous status. This recovery is local to the machine that ran the rerun: other machines receive only the per-node delete events, with no recovery record, so a copy elsewhere has to restore its nodes one at a time; undelete does not emit sync events.
 
 ### Restore (After Invalidation)
 

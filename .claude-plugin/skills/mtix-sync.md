@@ -395,7 +395,7 @@ unchanged. Its field is `resolution:<side>:<fields>`, identifying the choice and
 conflicting field names without copying values. The receipt and choice commit
 in one transaction. Repeating an import after the values agree adds no new
 resolution receipt. Ordinary field changes are still recorded separately;
-resolution records are exempt from ordinary change-entry retention.
+resolution records are exempt from ordinary change-entry retention. Imports reject valued or malformed resolution records before any write; the refusal names the task and entry, never the values. Ask the source writer to regenerate a valid board; do not hand-edit history or bypass its checksum.
 
 ## When to ask the user
 

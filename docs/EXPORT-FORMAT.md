@@ -124,7 +124,11 @@ records locally.
   Its `field` is `resolution:<side>:<fields>` (side and conflicting field names);
   `old` and `new` are absent. Actor and injected-clock time identify the decision.
   Both sides' original history entries remain in the union. Resolution records
-  are administrative entries, exempt from the ordinary change-entry retention cap.
+  are administrative entries, exempt from the ordinary change-entry retention cap. A peer receipt must omit
+  both values and use side `ours` or `theirs` with one or more distinct workflow
+  fields (`status`, `assignee`, `agent_state`, `defer_until`, `deleted_at`).
+  A malformed receipt refuses the entire import before any write; the error
+  names its task and entry without repeating values.
 - **Retention.** With `history.max_entries_per_task` set, a task's oldest
   change entries are trimmed and one `retention_drop` entry is written (field
   `retention`, `new` the count dropped as a decimal string, `old` the time of

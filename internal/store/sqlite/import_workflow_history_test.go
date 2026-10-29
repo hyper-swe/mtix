@@ -78,7 +78,7 @@ func TestWorkflowHistory_ReportBoundsAndMissingHistory(t *testing.T) {
 		name  string
 		count int
 		omit  bool
-	}{{"bounded", 9, false}, {"no peer history", 2, true}} {
+	}{{"bounded nine", 9, false}, {"bounded six", 6, false}, {"no peer history", 2, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			local, file, _ := workflowHistoryPair(t, tc.count)
 			if tc.omit {
@@ -97,9 +97,9 @@ func TestWorkflowHistory_ReportBoundsAndMissingHistory(t *testing.T) {
 					require.True(t, ok)
 					assert.Len(t, rows, 5)
 				}
-				assert.Equal(t, float64(4), field["local_history_more"])
-				assert.Equal(t, float64(4), field["file_history_more"])
-				assert.Contains(t, report.String(), "4 more")
+				assert.Equal(t, float64(tc.count-5), field["local_history_more"])
+				assert.Equal(t, float64(tc.count-5), field["file_history_more"])
+				assert.Contains(t, report.String(), fmt.Sprintf("%d more", tc.count-5))
 			}
 		})
 	}

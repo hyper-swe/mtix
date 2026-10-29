@@ -36,7 +36,8 @@ func TestRelayIngest_InvalidNodeID_QuarantinedNotApplied(t *testing.T) {
 	require.Equal(t, 1, stats.Quarantined)
 	require.Len(t, stats.Quarantines, 1)
 	require.Contains(t, stats.Quarantines[0].Reason, "invalid node id")
-	require.Contains(t, stats.Quarantines[0].Reason, "PROJ-1é.4")
+	require.Contains(t, stats.Quarantines[0].Reason, `PROJ-1\u00e9.4`)
+	require.NotContains(t, stats.Quarantines[0].Reason, "é", "printable non-ASCII is escaped, never raw")
 	_, err = r.store.GetNode(ctx, "PROJ-1é.4")
 	require.ErrorIs(t, err, model.ErrNotFound, "the record was not applied")
 }

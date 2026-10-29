@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/sync/redact"
 )
@@ -53,7 +54,10 @@ func printFinalError(w io.Writer, err error) {
 	if exitCodeForError(err) == exitCodeLeaseHeld {
 		prefix = ""
 	}
-	fmt.Fprintf(w, "%s%s\n", prefix, scrubSyncText(err.Error()))
+	// SafeBlock strips control, escape and bidi characters a stored id,
+	// assignee or title can carry into an error, and keeps its line breaks
+	// (MTIX-187.7.18).
+	fmt.Fprintf(w, "%s%s\n", prefix, format.SafeBlock(scrubSyncText(err.Error())))
 }
 
 func run() error { return runArgs(nil) }

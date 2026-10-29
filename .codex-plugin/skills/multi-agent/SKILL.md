@@ -191,6 +191,8 @@ listing behavior; count flags cannot be used on inbox ack or lease subcommands.
 
 ## Inbox envelopes and replies
 
+The plain `mtix inbox --agent <agent-id>` listing prints each author and node id on one line and each body with its lines kept and indented, after removing control characters, escapes, bidirectional overrides and isolates, zero-width and other invisible format characters (the directional marks U+200E, U+200F and U+061C are kept), so a stored body cannot forge another entry or the ack line. Use `--json` for the exact stored text.
+
 Read agent-ready messages with `mtix inbox --agent <agent-id> --format context`.
 `--format prompt` starts with a fixed nudge containing only your id and event
 sequences, followed by the same envelope. MCP `mtix_inbox` and

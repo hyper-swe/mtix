@@ -9,7 +9,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/relay/segment"
 )
 
-// validConfigKeys lists the 40 workspace keys per FR-11.2. Host wake keys
+// validConfigKeys lists the 45 workspace keys per FR-11.2. Host wake keys
 // are supplied separately by model.WakeSettingDefaults (FR-20.3).
 //
 // The sync.relay.* family configures the FR-21 file transport, which is
@@ -39,6 +39,11 @@ var validConfigKeys = map[string]bool{
 	"sync.auto_sync":               true,
 	"sync.interval":                true,
 	"sync.keep_roles":              true,
+	"sync.hub_contact":             true, // MTIX-112.20.1
+	"sync.push_on_addressed_send":  true, // MTIX-112.20.1
+	"sync.listen":                  true, // MTIX-112.20.1
+	"sync.listen_interval":         true, // MTIX-112.20.1
+	"sync.listen_max_idle":         true, // MTIX-112.20.1
 	"sync.relay.dir":               true,
 	"sync.relay.peer_id":           true,
 	"sync.relay.poll_interval":     true,
@@ -88,6 +93,26 @@ var valueValidators = map[string]func(string) error{
 		_, err := parseAutoSync(v)
 		return err
 	},
+	"sync.hub_contact": func(v string) error {
+		_, err := ParseHubContact(v)
+		return err
+	},
+	"sync.push_on_addressed_send": func(v string) error {
+		_, err := parseAutoSync(v)
+		return err
+	},
+	"sync.listen": func(v string) error {
+		_, err := ParseListen(v)
+		return err
+	},
+	"sync.listen_interval": func(v string) error {
+		_, err := ParseListenInterval(v)
+		return err
+	},
+	"sync.listen_max_idle": func(v string) error {
+		_, err := ParseListenMaxIdle(v)
+		return err
+	},
 	"history.export":               validateHistoryExport,     // MTIX-95.31.19.5
 	"history.max_entries_per_task": validateHistoryMaxEntries, // MTIX-95.31.19.4
 }
@@ -126,6 +151,11 @@ var configDefaults = map[string]string{
 	"sync.auto_sync":               "true",
 	"sync.interval":                "30s",
 	"sync.keep_roles":              "",
+	"sync.hub_contact":             "activity", // MTIX-112.20.1
+	"sync.push_on_addressed_send":  "true",
+	"sync.listen":                  defaultListenValue(),
+	"sync.listen_interval":         "10s", // == DefaultListenInterval (asserted by test)
+	"sync.listen_max_idle":         "8h",  // == DefaultListenMaxIdle (asserted by test)
 	// EXPERIMENTAL, opt-in file relay. An empty relay directory means no
 	// relay is configured; every relay phase is then a no-op rather than
 	// an error.

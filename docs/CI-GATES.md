@@ -147,7 +147,7 @@ not replace the pull request checks above.
 | --- | --- |
 | (none) | Go bar on `ubuntu-22.04` with PostgreSQL 16 |
 | `--os macos-latest` | Go bar on a macOS runner, for native Darwin checks. Runners offer no PostgreSQL service on macOS, so the PG-gated suites skip |
-| `--base <rev>` | Compares the snapshot's `.github` with `<rev>` instead of the merge-base of `HEAD` and `origin/main` |
+| `--base <rev>` | Compares the snapshot's `.github` with `<rev>` instead of the merge-base of `HEAD` and `origin/main`. `<rev>` must be a commit that is an ancestor of `origin/main`; anything else exits 2 |
 | `--web` | Adds the web job: `npm ci`, `npm audit` (dev dependencies included, any advisory fails), `npm run lint`, `npx tsc -b`, `npx vitest run`, `npm run build`, then `diff -r web/dist internal/web/dist`. Any difference fails the job |
 
 `--os` accepts only `ubuntu-22.04` (default) and `macos-latest`; any other
@@ -160,14 +160,16 @@ usage failure, 3 tree mismatch. Default runs send no extra dispatch inputs.
 The wrapper refuses a snapshot that changes `.github`, because GitHub runs
 push-event workflows from the pushed commit. It judges a change against the
 snapshot's own base: the merge-base of `HEAD` and `origin/main`, or the
-revision you pass with `--base`. A snapshot built on an older base that only
+revision you pass with `--base` (which must be an ancestor of `origin/main`, so
+an unreviewed commit cannot pose as a base). A snapshot built on an older base that only
 lacks later `.github` changes from `main` is not refused. The wrapper prints a
 line that says so and continues.
 
 A snapshot whose `.github` differs from its own base still exits 2 unless you
 pass `--allow-workflow-diff`. A changed `remote-bar.yml` is refused with or
 without that flag. If no base resolves (for example, in a shallow clone), the
-wrapper compares with `origin/main`. Run `git fetch --unshallow` or pass
+wrapper compares with `origin/main`, so an unresolved base never reads as an
+older base. Run `git fetch --unshallow` or pass
 `--base` to avoid that.
 
 ### Remote bar package sets (MTIX-112.17.27)

@@ -403,6 +403,7 @@ rb_run() {
 		git fetch --quiet "$RB_REMOTE" "refs/heads/main:refs/remotes/$RB_REMOTE/main" || rb_die 2 "fetch failed"
 	fi
 	parent="$(git rev-parse --verify "refs/remotes/$RB_REMOTE/main^{commit}" 2>/dev/null)" || rb_die 2 "no $RB_REMOTE/main"
+	[ -z "$base_rev" ] || rb_validate_base "$parent" "$base_rev"
 	tree="$(rb_snapshot_tree "$dir" "$parent")" || rb_die 2 "snapshot failed for $dir"
 	rb_bar_workflow_unchanged "$parent" "$tree" ||
 		rb_die 2 "cannot judge a changed remote-bar.yml; no workflow ran (--allow-workflow-diff does not override this refusal)"

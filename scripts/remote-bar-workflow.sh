@@ -41,6 +41,16 @@ rb_snapshot_base() {
 	fi
 }
 
+# rb_validate_base <parent> <rev>: fails closed unless <rev> is a commit that is
+# an ancestor of (or equal to) <parent>, the reviewed origin/main. Any other
+# commit could carry an unreviewed .github edit and pass as an older base.
+rb_validate_base() {
+	local base
+	base="$(rb_snapshot_base "$1" "$2")" || rb_die 2 "--base $2 is not a commit"
+	git merge-base --is-ancestor "$base" "$1" ||
+		rb_die 2 "--base $2 is not an ancestor of $RB_REMOTE/main; refusing to treat it as an older base"
+}
+
 # rb_workflows_older_base <parent> <tree> <rev>: succeeds when the snapshot's
 # .github equals that of its own base, so it only lacks main's later changes.
 rb_workflows_older_base() {

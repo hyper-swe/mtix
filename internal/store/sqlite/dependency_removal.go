@@ -39,9 +39,11 @@ func (s *Store) recordDependencyRemoval(ctx context.Context, tx *sql.Tx, from, t
 	return nil
 }
 
-// provenDependencyRemovals requires descent (the same currency verdict diffReplace
-// uses for fields) plus a new entry for this edge. A previously seen removal
-// cannot justify omitting an edge re-added locally.
+// provenDependencyRemovals requires the real descent and local activity checks
+// (fileDescends/copyIsCurrent) on every path, including base resolution, plus
+// a new entry for this edge. ResolveWithBase's field verdict does not prove
+// removals. A previously seen removal cannot justify omitting an edge re-added
+// locally.
 func provenDependencyRemovals(local *ExportData, idx *replaceIndex, current func(*exportNode, *exportNode) bool) map[string]bool {
 	proven := make(map[string]bool)
 	sources := make(map[string]*exportNode, len(local.Nodes))

@@ -474,6 +474,29 @@ Do not replace this with recursive `rm`. Build directories must not be changed
 concurrently with cleanup. The cloud-secret probe trap uses the same sequence
 only for its own `mktemp` directory; testing that trap requires no credentials.
 
+## Web content security (MTIX-187.7.9)
+
+Treat IDs and every ticket text field as untrusted, including WebSocket data.
+Use React text/attribute escaping, `encodeURIComponent` for ID path segments,
+and `URLSearchParams` for query values. HTML sinks are confined to SafeMarkdown
+and its allowlist sanitizer; the `noInnerHtml.test.ts` and existing HTML sink
+guards enforce this boundary. Do not weaken these guards to add a new sink.
+The shared browser fixture snapshot comes from `internal/testutil/HostileIDs`
+and `HostileText`; `TestHostileWebFixtures_MatchSharedCatalog` checks parity.
+Invalid UTF-8 has the same U+FFFD replacement as Go's JSON responses.
+
+`SecurityHeadersMiddleware` applies CSP to API and SPA responses while keeping
+nosniff. Inline script/eval and frames are forbidden; inline styles support
+React style props. HTTPS images remain allowed for SafeMarkdown compatibility
+and can disclose the viewer's IP to the image server. Keep this tradeoff and
+any changes to the policy documented in USERMANUAL's Web UI security section.
+
+Web contributors: never add an inline `<script>` or event-handler attribute to
+`web/index.html` or a component, never add a new HTML sink outside SafeMarkdown,
+and use `web/src/test/hostileFixtures.ts` in tests for any new surface that
+shows an id or ticket text. The policy string is asserted exactly by
+`TestSecurityHeaders_CSPPresent`, so a policy change must update that test.
+
 ## Terminal output regression guards (MTIX-187.7.5)
 
 Render human-facing sync event IDs with `internal/format.EventID` and stored

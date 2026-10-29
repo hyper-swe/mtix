@@ -52,6 +52,9 @@ type HooksDispatcher struct {
 	// allowed to run passes on a host whose local exec-dispatch policy is
 	// "daemon" (MTIX-56.10).
 	isDaemon bool
+
+	// wake is the optional wake pass run after the hook pass (WithWakeScanner).
+	wake WakeScanTrigger
 }
 
 // MarkDaemon flags this dispatcher as the daemon trigger for the
@@ -93,7 +96,16 @@ func NewHooksDispatcher(store *sqlite.Store, mtixDir string, logger *slog.Logger
 // §8). Never returns an error: a caller on the mutation path must not be
 // blocked.
 func (d *HooksDispatcher) Dispatch(ctx context.Context) {
-	if d == nil || d.store == nil {
+	if d == nil {
+		return
+	}
+	d.dispatchHooks(ctx)
+	d.scanWake(ctx) // a separate pass: not the hook ledger, not deferred by the exec policy
+}
+
+// dispatchHooks is the hook pass of Dispatch (FR-20 §4.2).
+func (d *HooksDispatcher) dispatchHooks(ctx context.Context) {
+	if d.store == nil {
 		return
 	}
 	cfg, warns := hooks.Load(d.mtixDir)

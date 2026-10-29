@@ -24,6 +24,8 @@ type State struct {
 	permissionNoticeProbe func(context.Context, PermissionBatch) (bool, error)
 	beforeCommit          func() error
 	syncDirectory         func(*os.File) error
+	// probeCreate replaces os.CreateTemp in ProbeWritable; tests only.
+	probeCreate func(dir, pattern string) (*os.File, error)
 }
 
 // New constructs a state accessor without creating any files.

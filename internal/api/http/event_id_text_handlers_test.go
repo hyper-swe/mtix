@@ -78,9 +78,11 @@ func assertMessageFieldsSafe(t *testing.T, v any, path string) {
 }
 
 // assertNoControlBytes requires the raw response body to hold no control
-// bytes other than the whitespace JSON allows between tokens.
-func assertNoControlBytes(t *testing.T, body []byte) {
+// bytes other than the whitespace JSON allows between tokens. The route's
+// counter lets its cleanup detect a missing call even when the body is safe.
+func assertNoControlBytes(t *testing.T, body []byte, calls *int) {
 	t.Helper()
+	*calls++
 	for i, c := range body {
 		if c < 0x20 && c != '\n' && c != '\r' && c != '\t' {
 			assert.Failf(t, "control byte in body", "byte 0x%02x at offset %d", c, i)
@@ -110,10 +112,14 @@ func TestHandlers_HostileUIDAndAnnotationID_MessagesAreSafeAndJSONExact(t *testi
 	}
 	for _, p := range paths {
 		t.Run(p, func(t *testing.T) {
+			controlChecks := 0
+			t.Cleanup(func() {
+				assert.Equal(t, 1, controlChecks, "route %s must call assertNoControlBytes exactly once", p)
+			})
 			w := hostileGet(s, p)
 			var body any
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
-			assertNoControlBytes(t, w.Body.Bytes())
+			assertNoControlBytes(t, w.Body.Bytes(), &controlChecks)
 			assertMessageFieldsSafe(t, body, "$")
 		})
 	}

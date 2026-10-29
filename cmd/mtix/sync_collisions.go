@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
@@ -130,12 +131,17 @@ func runSyncCollisionsList(ctx context.Context, stdout, stderr io.Writer,
 	if err != nil {
 		return wrapSyncErr(stderr, "list collisions", err)
 	}
-	if app.jsonOutput {
+	return writeCollisions(stdout, open, app.jsonOutput)
+}
+
+// writeCollisions preserves exact ids in JSON and renders them safely in text.
+func writeCollisions(stdout io.Writer, open []transport.OpenCollision, jsonOutput bool) error {
+	if jsonOutput {
 		body, mErr := json.MarshalIndent(open, "", "  ")
 		if mErr != nil {
 			return mErr
 		}
-		_, err = fmt.Fprintln(stdout, string(body))
+		_, err := fmt.Fprintln(stdout, string(body))
 		return err
 	}
 	printCollisions(stdout, open)
@@ -235,10 +241,10 @@ func printCollisions(w io.Writer, open []transport.OpenCollision) {
 	for _, c := range open {
 		fmt.Fprintf(w, "[%d] %s (detected epoch %d)\n", c.CollisionID, c.DisplayPath, c.DetectedEpoch)
 		fmt.Fprintf(w, "    held     uid=%s epoch=%d claim_ts=%d  %s\n",
-			shortHashForCLI(c.HeldUID), c.HeldEpoch, c.HeldWallClockTS,
+			format.EventID(c.HeldUID), c.HeldEpoch, c.HeldWallClockTS,
 			advisoryOlder(c.HeldWallClockTS, c.IncomingWallClockTS))
 		fmt.Fprintf(w, "    incoming uid=%s epoch=%d claim_ts=%d  %s\n",
-			shortHashForCLI(c.IncomingUID), c.DetectedEpoch, c.IncomingWallClockTS,
+			format.EventID(c.IncomingUID), c.DetectedEpoch, c.IncomingWallClockTS,
 			advisoryOlder(c.IncomingWallClockTS, c.HeldWallClockTS))
 	}
 }

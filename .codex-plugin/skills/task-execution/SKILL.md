@@ -22,6 +22,20 @@ The dot-notation hierarchy (e.g., PROJ-42.1.3) IS your briefing. Each level adds
 
 Always run `mtix context <id>` before starting — it assembles the full prompt from root to your task.
 
+## Every action item becomes a ticket
+
+When you find or promise an action item (a follow-up, cleanup, promised check or open question), file an mtix ticket right away. Do not leave it in chat, notes or a state file. A ticket keeps the item traceable, findable later and auditable.
+
+```bash
+mtix create "Add retry to the export check" --under PROJ-12 --type chore \
+  --description "Why the item exists and its scope" \
+  --prompt "Exact files, functions and edge cases" \
+  --acceptance "Testable outcome"
+mtix create "Cleanup after the migration" --description "..." --prompt "..." --acceptance "..."
+```
+
+Use `--under <id>` to place the item under related work. Omit it for a new root ticket.
+
 ## Workflow
 
 1. Read the context chain completely

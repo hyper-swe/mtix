@@ -63,6 +63,7 @@ func seedMirrorColumnFixture(t *testing.T) (*Store, string) {
 	t.Cleanup(func() { _ = s.Close() })
 
 	ctx := context.Background()
+	seedRecoveryMachineHash(t, s)
 	at := time.Date(2026, 9, 1, 10, 0, 0, 0, time.UTC)
 	for i, title := range []string{"reviewed task with a comment", "unaffected neighbour task"} {
 		require.NoError(t, s.CreateNode(ctx, &model.Node{
@@ -81,6 +82,23 @@ func seedMirrorColumnFixture(t *testing.T) (*Store, string) {
 		`["dd15992"]`, "RC-1")
 	require.NoError(t, err)
 	return s, dbPath
+}
+
+// seedRecoveryMachineHash keeps these fixtures independent of host interfaces.
+func seedRecoveryMachineHash(t *testing.T, s *Store) {
+	t.Helper()
+	ctx := context.Background()
+	const hash = "0123456789abcdef"
+	result, err := s.WriteDB().ExecContext(ctx, `UPDATE meta SET value = ? WHERE key = ?`,
+		hash, "meta.sync.machine_hash")
+	require.NoError(t, err)
+	rows, err := result.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows, "the cached identity key must already exist")
+	var cached string
+	require.NoError(t, s.WriteDB().QueryRowContext(ctx, `SELECT value FROM meta WHERE key = ?`,
+		"meta.sync.machine_hash").Scan(&cached))
+	require.Equal(t, hash, cached)
 }
 
 // exportMirrorOf exports s as a tasks.json mirror, applies edit to it

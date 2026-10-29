@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
@@ -154,10 +153,10 @@ func runContext(id string, maxTokens int) error {
 		}
 		fmt.Printf("%s%s [%s] %s\n", indent, entry.ID, entry.Status, format.SafeLine(entry.Title))
 	}
-	// The assembled prompt embeds stored titles and prompt text; print it
-	// through the same terminal rule as `mtix show` (MTIX-187.7.4). --json
-	// carries the exact text.
-	if shown := strings.ReplaceAll(displayText(resp.AssembledPrompt), "\t", "    "); shown != "" {
+	// The assembled prompt embeds stored titles and prompt text; print the
+	// display form, in which no stored line can start a heading of its own
+	// (MTIX-187.7.13). --json carries the exact text.
+	if shown := format.SafeBlock(app.ctxSvc.AssembleDisplayPrompt(resp, maxTokens)); shown != "" {
 		fmt.Printf("\n=== Assembled Prompt (%d chars) ===\n%s\n", utf8.RuneCountInString(shown), shown)
 	}
 	return nil

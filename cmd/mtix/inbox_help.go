@@ -37,4 +37,12 @@ background task whose harness supports it.
            (session-start / prompt-submit).
 Both print NOTHING when the inbox is empty, so a wake script's idempotency
 check is: payload=$(mtix inbox --agent X --format prompt); [ -z "$payload" ].
-Reads never ack — acknowledgement stays explicit.`
+Reads never ack — acknowledgement stays explicit.
+
+The plain listing prints each entry's author and node id on one line and the
+body with its line breaks, every continuation line indented, after removing
+control characters, escapes, bidirectional overrides and isolates, zero-width
+and other invisible format characters (the directional marks U+200E, U+200F
+and U+061C are kept), so a stored body cannot forge another entry or the ack
+line. --json prints the exact stored text; --format prompt and context quote
+the body.`

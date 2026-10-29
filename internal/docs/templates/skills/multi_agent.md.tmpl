@@ -201,6 +201,8 @@ listing behavior; count flags cannot be used on inbox ack or lease subcommands.
 
 ## Inbox envelopes and replies
 
+The plain `mtix inbox --agent <agent-id>` listing prints each author and node id on one line and each body with its lines kept and indented, after removing control characters, escapes, bidirectional overrides and isolates, zero-width and other invisible format characters (the directional marks U+200E, U+200F and U+061C are kept), so a stored body cannot forge another entry or the ack line. Use `--json` for the exact stored text.
+
 Read agent-ready messages with `mtix inbox --agent <agent-id> --format context`.
 `--format prompt` starts with a fixed nudge containing only your id and event
 sequences, followed by the same envelope. MCP `mtix_inbox` and
@@ -311,6 +313,8 @@ Call `mcp__mtix__mtix_session_start` with agent ID and project. This creates a t
 During work, the agent:
 - Claims nodes via `mcp__mtix__mtix_claim`
 - Sends heartbeats via `mcp__mtix__mtix_agent_heartbeat` every 5 minutes
+
+Cross-machine wake: hub contact by the daemon follows `sync.hub_contact` (`activity` default, `interval:<duration>`, `manual`): `activity` contacts the hub only for 30 minutes after real activity so a database that pauses when idle can pause, `interval` keeps it awake around the clock, `manual` never contacts it. Real activity is a mutation command, an addressed comment, an MCP commit, `mtix agent heartbeat`, or glue session-start or prompt-submit; reads, `mtix inbox`, waits and any waiter arming a lease are not. `sync.listen` (shipped default: `{{ .ListenDefault }}`) configures a listen hold that takes effect only once a listener runs, which is a later release: in this build no listener arms a lease, so the hold is inert and `sync.listen` changes nothing today. Once a listener runs, `live` keeps the hub contacted every `sync.listen_interval` (10s) until `sync.listen_max_idle` (8h) after the last real activity, and `mtix config set sync.listen off` switches that off. `mtix doctor` rows `sync.hub-contact` and `sync.listen` show the state and print the fix command.
 - Executes tasks following the context chain
 - Marks nodes done or defers them
 

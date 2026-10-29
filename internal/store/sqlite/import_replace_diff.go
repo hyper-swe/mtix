@@ -208,7 +208,8 @@ func diffReplace(local, file *ExportData, current func(*exportNode, *exportNode)
 			diff.Added = append(diff.Added, file.Nodes[i].ID)
 		}
 	}
-	diff.compareDependencies(local.Dependencies, file.Dependencies, sameTaskAt)
+	removals := provenDependencyRemovals(local, idx, current)
+	diff.compareDependencies(local.Dependencies, file.Dependencies, sameTaskAt, removals)
 	diff.sort()
 	return diff, nil
 }
@@ -281,11 +282,10 @@ func (d *ReplaceDiff) sort() {
 func depLabel(d *exportDep) string { return d.DepType + " " + d.ToID }
 
 // compareDependencies records the dependencies only the file holds and
-// those only the store holds; each of the latter is a loss of the node it
-// starts from. A local dependency's ends are read as the file's ids of the
+// those only the store holds; an unproven removal is a loss of its source. A local dependency's ends are read as the file's ids of the
 // same tasks (sameTaskAt), so a dependency on a task the file holds under
 // another id is held (MTIX-95.31.4).
-func (d *ReplaceDiff) compareDependencies(local, file []exportDep, sameTaskAt map[string]string) {
+func (d *ReplaceDiff) compareDependencies(local, file []exportDep, sameTaskAt map[string]string, removals map[string]bool) {
 	key := func(dep *exportDep) string { return dep.FromID + "\x00" + dep.ToID + "\x00" + dep.DepType }
 	inFile := func(id string) string {
 		if moved, ok := sameTaskAt[id]; ok {
@@ -306,6 +306,9 @@ func (d *ReplaceDiff) compareDependencies(local, file []exportDep, sameTaskAt ma
 			continue
 		}
 		d.DepsRemoved = append(d.DepsRemoved, dep.FromID+" "+depLabel(dep))
+		if removals[dependencyRemovalKey(dep.FromID, dep.ToID, dep.DepType)] {
+			continue
+		}
 		loss := d.lossOf(dep.FromID)
 		loss.Dependencies = append(loss.Dependencies, depLabel(dep))
 	}

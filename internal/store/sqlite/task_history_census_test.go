@@ -43,6 +43,7 @@ var historyCensus = map[string]struct {
 	// rekeyed where it is keyed by the id they rewrite.
 	"context.go:Store.SetAnnotations": {1, censusWired}, "context.go:Store.mutateAnnotations": {1, censusWired},
 	"progress.go:recomputeNodeProgress":                     {1, censusExcluded},
+	"dependency_removal.go:Store.recordDependencyRemoval":   {1, censusWired},
 	"dependency.go:autoBlockNode":                           {1, censusWired},
 	"dependency.go:restoreUnblockedNode":                    {1, censusWired},
 	"import_merge_keep.go:mergeUnchangedContent":            {1, censusWired},

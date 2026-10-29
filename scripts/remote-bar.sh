@@ -19,7 +19,7 @@
 #   2. Pushes ONLY refs/heads/ci-scratch/* to hyper-swe/mtix. Any other push
 #      target, or any other remote URL (fetch or push), is refused. Tags are
 #      never pushed, whatever the caller's push config says.
-#      A snapshot whose .github subtree differs from its own base is refused,
+#      A snapshot whose .github subtree differs from its base is refused,
 #      because GitHub runs push-event workflows from the pushed commit; pass
 #      --allow-workflow-diff to accept that knowingly (a warning is printed).
 #      The base is --base <rev>, or else the merge-base of HEAD and

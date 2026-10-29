@@ -845,8 +845,10 @@ func TestRemoteBar_Run_BaseFlag_MissingValueOrUnknownRev_Exits2(t *testing.T) {
 	out, code := bash(t, work, `bash "$RB_SCRIPT" --dry-run "$S" --base`, "S="+snap)
 	require.Equal(t, 2, code, out)
 	require.Contains(t, out, "--base needs a value")
-	// An unknown revision fails even when the snapshot's .github is unchanged.
-	out, code = bash(t, work, `bash "$RB_SCRIPT" --dry-run --base nonexistent "$S"`, "S=" + t.TempDir())
+	// An unknown revision fails even when the snapshot's .github equals
+	// origin/main, so the older-base comparison is never reached.
+	same := writeOldSnapshot(t, "on: push\n# later\n")
+	out, code = bash(t, work, `bash "$RB_SCRIPT" --dry-run --base nonexistent "$S"`, "S="+same)
 	require.Equal(t, 2, code, out)
 	require.Contains(t, out, "is not a commit")
 }

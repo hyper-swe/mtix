@@ -179,7 +179,7 @@ func checkHistoryEntry(e exportHistoryEntry) error {
 		}
 	}
 	switch model.HistoryKind(e.Kind) {
-	case model.HistoryKindChange, model.HistoryKindRedaction, model.HistoryKindRetentionDrop:
+	case model.HistoryKindChange, model.HistoryKindRedaction, model.HistoryKindRetentionDrop, model.HistoryKindResolution:
 	default:
 		return fmt.Errorf("history entry %q has unknown kind %q: %w", e.ID, e.Kind, model.ErrInvalidInput)
 	}

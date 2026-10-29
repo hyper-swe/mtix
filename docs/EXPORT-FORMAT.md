@@ -119,6 +119,12 @@ records locally.
   incomplete; it is silent otherwise. A file is refused
   when an entry has a kind, origin or time outside what mtix writes, or
   when a top-level entry names a task the file holds.
+- **Workflow resolutions.** An explicit merge workflow choice appends one
+  value-free `kind: resolution` record per resolved task in the same transaction.
+  Its `field` is `resolution:<side>:<fields>` (side and conflicting field names);
+  `old` and `new` are absent. Actor and injected-clock time identify the decision.
+  Both sides' original history entries remain in the union. Resolution records
+  are administrative entries, exempt from the ordinary change-entry retention cap.
 - **Retention.** With `history.max_entries_per_task` set, a task's oldest
   change entries are trimmed and one `retention_drop` entry is written (field
   `retention`, `new` the count dropped as a decimal string, `old` the time of

@@ -403,21 +403,40 @@ func rawEventIDUses(a ast.Expr, file, handlePkg string) []token.Pos {
 	ast.Inspect(a, func(n ast.Node) bool {
 		switch v := n.(type) {
 		case *ast.CallExpr:
-			if isFormatEventIDCall(v) || isQuoteToASCII(v) || isQuarantineHandleCall(v, handlePkg) {
-				return false
-			}
+			return !isSafeIDCall(v, handlePkg)
 		case *ast.SelectorExpr:
-			if strings.Contains(strings.ToLower(v.Sel.Name), "eventid") || (syncFile && (v.Sel.Name == "id" || v.Sel.Name == "HeldUID" || v.Sel.Name == "IncomingUID")) {
+			if isRawIDSelector(v, syncFile) {
 				out = append(out, v.Pos())
 			}
 		case *ast.Ident:
-			if eventIDNames[v.Name] || (syncFile && v.Name == "id") {
+			if isRawIDIdent(v, syncFile) {
 				out = append(out, v.Pos())
 			}
 		}
 		return true
 	})
 	return out
+}
+
+// isSafeIDCall reports whether call renders its arguments safely, so the
+// guard does not look inside it.
+func isSafeIDCall(call *ast.CallExpr, handlePkg string) bool {
+	return isFormatEventIDCall(call) || isQuoteToASCII(call) || isQuarantineHandleCall(call, handlePkg)
+}
+
+// isRawIDSelector reports whether sel names an event id or, in a sync file, an
+// id or a held or incoming uid.
+func isRawIDSelector(sel *ast.SelectorExpr, syncFile bool) bool {
+	if strings.Contains(strings.ToLower(sel.Sel.Name), "eventid") {
+		return true
+	}
+	return syncFile && (sel.Sel.Name == "id" || sel.Sel.Name == "HeldUID" || sel.Sel.Name == "IncomingUID")
+}
+
+// isRawIDIdent reports whether id is a known event id name or, in a sync file,
+// the bare name id.
+func isRawIDIdent(id *ast.Ident, syncFile bool) bool {
+	return eventIDNames[id.Name] || (syncFile && id.Name == "id")
 }
 
 // hostileRaw is ackCLIRaw carrying hostileEventID as its event_id, so the

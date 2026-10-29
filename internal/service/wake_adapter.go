@@ -118,6 +118,13 @@ func (d *WakeDispatcher) selectAdapter(ctx context.Context, key model.WakeKey) W
 	return nil
 }
 
+// HasLiveRoute reports whether a live, healthy adapter exists for the registration. The
+// scanner claims nothing when it is false, so an event is not consumed before an adapter
+// that can deliver it is registered (ADR-007 section 2.7 step 4, MTIX-112.17.8).
+func (d *WakeDispatcher) HasLiveRoute(ctx context.Context, key model.WakeKey) bool {
+	return d.selectAdapter(ctx, key) != nil
+}
+
 // deliverWake runs the selected route once. The claim is already won, so exactly one
 // Deliver runs per (registration, event) however many routes are armed. A malformed
 // adapter result is normalised to undeliverable/invalid-adapter-outcome so the finalize

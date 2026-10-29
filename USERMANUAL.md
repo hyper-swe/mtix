@@ -1412,6 +1412,57 @@ these guards; an empty list is the normal state.
 
 mtix records a change log per task (field, old and new value for structured fields, actor, origin, time). By default `.mtix/tasks.json` omits it and stays readable by every released mtix. `mtix config set history.export true` writes the file in export format 2.1.0 with the log: each node carries a `history` list, and the history of tasks that no longer exist travels in an optional top-level `history` list; the checksum covers both (see `docs/EXPORT-FORMAT.md`). mtix 0.5.4 and earlier cannot read such a file: their import fails with `checksum verification failed`, and their automatic import loads nothing. Turn the switch on only when every machine and daemon that touches the board runs this version or later; no doctor check verifies that yet. `mtix config set history.export false` returns to 2.0.0 at the next write. `mtix import` (replace or merge) and the automatic import union the file's history into the store by entry id: a local entry is never dropped or changed, importing the same file twice adds nothing, an entry id the store holds with other content keeps the local entry and is reported as a conflict (count and first entry ids, no content), and entries keyed by an old dot id rather than a task uid are skipped and counted. `mtix import --json` reports `history_added`, `history_skipped`, `history_conflicts` and `history_skipped_legacy_key`. An entry id the file repeats with different content is stored in neither copy and counts as a conflict. The automatic import reports conflicts and skipped legacy-key entries once per imported file on stderr. While `history.export` is on, a file last written by an mtix older than the first mtix release that keeps task history (0.6.0 today), or by one that recorded no version, makes the import warn "history may be incomplete: board last written by mtix X; upgrade mtix on that machine" ("of an unrecorded version" in place of "X" when none was recorded); a writer at or above that release, a development build and a board with `history.export` off never warn. Upgrade that machine and let it write the board again. `history.max_entries_per_task` bounds the log: over the limit, the next change to a task trims its oldest change entries to 90% of the limit and writes a `retention_drop` marker (count dropped in `new`, cutoff time in `old`); markers and redactions are never trimmed, lowering the limit trims only at the next change, and an import or sync skips an incoming change entry at or before the cutoff this copy of the board recorded when it trimmed the task (a local record, never exported, imported or synced), so trimmed entries stay gone. The cutoff is local to each copy: trimming on one machine does not trim the others. An incoming entry dated more than 24 hours ahead of this machine's clock is skipped and counted, and a cutoff is never later than this machine's clock: a change entry dated ahead of the clock (inside the 24 hour allowance) is neither counted toward the limit nor trimmed until the clock passes it (`mtix doctor` reports how many in `ahead_of_clock`). A cutoff recorded while the clock ran ahead and now later than the clock counts as the clock on import (entries trimmed meanwhile may return from a peer); doctor warns and shows the fix, counting these in `cutoffs_ahead_of_clock`. A marker received from another machine is stored but is never a cutoff, and a marker with an unreadable cutoff or count is skipped with a warning. A long-running process reads the limit when it starts. `mtix doctor` adds a `history.size` row (rows, tasks, the largest tasks, the limit, tasks over it) once the board has history or a limit, and warns, naming the key and the exact fix, when a hand-edited limit is not a positive whole number (it is then read as unset); `--json` carries the numbers in the row's `data` object, which only some rows have (every other row keeps exactly `id`, `status`, `detail` and `fix`). `mtix show <id> --history` lists the history newest first (`--history-limit`, default 50) and `mtix show <id> --json` includes it as `history` (an empty list when the task has none); free-text fields list no text. The switch is experimental until a later release adds the doctor check.
 
+#### Removing sensitive text (0.6.0)
+
+These steps clean an editable current field and a fresh snapshot, not every
+retained copy. Coordinate with the team, pause other writers and syncing, and
+resolve any pending auto-import refusal before replacing the board file. Never
+paste secrets into tasks, comments or activity notes, and never print credentials
+while checking cleanup.
+
+1. Replace the affected editable field with a clean value. For example,
+   `mtix update PROJ-1 --description Clean` replaces the description; use the
+   appropriate flag for the affected field and replace `PROJ-1` with its task id.
+   This does not change other fields, comments or activity records. Free-text
+   task-history entries omit old and new text; structured fields retain values.
+   Overwriting labels or assignee leaves the old value in local history and,
+   while `history.export` is on, in exported history.
+2. `history.export` is `false` by default. If it was on, turn it off with
+   `mtix config set history.export false`, then verify `false` with
+   `mtix config get history.export`. This excludes history from a fresh export,
+   not the current fields, comments or activity that the export also carries.
+3. Re-export from the project root to a new private file, then replace
+   `.mtix/tasks.json` only if export succeeds. In a POSIX shell:
+
+   ```sh
+   (umask 077; set -C; mtix export > .mtix/tasks-clean.json) &&
+     mv .mtix/tasks-clean.json .mtix/tasks.json
+   ```
+
+   The temporary name must not already exist; the command refuses to overwrite
+   it. On failure, keep the original board file and do not publish the partial
+   export. On success, the fresh snapshot has no per-task or top-level history.
+   Do not hand-edit history or its checksum, and do not import an edited snapshot
+   expecting it to erase local entries: history import keeps local entries.
+
+The local SQLite store keeps task history even with export off. In 0.6.0, no
+supported command selectively removes a task-history entry. Retention can trim
+old ordinary change entries, but it is not targeted erasure and does not clean
+other copies.
+
+Sync sends task creation and field-change payloads, including free text,
+separately from the history export. Older queued events can still carry sensitive
+text after the current field is cleaned. mtix 0.6.0 cannot erase retained hub
+copies. Coordinate those copies and queued events with the operator before
+resuming sync; a clean snapshot or field does not purge them.
+
+Past Git history, other clones, copied exports and backups are outside mtix's
+reach. A new clean commit leaves past commits intact. Removing sensitive text
+from past commits requires a Git history rewrite and a team-coordinated
+force-push; every existing clone must re-clone from the rewritten repository.
+Do not push old history back. Re-cloning does not erase hub copies. Task-history
+redaction is planned for the protocol-2 release; it is not available in 0.6.0.
+
 ---
 
 ## Web UI

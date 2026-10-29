@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Document manual sensitive-text cleanup for current fields and fresh snapshots, with the local, hub and Git limits before protocol-2 redaction (MTIX-95.31.19.14).
+
 - Host-local wake settings and agent overrides, read-only doctor diagnostics, and additive hop metadata with released-reader compatibility; live control and hop delivery await the wake scanner (MTIX-112.17.10.1).
 
 ### Security

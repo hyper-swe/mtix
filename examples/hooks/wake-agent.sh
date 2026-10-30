@@ -25,7 +25,7 @@
 # NOTE (MTIX-56.9): mtix spawns this script DETACHED and does not wait;
 # timeout-seconds is best-effort. Long launches are fine, but self-bound
 # anything that could hang. Exit codes are yours to report (log or
-# mtix comment) — the fabric's success signal is the inbox ack.
+# mtix comment) — the fabric's success signal is the acknowledgment.
 #
 # The launch line is harness-specific; keep exactly one uncommented.
 

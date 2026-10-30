@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Refine wake-guidance checks for explicit command markup and unrelated variables, with recording fixtures for external command selection (MTIX-112.26).
+
 - Document manual sensitive-text cleanup for current fields and fresh snapshots, with the local, hub and Git limits before protocol-2 redaction (MTIX-95.31.19.14).
 - Workflow merge conflicts show each side's field history, with bounded text and JSON reports; explicit resolutions preserve both histories and record the choice.
 
@@ -293,7 +295,7 @@ The agent-to-agent coordination release: the FR-19 hooks/inbox foundation and FR
 - Fresh clones and first pulls into an empty store initialize the dispatch floor at the journal tail, so bootstrapped history never fires a hook backlog storm.
 - **`mtix daemon` (MTIX-56.2/56.3):** the host's first-class event dispatcher — pull-then-dispatch every 5s; fully functional with no hub (local-tail mode for cross-process writes); `mtix daemon install|status|start|stop|uninstall` registers it as an OS service (launchd / systemd --user / Task Scheduler) with boot-start and crash-restart, one service per project.
 - **Global `-C, --project-dir <dir>` (MTIX-56.4):** every command can target a named project like `git -C`, applied before store init; `mcp --project` becomes a deprecated alias (`mtix mcp -C dir` unchanged).
-- **Prompt-terminated delivery (MTIX-56.8):** `mtix inbox --format prompt|context` emits agent-ready text (events + ack/reply contract; empty inbox → empty output, the wake-script idempotency check); reference wake script at `examples/hooks/wake-agent.sh` launches any harness CLI with the inbox as the prompt.
+- **Prompt-terminated delivery (MTIX-56.8):** `mtix inbox --format prompt\|context` emits agent-ready text (events + ack/reply contract; empty inbox → empty output, the wake-script idempotency check); reference wake script at `examples/hooks/wake-agent.sh` launches any harness CLI with the inbox as the prompt.
 - **Channel adapter (MTIX-56.7, experimental):** `mtix mcp --channel-agent <id>` also acts as a Claude Code channel (research preview) — pushes the agent's new inbox events into the running session, with ack/reply through the same server's tools, and holds an mtix presence session while serving. Requires launching Claude Code with `--channels` (or the development flag during the preview).
 - Three-agent scenario regression test (planner→developer→tester) and the FR-20 cross-host release-gate e2e (exec wake exactly-once, restart-safe, crash-injection re-fire) (MTIX-56.5).
 - **Multi-project in one database (MTIX-37, FR-MULTI-PROJECT):** `--project` / `--all-projects` scope on query commands, `mtix projects`, project-aware create defaulting to the primary prefix, a project argument on the MCP query tools, and a multi-project web UI (scope selector, project-aware create, NodeID badges).

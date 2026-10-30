@@ -381,6 +381,31 @@ func TestDeleteNodeWithRoot_AncestorRoot_DeletesOnlyTheNode(t *testing.T) {
 	}
 }
 
+// TestDeleteNodeWithRoot_AncestorRoot_RecalculatesParentProgress pins FR-5.7
+// for a grouped delete: deleting a child under an ancestor recovery root
+// (the root differs from the deleted id) still recomputes the surviving
+// parent's progress in the same transaction (MTIX-107.20.1).
+func TestDeleteNodeWithRoot_AncestorRoot_RecalculatesParentProgress(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, s.CreateNode(ctx, makeRootNode("PROJ-1", "PROJ", "Parent", now)))
+	done := makeChildNode("PROJ-1.1", "PROJ-1", "PROJ", "Done Child", 1, 1, now)
+	done.Progress = 1.0
+	done.Status = model.StatusDone
+	require.NoError(t, s.CreateNode(ctx, done))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.2", "PROJ-1", "PROJ", "Open Child", 1, 2, now)))
+	before, err := s.GetNode(ctx, "PROJ-1")
+	require.NoError(t, err)
+	require.Equal(t, 0.5, before.Progress, "one done and one open child")
+
+	require.NoError(t, s.DeleteNodeWithRoot(ctx, "PROJ-1.2", "PROJ-1", "admin"))
+
+	after, err := s.GetNode(ctx, "PROJ-1")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, after.Progress, "only the done child remains, so the parent rolls up to 1.0")
+}
+
 // TestDeleteNodeWithRoot_SharedRoot_OneUndeleteRestoresTheGroup pins the
 // grouping: nodes deleted one by one under the same root come back together.
 func TestDeleteNodeWithRoot_SharedRoot_OneUndeleteRestoresTheGroup(t *testing.T) {

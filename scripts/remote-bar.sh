@@ -367,15 +367,16 @@ rb_os_ok() {
 
 # rb_print_failed_log RUN_ID: prints a failed run's log. The log is captured
 # once, then the failing-test lines of the WHOLE log come first (they often lie
-# outside the tail), deduplicated by text without the runner's timestamp prefix and test duration
-# and capped at 100, followed by the last 200 lines. MTIX-215.
+# outside the tail), deduplicated by text without the runner's timestamp prefix
+# and a trailing test duration, and capped at 100, followed by the last 200
+# lines. MTIX-215.
 rb_print_failed_log() {
 	local logf="$RB_TMPDIR/failed.log"
 	gh run view "$1" --repo "$RB_REPO_SLUG" --log-failed >"$logf" 2>&1 || true
 	local marks='--- FAIL:|(^|[[:space:]])FAIL[[:space:]]+[^[:space:]]|panic:|\[build failed\]|test timed out'
 	echo "failing tests:"
 	{ grep -E -- "$marks" "$logf" || true; } |
-		sed -E 's/^.*[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z[[:space:]]+//; s/[[:space:]]+\([0-9.]+s\)$//' |
+		sed -E 's/^.*[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+Z[[:space:]]+//; s/[[:space:]]+\(?[0-9.]+s\)?$//' |
 		awk '!seen[$0]++' | head -n 100 || true
 	echo "log tail (last 200 lines):"
 	tail -n 200 "$logf" || true

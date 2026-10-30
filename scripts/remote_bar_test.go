@@ -596,6 +596,93 @@ func TestRemoteBar_Run_FailedLogListsFailingTestsAheadOfTheTail(t *testing.T) {
 	require.Contains(t, out, "filler line 299")
 }
 
+// failedLogFile writes lines as a fake gh failed-run log and returns its path.
+func failedLogFile(t *testing.T, lines []string) string {
+	t.Helper()
+	logFile := filepath.Join(t.TempDir(), "failed.log")
+	require.NoError(t, os.WriteFile(logFile, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+	return logFile
+}
+
+// failingBlock returns the lines printed between the failing tests header and
+// the log tail header, failing the test when either header is missing or
+// misordered.
+func failingBlock(t *testing.T, out string) []string {
+	t.Helper()
+	header := strings.Index(out, "failing tests:\n")
+	tail := strings.Index(out, "log tail (last 200 lines):\n")
+	require.GreaterOrEqual(t, header, 0, "failing tests header:\n%s", out)
+	require.Greater(t, tail, header, "log tail header follows the failing tests block:\n%s", out)
+	return strings.Split(strings.TrimSpace(out[header+len("failing tests:\n"):tail]), "\n")
+}
+
+// TestRemoteBar_Run_FailingTestsBlockIsCappedAtOneHundredLines pins the cap:
+// 150 distinct failures print exactly the first 100.
+func TestRemoteBar_Run_FailingTestsBlockIsCappedAtOneHundredLines(t *testing.T) {
+	var lines []string
+	for i := 0; i < 150; i++ {
+		lines = append(lines, fmt.Sprintf("bar\trun\t2026-10-30T01:00:00.0000000Z --- FAIL: TestCap_%03d (0.01s)", i))
+	}
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed failure", "STUB_STEPS=Run committed bar", "STUB_FAILED_LOG="+failedLogFile(t, lines))
+
+	require.Equal(t, 1, code, out)
+	block := failingBlock(t, out)
+	require.Len(t, block, 100, "exactly 100 lines")
+	require.Equal(t, "--- FAIL: TestCap_000", block[0])
+	require.Equal(t, "--- FAIL: TestCap_099", block[99])
+	require.NotContains(t, strings.Join(block, "\n"), "TestCap_100")
+}
+
+// TestRemoteBar_Run_FailingTestsBlockMatchesEachMarkerAloneAndNothingElse pins
+// every marker on its own line, and that bare FAIL, ok and lowercase lines
+// stay out of the block.
+func TestRemoteBar_Run_FailingTestsBlockMatchesEachMarkerAloneAndNothingElse(t *testing.T) {
+	ts := "bar\trun\t2026-10-30T01:00:00.0000000Z "
+	lines := []string{
+		ts + "--- FAIL: TestMarker_Sub (0.01s)",
+		ts + "FAIL\tpkg/one\t0.5s",
+		ts + "panic: marker only",
+		ts + "pkg/two [build failed]",
+		ts + "test timed out after 10m0s",
+		ts + "FAIL",
+		ts + "ok  \tpkg/fine\t0.1s",
+		ts + "fail: lowercase noise",
+		ts + "FAIL\tpkg/one\t0.9s",
+	}
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed failure", "STUB_STEPS=Run committed bar", "STUB_FAILED_LOG="+failedLogFile(t, lines))
+
+	require.Equal(t, 1, code, out)
+	want := []string{"--- FAIL: TestMarker_Sub", "FAIL\tpkg/one", "panic: marker only", "pkg/two [build failed]", "test timed out after 10m0s"}
+	require.Equal(t, want, failingBlock(t, out), "each marker once, durations ignored for dedup, noise excluded")
+}
+
+// TestRemoteBar_Run_GreenRunPrintsNoFailedLog pins that the failed-log output
+// is limited to failing runs.
+func TestRemoteBar_Run_GreenRunPrintsNoFailedLog(t *testing.T) {
+	lines := []string{"bar\trun\t2026-10-30T01:00:00.0000000Z --- FAIL: TestIgnored (0.01s)"}
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed success", "STUB_FAILED_LOG="+failedLogFile(t, lines))
+
+	require.Equal(t, 0, code, out)
+	require.NotContains(t, out, "failing tests:")
+	require.NotContains(t, out, "log tail (last 200 lines):")
+	require.NotContains(t, out, "TestIgnored")
+}
+
+// TestRemoteBar_Run_FailedRunLeavesNoTempFilesBehind pins that the captured
+// failed log is removed with the temp dir.
+func TestRemoteBar_Run_FailedRunLeavesNoTempFilesBehind(t *testing.T) {
+	tmp := t.TempDir()
+	lines := []string{"bar\trun\t2026-10-30T01:00:00.0000000Z --- FAIL: TestLeak (0.01s)"}
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed failure", "STUB_STEPS=Run committed bar",
+		"STUB_FAILED_LOG="+failedLogFile(t, lines), "TMPDIR="+tmp)
+
+	require.Equal(t, 1, code, out)
+	require.Contains(t, out, "TestLeak", "the failed log was captured and printed")
+	entries, err := os.ReadDir(tmp)
+	require.NoError(t, err)
+	require.Empty(t, entries, "no remote-bar temp dir or failed.log is left behind")
+}
+
 func TestRemoteBar_Run_TimeoutCancelsTheRunAndReportsInfraFailure(t *testing.T) {
 	out, code, bare, logPath := runWithStub(t, "STUB_STATE=in_progress ", "RB_TIMEOUT_SECS=1")
 	require.Equal(t, 2, code, out)

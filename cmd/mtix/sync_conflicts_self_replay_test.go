@@ -402,3 +402,74 @@ func TestSyncConflictsResolve_TombstoneTarget_NamesNewestLww(t *testing.T) {
 	require.ErrorIs(t, err, model.ErrInvalidInput)
 	require.Contains(t, err.Error(), fmt.Sprintf("newest conflict is conflict_id %d", lww))
 }
+
+// TestSyncConflictsResolve_GenuineWonLocally_DecisionStillMasks: a genuine
+// conflict has one own event and one applied (foreign) event, in either
+// role. Its manual decision copies that pair, which is not an own pair, so
+// the decision still resolves it and resolve does not refuse it as
+// self-replay. Guards both halves of the own-pair test in both the read
+// query and the resolve check.
+func TestSyncConflictsResolve_GenuineWonLocally_DecisionStillMasks(t *testing.T) {
+	tests := []struct {
+		name          string
+		winner, loser string
+	}{
+		{"own winner, applied loser", "own-a", "foreign"},
+		{"applied winner, own loser", "foreign", "own-a"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			initTestApp(t)
+			seedLocalEvent(t, "own-a", "pending")
+			seedLocalEvent(t, "foreign", "applied")
+			genuine := seedPairConflict(t, "TEST-1", "title", "lww", tt.winner, tt.loser)
+			require.JSONEq(t, "1", openConflictCount(t))
+
+			resolveConflict(t, genuine, "keep-local") // not refused as self-replay
+			require.JSONEq(t, "0", openConflictCount(t), "the decision resolves the genuine conflict")
+			rows := listAllConflicts(t)
+			require.Len(t, rows, 2)
+			for _, r := range rows {
+				require.NotNil(t, r.SelfReplay)
+				require.False(t, *r.SelfReplay, "neither the conflict nor its decision is self-replay")
+			}
+		})
+	}
+}
+
+// TestSyncConflictsResolve_PhantomDecision_DoesNotResolveNewest: with two
+// genuine conflicts and a later phantom row plus a decision on it, resolving
+// the first still says to resolve the newest genuine one: the phantom
+// decision does not count as resolving it.
+func TestSyncConflictsResolve_PhantomDecision_DoesNotResolveNewest(t *testing.T) {
+	initTestApp(t)
+	seedLocalEvent(t, "own-a", "pending")
+	seedLocalEvent(t, "own-b", "pushed")
+	seedLocalEvent(t, "foreign", "applied")
+	first := seedPairConflict(t, "TEST-1", "title", "lww", "foreign", "own-b")
+	second := seedPairConflict(t, "TEST-1", "title", "lww", "foreign", "own-a")
+	seedPairConflict(t, "TEST-1", "title", "lww", "own-a", "own-b")    // phantom conflict
+	seedPairConflict(t, "TEST-1", "title", "manual", "own-a", "own-b") // decision on it
+
+	var stdout, stderr bytes.Buffer
+	err := runSyncConflictsResolve(context.Background(), &stdout, &stderr, fmt.Sprint(first), "acknowledge")
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+	require.Contains(t, err.Error(), fmt.Sprintf("resolve conflict_id %d instead", second))
+	require.NotContains(t, err.Error(), "already resolved")
+}
+
+// TestSyncConflictsResolve_TombstoneWithoutLww_NamesTarget: for a tombstone
+// target with no lww row on its node and field and a later decision, the
+// newest conflict falls back to the target itself.
+func TestSyncConflictsResolve_TombstoneWithoutLww_NamesTarget(t *testing.T) {
+	initTestApp(t)
+	seedLocalEvent(t, "own-b", "pushed")
+	seedLocalEvent(t, "foreign", "applied")
+	tomb := seedPairConflict(t, "TEST-1", "", "tombstone", "foreign", "own-b")
+	seedPairConflict(t, "TEST-1", "", "manual", "foreign", "own-b")
+
+	var stdout, stderr bytes.Buffer
+	err := runSyncConflictsResolve(context.Background(), &stdout, &stderr, fmt.Sprint(tomb), "acknowledge")
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+	require.Contains(t, err.Error(), fmt.Sprintf("newest conflict is conflict_id %d", tomb))
+}

@@ -11,7 +11,7 @@ import (
 
 var wakeCommandWordRE = regexp.MustCompile(`^\s*("[^"\n]*"|'[^'\n]*'|[^\s;&|()]+)`)
 var wakeCaptureAssignmentRE = regexp.MustCompile("([A-Za-z_][A-Za-z_0-9]*)=[\"']?(\\$\\(|`)")
-var wakePromptOperandsRE = regexp.MustCompile(`^[ \t]+inbox\b[^\n;&|)]*--format[ \t]+prompt(?:[ \t;|&)]|$)`)
+var wakeInboxHeadRE = regexp.MustCompile(`^[ \t]+inbox(?:[ \t;&|)]|$)`)
 
 func wakeActualCommandHead(text string) (string, string, bool) {
 	match := wakeCommandWordRE.FindStringSubmatchIndex(text)
@@ -73,12 +73,44 @@ func wakeCaptureBody(text string) (string, bool) {
 
 func wakeBodyReadsInput(body string) bool {
 	for _, start := range wakeMetadataStartRE.FindAllStringSubmatchIndex(body, -1) {
-		word, tail, ok := wakeActualCommandHead(body[start[2]:])
-		if ok && (word == "$MTIX_BIN" || word == "mtix") && wakePromptOperandsRE.MatchString(tail) {
+		word, tail, ok := wakeInputCommandHead(body[start[2]:])
+		fields := strings.Fields(tail)
+		reader := word == "$MTIX_BIN" || word == "${MTIX_BIN}" || word == "mtix" || strings.HasSuffix(word, "/mtix")
+		if ok && reader && wakeInboxHeadRE.MatchString(tail) && (len(fields) < 2 || fields[1] != "lease") {
 			return true
 		}
 	}
 	return false
+}
+
+// Source recognition follows command forwarding without granting metadata status.
+func wakeInputCommandHead(text string) (string, string, bool) {
+	text = strings.TrimSpace(text)
+	if strings.HasPrefix(text, "command -p ") {
+		text = strings.TrimSpace(strings.TrimPrefix(text, "command -p "))
+	}
+	word, tail, ok := wakeActualCommandHead(text)
+	if !ok || word != "env" {
+		return word, tail, ok
+	}
+	for {
+		word, tail, ok = wakeActualCommandHead(strings.TrimSpace(tail))
+		if !ok {
+			return word, tail, false
+		}
+		if word == "-u" || word == "--unset" || word == "-C" || word == "--chdir" {
+			operand := wakeCommandWordRE.FindStringIndex(tail)
+			if operand == nil {
+				return "", "", false
+			}
+			tail = tail[operand[1]:]
+			continue
+		}
+		if strings.HasPrefix(word, "-") || strings.Contains(word, "=") {
+			continue
+		}
+		return word, tail, true
+	}
 }
 
 var wakeLookupRemainderRE = regexp.MustCompile(`^\s*(?:[0-9]*[<>]+(?:/dev/null|&[0-9]+)\s*)*(?:[);&|]|$)`)

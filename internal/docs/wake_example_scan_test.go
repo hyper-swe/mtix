@@ -22,8 +22,6 @@ var wakeVariableRE = regexp.MustCompile(`\$\{?([A-Za-z_][A-Za-z_0-9]*)`)
 var wakeCaptureRE = regexp.MustCompile(`^([A-Za-z_][A-Za-z_0-9]*)="\$\(mtix inbox --agent (?:"\$[A-Za-z_][A-Za-z_0-9]*"|[A-Za-z_][A-Za-z_0-9-]*) --format prompt\)"$`)
 var wakeInputLineRE = regexp.MustCompile(`^printf '%s\\n' "\$(?:[A-Za-z_][A-Za-z_0-9]*|\{[A-Za-z_][A-Za-z_0-9]*\})" \| (?:claude -p|codex exec -)$`)
 var wakeEmptyRE = regexp.MustCompile(`^\[ -z "\$(?:[A-Za-z_][A-Za-z_0-9]*|\{[A-Za-z_][A-Za-z_0-9]*\})" \] && exit 0$`)
-var wakeSourceVariableRE = regexp.MustCompile(`([A-Za-z_][A-Za-z_0-9]*)=["']?\$\(\s*(?:mtix|"\$MTIX_BIN") inbox[^()\n]*--format prompt[^()\n]*\)`)
-var wakeShellLineRE = regexp.MustCompile(`^(?:(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-z_0-9]*=|(?:[A-Za-z0-9_./-]+|"[^"\n]+"|'[^'\n]+'|\$\{?[A-Za-z_][A-Za-z_0-9]*\}?)+[ \t])|[<>])`)
 var wakeRawShellLineRE = regexp.MustCompile(`^(?:[({!][ \t]*)*(?:[A-Za-z_][A-Za-z_0-9]*=|(?:[0-9]*[A-Za-z_][A-Za-z_0-9./-]*|[./][A-Za-z_0-9./-]*|"[^"\n]+"|'[^'\n]+')+[ \t]|[0-9]*[<>])`)
 var wakeInlineRE = regexp.MustCompile("`([^`\\n]+)`")
 
@@ -60,7 +58,10 @@ func wakeCaptureCommandOrigin(line string, offset int) bool {
 	return wakeControlPrefixRE.MatchString(strings.TrimLeft(prefix[last[1]:], " \t"))
 }
 
-func wakeCommandLines(text string) []string {
+func wakeCommandLines(text string, document ...bool) []string {
+	if len(document) > 0 && document[0] {
+		return wakeDocumentCommands(text)
+	}
 	text = strings.ReplaceAll(text, "\\\n", " ")
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
@@ -85,15 +86,15 @@ func wakeCommandLines(text string) []string {
 	return lines
 }
 
-func wakeLaunchProblems(text string) []string {
-	lines := wakeCommandLines(text)
+func wakeLaunchProblems(text string, document ...bool) []string {
+	lines := wakeCommandLines(text, document...)
 	inputs := wakeInputVariables(lines)
 	protocol := wakeIsLeaseScript(text)
 	var problems []string
 	for _, line := range lines {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
 		line = strings.Join(strings.Fields(line), " ")
-		if wakeCaptureRE.MatchString(line) || wakeEmptyRE.MatchString(line) || wakeInputLineRE.MatchString(line) {
+		if (wakeCaptureRE.MatchString(line) && !wakeReferencesInput(line, inputs)) || wakeEmptyRE.MatchString(line) || wakeInputLineRE.MatchString(line) {
 			continue
 		}
 		if wakeLeaseLineAllowed(line, inputs, protocol) {
@@ -107,16 +108,16 @@ func wakeLaunchProblems(text string) []string {
 }
 
 func wakeNeedsInputCheck(line string, inputs map[string]bool) bool {
-	if wakeReferencesInput(line, inputs) || len(wakeSourceCaptures(line)) > 0 || wakeShellCaptureOrigin(line) {
+	if wakeReferencesInput(line, inputs) || len(wakeSourceCaptures(line)) > 0 {
 		return true
 	}
-	if wakeOtherInputForms[line] {
-		return false
+	if wakeBodyReadsInput(line) && !wakeReaderReferenceRE.MatchString(line) {
+		return true
 	}
-	if wakeVariableRE.MatchString(line) || strings.Contains(line, "$(") {
-		return wakeShellLineRE.MatchString(line) || strings.ContainsAny(line, "|;") || strings.HasPrefix(line, "[")
+	if wakeHasLaunchOperands(line) {
+		return true
 	}
-	return wakeHasLaunchOperands(line)
+	return wakeVariableRE.MatchString(line) && wakeConsumerRE.MatchString(line)
 }
 
 func wakeReferencesInput(line string, inputs map[string]bool) bool {
@@ -145,50 +146,6 @@ func wakeHasLaunchOperands(line string) bool {
 		}
 	}
 	return true
-}
-
-// These finite non-inbox forms describe repository metadata and backup paths.
-var wakeOtherInputForms = map[string]bool{
-	`> mtix config set sync.relay.peer_id "$(cat /persistent/relay-id)"`:                                  true,
-	`> mtix config set sync.relay.dir "$(cat /persistent/relay-dir)"`:                                     true,
-	`> mtix sync relay attach "$(cat /persistent/relay-dir)"`:                                             true,
-	"The default `\"$user\", public` puts a schema named after the role first":                            true,
-	`MTIX_FAULTFS_DIR=$(scripts/faultfs.sh create) go test ./e2e/faultinject/ -tags=faultinject -count=1`: true,
-	`if [ -z "${MTIX_BIN:-}" ]; then`:                                                                     true,
-	`if ! MTIX_BIN="$(command -v mtix)"; then`:                                                            true,
-	`msg="$(git log -1 --format='%B' "${sha}" 2>/dev/null || true)"`:                                      true,
-	`hit="$(printf '%s' "${msg}" | grep -Eo "${PROVISIONAL_RE}" || true)"`:                                true,
-	`if [ -n "${hit}" ]; then`:                                                                            true,
-	`subject="$(git log -1 --format='%s' "${sha}" 2>/dev/null || true)"`:                                  true,
-	`printf '%s %s [%s]\n' "${sha}" "${subject}" "$(printf '%s' "${hit}" | tr '\n' ',' | sed 's/,$//')"`:  true,
-	`[ -z "${localsha:-}" ] && continue`:                                                                  true,
-	`[ "${localsha}" = "${ZERO_SHA}" ] && continue`:                                                       true,
-	`if [ "${remotesha:-${ZERO_SHA}}" = "${ZERO_SHA}" ]; then`:                                            true,
-	`offenders="$(scan_range_for_provisional "${localsha}" --not --remotes)"`:                             true,
-	`offenders="$(scan_range_for_provisional "${remotesha}..${localsha}")"`:                               true,
-	`if [ -n "${offenders}" ]; then`:                                                                      true,
-	`printf '%s\n' "${offenders}" >&2`:                                                                    true,
-	`if [ "${PROVISIONAL_FOUND}" = "1" ]; then`:                                                           true,
-	`if [ "${MTIX_BLOCK_PROVISIONAL:-0}" = "1" ]; then`:                                                   true,
-	`if [ -z "${MTIX_SYNC_DSN:-}" ] && [ ! -f ".mtix/secrets" ]; then`:                                    true,
-	`if ! "${MTIX_BIN}" sync push 2>&1; then`:                                                             true,
-	`if [ -f "${TASKS_FILE}" ]; then`:                                                                     true,
-	`PRE_HASH="$(git hash-object "${TASKS_FILE}")"`:                                                       true,
-	`if ! "${MTIX_BIN}" sync --fix >/dev/null 2>&1; then`:                                                 true,
-	`POST_HASH="$(git hash-object "${TASKS_FILE}")"`:                                                      true,
-	`if [ "${PRE_HASH}" = "${POST_HASH}" ]; then`:                                                         true,
-	`git add -- "${TASKS_FILE}"`:                                                                          true,
-	`TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"`:                                                          true,
-	`COMMIT_MSG="chore(snapshot): tasks.json refresh @ ${TIMESTAMP}"`:                                     true,
-	`if [ "${MTIX_HOOK_AMEND:-0}" = "1" ]; then`:                                                          true,
-	`git commit --quiet --no-verify -m "${COMMIT_MSG}"`:                                                   true,
-	`NEW_SHA="$(git rev-parse --short HEAD)"`:                                                             true,
-	`printf 'mtix pre-push: sync push + snapshot committed (%s) %s\n' "${NEW_SHA}" "${TASKS_FILE}" >&2`:   true,
-	`DATE=$(date -u +%Y%m%dT%H%M%SZ)`:                                                                     true,
-	`mtix sync backup --output "/tmp/mtix-hub-${DATE}.sql"`:                                               true,
-	`<your-upload-tool> "/tmp/mtix-hub-${DATE}.sql" "<bucket>/mtix-hub/${DATE}.sql" # object storage (an S3-compatible API or similar)`: true,
-	`shred -u "/tmp/mtix-hub-${DATE}.sql"`: true,
-	`mtix sync backup --output "hub-$(date -u +%Y%m%dT%H%M%SZ).sql" # pg_dump of every mtix hub table`: true,
 }
 
 func wakeShippedFiles(t *testing.T) map[string]string {
@@ -227,11 +184,12 @@ func wakeShippedFiles(t *testing.T) map[string]string {
 
 func TestWakeExample_ShippedGuidance_UsesStaticLaunchOperands(t *testing.T) {
 	for path, text := range wakeShippedFiles(t) {
-		t.Run(path, func(t *testing.T) { require.Empty(t, wakeLaunchProblems(text)) })
+		t.Run(path, func(t *testing.T) { require.Empty(t, wakeLaunchProblems(text, !strings.HasSuffix(path, ".sh"))) })
 	}
 }
 
 func TestWakeExample_CommandForms_AreClassifiedIndependently(t *testing.T) {
+	assertWakeGuidanceForms(t)
 	tests := []struct {
 		text  string
 		valid bool
@@ -289,7 +247,7 @@ func TestWakeExample_SnippetForms_IncludeCompleteCommands(t *testing.T) {
 	for i, form := range forms {
 		for j, wrapper := range wrappers {
 			t.Run(fmt.Sprintf("%d/%d", i, j), func(t *testing.T) {
-				require.NotEmpty(t, wakeLaunchProblems(fmt.Sprintf(wrapper, form)), "complete documented form")
+				require.NotEmpty(t, wakeDerivedProblems(fmt.Sprintf(wrapper, form)), "complete documented form")
 			})
 		}
 	}
@@ -310,7 +268,7 @@ func TestWakeExample_CombinedForms_FollowDocumentedRoutine(t *testing.T) {
 		`printf "$MESSAGE\n" | gemini -p`,
 	}
 	for i, form := range forms {
-		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeLaunchProblems(form), "complete documented form") })
+		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeDerivedProblems(form), "complete documented form") })
 	}
 }
 
@@ -324,7 +282,7 @@ func TestWakeExample_ExecutableForms_FollowDocumentedRoutine(t *testing.T) {
 		"`\"new-runtime\" --message \"$MESSAGE\"`",
 	}
 	for i, form := range forms {
-		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeLaunchProblems(form), "complete documented form") })
+		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeDerivedProblems(form), "complete documented form") })
 	}
 }
 
@@ -339,7 +297,7 @@ func TestWakeExample_CompoundForms_KeepCompleteInputChecks(t *testing.T) {
 		"GEMINI `printf '%s\\n' \"$UNSEEN\" | claude -p`",
 	}
 	for i, form := range forms {
-		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeLaunchProblems(form), "complete documented form") })
+		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeDerivedProblems(form), "complete documented form") })
 	}
 	require.Empty(t, wakeLaunchProblems("The default `\"$user\", public` puts a schema named after the role first"), "metadata form")
 }
@@ -376,7 +334,7 @@ func TestWakeExample_MetadataForms_KeepInputChecks(t *testing.T) {
 		`claude mcp add "$MESSAGE"`,
 		`TASKS_FILE="$(mtix inbox --agent worker --format prompt)"` + "\n" + `git add -- "${TASKS_FILE}"`,
 	} {
-		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeLaunchProblems(form), "documented input form") })
+		t.Run(strconv.Itoa(i), func(t *testing.T) { require.NotEmpty(t, wakeDerivedProblems(form), "documented input form") })
 	}
 }
 

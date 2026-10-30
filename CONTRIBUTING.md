@@ -415,6 +415,22 @@ review, docs-coverage sweep) around the automated gates
 
 ---
 
+## Generated command guidance
+
+Write executable documentation examples in code spans or fenced shell blocks.
+Plain prose outside those markers is explanatory text, even when it mentions a
+quoted variable. A code span containing only a variable or variable-based path
+is a reference. Put the complete command, including wrappers, pipelines and
+redirects, inside the same span or fence. Use double backticks around a command
+that contains shell backticks, with a space inside each delimiter.
+
+The wake-guidance checks inspect code spans, unlabelled fences, and fences marked
+`sh`, `bash`, `shell` or `console`. Raw shell examples and their commented command
+variants are checked too. Keep generated guidance templates and both plugin
+mirrors consistent. Inbox-derived values follow the documented constant-format
+standard-input routine regardless of variable or command name; unrelated shell
+variables do not need exact-line exemptions.
+
 ## Testing sync changes (MTIX-15 / FR-18)
 
 If your change touches the sync hub path (`internal/sync/...`,

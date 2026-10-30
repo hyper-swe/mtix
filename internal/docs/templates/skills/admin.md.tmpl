@@ -359,9 +359,11 @@ The append-only tables (`audit_log`, `sync_conflicts`, `sync_events`) refuse TRU
 **Resolving restore collisions:** The hub must accept the winner before mtix renumbers locally. If the hub refuses
 (for example, `permission denied for table sync_node_collisions`), the local
 store stays unchanged. Resolve with a role allowed to UPDATE that table.
-If acceptance succeeds but local completion fails, mtix reports
-`hub accepted collision <id> but local completion failed` and prints the exact
-recovery command: `mtix sync collisions resolve <id> --winner held|incoming`
+If acceptance succeeds but local renumbering fails, mtix reports
+`hub accepted collision <id> but local renumber failed`. If the local move
+succeeds but recording its completion on the hub fails, mtix reports
+`hub accepted collision <id> but recording completion on the hub failed`.
+Both failures print the exact recovery command: `mtix sync collisions resolve <id> --winner held|incoming`
 (with the original winner filled in). Fix the reported cause, then run that
 command on the client that owns the losing node, with the same hub configured.
 The decision is already recorded on the hub, so the collision no longer shows

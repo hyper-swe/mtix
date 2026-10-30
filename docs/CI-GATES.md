@@ -155,6 +155,16 @@ value exits 2 before anything is pushed. The options combine. Exit codes are
 unchanged: 0 green, 1 bar red (including the web checks), 2 infrastructure or
 usage failure, 3 tree mismatch. Default runs send no extra dispatch inputs.
 
+When the run fails, the script prints the failed log in two parts. A
+`failing tests:` block comes first. It lists every line of the whole log that
+holds a Go test failure marker (`--- FAIL:`, a `FAIL <package>` line, `panic:`,
+`[build failed]` or `test timed out`), once each (the runner's timestamp prefix
+and a trailing test duration are ignored when comparing lines), at most 100
+lines. A `log tail (last 200 lines):` block follows with the end of the log.
+The failing-test names often sit earlier in the log than the last 200 lines, so
+read the first block to see which tests failed. The verdict line and the exit
+code are unchanged.
+
 ### Workflow changes and older bases
 
 The wrapper refuses a snapshot that changes `.github`, because GitHub runs

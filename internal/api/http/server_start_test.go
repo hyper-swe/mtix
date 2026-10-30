@@ -48,8 +48,10 @@ func TestServer_Health_ReportsBuildVersion(t *testing.T) {
 // TestServer_Start_BindAddress_WarnsOnlyWhenNotLoopback verifies that
 // Start warns about network exposure only for a bind address that is not
 // loopback, with ::1 and the rest of 127.0.0.0/8 treated as loopback
-// (NFR-5.2, MTIX-95.14). The port is invalid, so Start returns right after
-// the warning decision without listening; Start also logs the version.
+// (NFR-5.2, MTIX-95.14). A network bind carries the insecure-bind opt-in and
+// a token here, as MTIX-220 requires before Start listens at all. The port is
+// invalid, so Start returns right after the warning decision without
+// listening; Start also logs the version.
 func TestServer_Start_BindAddress_WarnsOnlyWhenNotLoopback(t *testing.T) {
 	tests := []struct {
 		name string
@@ -69,13 +71,15 @@ func TestServer_Start_BindAddress_WarnsOnlyWhenNotLoopback(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var logs, warnings bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(&logs, nil))
-			s := testServerWith(t, logger, ServerConfig{Bind: tt.bind, Port: "-1", Version: "0.5.4-beta"})
+			s := testServerWith(t, logger, ServerConfig{
+				Bind: tt.bind, Port: "-1", Version: "0.5.4-beta", InsecureBind: tt.warn, AuthToken: authTestToken,
+			})
 			s.warnOut = &warnings
 
 			require.Error(t, s.Start(), "an invalid port must fail to listen")
 
 			if tt.warn {
-				assert.Contains(t, warnings.String(), "WARNING: Binding to")
+				assert.Contains(t, warnings.String(), "WARNING: Serving on")
 			} else {
 				assert.Empty(t, warnings.String())
 			}

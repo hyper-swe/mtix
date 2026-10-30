@@ -65,3 +65,53 @@ func TestCollisionResolution_AcceptAndComplete(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, missing.CollisionID)
 }
+
+// An open collision has no move path either, but is not an accepted decision
+// that the client can resume. Keep both states present when listing pending moves.
+func TestCollisionResolution_PendingMovesExcludeOpen(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	rows := seedPendingStatusCollisions(t, pool)
+	require.Len(t, rows, 2)
+	accepted, err := pool.ResolveCollision(ctx, rows[0].CollisionID, rows[0].HeldEventID, "", "operator")
+	require.NoError(t, err)
+	require.True(t, accepted)
+
+	pending, err := pool.ListPendingCollisionMoves(ctx, "TEST")
+	require.NoError(t, err)
+	require.Equal(t, []transport.PendingCollisionMove{{
+		OpenCollision: rows[0], WinnerEventID: rows[0].HeldEventID,
+	}}, pending)
+	open, err := pool.ListOpenCollisions(ctx, "TEST")
+	require.NoError(t, err)
+	require.Equal(t, []transport.OpenCollision{rows[1]}, open)
+}
+
+func seedPendingStatusCollisions(t *testing.T, pool *transport.Pool) []transport.OpenCollision {
+	t.Helper()
+	ctx := context.Background()
+	require.NoError(t, pool.Migrate(ctx))
+	held := []*model.SyncEvent{
+		uidEvent("0193fa00-0000-7000-8000-0000000a4101", "TEST-1", "alice", 1),
+		uidEvent("0193fa00-0000-7000-8000-0000000a4102", "TEST-2", "alice", 2),
+	}
+	for _, event := range held {
+		event.ProjectPrefix = "TEST"
+	}
+	_, _, _, _, err := pool.PushEventsWithCollisions(ctx, held)
+	require.NoError(t, err)
+	_, err = pool.MarkRestored(ctx)
+	require.NoError(t, err)
+	incoming := []*model.SyncEvent{
+		uidEvent("0193fa00-0000-7000-8000-0000000a4103", "TEST-1", "bob", 3),
+		uidEvent("0193fa00-0000-7000-8000-0000000a4104", "TEST-2", "bob", 4),
+	}
+	for _, event := range incoming {
+		event.ProjectPrefix = "TEST"
+	}
+	_, _, _, _, err = pool.PushEventsWithCollisions(ctx, incoming)
+	require.NoError(t, err)
+	rows, err := pool.ListOpenCollisions(ctx, "TEST")
+	require.NoError(t, err)
+	return rows
+}

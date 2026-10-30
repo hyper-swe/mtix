@@ -22,7 +22,8 @@ import (
 
 // ConflictRow is the JSON-serializable shape returned by `mtix sync
 // conflicts list`. Mirrors the local sync_conflicts table, plus whether
-// the row is an unresolved conflict (MTIX-95.7).
+// the row is an unresolved conflict (MTIX-95.7) and whether it is a
+// self-replay row, which is never unresolved (MTIX-216).
 type ConflictRow struct {
 	ConflictID    int64  `json:"conflict_id"`
 	EventIDWinner string `json:"event_id_winner"`
@@ -33,6 +34,7 @@ type ConflictRow struct {
 	ResolvedAt    string `json:"resolved_at"`
 	ResolvedBy    string `json:"resolved_by,omitempty"`
 	Unresolved    bool   `json:"unresolved"`
+	SelfReplay    bool   `json:"self_replay"`
 }
 
 // highConflictThreshold is the FR-18.12 banner threshold: above this many
@@ -269,48 +271,6 @@ func resolveConflictRow(ctx context.Context, store *sqlite.Store, target Conflic
 	})
 }
 
-// checkResolveTarget refuses, as invalid input, a resolve of a conflict
-// with a later manual or lww row for its node and field: its decision
-// would also close every conflict recorded after it, unreviewed. The error
-// names the newest conflict of the node and field: the one to resolve,
-// or, when it is resolved too, the one whose decision already stands. It
-// runs on the resolve's own transaction (MTIX-95.7).
-func checkResolveTarget(ctx context.Context, tx *sql.Tx, target ConflictRow) error {
-	var later, newestResolved bool
-	var newest int64
-	// For the target's node and field (NULL fields pair with each other):
-	// whether a manual or lww row follows the target, the newest lww
-	// conflict, and whether a manual row follows that newest conflict.
-	err := tx.QueryRowContext(ctx, `
-		SELECT later, newest,
-		       EXISTS (SELECT 1 FROM sync_conflicts
-		               WHERE node_id = ?1 AND field_name IS ?2 AND resolution = 'manual'
-		                 AND conflict_id > newest)
-		FROM (SELECT
-		        EXISTS (SELECT 1 FROM sync_conflicts
-		                WHERE node_id = ?1 AND field_name IS ?2 AND conflict_id > ?3
-		                  AND resolution IN ('manual', 'lww')) AS later,
-		        COALESCE((SELECT MAX(conflict_id) FROM sync_conflicts
-		                  WHERE node_id = ?1 AND field_name IS ?2 AND resolution = 'lww'), ?3) AS newest)`,
-		target.NodeID, nullIfEmpty(target.FieldName), target.ConflictID,
-	).Scan(&later, &newest, &newestResolved)
-	if err != nil {
-		return fmt.Errorf("mtix sync conflicts resolve: read later conflicts: %w", err)
-	}
-	if !later {
-		return nil
-	}
-	pair := "node " + target.NodeID + ", " + fieldLabel(target.FieldName)
-	if newest > target.ConflictID && !newestResolved {
-		return fmt.Errorf("mtix sync conflicts resolve: conflict_id %d has a later conflict on %s; "+
-			"resolve conflict_id %d instead, the newest conflict for that node and field: %w",
-			target.ConflictID, pair, newest, model.ErrInvalidInput)
-	}
-	return fmt.Errorf("mtix sync conflicts resolve: conflict_id %d is already resolved: a later decision "+
-		"covers %s, whose newest conflict is conflict_id %d, also resolved: %w",
-		target.ConflictID, pair, newest, model.ErrInvalidInput)
-}
-
 // fieldLabel names a conflict's field for a message, or says it has none.
 func fieldLabel(field string) string {
 	if field == "" {
@@ -343,28 +303,49 @@ func printResolveResult(w io.Writer, original ConflictRow, action string) error 
 // when empty), in conflict_id order: only the unresolved ones, or every
 // row when all is set. This is the one place the unresolved rule lives;
 // sync status counts the rows it returns (MTIX-95.7).
+//
+// A self-replay row (MTIX-216) is never unresolved and takes no part in the
+// rule: an lww row whose winner AND loser event ids are both in this
+// store's sync_events with a sync_status other than applied, that is, both
+// emitted by this replica. Two events of one replica are totally ordered by
+// Lamport clock, so such a pair cannot be a genuine conflict; before 0.5.4
+// a pull replayed the replica's own pushed events and logged exactly these
+// rows (MTIX-95.2). The class is derived at read time and nothing is
+// written: sync_conflicts stays append-only. A pair with an applied
+// (mirrored foreign) event, or with an event no longer in sync_events
+// (pruned or compacted), is not self-replay and stays unresolved: the safe
+// direction. Manual rows keep their meaning and are never self-replay.
 func readConflicts(ctx context.Context, store *sqlite.Store, nodeFilter string, all bool) ([]ConflictRow, error) {
-	// Each row with its unresolved flag: an lww row is unresolved until a
-	// manual row for the same node and field (NULL fields pair with each
-	// other) follows it in conflict_id order; a later lww row for the pair
-	// is unresolved again. Tombstone and manual rows are never unresolved.
-	// The two parameters filter by node ('' for every node) and choose
-	// every row or only the unresolved ones.
+	// Each row with its flags: self_replay is derived from sync_events as
+	// above; an lww row that is not self-replay is unresolved until a manual
+	// row for the same node and field (NULL fields pair with each other)
+	// follows it in conflict_id order; a later lww row for the pair is
+	// unresolved again. Tombstone, manual and self-replay rows are never
+	// unresolved. The two parameters filter by node ('' for every node) and
+	// choose every row or only the unresolved ones.
 	rows, err := store.Query(ctx, `
 		SELECT conflict_id, event_id_winner, event_id_loser, node_id,
-		       field_name, resolution, resolved_at, resolved_by, unresolved
+		       field_name, resolution, resolved_at, resolved_by, unresolved, self_replay
 		FROM (
 		    SELECT c.conflict_id, c.event_id_winner, c.event_id_loser, c.node_id,
 		           COALESCE(c.field_name, '') AS field_name, c.resolution, c.resolved_at,
-		           COALESCE(c.resolved_by, '') AS resolved_by,
-		           (c.resolution = 'lww' AND NOT EXISTS (
+		           COALESCE(c.resolved_by, '') AS resolved_by, c.self_replay,
+		           (c.resolution = 'lww' AND NOT c.self_replay AND NOT EXISTS (
 		               SELECT 1 FROM sync_conflicts m
 		               WHERE m.resolution = 'manual'
 		                 AND m.node_id = c.node_id
 		                 AND m.field_name IS c.field_name
 		                 AND m.conflict_id > c.conflict_id)) AS unresolved
-		    FROM sync_conflicts c
-		    WHERE (?1 = '' OR c.node_id = ?1)
+		    FROM (
+		        SELECT sc.*, (sc.resolution = 'lww'
+		            AND EXISTS (SELECT 1 FROM sync_events w
+		                        WHERE w.event_id = sc.event_id_winner AND w.sync_status <> 'applied')
+		            AND EXISTS (SELECT 1 FROM sync_events l
+		                        WHERE l.event_id = sc.event_id_loser AND l.sync_status <> 'applied')
+		        ) AS self_replay
+		        FROM sync_conflicts sc
+		        WHERE (?1 = '' OR sc.node_id = ?1)
+		    ) c
 		)
 		WHERE ?2 OR unresolved
 		ORDER BY conflict_id`, nodeFilter, all)
@@ -377,7 +358,7 @@ func readConflicts(ctx context.Context, store *sqlite.Store, nodeFilter string, 
 		var r ConflictRow
 		if scanErr := rows.Scan(
 			&r.ConflictID, &r.EventIDWinner, &r.EventIDLoser, &r.NodeID,
-			&r.FieldName, &r.Resolution, &r.ResolvedAt, &r.ResolvedBy, &r.Unresolved,
+			&r.FieldName, &r.Resolution, &r.ResolvedAt, &r.ResolvedBy, &r.Unresolved, &r.SelfReplay,
 		); scanErr != nil {
 			return nil, fmt.Errorf("read conflicts: %w", scanErr)
 		}
@@ -464,8 +445,8 @@ func printConflictsTable(w io.Writer, rows []ConflictRow, all bool) error {
 			unresolved)
 	}
 	for _, r := range rows {
-		fmt.Fprintf(w, "[%d] %s field=%s resolution=%s unresolved=%t winner=%s loser=%s\n",
-			r.ConflictID, r.NodeID, emptyDash(r.FieldName), r.Resolution, r.Unresolved,
+		fmt.Fprintf(w, "[%d] %s field=%s resolution=%s unresolved=%t self_replay=%t winner=%s loser=%s\n",
+			r.ConflictID, r.NodeID, emptyDash(r.FieldName), r.Resolution, r.Unresolved, r.SelfReplay,
 			format.EventID(r.EventIDWinner), format.EventID(r.EventIDLoser))
 	}
 	return nil

@@ -272,6 +272,7 @@ func appendLocalChecks(ctx context.Context, report DoctorReport) DoctorReport {
 		report = appendWakeBudgetRewindCheck(ctx, report, app.store)
 	}
 	report = appendHeldPushCheck(ctx, report, app.store)
+	report = appendSelfReplayConflictCheck(ctx, report, app.store)
 	modeOK, detail := checkSecretsFileMode(app.mtixDir)
 	return appendCheck(report, "secrets file mode", modeOK, detail)
 }

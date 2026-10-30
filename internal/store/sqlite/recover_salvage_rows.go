@@ -71,12 +71,11 @@ type salvagedRow struct {
 // (MTIX-107.80). So Export never holds two nodes with one id, and a mirror
 // copy never reaches a row through another node's entry.
 //
-// When the table itself holds two rows with id B (MTIX-107.78), the first
-// row read is kept as B and the other is reported by reportDuplicateRow,
-// with its content, so B is listed once in RecoveredIDs and no row is
-// dropped without a note.
-func salvageRows(ctx context.Context, db *sql.DB, keys []salvageKey, out *dbSalvage, res *RecoverResult) {
-	st := &salvageState{ownEntry: map[int64]bool{}, keptAt: map[string]int64{}, reported: map[int64]bool{}}
+// Duplicate rows are chosen by nonempty uid, then content hash against an
+// eligible mirror (MTIX-107.78.2). Equal matches retain the existing first-kept
+// order. Every losing row is reported after the final winner is known.
+func salvageRows(ctx context.Context, db *sql.DB, keys []salvageKey, out *dbSalvage, res *RecoverResult, mirror *mirrorSource) {
+	st := newSalvageState(mirror)
 	var misread []salvagedRow
 	for _, k := range keys {
 		row, err := readSalvageRow(ctx, db, k)
@@ -89,12 +88,13 @@ func salvageRows(ctx context.Context, db *sql.DB, keys []salvageKey, out *dbSalv
 			continue
 		}
 		if st.ownEntry[k.rowid] {
-			res.Notes = append(res.Notes, fmt.Sprintf(
-				"node %s: a second index entry for %s points at the same row, which is salvaged once", k.id, k.id))
+			st.repeated = append(st.repeated, k)
 			continue
 		}
 		if _, kept := st.keptAt[k.id]; kept {
-			reportDuplicateRow(st, res, row)
+			if chooseDuplicateRow(out, st, row) {
+				st.ownEntry[k.rowid] = true
+			}
 			continue
 		}
 		keepSalvagedRow(out, st, res, row)
@@ -108,16 +108,26 @@ func salvageRows(ctx context.Context, db *sql.DB, keys []salvageKey, out *dbSalv
 		seen[row.key] = true
 		keepMisreadRow(out, st, res, row)
 	}
+	finishDuplicateChoices(out, st, res)
 }
 
 // salvageState is what salvageRows knows about the rows it has handled
 // (MTIX-107.78): the rowids kept through their own index entry, the rowid of
-// the row kept as each id, and the rowids reported as a second row with an
-// id that is already kept.
+// the row kept as each id, losing duplicate rows, and deferred index notes.
 type salvageState struct {
-	ownEntry map[int64]bool
-	keptAt   map[string]int64
-	reported map[int64]bool
+	ownEntry      map[int64]bool
+	keptAt        map[string]int64
+	reported      map[int64]bool
+	mirror        *mirrorSource
+	mirrors       map[string]*exportNode
+	queued        map[int64]bool
+	discarded     []salvagedRow
+	discardedByID map[string][]int
+	misreadNotes  []misreadNote
+	firstMisread  map[int64]salvageKey
+	repeated      []salvageKey
+	choices       map[string]string
+	columns       map[string][]*unreadableColumnError
 }
 
 // readSalvageRow reads the row index entry k points at, by rowid
@@ -140,41 +150,31 @@ func readSalvageRow(ctx context.Context, db *sql.DB, k salvageKey) (salvagedRow,
 // recovered, with its unreadable JSON columns (MTIX-95.31.3).
 func keepSalvagedRow(out *dbSalvage, st *salvageState, res *RecoverResult, row salvagedRow) {
 	out.nodes[row.node.ID] = row.node
-	out.unreadable = append(out.unreadable, row.cols...)
+	if len(row.cols) > 0 {
+		st.columns[row.node.ID] = row.cols
+	}
 	st.keptAt[row.node.ID] = row.key.rowid
 	res.RecoveredIDs = append(res.RecoveredIDs, row.node.ID)
 }
 
-// keepMisreadRow handles a row that the index entry for id A reached
-// although the row carries id B (MTIX-95.31.3). Nothing from the row is kept
-// under A, and A is listed in LostIDs until Recover finds it salvaged
-// another way (see salvageRows). The row is kept once, as B, unless it is
-// already kept: through B's own entry (ownEntry), or as B through another
-// entry. A different row already kept as B means the table holds two rows
-// with id B: this one is reported by reportDuplicateRow (MTIX-107.78). The
-// note says only what is known: the entry for A points at the row of B, and
-// what happened to that row.
+// keepMisreadRow registers an index entry for A that reaches a row carrying B.
+// Same-row hits are reused. Different rows with B are compared against the
+// mirror, and only the loser is queued; notes wait for the final selection.
 func keepMisreadRow(out *dbSalvage, st *salvageState, res *RecoverResult, row salvagedRow) {
 	a, b := row.key.id, row.node.ID
 	res.LostIDs = append(res.LostIDs, a)
-	note := fmt.Sprintf("node %s: the index entry for %s points at the row of %s; ", a, a, b)
+	if _, seen := st.firstMisread[row.key.rowid]; !seen {
+		st.firstMisread[row.key.rowid] = row.key
+	}
+	st.misreadNotes = append(st.misreadNotes, misreadNote{key: row.key, nodeID: b})
 	keptAt, already := st.keptAt[b]
-	duplicate := false
 	switch {
-	case st.ownEntry[row.key.rowid]:
-		note += fmt.Sprintf("the entry of %s reaches that row, so it is not salvaged again", b)
-	case already && keptAt == row.key.rowid:
-		note += fmt.Sprintf("a row is already salvaged as %s, so this one is not salvaged again", b)
+	case st.ownEntry[row.key.rowid], already && keptAt == row.key.rowid:
+		return
 	case already:
-		duplicate = true
-		note += fmt.Sprintf("the table holds two rows with id %s, so it is not salvaged (see the note on %s)", b, b)
+		chooseDuplicateRow(out, st, row)
 	default:
 		keepSalvagedRow(out, st, res, row)
-		note += fmt.Sprintf("no entry of %s reaches that row, so it is salvaged once, as %s", b, b)
-	}
-	res.Notes = append(res.Notes, note)
-	if duplicate {
-		reportDuplicateRow(st, res, row)
 	}
 }
 
@@ -189,7 +189,8 @@ func reportDuplicateRow(st *salvageState, res *RecoverResult, row salvagedRow) {
 	}
 	st.reported[row.key.rowid] = true
 	b := row.node.ID
-	note := fmt.Sprintf("node %s: the table holds two rows with id %s: the row at rowid %d is salvaged as %s, "+
+	note := fmt.Sprintf("kept the row by %s; ", st.choices[b])
+	note += fmt.Sprintf("node %s: the table holds two rows with id %s: the row at rowid %d is salvaged as %s, "+
 		"and the row at rowid %d is not salvaged; ", b, b, st.keptAt[b], b, row.key.rowid)
 	content, err := json.Marshal(row.node)
 	if err != nil {

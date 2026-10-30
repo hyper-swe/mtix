@@ -67,3 +67,10 @@ func PersistConflictsForTest(ctx context.Context, tx pgx.Tx, conf []ConflictDesc
 // ElsewhereRefusalForTest returns the registry-index refusal for duplicate
 // creates recorded at another number (MTIX-187.4.4).
 func ElsewhereRefusalForTest(eventIDs []string) error { return elsewhereRefusal(eventIDs) }
+
+// SetBeforeMigrateCommitForTest sets p's before-commit seam (FR-18.4).
+// Tests set it before calling Migrate, never concurrently with Migrate.
+// Compiled into tests only; the hook belongs to this Pool, not package state.
+func SetBeforeMigrateCommitForTest(p *Pool, hook func(pgx.Tx) error) {
+	p.beforeMigrateCommit = hook
+}

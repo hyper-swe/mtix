@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/hooks"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
@@ -39,9 +40,9 @@ func originsResult(issues []hooks.OriginIssue) service.DoctorResult {
 	details := make([]string, 0, len(issues))
 	fixes := make([]string, 0, len(issues))
 	for _, issue := range issues {
-		details = append(details, fmt.Sprintf("%s (%s)", issue.Hook, issue.Reason))
-		if !slices.Contains(fixes, issue.Fix) {
-			fixes = append(fixes, issue.Fix)
+		details = append(details, fmt.Sprintf("%s (%s)", format.SafeLine(issue.Hook), format.SafeLine(issue.Reason)))
+		if fix := format.SafeLine(issue.Fix); !slices.Contains(fixes, fix) {
+			fixes = append(fixes, fix)
 		}
 	}
 	return service.DoctorResult{

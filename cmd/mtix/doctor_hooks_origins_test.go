@@ -114,3 +114,17 @@ func TestOriginsResult_IdenticalFixes_ListedOnce(t *testing.T) {
 	require.Contains(t, row.Detail, "a (")
 	require.Contains(t, row.Detail, "b (")
 }
+
+func TestOriginsResult_HostileValues_RenderedWithoutControlCharacters(t *testing.T) {
+	res := originsResult([]hooks.OriginIssue{{
+		Hook:   "evil\x1b[31mhook",
+		Reason: "bad\nrow\x1b]0;title\x07",
+		Fix:    "mtix hooks allow-origin 'https://x.example\x1b[2J'",
+	}})
+	require.Equal(t, service.DoctorWarn, res.Status)
+	for _, text := range []string{res.Detail, res.Fix} {
+		for _, r := range text {
+			require.False(t, r < 0x20 || r == 0x7f, "control character %q in %q", r, text)
+		}
+	}
+}

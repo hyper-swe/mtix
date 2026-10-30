@@ -1804,10 +1804,16 @@ unresolved ones: lww conflicts with no later manual resolution for the
 same node and field ('mtix sync conflicts resolve' records one). A later
 lww conflict on the same node and field is unresolved again.
 
+Self-replay rows are never listed by default and never unresolved: lww
+rows written before 0.5.4, when a pull replayed this store's own pushed
+events, whose winner and loser events were both emitted by this store.
+They are not conflicts, they neither hide nor reopen a genuine conflict,
+and nothing is written to the store to classify them.
+
 --all lists every row, manual resolutions and tombstone rows included,
-each marked unresolved=true or unresolved=false. Default output is a
-plain-text table; --json for agent and CI consumption (each row
-carries "unresolved").
+each marked unresolved=true or unresolved=false and self_replay=true or
+self_replay=false. Default output is a plain-text table; --json for agent
+and CI consumption (each row carries "unresolved" and "self_replay").
 
 When unresolved conflicts exceed 50, a banner is printed pointing
 at --batch <node_id> for batch resolution. --batch <node_id> filters
@@ -1924,6 +1930,11 @@ Run health checks against the local store and the BYO Postgres hub:
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  Self-replay conflict rows - informational, always PASS: counts conflict rows
+                           written before 0.5.4 by the replay of this store's
+                           own events; they are not conflicts and are not
+                           counted; fix: none required; inspect with
+                           'mtix sync conflicts list --all'
   board.id               - one committed board identity; a hub board also
                            needs a known local hub observation
   board.hub-identity-changed - warns when the observed hub differs from

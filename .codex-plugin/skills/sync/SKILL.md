@@ -114,6 +114,102 @@ Each daemon pass takes `dispatch.lock` before pending-mirror recovery, hub pull,
 
 A normal `mtix sync push` that drains its eligible queue releases the push lock, checks for committed arrivals, and reacquires before reading and pushing again. It performs at most three passes. An event arriving after the final pass stays durably pending and is not marked pushed; `mtix sync status` shows its pending count. Run the next explicit `mtix sync push` to deliver it. Held, unresolved deferred or no-progress work does not trigger fruitless repeat passes. `--force` keeps its single lock-free pass, and hook mode keeps its transient-error warning behavior. A contender exits successfully with its event still durable; holder delivery is not promised at the cap. Other non-pusher owners include automatic import, `mtix sync backfill`, and merge-import UID adoption; each can hold the push lock without pushing, so work skipped under any of them remains pending for the next push. The daemon remains a pull/dispatch loop and does not autonomously push these events unless a configured hook invokes push.
 
+## Daemon log retention
+
+Idle daemon ticks leave an unchanged mirror's bytes, `exported_at`, mtime and
+inode intact, including after restart. Debug-only `sync_export_completed`
+messages describe actual automatic publications; routine idle ticks produce no
+export-success lines at the default log level. Direct explicit exports retain
+their timestamp contract.
+
+On macOS, launchd captures stdout and stderr in `.mtix/logs/daemon.out.log` and
+`.mtix/logs/daemon.err.log`. This capture is unbounded unless an administrator
+configures retention; mtix does not rotate it. Linux's generated systemd user
+service uses the journal instead. Windows Task Scheduler has no mtix-managed
+log-retention guarantee.
+
+`mtix doctor` adds `daemon.logs` when either project log exists: it warns above
+10 MiB (10485760 bytes) per file, passes at or below that boundary, and omits the
+row when both are absent. Text and `--json` include filenames, byte counts and
+operator remedies. Inspection errors and nonregular files warn for manual
+inspection. Symlinked logs report `symlink, not inspected`: doctor does not
+follow the link or claim a size. It reads file metadata only; `--fix` does not create, truncate,
+rotate or delete these logs. This check does not measure the system journal.
+Preserve any needed records before enabling retention.
+
+**macOS native policy (administrator required).** Install a root-controlled
+`/etc/newsyslog.d/mtix-daemon.conf` using actual absolute project paths and the
+service user's `USER:GROUP`. The example paths must contain no whitespace;
+verify the installed `newsyslog.conf(5)` syntax for your paths before use.
+The columns below are path, owner, mode, archive count, size in KiB, time,
+flags, PID file and signal:
+
+```text
+/absolute/project/.mtix/logs/daemon.out.log USER:GROUP 600 3 10240 * - /absolute/project/.mtix/sync.daemon.pid 15
+/absolute/project/.mtix/logs/daemon.err.log USER:GROUP 600 3 10240 * - /absolute/project/.mtix/sync.daemon.pid 15
+```
+
+This retains three archives per file and sets a rotation threshold of 10240 KiB.
+Newsyslog checks whether that threshold is reached; doctor warns strictly above
+10 MiB. See `newsyslog.conf(5)` for the columns and `newsyslog(8)` for invocation
+options; `-` is the supported no-special-processing flags placeholder.
+Signal 15 is SIGTERM: the daemon exits and launchd's KeepAlive restarts it,
+briefly interrupting service and reopening the capture files. The two entries
+use the same PID-file path and signal: newsyslog defers signaling until all
+selected rotations finish and sends one SIGTERM per invocation for that pair.
+When both files rotate in that invocation, one restart reopens both; separate
+invocations can each restart the service. A rename alone,
+or rotation with signaling disabled, leaves inherited descriptors writing to
+the old file. mtix publishes its own `.mtix/sync.daemon.pid` after acquiring the
+ownership lock, but a crash can leave a stale PID; PID reuse could signal an
+unrelated process. An administrator must trust the board directory and PID
+file, verify the live service identity before enabling this policy, and resolve
+stale PID files before invoking rotation. This is not a stale-PID-proof policy.
+Do not use an unsupported newsyslog `R` configuration flag.
+
+After installing and checking the configuration, run
+`sudo /usr/sbin/newsyslog -f /etc/newsyslog.d/mtix-daemon.conf`.
+Confirm the system's periodic newsyslog job includes `/etc/newsyslog.d/`.
+A periodic size policy is not a hard byte cap: files may exceed the threshold
+between runs, and retained archives add to disk usage.
+
+**Optional file policy where logrotate is installed.** Configure the following
+in administrator-controlled `/etc/logrotate.d/mtix-daemon`, substituting the
+real paths and service user/group:
+
+```text
+"/absolute/project/.mtix/logs/daemon.out.log" "/absolute/project/.mtix/logs/daemon.err.log" {
+    su USER GROUP
+    size 10M
+    rotate 3
+    copytruncate
+    missingok
+    notifempty
+}
+```
+
+Then run `sudo logrotate /etc/logrotate.d/mtix-daemon` and arrange its periodic
+scheduler. `copytruncate` preserves open descriptors but can lose records
+written between copying and truncating. This also is a periodic threshold,
+not a strict byte cap. Choose one file-rotation policy, not both.
+
+**Linux journal policy (host administrator).** In a journald drop-in such as
+`/etc/systemd/journald.conf.d/mtix-retention.conf`, set:
+
+```ini
+[Journal]
+SystemMaxUse=100M
+RuntimeMaxUse=100M
+SystemMaxFileSize=10M
+RuntimeMaxFileSize=10M
+```
+
+Apply it with `sudo systemctl restart systemd-journald`. These limits affect
+the host's journal, not just mtix; coordinate with the host administrator.
+Persistent and runtime storage have separate budgets. Only archived journal
+files are removed to reclaim space; active files can keep usage above a target,
+and vacuuming the journal does not rotate the project's `.mtix/logs` files.
+
 ## Pending mirror exports
 
 Mirror exports read nodes, dependencies, agents and sessions from one read-only WAL snapshot, allowing writers to commit while the export reads. The mirror file and its conflict baseline describe that same snapshot; publication writes the file before its hashes. A write committed after the snapshot is handled by a later export.

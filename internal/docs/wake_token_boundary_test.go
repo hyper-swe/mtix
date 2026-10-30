@@ -21,6 +21,12 @@ func TestWakeGuidance_TokenBoundaries_Consistent(t *testing.T) {
 		{`SUB=inbox; $M $SUB`, `SUB=input; $M $SUB`},
 		{`date; SUB=inbox`, `date; SUB=input`},
 		{`$M --inbox`, `$M --help`},
+		{`$M ${X:+inbox}`, `$M ${X:+date}`},
+		{`$M ${X+inbox}`, `$M ${X+date}`},
+		{`$M ${X/x/inbox}`, `$M ${X/x/date}`},
+		{`$M ${X//*/inbox}`, `$M ${X//*/date}`},
+		{`IFS=.; $M $(echo inbox.)`, `IFS=.; $M $(echo date.)`},
+		{`IFS=+; V=inbox+; $M $V`, `IFS=+; V=date+; $M $V`},
 	}
 	script := wakeSource(t, "examples/hooks/wake-agent.sh")
 	for _, pair := range pairs {
@@ -35,7 +41,7 @@ func TestWakeGuidance_TokenBoundaries_Consistent(t *testing.T) {
 
 func TestWakeGuidance_TokenBoundaryPositions_Consistent(t *testing.T) {
 	script := wakeSource(t, "examples/hooks/wake-agent.sh")
-	for _, separator := range []string{",", "=", ":", "-"} {
+	for _, separator := range []string{",", "=", ":", "-", "+", "/", ".", "@", "%", "~", "^", "#", "*", "?", "[", "]"} {
 		for _, position := range []struct{ left, right string }{{separator, ""}, {"", separator}, {"left" + separator, separator + "right"}} {
 			text := "$M " + position.left + "inbox" + position.right
 			t.Run(text, func(t *testing.T) {
@@ -44,7 +50,7 @@ func TestWakeGuidance_TokenBoundaryPositions_Consistent(t *testing.T) {
 			})
 		}
 	}
-	for _, text := range []string{"date -u", "$M --help", "$TOOL run", "SUB=input", "$M input_count"} {
+	for _, text := range []string{"date -u", "$M --help", "$TOOL run", "SUB=input", "$M input_count", "./docs/input"} {
 		assertWakeTokenPolicy(t, text, true)
 		require.Empty(t, wakeLaunchProblems(script+"\n"+text))
 	}

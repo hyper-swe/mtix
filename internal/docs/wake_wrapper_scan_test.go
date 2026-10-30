@@ -5,11 +5,13 @@ package docs
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
-// Wrapper and control-flow words are ordinary tokens, without interpretation.
-var wakeLogicalTokenRE = regexp.MustCompile(`\$|[^$\s;&|(){}!<>,=:-]+`)
+// Word runs are ordinary tokens, without interpretation. Dollar and glob markers
+// retain a preceding command position even when no literal word names it.
+var wakeLogicalTokenRE = regexp.MustCompile(`\$|[A-Za-z0-9_]+|\*`)
 var wakeKnownReaderHeadRE = regexp.MustCompile(`^(?:(?:[A-Za-z_0-9./-]*/)?mtix|\$\{?MTIX_BIN\}?)$`)
 var wakeMetadataRedirectRE = regexp.MustCompile(`(?:[ \t]+[012]?>{1,2}(?:/dev/null|"\$WAKE_AGENT_LOG"))+$`)
 var wakeLeaseOccurrenceRE = regexp.MustCompile(`(?:^|[^$A-Za-z_0-9./-])(?:mtix|"?\$\{?MTIX_BIN\}?"?)[ \t]+inbox[ \t]+lease\b`)
@@ -20,9 +22,42 @@ var wakeLeaseOccurrenceRE = regexp.MustCompile(`(?:^|[^$A-Za-z_0-9./-])(?:mtix|"
 // inbox events, so it needs no input provenance. Anything else stays a reader.
 var wakeStatusFormRE = regexp.MustCompile(`^(?:[A-Za-z_0-9./-]*/)?mtix inbox status --agent (?:<agent>|[A-Za-z_0-9.-]+)(?: (?:--json|\[--json\]))?(?: (?:--limit [0-9]+|\[--limit N\]))?$`)
 
+// Retain the original token view as well as the lexical splice view: removing
+// an expansion must not hide a reader word that occurs inside that expansion.
+var wakeWordExpansionRE = regexp.MustCompile(`([A-Za-z0-9_])(?:\$\{[^{}]*\}|\$\(\))+([A-Za-z0-9_])`)
+var wakeQuotedWordRE = regexp.MustCompile(`\$'(?:\\.|[^'\\])*'`)
+
 func wakeLogicalTokens(text string) []string {
-	text = strings.NewReplacer("\\", "", "\"", "", "'", "", "`", "$").Replace(text)
-	return wakeLogicalTokenRE.FindAllString(text, -1)
+	normalize := strings.NewReplacer("\\", "", "\"", "", "'", "", "`", "$")
+	original := normalize.Replace(text)
+	tokens := wakeLogicalTokenRE.FindAllString(original, -1)
+	joined := normalize.Replace(wakeQuotedWordRE.ReplaceAllStringFunc(text, wakeQuotedWord))
+	for {
+		next := wakeWordExpansionRE.ReplaceAllString(joined, "${1}${2}")
+		if next == joined {
+			break
+		}
+		joined = next
+	}
+	if joined != original {
+		tokens = append(tokens, wakeLogicalTokenRE.FindAllString(joined, -1)...)
+	}
+	return tokens
+}
+
+// Decode literal quoted characters only; this does not evaluate shell values.
+func wakeQuotedWord(text string) string {
+	value := text[2 : len(text)-1]
+	var word strings.Builder
+	for value != "" {
+		letter, _, tail, err := strconv.UnquoteChar(value, '\'')
+		if err != nil {
+			return text
+		}
+		word.WriteRune(letter)
+		value = tail
+	}
+	return word.String()
 }
 
 func wakeContainsInboxToken(text string) bool {

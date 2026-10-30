@@ -434,10 +434,12 @@ standard-input routine regardless of variable or command name; unrelated shell
 variables do not need exact-line exemptions.
 A logical executable line with an inbox token after another token is
 conservatively treated as a reader source, regardless of groups, wrappers,
-reserved words or operators. Commas, equals signs, colons and dashes also
-separate tokens. Only complete approved capture, reference, lease and documented
-status forms are allowed. This is a token scan, without shell parsing, variable
-expansion or alias resolution. It deliberately refuses even unrelated literal
+reserved words or operators. Tokens are maximal ASCII word-character runs;
+non-word characters separate them. A second lexical view joins literal quoted
+characters and in-word parameter or empty command expansions, retaining the
+original tokens as well. Only complete approved capture, reference, lease and
+documented status forms are allowed. This is a conservative token scan, without
+shell evaluation, variable value expansion or alias resolution. It deliberately refuses even unrelated literal
 data such as 'echo inbox' inside executable markup; ordinary prose containing
 the same words is not scanned.
 

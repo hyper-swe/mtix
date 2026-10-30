@@ -25,6 +25,7 @@ func TestDoctorDaemonLogsCLI_OversizedReadOnly(t *testing.T) {
 				out := doctorCLIExecute(t, root, "", args...)
 				require.Equal(t, 0, out.exit, out.stderr)
 				require.Contains(t, out.stdout, "daemon.logs")
+				require.Contains(t, out.stdout, "generated sync skill")
 				require.Contains(t, out.stdout, name)
 				require.Contains(t, out.stdout, "10485761")
 				require.Contains(t, out.stdout, "10485760")

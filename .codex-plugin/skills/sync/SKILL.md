@@ -132,7 +132,8 @@ log-retention guarantee.
 10 MiB (10485760 bytes) per file, passes at or below that boundary, and omits the
 row when both are absent. Text and `--json` include filenames, byte counts and
 operator remedies. Inspection errors and nonregular files warn for manual
-inspection. It reads file metadata only; `--fix` does not create, truncate,
+inspection. Symlinked logs report `symlink, not inspected`: doctor does not
+follow the link or claim a size. It reads file metadata only; `--fix` does not create, truncate,
 rotate or delete these logs. This check does not measure the system journal.
 Preserve any needed records before enabling retention.
 
@@ -148,9 +149,16 @@ flags, PID file and signal:
 /absolute/project/.mtix/logs/daemon.err.log USER:GROUP 600 3 10240 * - /absolute/project/.mtix/sync.daemon.pid 15
 ```
 
-This retains three archives per file and requests rotation above 10240 KiB.
+This retains three archives per file and sets a rotation threshold of 10240 KiB.
+Newsyslog checks whether that threshold is reached; doctor warns strictly above
+10 MiB. See `newsyslog.conf(5)` for the columns and `newsyslog(8)` for invocation
+options; `-` is the supported no-special-processing flags placeholder.
 Signal 15 is SIGTERM: the daemon exits and launchd's KeepAlive restarts it,
-briefly interrupting service and reopening the capture files. A rename alone,
+briefly interrupting service and reopening the capture files. The two entries
+use the same PID-file path and signal: newsyslog defers signaling until all
+selected rotations finish and sends one SIGTERM per invocation for that pair.
+When both files rotate in that invocation, one restart reopens both; separate
+invocations can each restart the service. A rename alone,
 or rotation with signaling disabled, leaves inherited descriptors writing to
 the old file. mtix publishes its own `.mtix/sync.daemon.pid` after acquiring the
 ownership lock, but a crash can leave a stale PID; PID reuse could signal an

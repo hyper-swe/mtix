@@ -15,7 +15,7 @@ import (
 
 const daemonLogWarningBytes = 10 * 1024 * 1024
 
-const daemonLogRetentionFix = "Preserve needed records, then configure the platform retention recipe in USERMANUAL.md: " +
+const daemonLogRetentionFix = "Preserve needed records, then configure the platform retention recipe in the generated sync skill (mtix-sync / sync): " +
 	"on macOS use sudo /usr/sbin/newsyslog -f /etc/newsyslog.d/mtix-daemon.conf; " +
 	"where logrotate is installed use sudo logrotate /etc/logrotate.d/mtix-daemon. " +
 	"These commands require an administrator-installed configuration first; doctor --fix does not rotate logs."
@@ -59,6 +59,10 @@ func inspectDaemonLog(path, name string) (service.DoctorResult, bool) {
 		Fix: "Inspect .mtix/logs ownership, permissions and file types manually before configuring retention; doctor --fix leaves these paths unchanged."}
 	if err != nil {
 		row.Detail = fmt.Sprintf("cannot inspect .mtix/logs/%s: %v", name, err)
+		return row, true
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		row.Detail = fmt.Sprintf(".mtix/logs/%s is a symlink, not inspected; size unknown", name)
 		return row, true
 	}
 	if !info.Mode().IsRegular() {

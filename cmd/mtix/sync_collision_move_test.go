@@ -56,24 +56,30 @@ func TestCollisionMove_RetryRenumbersOnce(t *testing.T) {
 			uid := localNodeUID(t, app.store, "TEST-1")
 			c := transport.OpenCollision{CollisionID: 42, DisplayPath: "TEST-1"}
 			fail := true
+			cause := errors.New("write refused")
 			move := collisionMove{
 				accept: func(context.Context) error { return nil },
 				renumber: func(ctx context.Context, uid string) (string, error) {
 					if fail && !failAfterMove {
-						return "", errors.New("local write refused")
+						return "", cause
 					}
 					path, err := renumberCollisionLoser(ctx, uid, c.DisplayPath)
 					return path, err
 				},
 				finish: func(context.Context, string) error {
 					if fail && failAfterMove {
-						return errors.New("completion refused")
+						return cause
 					}
 					return nil
 				},
 			}
 			_, err := resolveCollisionMove(ctx, c, "held", uid, move)
-			require.Error(t, err)
+			require.ErrorIs(t, err, cause)
+			expected := "hub accepted collision 42 but local renumber failed"
+			if failAfterMove {
+				expected = "hub accepted collision 42 but recording completion on the hub failed"
+			}
+			require.ErrorContains(t, err, expected)
 			require.Contains(t, err.Error(), "mtix sync collisions resolve 42 --winner held")
 			fail = false
 			for range 2 {

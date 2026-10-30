@@ -14,6 +14,12 @@ var wakeKnownReaderHeadRE = regexp.MustCompile(`^(?:(?:[A-Za-z_0-9./-]*/)?mtix|\
 var wakeMetadataRedirectRE = regexp.MustCompile(`(?:[ \t]+[012]?>{1,2}(?:/dev/null|"\$WAKE_AGENT_LOG"))+$`)
 var wakeLeaseOccurrenceRE = regexp.MustCompile(`(?:^|[^$A-Za-z_0-9./-])(?:mtix|"?\$\{?MTIX_BIN\}?"?)[ \t]+inbox[ \t]+lease\b`)
 
+// wakeStatusFormRE is the one approved non-reader inbox form beyond lease and ack
+// (MTIX-112.40.6): mtix inbox status --agent <id> with only the documented
+// --json and --limit flags, as a complete command. It reads wake state, never
+// inbox events, so it needs no input provenance. Anything else stays a reader.
+var wakeStatusFormRE = regexp.MustCompile(`^(?:[A-Za-z_0-9./-]*/)?mtix inbox status --agent (?:<agent>|[A-Za-z_0-9.-]+)(?: (?:--json|\[--json\]))?(?: (?:--limit [0-9]+|\[--limit N\]))?$`)
+
 func wakeLogicalTokens(text string) []string {
 	text = strings.NewReplacer("\\", "", "\"", "", "'", "", "`", "$").Replace(text)
 	return wakeLogicalTokenRE.FindAllString(text, -1)
@@ -32,6 +38,9 @@ func wakeContainsInboxToken(text string) bool {
 // are restricted to the documented lease log destinations, never a suffix command.
 func wakeExactMetadataSource(text string) bool {
 	if text == `ack: mtix inbox ack <seq> --agent <id> -C '<board>'` {
+		return true
+	}
+	if wakeStatusFormRE.MatchString(strings.TrimSpace(text)) {
 		return true
 	}
 	head, tail, ok := wakeActualCommandHead(text)

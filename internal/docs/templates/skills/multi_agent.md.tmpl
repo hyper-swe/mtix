@@ -460,9 +460,14 @@ review of that hook; other hook approvals remain independent.
 
 ## Wake process context and host controls
 
-This build stores and reports `wake.live` and `wake.max_hop_depth`.
+This build stores and reports `wake.live` and `wake.max_hop_depth`, and applies `wake.confirm_window` now in `mtix inbox status`.
 Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
 when the wake scanner ships. They do not control live delivery in this build.
+
+The wake scan core ships in this build, but nothing constructs or runs it yet:
+no delivery route exists before a later release. So in this build no scan runs,
+no registration is marked stale by a scan and no stale registration is expired by
+one, and no agent is woken live.
 
 Set `mtix config set wake.live off` for the future scanner, or append
 `--agent worker` for one agent. `wake.settings` in `mtix doctor --json` shows
@@ -507,4 +512,37 @@ high-water mark, and nothing is skipped. Once a dispatcher is wired in, your inb
 the operator's grant and setting changes also trigger that re-check; this build wires none,
 so nothing is delivered automatically. Ack after handling keeps back-off quiet and nothing is skipped.
 `wake.guard-trips` in doctor text and JSON lists recent loop-guard trips; it is read-only.
+
+## Wake delivery status
+
+`mtix comment --to <agent>` prints the addressee's wake state under its confirmation line, and with
+`--json` adds `wake` (`state`, `reason`, `fix`; `route` and `since` appear only on rows read from the wake ledger). `mtix inbox status --agent <agent> [--json] [--limit N]`
+shows the current state and the last wake outcomes with their age. It reads local state only and never contacts a hub.
+The message is always in the inbox: any state other than `confirmed` means the wake is unconfirmed, never that the
+message is lost.
+
+| State | Meaning | Next step |
+|---|---|---|
+| `queued` | A session and a dispatcher exist and no nudge is recorded yet | `mtix inbox status --agent <agent>` |
+| `nudged` | A nudge was sent and the confirmation window is open | wait, then `mtix inbox status --agent <agent>` |
+| `unconfirmed` | A nudge was sent and `wake.confirm_window` passed unseen | `mtix inbox --agent <agent> --wait` |
+| `confirmed` | The session was seen acting on the nudge | none |
+| `held` | The route needs approval: `mtix agent allow <agent>` | read the inbox: `mtix inbox --agent <agent>` |
+| `undeliverable` | No route could deliver; `reason` says why | `mtix inbox --agent <agent> --wait` |
+| `off` | Live wake is off for the agent | `mtix config set wake.live on --agent <agent>` |
+| `no-live-session` | The agent has no registered session on this host | `mtix agent register <agent>` |
+| `no-dispatcher` | No dispatcher heartbeat: nothing nudges, the event waits in the inbox | `mtix inbox --agent <agent> --wait` |
+| `unknown` | A source could not be read; `reason` names it | `mtix doctor --json` |
+
+`unconfirmed` is derived at read time from `wake.confirm_window` (default 30 seconds; set it with
+`mtix config set wake.confirm_window 60`, whole seconds 1 to 86400; it is an ordinary setting and needs no terminal). It is never written as an inbox event and no timer runs.
+In this build the states `nudged`, `unconfirmed`, `confirmed`, `held` and `undeliverable` come from wake ledger
+rows, and nothing writes ledger rows until the wake scanner ships, so they are seeded-only today. Approving a held
+wake does not yet send a fresh nudge (follow-up MTIX-112.40.10); read the inbox yourself.
+
+`mtix doctor --json` reports `wake.listener.routes`, `wake.listener.dispatcher` and `wake.listener.unconfirmed-rate`
+(warns above 20 percent unconfirmed over 24 hours), each with a runnable `fix`. The rows `wake.listener.hook-installed`,
+`wake.listener.waiter-armed`, `wake.listener.route-contract` and `wake.listener.bypass-hold` are present as INFO rows
+with `data.reachable` false and `data.blocked_by` naming the ticket whose adapter is not built yet (hook waiter
+MTIX-112.40.4 and install MTIX-112.40.5, session socket MTIX-112.40.3): they are not reachable in this build and are never silently skipped.
 

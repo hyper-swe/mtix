@@ -1013,6 +1013,7 @@ the body.
 
 - `ack <seq>...` — Acknowledge specific inbox events (selective); --through acks everything up to a seq
 - `lease` — Acquire or release board-local wake ownership
+- `status` — Show the wake delivery state for an agent and its recent wake outcomes
 ---
 
 ## ack
@@ -1093,6 +1094,26 @@ mtix inbox lease release --agent developer --holder "$HOLDER"
 | `--holder` |  | Owner token (required for release; renews acquire) |  |
 | `--json` |  | Print JSON | false |
 | `--ttl` |  | Lease duration, inclusive 1m..24h | 15m |
+---
+
+## status
+
+**Usage:** `status`
+
+Show the wake delivery state for an agent and its recent wake outcomes
+
+Show the wake delivery state for an agent and its last wake outcomes with age
+(MTIX-112.40.6). States: queued, nudged, unconfirmed, confirmed, held, undeliverable,
+off, no-live-session, no-dispatcher, unknown. unconfirmed is derived at read time from
+wake.confirm_window (default 30 seconds) and is never written as an inbox event.
+This reads local state only and never contacts a hub.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` |  | Agent id whose wake status to show (required) |  |
+| `--limit` |  | Number of recent wake rows to show (1-1000) | 10 |
 ---
 
 ## init
@@ -1421,7 +1442,8 @@ Start the mtix HTTP and WebSocket server
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--addr` |  | Bind address (default localhost; non-localhost exposes API without auth) | 127.0.0.1 |
+| `--addr` |  | Bind address (default: the api.bind setting, else localhost); a non-loopback address needs --insecure-bind | 127.0.0.1 |
+| `--insecure-bind` |  | Allow a non-loopback bind: the server requires a bearer token, created on first use in the operator-local state directory (NFR-5.2) | false |
 | `--port` |  | HTTP port | 8377 |
 ---
 
@@ -1779,9 +1801,13 @@ keeps the contested number:
   held      the create that currently holds the number on the hub keeps it
   incoming  the blocked (queued) create keeps it
 
-The LOSER renumbers to the next free number under its parent via
-Store.RenumberSubtree (no create event is deleted, no node is lost). The
-moved node may have external references that need updating.
+The hub accepts the choice first; only then does the LOSER renumber to the
+next free number under its parent via Store.RenumberSubtree (no create event
+is deleted, no node is lost). A hub that refuses the update leaves this local
+store unchanged. If the local move fails after the hub accepted, the command
+prints the exact command to run again on the client that owns the losing task;
+a repeat is safe and a completed collision is a no-op. The moved node may have
+external references that need updating.
 
 ### Flags
 
@@ -1814,10 +1840,16 @@ unresolved ones: lww conflicts with no later manual resolution for the
 same node and field ('mtix sync conflicts resolve' records one). A later
 lww conflict on the same node and field is unresolved again.
 
+Self-replay rows are never listed by default and never unresolved: lww
+rows written before 0.5.4, when a pull replayed this store's own pushed
+events, whose winner and loser events were both emitted by this store.
+They are not conflicts, they neither hide nor reopen a genuine conflict,
+and nothing is written to the store to classify them.
+
 --all lists every row, manual resolutions and tombstone rows included,
-each marked unresolved=true or unresolved=false. Default output is a
-plain-text table; --json for agent and CI consumption (each row
-carries "unresolved").
+each marked unresolved=true or unresolved=false and self_replay=true or
+self_replay=false. Default output is a plain-text table; --json for agent
+and CI consumption (each row carries "unresolved" and "self_replay").
 
 When unresolved conflicts exceed 50, a banner is printed pointing
 at --batch <node_id> for batch resolution. --batch <node_id> filters
@@ -1934,6 +1966,11 @@ Run health checks against the local store and the BYO Postgres hub:
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  Self-replay conflict rows - informational, always PASS: counts conflict rows
+                           written before 0.5.4 by the replay of this store's
+                           own events; they are not conflicts and are not
+                           counted; fix: none required; inspect with
+                           'mtix sync conflicts list --all'
   board.id               - one committed board identity; a hub board also
                            needs a known local hub observation
   board.hub-identity-changed - warns when the observed hub differs from
@@ -1956,6 +1993,14 @@ Run health checks against the local store and the BYO Postgres hub:
   Hub privileges         - which roles other than the table owner can use the
                            sync tables, and whether every TRUNCATE guard is in
                            place (the check mtix sync harden runs)
+
+When PG reachable fails, queue draining, schema current and hub privileges
+are SKIPPED with a hub-unreachable reason. Fix connectivity and run doctor
+again before diagnosing the pusher. A reachable hub still fails queue
+draining for eligible events pending over 1h, even if its schema check
+fails. Skipped rows have pass=false and skipped=true in --json (skipped is
+omitted otherwise); they do not fail the report themselves. Unified mtix
+doctor maps them to INFO with the same reason. PG reachable still fails.
 
 Each hub check allows 30 s to connect, the same budget as mtix sync init,
 clone, push and pull, so a hub that is resuming from idle passes.
@@ -2011,9 +2056,9 @@ whenever mtix sync harden would report a finding, not only a role outside
 the list or a missing or disabled TRUNCATE guard, but also a kept role
 that can grant its access on or holds a privilege another role granted
 it, an mtix object owned by another role, and a membership through which
-a role can reach every table. If the check cannot run, it is a WARN by
-default and fails in strict mode. The check contacts the hub only while
-the doctor runs.
+a role can reach every table. If the hub is reachable but the check cannot
+run, it is a WARN by default and fails in strict mode. The check contacts
+the hub only while the doctor runs.
 
 Exit code: 0 on all-pass, including checks that pass with a WARN; 2 if
 any check fails. --json output for agents and CI consumption.
@@ -2090,6 +2135,11 @@ Initialize the sync hub for this project (FR-18)
 
 Initialize the BYO Postgres sync hub for this project. Runs the schema
 migration under a PG advisory lock so concurrent first-connects are safe.
+Connect has a 30s budget. Migration has its own --migrate-timeout (default 5m),
+including advisory-lock wait. Index statements block writes until commit even
+when every index already exists; adding missing columns blocks reads too.
+Existing columns skip ALTER. After a migration timeout, retry as the owner with
+the larger --migrate-timeout printed in the error, then run sync doctor.
 
 DSN sources (FR-18.16):
   1. Environment:        MTIX_SYNC_DSN
@@ -2116,6 +2166,7 @@ migrate --yes while the version gate is open, then mtix sync init again.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
+| `--migrate-timeout` |  | Deadline for hub migration, including advisory-lock wait (separate from the 30s connect budget) | 5m0s |
 ---
 
 ## mark-restored

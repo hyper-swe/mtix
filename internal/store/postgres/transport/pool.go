@@ -36,6 +36,11 @@ type Pool struct {
 	// tests set it (export_for_test.go).
 	afterCommit func() error
 
+	// beforeMigrateCommit is a per-pool migration test seam (FR-18.4).
+	// It runs after the whole schema batch, immediately before COMMIT.
+	// Nil in production; only export_for_test.go can set it for tests.
+	beforeMigrateCommit func(pgx.Tx) error
+
 	// afterSessionLock is a test seam (MTIX-107.85). When set, it runs
 	// right after EnsureRegistryIndex takes its session advisory lock, so
 	// a test can cancel the caller's context while the lock is held. Nil

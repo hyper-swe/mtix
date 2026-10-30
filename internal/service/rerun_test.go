@@ -563,54 +563,51 @@ func TestRerun_InvalidStrategy_WithChildren_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "unknown rerun strategy")
 }
 
-// TestRerun_DeleteStrategy_UndeleteRestoresOneNodeAtATime pins the documented
-// recovery after `mtix rerun --strategy delete` (MTIX-95.18). Rerun deletes
-// each descendant with its own non-cascading delete (so each emits its own
-// sync event), so undelete restores one node at a time: undeleting the child
-// leaves the grandchild deleted until it is undeleted too. Restored nodes are
-// still invalidated, and restore returns them to their previous status.
-func TestRerun_DeleteStrategy_UndeleteRestoresOneNodeAtATime(t *testing.T) {
+// TestRerun_DeleteStrategy_UndeleteRestoresSubtree verifies grouped recovery
+// while retaining one depth-first sync delete event per node (MTIX-107.20).
+func TestRerun_DeleteStrategy_UndeleteRestoresSubtree(t *testing.T) {
 	svc, s, _ := newTestNodeService(t)
 	ctx := context.Background()
+	// Keep this fixture independent of host network interface discovery.
+	_, seedErr := s.WriteDB().ExecContext(ctx, "UPDATE meta SET value = ? WHERE key = ?", "0123456789abcdef", "meta.sync.machine_hash")
+	require.NoError(t, seedErr)
+	create := func(parent, title string) *model.Node {
+		t.Helper()
+		node, err := svc.CreateNode(ctx, &service.CreateNodeRequest{
+			ParentID: parent, Project: "TEST", Title: title, Creator: "admin",
+		})
+		require.NoError(t, err)
+		return node
+	}
+	root := create("", "Rerun parent")
+	child := create(root.ID, "Recoverable child")
+	grandchild := create(child.ID, "Recoverable grandchild")
+	sibling := create(root.ID, "Separate subtree")
+	earlier := create(child.ID, "Previously deleted descendant")
+	require.NoError(t, svc.DeleteNode(ctx, earlier.ID, false, "admin"))
 
-	root, err := svc.CreateNode(ctx, &service.CreateNodeRequest{
-		Project: "PROJ", Title: "Root", Creator: "admin",
-	})
-	require.NoError(t, err)
-	child, err := svc.CreateNode(ctx, &service.CreateNodeRequest{
-		ParentID: root.ID, Project: "PROJ", Title: "Child", Creator: "admin",
-	})
-	require.NoError(t, err)
-	grandchild, err := svc.CreateNode(ctx, &service.CreateNodeRequest{
-		ParentID: child.ID, Project: "PROJ", Title: "Grandchild", Creator: "admin",
-	})
-	require.NoError(t, err)
 	require.NoError(t, svc.Rerun(ctx, root.ID, service.RerunDelete, "fresh start", "admin"))
-
-	steps := []struct {
-		undelete    string
-		wantLive    []string
-		wantDeleted []string
-	}{
-		{undelete: child.ID, wantLive: []string{child.ID}, wantDeleted: []string{grandchild.ID}},
-		{undelete: grandchild.ID, wantLive: []string{child.ID, grandchild.ID}},
-	}
-	// The steps run in order against one store, starting from the top.
-	for _, step := range steps {
-		require.NoError(t, svc.UndeleteNode(ctx, step.undelete))
-		for _, id := range step.wantLive {
-			got, getErr := s.GetNode(ctx, id)
-			require.NoError(t, getErr, "%s restored", id)
-			assert.Equal(t, model.StatusInvalidated, got.Status, "%s is still invalidated", id)
-		}
-		for _, id := range step.wantDeleted {
-			_, getErr := s.GetNode(ctx, id)
-			assert.ErrorIs(t, getErr, model.ErrNotFound, "%s stays deleted until undeleted itself", id)
+	events, err := s.ReadPendingEvents(ctx, 100)
+	require.NoError(t, err)
+	var deleted []string
+	for _, event := range events {
+		if event.OpType == model.OpDelete {
+			deleted = append(deleted, event.NodeID)
 		}
 	}
-
+	assert.Equal(t, []string{earlier.ID, grandchild.ID, child.ID, sibling.ID}, deleted)
+	require.NoError(t, svc.UndeleteNode(ctx, child.ID))
+	for _, id := range []string{child.ID, grandchild.ID} {
+		got, getErr := s.GetNode(ctx, id)
+		require.NoError(t, getErr, "%s restored", id)
+		assert.Equal(t, model.StatusInvalidated, got.Status)
+	}
+	for _, id := range []string{earlier.ID, sibling.ID} {
+		_, getErr := s.GetNode(ctx, id)
+		assert.ErrorIs(t, getErr, model.ErrNotFound, "%s stays deleted", id)
+	}
 	require.NoError(t, svc.Restore(ctx, child.ID, "admin"))
 	got, err := s.GetNode(ctx, child.ID)
 	require.NoError(t, err)
-	assert.Equal(t, model.StatusOpen, got.Status, "restore returns the node to its previous status")
+	assert.Equal(t, model.StatusOpen, got.Status)
 }

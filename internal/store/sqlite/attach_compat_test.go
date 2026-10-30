@@ -65,7 +65,7 @@ func attachReaderCommand(t *testing.T, binary, project, dsn string, args ...stri
 func attachSeedLocalState(t *testing.T, s *sqlite.Store) {
 	t.Helper()
 	for _, query := range []string{
-		"INSERT INTO agent_registrations(agent_id,harness,uid,host_id,origin,registered_at,last_seen,registrar_version,attach_protocol,returned_seq_mark) VALUES('worker','local','uid','host','manual','now','now','v',1,7)",
+		"INSERT INTO agent_registrations(agent_id,harness,uid,host_id,origin,registered_at,last_seen,registrar_version,attach_protocol,returned_seq_mark,stale_since) VALUES('worker','local','uid','host','manual','now','now','v',1,7,'then')",
 		"INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome) VALUES('worker','host','uid',7,1,'now','claimed')",
 		"INSERT INTO wake_scan_cursor VALUES('host','uid',7)",
 		"INSERT INTO dispatcher_heartbeat VALUES('host','uid',123,1,'v','now')",

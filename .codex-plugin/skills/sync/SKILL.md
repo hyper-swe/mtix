@@ -408,6 +408,18 @@ Listen hold: `sync.listen` is `live` or `off` (shipped default: `live`). In this
 
 Run `mtix sync doctor`, or `mtix sync doctor --json` for machine-readable output. Exit code 0 means no check failed; 2 means at least one did. Each check names its fix, and the fix names who runs it: the table owner, a role administrator, or you.
 
+When `PG reachable` fails, `queue draining`, `schema current` and
+`hub-privileges` are `SKIPPED` with a hub-unreachable reason. Restore hub
+connectivity and run `mtix sync doctor` again before diagnosing the pusher.
+A reachable hub still makes `queue draining` fail when eligible events
+have been pending for over an hour; a schema failure alone does not skip
+that queue check. Relay-only queue checks are unchanged. In
+`mtix sync doctor --json`, these skipped rows have `"pass": false` and
+`"skipped": true`; `skipped` is omitted on other rows. A skipped row does
+not itself fail the report, but the failed `PG reachable` check still
+returns exit code 2. Unified `mtix doctor` reports the skipped rows as
+`INFO` (`"status": "info"` in JSON), with the same reason.
+
 | Check | What it verifies |
 |-------|------------------|
 | `PG reachable` | the connection opens and answers |
@@ -448,6 +460,7 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 | `hub-triggers` WARN or FAIL | a hub function or trigger is missing, rebound or disabled | Ask the table owner to run `mtix sync init` or the `ALTER TABLE ... ENABLE TRIGGER` statement the check prints. |
 | `hub-privileges` WARN | roles besides the owner can use the sync tables | Acceptable on a private network. To restrict, the owner runs `mtix sync harden` (dry run) and, with the user's approval of its role list, `--apply`. |
 | `mtix sync conflicts list` shows conflicts | two machines changed the same field | `mtix sync conflicts resolve <id>` records a decision and changes no task: apply the chosen value with `mtix update`, then push. |
+| `mtix sync status` counts unresolved conflicts after upgrading from 0.5.3 or earlier, although only one machine ever wrote | before 0.5.4 a pull replayed this store's own pushed events and logged them as lww conflicts; both events of such a row were emitted by this store | Nothing to run: such rows are not counted, and the count clears by itself on upgrade, with no write to the store. `mtix sync conflicts list --all` shows them as `self_replay=true`, and `mtix sync doctor` reports their number in its `self-replay conflict rows` check (always PASS, fix: none required). Do not resolve one: it is refused. A conflict with an event from another machine, or with an event this store no longer holds, is still counted. |
 | a task is blocked on a restore collision | the hub was restored and two settled tasks claim one number | `mtix sync collisions list` shows them; ask the user, who resolves with `mtix sync collisions resolve`. |
 | a task is `in_progress` again after `mtix done`, with `closed_at` still set | own-event replay, below | `mtix sync repair --status`, below. |
 

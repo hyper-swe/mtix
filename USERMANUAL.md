@@ -1553,17 +1553,20 @@ The UI connects to `/ws/events` via WebSocket for live updates. Connection statu
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--addr` | `127.0.0.1` | Bind address |
+| `--addr` | `127.0.0.1` | Bind address (when not given, the `api.bind` setting applies, else `127.0.0.1`); a non-loopback address needs `--insecure-bind` |
+| `--insecure-bind` | `false` | Allow a non-loopback bind; the server then requires a bearer token (see below) |
 | `--port` | `8377` | HTTP port |
 
-The server binds to localhost by default. To reach it from another machine, bind to the address that clients use, for example `--addr 192.168.1.20`. The API has no authentication, so do this only on a trusted network; the server prints a warning at startup for any bind address that is not loopback.
+The server binds to localhost by default (`--addr`, else the `api.bind` setting, else `127.0.0.1`). A loopback bind needs no credential.
+
+To reach the server from another machine, bind to the address that clients use and opt in explicitly: `mtix serve --addr 192.168.1.20 --insecure-bind`. A non-loopback address (including `0.0.0.0` and `::`) is refused without `--insecure-bind`, and the refusal prints this exact command. With it, every request needs a bearer token: the first run creates a random 32-byte token in the operator-local state directory (`serve-token.json`, mode 0600, never inside a project) and prints only its path, never the token. Read it yourself with `jq -r .data.token <path>`, and send it as `Authorization: Bearer <token>` on every request, health and the OpenAPI document included. A browser WebSocket cannot set a header, so it offers the subprotocols `mtix.auth` and `mtix.auth.<token>`; the server answers with `mtix.auth` only and never repeats the token. Never put the token in a URL. A wrong or missing token gets `401 AUTH_REQUIRED` before any other check. To rotate the token, delete the file and restart. The traffic is plain HTTP, so use it on a trusted network or behind a tunnel you run. A configured `api.bind` that is not loopback now triggers the same refusal. `mtix doctor` shows a `serve.exposure` row when the effective bind is not loopback: a warning with the exact fix when no token exists yet, a failure when the token file is unusable (group or world readable, malformed, or inside a project). The gRPC server listens on `127.0.0.1` only.
 
 ### Accepted Requests
 
 `mtix serve` answers a request only when it is addressed to this server and, for a browser, comes from a local page:
 
 - **Host.** The `Host` header must name `localhost` or a loopback address (`127.0.0.1`, `::1` and the rest of the loopback range), on any port. When `--addr` is a specific address or host name, that exact address or name is accepted as well. A wildcard bind such as `--addr 0.0.0.0` or `--addr ::` adds no name, so it accepts loopback names only: bind to the specific address clients use. Other requests get `403` with error code `HOST_NOT_ALLOWED`.
-- **Browser origin.** A request that carries an `Origin` header is accepted when that origin is `http` or `https` on `localhost` or a loopback address, on any port (for example `http://localhost:5173` or `http://[::1]:8377`). When `--addr` is a specific address or host name, the server's own origin is accepted as well: `http`, that address or name, and the `--port` value (for example `http://192.168.1.20:8377` for `--addr 192.168.1.20 --port 8377`), so the web UI works when opened at that address. Any other origin gets `403`, with error code `ORIGIN_NOT_ALLOWED` for HTTP requests; the WebSocket upgrade at `/ws/events` applies the same rule. Clients that send no `Origin` header, such as the CLI, scripts and SDKs, are not affected.
+- **Browser origin.** A request that carries an `Origin` header is accepted when that origin is `http` or `https` on `localhost` or a loopback address, on any port (for example `http://localhost:5173` or `http://[::1]:8377`). When `--addr` is a specific address or host name, the server's own origin is accepted as well: `http`, that address or name, and the `--port` value (for example `http://192.168.1.20:8377` for `--addr 192.168.1.20 --port 8377`), so a page served from that address passes the origin check. Until the web UI can ask for the bearer token (a follow-up), the embedded web UI cannot load data on a network bind, because every route, the UI included, needs the token; use an API client there. Any other origin gets `403`, with error code `ORIGIN_NOT_ALLOWED` for HTTP requests; the WebSocket upgrade at `/ws/events` applies the same rule. Clients that send no `Origin` header, such as the CLI, scripts and SDKs, are not affected.
 - **Client address.** The client address in the request log is the address of the TCP connection. Behind a reverse proxy, the log shows the proxy's address.
 
 `GET /health` reports the version of the running `mtix` binary in its `version` field.
@@ -2204,7 +2207,9 @@ values (`pending`, `pushed`, `applied`, `open_conflicts`,
 `project_prefix`). `open_conflicts` counts unresolved conflicts only: an
 lww conflict is unresolved until `mtix sync conflicts resolve` records a
 decision for its node and field, and a later conflict on the same node
-and field is unresolved again. Above 50 unresolved conflicts, status
+and field is unresolved again. Rows written before 0.5.4 by the replay
+of this store's own pushed events (self-replay rows, below) are not
+counted. Above 50 unresolved conflicts, status
 prints a banner that points at `mtix sync conflicts list --batch
 <node-id>`. There is no `conflicted` count: no sync path ever marks an
 event conflicted, so earlier versions always showed 0 there.
@@ -3477,6 +3482,32 @@ input, and the error names the newest conflict id of that node and field
 stands). Passing the id of a `manual` row is refused as invalid input as
 well: resolve the conflict it answers instead (`--all` shows both).
 
+**Phantom conflicts after upgrading from 0.5.3 or earlier.** Before 0.5.4,
+`mtix sync pull` replayed the events this store had pushed itself as if
+they came from another machine, and logged every own event older than a
+newer local write to the same field as an lww conflict. A store with a
+single writer could show dozens of unresolved conflicts that never were
+conflicts, and resolving them doubled the count. 0.5.4 stopped writing
+these rows (MTIX-95.2) but still counted the old ones. Since this version
+they are recognized when read, with nothing to run and nothing written
+(`sync_conflicts` stays append-only): an lww row is a self-replay row when
+both its winner and its loser event are in this store's own event log and
+were emitted by this store (any `sync_status` except `applied`). Two
+events of one machine are ordered by clock, so such a pair cannot be a
+genuine conflict. Self-replay rows are not counted by `mtix sync status`,
+not listed by `mtix sync conflicts list`, and shown by `--all` with
+`unresolved=false` and `self_replay=true` (`--json` carries both keys).
+They neither hide nor reopen a genuine conflict on the same node and
+field, and `resolve` refuses their ids. A decision recorded on such a row
+with 0.5.4 (a `manual` row whose winner and loser are both events of this
+store) is ignored the same way: it does not resolve an earlier genuine
+conflict of the node and field. A conflict with an event from
+another machine stays counted, and so does a row whose events this store
+no longer holds. `mtix sync doctor` has an informational check,
+`self-replay conflict rows`, that always passes and reports how many rows
+this covers; its fix is `none required; inspect with mtix sync conflicts
+list --all`.
+
 For whole-project escapes (many conflicts, divergent history):
 
 ```bash
@@ -3519,13 +3550,26 @@ for the full tradeoff.
 
 ### Hub health checks
 
+When `PG reachable` fails, `queue draining`, `schema current` and
+`hub-privileges` are `SKIPPED` with a hub-unreachable reason. Restore hub
+connectivity and run `mtix sync doctor` again before diagnosing the pusher.
+A reachable hub still makes `queue draining` fail when eligible events
+have been pending for over an hour; a schema failure alone does not skip
+that queue check. Relay-only queue checks are unchanged. In
+`mtix sync doctor --json`, these skipped rows have `"pass": false` and
+`"skipped": true`; `skipped` is omitted on other rows. A skipped row does
+not itself fail the report, but the failed `PG reachable` check still
+returns exit code 2. Unified `mtix doctor` reports the skipped rows as
+`INFO` (`"status": "info"` in JSON), with the same reason.
+
 ```bash
 mtix sync doctor             # health checks: PG reachable, schema current,
                              #   queue draining, no orphan applied,
                              #   board matches sync log, quarantined
                              #   events, valid node ids, unique node
-                             #   uids, held push events, secrets file
-                             #   mode, hub triggers, hub privileges
+                             #   uids, held push events, self-replay
+                             #   conflict rows (informational), secrets
+                             #   file mode, hub triggers, hub privileges
 ```
 
 The `board matches sync log` check runs on a project that syncs. It
@@ -4104,6 +4148,7 @@ change the node's status with the normal commands instead.
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
 | `mtix sync backup` fails with `a hub table was not found` (`pg_dump` names the table above it) | `pg_dump` found no table of that name through the search_path of the role the DSN names; no file was left. The hub has not been initialized since an upgrade added the table; or the hub's schema is named only in the DSN, which `pg_dump` does not receive; or the DSN's role lacks USAGE on the hub's schema, which leaves that schema off its search_path | Run `mtix sync init` with the DSN naming the table owner, then back up again; for a hub whose schema only the DSN names, first run the printed `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`, which takes precedence over a role-wide `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`; for a DSN role without USAGE, run the GRANT statements the backup prints: the schema's owner grants USAGE on the schema (find it with `SELECT nspowner::regrole FROM pg_catalog.pg_namespace WHERE nspname = '<schema>';`; for `public` in a database created on PostgreSQL 15 or later it is `pg_database_owner`, that is, the database's owner), and the table owner grants SELECT on each sync table and sync-table sequence by name (`GRANT SELECT ON TABLE <schema>.applied_events, <schema>.audit_log, ... TO <the DSN's role>;`), so the role gets nothing else in the schema; then keep that role with `--keep-role` so `mtix sync harden --apply` leaves its access |
 | An id in mtix text looks like `"evt\u00e9"` or `"a\nb"`, with quotes and backslash escapes | mtix prints a sync event id, and the ids that come from sync (a task uid, an annotation id), in plain text output as double-quoted, printable-ASCII text, so a control character, bidirectional mark or non-ASCII letter in a stored id cannot alter a terminal or log. The stored id is unchanged; `mtix sync collisions list` shows both held and incoming task uids in full with the same quoting and escaping, without truncation; its `--json` output preserves the exact uids. REST, MCP and gRPC do the same in their text and error messages; their JSON and protobuf fields carry the exact id. Validator refusals, local store and apply-path errors, and hub push and collision errors name the event id the same way; only rows recorded by older versions, in validator refusal reasons or local store error text, can still hold the raw id. An id or text a caller sends that a server repeats in an error or result message is escaped in the message (control, invisible and invalid bytes appear as `\n`, `\r`, `\t`, `\xNN`, `\uNNNN` or `\UNNNNNNNN`; printable text stays readable; a literal backslash is not escaped, so read the escapes as a hint); the JSON fields still carry what was sent. The exact id is in the quarantine `event_id` column and in `--json` output, not in a log field or error text | Read the escapes as the id (`\n` is a newline, `\u00e9` is é). Use the JSON output for the exact value, and give the quoted form to whoever runs the hub; never edit or rename the stored id |
+| `mtix sync status` counts conflicts after an upgrade from 0.5.3 or earlier although one machine wrote | Rows from the pre-0.5.4 replay of own events | None needed: they are not counted. `mtix sync conflicts list --all` shows them as `self_replay=true` |
 | `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
 | `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |
 

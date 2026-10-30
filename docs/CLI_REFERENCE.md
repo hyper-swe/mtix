@@ -1412,7 +1412,8 @@ Start the mtix HTTP and WebSocket server
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--addr` |  | Bind address (default localhost; non-localhost exposes API without auth) | 127.0.0.1 |
+| `--addr` |  | Bind address (default: the api.bind setting, else localhost); a non-loopback address needs --insecure-bind | 127.0.0.1 |
+| `--insecure-bind` |  | Allow a non-loopback bind: the server requires a bearer token, created on first use in the operator-local state directory (NFR-5.2) | false |
 | `--port` |  | HTTP port | 8377 |
 ---
 
@@ -1804,10 +1805,16 @@ unresolved ones: lww conflicts with no later manual resolution for the
 same node and field ('mtix sync conflicts resolve' records one). A later
 lww conflict on the same node and field is unresolved again.
 
+Self-replay rows are never listed by default and never unresolved: lww
+rows written before 0.5.4, when a pull replayed this store's own pushed
+events, whose winner and loser events were both emitted by this store.
+They are not conflicts, they neither hide nor reopen a genuine conflict,
+and nothing is written to the store to classify them.
+
 --all lists every row, manual resolutions and tombstone rows included,
-each marked unresolved=true or unresolved=false. Default output is a
-plain-text table; --json for agent and CI consumption (each row
-carries "unresolved").
+each marked unresolved=true or unresolved=false and self_replay=true or
+self_replay=false. Default output is a plain-text table; --json for agent
+and CI consumption (each row carries "unresolved" and "self_replay").
 
 When unresolved conflicts exceed 50, a banner is printed pointing
 at --batch <node_id> for batch resolution. --batch <node_id> filters
@@ -1924,6 +1931,11 @@ Run health checks against the local store and the BYO Postgres hub:
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  Self-replay conflict rows - informational, always PASS: counts conflict rows
+                           written before 0.5.4 by the replay of this store's
+                           own events; they are not conflicts and are not
+                           counted; fix: none required; inspect with
+                           'mtix sync conflicts list --all'
   board.id               - one committed board identity; a hub board also
                            needs a known local hub observation
   board.hub-identity-changed - warns when the observed hub differs from
@@ -1946,6 +1958,14 @@ Run health checks against the local store and the BYO Postgres hub:
   Hub privileges         - which roles other than the table owner can use the
                            sync tables, and whether every TRUNCATE guard is in
                            place (the check mtix sync harden runs)
+
+When PG reachable fails, queue draining, schema current and hub privileges
+are SKIPPED with a hub-unreachable reason. Fix connectivity and run doctor
+again before diagnosing the pusher. A reachable hub still fails queue
+draining for eligible events pending over 1h, even if its schema check
+fails. Skipped rows have pass=false and skipped=true in --json (skipped is
+omitted otherwise); they do not fail the report themselves. Unified mtix
+doctor maps them to INFO with the same reason. PG reachable still fails.
 
 Each hub check allows 30 s to connect, the same budget as mtix sync init,
 clone, push and pull, so a hub that is resuming from idle passes.
@@ -2001,9 +2021,9 @@ whenever mtix sync harden would report a finding, not only a role outside
 the list or a missing or disabled TRUNCATE guard, but also a kept role
 that can grant its access on or holds a privilege another role granted
 it, an mtix object owned by another role, and a membership through which
-a role can reach every table. If the check cannot run, it is a WARN by
-default and fails in strict mode. The check contacts the hub only while
-the doctor runs.
+a role can reach every table. If the hub is reachable but the check cannot
+run, it is a WARN by default and fails in strict mode. The check contacts
+the hub only while the doctor runs.
 
 Exit code: 0 on all-pass, including checks that pass with a WARN; 2 if
 any check fails. --json output for agents and CI consumption.

@@ -283,10 +283,11 @@ func duplicateMirrorUIDCases() []duplicateMirrorChoiceCase {
 		{name: "UID beats conflicting hash for second row", mirrorUID: 2, mirrorHash: 1, winner: 2, reason: "uid-match"},
 		{name: "matching row reached through misread entry", misread: true, mirrorUID: 2, mirrorHash: 1, winner: 2, reason: "uid-match"},
 		{name: "hash fallback despite differing UIDs", mirrorUID: -1, mirrorHash: 2, winner: 2, reason: "hash-match"},
-		{name: "hash breaks nonempty UID tie", sameUID: true, mirrorUID: 1, mirrorHash: 2, winner: 2, reason: "hash-match"},
+		{name: "hash breaks nonempty UID tie", sameUID: true, mirrorUID: 1, mirrorHash: 2, winner: 2, reason: "uid-match then hash-match"},
+		{name: "three rows only final UID and hash match", rows: 3, mirrorUID: 3, mirrorHash: 3, winner: 3, reason: "uid-match"},
 		{name: "three rows prefer final UID match", rows: 3, mirrorUID: 3, mirrorHash: 1, winner: 3, reason: "uid-match"},
 		{name: "three misread candidates improve twice", rows: 3, misread: true, mirrorUID: 3, mirrorHash: 2, winner: 3, reason: "uid-match"},
-		{name: "three UID matches use final hash", rows: 3, sameUID: true, mirrorUID: 1, mirrorHash: 3, winner: 3, reason: "hash-match"},
+		{name: "three UID matches use final hash", rows: 3, sameUID: true, mirrorUID: 1, mirrorHash: 3, winner: 3, reason: "uid-match then hash-match"},
 	}
 }
 
@@ -294,8 +295,8 @@ func duplicateMirrorFallbackCases() []duplicateMirrorChoiceCase {
 	return []duplicateMirrorChoiceCase{
 		{name: "no mirror keeps first", noMirror: true, winner: 1, reason: "first-kept"},
 		{name: "neither value matches", mirrorUID: -1, mirrorHash: -1, winner: 1, reason: "first-kept"},
-		{name: "equal UID and hash keep first", sameUID: true, sameHash: true, mirrorUID: 1, mirrorHash: 1, winner: 1, reason: "first-kept"},
-		{name: "equal hashes keep first", sameHash: true, mirrorHash: 1, winner: 1, reason: "first-kept"},
+		{name: "equal UID and hash keep first", sameUID: true, sameHash: true, mirrorUID: 1, mirrorHash: 1, winner: 1, reason: "uid-match then first-kept among equal matches"},
+		{name: "equal hashes keep first", sameHash: true, mirrorHash: 1, winner: 1, reason: "hash-match then first-kept among equal matches"},
 		{name: "invalid mirror time cannot choose", mirrorUID: 2, mirrorHash: 2, invalidTime: true, winner: 1, reason: "first-kept"},
 		{name: "ambiguous same ID mirror cannot choose", mirrorUID: 2, mirrorHash: 2, ambiguous: true, winner: 1, reason: "first-kept"},
 		{name: "missing mirror node keeps first", missingCopy: true, winner: 1, reason: "first-kept"},
@@ -303,7 +304,9 @@ func duplicateMirrorFallbackCases() []duplicateMirrorChoiceCase {
 		{name: "empty UID cannot outrank real hash", emptyFirstUID: true, mirrorHash: 2, winner: 2, reason: "hash-match"},
 		{name: "empty hash cannot select last", emptyLastHash: true, mirrorUID: -1, winner: 1, reason: "first-kept"},
 		{name: "legacy mirror has no extra schema floor", schema: "1.0.0", mirrorUID: 2, mirrorHash: 1, winner: 2, reason: "uid-match"},
-		{name: "unverified mirror remains salvage source", unverified: true, mirrorUID: 2, mirrorHash: 1, winner: 2, reason: "uid-match"},
+		{name: "unverified mirror remains salvage source", unverified: true, mirrorUID: 2, mirrorHash: 1, winner: 2, reason: "uid-match (the mirror checksum did not verify)"},
+		{name: "unverified hash match marks the choice", unverified: true, mirrorUID: -1, mirrorHash: 2, winner: 2, reason: "hash-match (the mirror checksum did not verify)"},
+		{name: "unverified no match keeps first without choice marker", unverified: true, mirrorUID: -1, mirrorHash: -1, winner: 1, reason: "first-kept"},
 		{name: "own entry fallback precedes earlier misread", earlyMisread: true, missingCopy: true, winner: 1, reason: "first-kept"},
 	}
 }
@@ -505,7 +508,9 @@ func assertDuplicateMirrorChoiceNotes(t *testing.T, tc duplicateMirrorChoiceCase
 		require.Len(t, notes, 1, "each physical losing row is reported once: %v", res.Notes)
 		note := notes[0]
 		assert.Contains(t, note, fmt.Sprintf("the row at rowid %d is salvaged as RC-2", rows[tc.winner-1].key.rowid), "every note names the final winner")
-		assert.Contains(t, note, tc.reason, "the report explains the selection tier")
+		reason, _, ok := strings.Cut(note, "; node ")
+		require.True(t, ok, "the report starts with its reason clause")
+		assert.Equal(t, "kept the row by "+tc.reason, reason, "the report explains the exact selection tier")
 		_, payload, ok := strings.Cut(note, "its content is ")
 		require.True(t, ok)
 		decoder := json.NewDecoder(strings.NewReader(payload))
@@ -570,6 +575,128 @@ func TestRecover_DuplicateOwnEntryReportsFinalWinner(t *testing.T) {
 	t.Cleanup(func() { _ = fresh.Close() })
 	_, err = fresh.Import(context.Background(), res.Export, ImportModeReplace, false)
 	require.NoError(t, err)
+}
+
+// TestRecover_DuplicateWinningOwnEntryRepeatedOnce pins the winner flag after
+// replacement: the repeated cell reaches the NEW winner (MTIX-107.78.2 F3).
+func TestRecover_DuplicateWinningOwnEntryRepeatedOnce(t *testing.T) {
+	s, path := seedMirrorColumnFixture(t)
+	tc := duplicateMirrorChoiceCase{mirrorUID: 1, mirrorHash: 2, winner: 1, reason: "uid-match"}
+	seedDuplicateMirrorCandidates(t, s, 3, tc)
+	mirrorPath, _ := exportMirrorOf(t, s, func(t *testing.T, m *ExportData) {
+		extra := *mirrorNodeOf(t, m, "RC-4")
+		editDuplicateChoiceMirror(t, m, tc)
+		m.Nodes = append(m.Nodes, extra)
+	}, false)
+	require.NoError(t, s.Close())
+	patchIndexEntries(t, path, map[string]indexPatch{
+		"RC-2": {pointAt: "RC-3"},
+		"RC-3": {renameTo: "RC-2", pointAt: "RC-2"},
+		"RC-4": {renameTo: "RC-2", pointAt: "RC-2"},
+	})
+	renameTableRows(t, path, map[string]string{"RC-3": "RC-2"})
+	rows := readDuplicateChoiceRows(t, path, 2)
+	res, err := Recover(context.Background(), path, mirrorPath, "test-version", slog.Default())
+	require.NoError(t, err)
+	require.Equal(t, rows[0].node.UID, recoveredNode(t, res, "RC-2").UID)
+	assertDuplicateMirrorChoiceNotes(t, tc, rows, res)
+	assertWinnerNeverDiscarded(t, res, rows[0].key.rowid)
+	assert.Len(t, notesContaining(res.Notes, "same row, which is salvaged once"), 1)
+	assert.Empty(t, notesContaining(res.Notes, "same discarded duplicate row"))
+	assertDuplicateChoiceImports(t, res)
+}
+
+// TestRecover_DuplicateMisreadsReachKeptRow pins same-row reuse when B has no
+// working own entry and two other entries reach B (MTIX-107.78.2 F2).
+func TestRecover_DuplicateMisreadsReachKeptRow(t *testing.T) {
+	s, path := seedMirrorColumnFixture(t)
+	tc := duplicateMirrorChoiceCase{mirrorUID: 1, mirrorHash: 1}
+	seedDuplicateMirrorCandidates(t, s, 3, tc)
+	mirrorPath, _ := exportMirrorOf(t, s, func(t *testing.T, m *ExportData) {
+		editDuplicateChoiceMirror(t, m, tc)
+	}, false)
+	require.NoError(t, s.Close())
+	patchIndexEntries(t, path, map[string]indexPatch{
+		"RC-2": {pointAt: "RC-1"},
+		"RC-3": {pointAt: "RC-2"},
+		"RC-4": {pointAt: "RC-2"},
+	})
+	rows := readDuplicateChoiceRows(t, path, 1)
+	res, err := Recover(context.Background(), path, mirrorPath, "test-version", slog.Default())
+	require.NoError(t, err)
+	require.Equal(t, rows[0].node.UID, recoveredNode(t, res, "RC-2").UID)
+	assertWinnerNeverDiscarded(t, res, rows[0].key.rowid)
+	assert.Empty(t, notesContaining(res.Notes, "is not salvaged; its content is "))
+	prefix := "the index entry for %s points at the row of RC-2; "
+	first := "node RC-3: " + fmt.Sprintf(prefix, "RC-3") + "no entry of RC-2 reaches that row, so it is salvaged once, as RC-2"
+	again := "node RC-4: " + fmt.Sprintf(prefix, "RC-4") + "a row is already salvaged as RC-2, so this one is not salvaged again"
+	assert.Equal(t, []string{first}, notesContaining(res.Notes, "node RC-3: "))
+	assert.Equal(t, []string{again}, notesContaining(res.Notes, "node RC-4: "))
+	assertDuplicateChoiceImports(t, res)
+}
+
+// TestRecover_DuplicateOwnLoserIndexNotes distinguishes a displaced own row
+// and a later losing own row from a salvaged row (MTIX-107.78.2 F4).
+func TestRecover_DuplicateOwnLoserIndexNotes(t *testing.T) {
+	for _, winner := range []int{1, 2} {
+		t.Run(fmt.Sprintf("winner_%d", winner), func(t *testing.T) {
+			tc := duplicateMirrorChoiceCase{mirrorUID: winner, mirrorHash: 3 - winner, winner: winner, reason: "uid-match"}
+			f := makeDuplicateOwnLoserFixture(t, tc)
+			res, err := Recover(context.Background(), f.dbPath, f.mirrorPath, "test-version", slog.Default())
+			require.NoError(t, err)
+			require.Equal(t, f.rows[winner-1].node.UID, recoveredNode(t, res, "RC-2").UID)
+			assertDuplicateMirrorChoiceNotes(t, tc, f.rows, res)
+			assertWinnerNeverDiscarded(t, res, f.rows[winner-1].key.rowid)
+			note := "node RC-4: the index entry for RC-4 points at the row of RC-2; " +
+				"the table holds two rows with id RC-2, so it is not salvaged (see the note on RC-2)"
+			assert.Equal(t, []string{note}, notesContaining(res.Notes, "node RC-4: "), "the index note must describe the losing own row")
+			assertDuplicateChoiceImports(t, res)
+		})
+	}
+}
+
+// makeDuplicateOwnLoserFixture routes RC-4 to the losing row after two own
+// entries have competed for RC-2 (MTIX-107.78.2 F4).
+func makeDuplicateOwnLoserFixture(t *testing.T, tc duplicateMirrorChoiceCase) duplicateMirrorChoiceFixture {
+	t.Helper()
+	s, path := seedMirrorColumnFixture(t)
+	seedDuplicateMirrorCandidates(t, s, 3, tc)
+	mirrorPath, _ := exportMirrorOf(t, s, func(t *testing.T, m *ExportData) {
+		editDuplicateChoiceMirror(t, m, tc)
+	}, false)
+	require.NoError(t, s.Close())
+	loser := 3 - tc.winner
+	patchIndexEntries(t, path, map[string]indexPatch{
+		"RC-3": {renameTo: "RC-2"},
+		"RC-4": {pointAt: fmt.Sprintf("RC-%d", loser+1)},
+	})
+	renameTableRows(t, path, map[string]string{"RC-3": "RC-2"})
+	return duplicateMirrorChoiceFixture{dbPath: path, mirrorPath: mirrorPath, rows: readDuplicateChoiceRows(t, path, 2)}
+}
+
+// assertWinnerNeverDiscarded catches a winner incorrectly queued as its own
+// duplicate loser (MTIX-107.78.2 F2/F3).
+func assertWinnerNeverDiscarded(t *testing.T, res *RecoverResult, rowid int64) {
+	t.Helper()
+	marker := fmt.Sprintf("the row at rowid %d is not salvaged; its content is ", rowid)
+	assert.Empty(t, notesContaining(res.Notes, marker), "the final winning row must never be reported as discarded")
+}
+
+// assertDuplicateChoiceImports checks unique recovered IDs and replace import
+// after the damaged-index cases (MTIX-107.78.2).
+func assertDuplicateChoiceImports(t *testing.T, res *RecoverResult) {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, id := range res.RecoveredIDs {
+		require.False(t, seen[id], "each recovered ID is listed once")
+		seen[id] = true
+	}
+	require.True(t, seen["RC-2"])
+	fresh, err := New(filepath.Join(t.TempDir(), "fresh.db"), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = fresh.Close() })
+	_, err = fresh.Import(context.Background(), res.Export, ImportModeReplace, false)
+	require.NoError(t, err, "the selected export imports with unique IDs and UIDs")
 }
 
 // TestRecover_IndexEntryPointsAtAnotherRow_ExportHoldsEachIDOnceAndImports

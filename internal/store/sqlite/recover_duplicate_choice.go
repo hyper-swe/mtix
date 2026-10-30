@@ -5,6 +5,7 @@ package sqlite
 
 import "fmt"
 
+// newSalvageState initializes duplicate selection and deferred notes (MTIX-107.78.2).
 func newSalvageState(mirror *mirrorSource) *salvageState {
 	return &salvageState{
 		ownEntry: map[int64]bool{}, keptAt: map[string]int64{}, reported: map[int64]bool{},
@@ -15,8 +16,8 @@ func newSalvageState(mirror *mirrorSource) *salvageState {
 	}
 }
 
-// duplicateMirror has no JSON-column schema floor or UID mismatch filter:
-// UID and content hash are the evidence used to choose the row itself.
+// duplicateMirror selects one valid-time copy without a JSON-column schema
+// floor or UID mismatch filter (MTIX-107.78.2). UID and hash choose the row.
 func (st *salvageState) duplicateMirror(id string) *exportNode {
 	if n, checked := st.mirrors[id]; checked {
 		return n
@@ -35,13 +36,16 @@ func (st *salvageState) duplicateMirror(id string) *exportNode {
 	return n
 }
 
+// duplicateMatch ranks UID and content evidence for one row (MTIX-107.78.2).
 type duplicateMatch struct{ uid, hash bool }
 
+// misreadNote defers an index diagnostic until the final choice (MTIX-107.78.2).
 type misreadNote struct {
 	key    salvageKey
 	nodeID string
 }
 
+// matchDuplicate compares nonempty UID and hash evidence (MTIX-107.78.2).
 func matchDuplicate(row exportNode, mirror *exportNode) duplicateMatch {
 	if mirror == nil {
 		return duplicateMatch{}
@@ -52,6 +56,7 @@ func matchDuplicate(row exportNode, mirror *exportNode) duplicateMatch {
 	}
 }
 
+// duplicateIsBetter ranks UID before hash and leaves ties unchanged (MTIX-107.78.2).
 func duplicateIsBetter(candidate, current duplicateMatch) bool {
 	if candidate.uid != current.uid {
 		return candidate.uid
@@ -59,7 +64,8 @@ func duplicateIsBetter(candidate, current duplicateMatch) bool {
 	return candidate.hash && !current.hash
 }
 
-// A strict comparison leaves ties and the no-match fallback in their old order.
+// chooseDuplicateRow retains the stronger match and queues the loser; a strict
+// comparison preserves ties and the old no-match fallback (MTIX-107.78.2).
 func chooseDuplicateRow(out *dbSalvage, st *salvageState, row salvagedRow) bool {
 	b := row.node.ID
 	current := keptDuplicateRow(out, st, b)
@@ -80,10 +86,12 @@ func chooseDuplicateRow(out *dbSalvage, st *salvageState, row salvagedRow) bool 
 	return true
 }
 
+// keptDuplicateRow returns the kept row with its unreadable columns (MTIX-107.78.2).
 func keptDuplicateRow(out *dbSalvage, st *salvageState, id string) salvagedRow {
 	return salvagedRow{key: salvageKey{id: id, rowid: st.keptAt[id]}, node: out.nodes[id], cols: st.columns[id]}
 }
 
+// queueDuplicateRow records each physical loser once (MTIX-107.78.2).
 func queueDuplicateRow(st *salvageState, row salvagedRow) {
 	if st.queued[row.key.rowid] {
 		return
@@ -93,7 +101,8 @@ func queueDuplicateRow(st *salvageState, row salvagedRow) {
 	st.discarded = append(st.discarded, row)
 }
 
-// Render after selection so three-row groups never name an intermediate winner.
+// finishDuplicateChoices renders notes after selection so three-row groups
+// never name an intermediate winner (MTIX-107.78.2).
 func finishDuplicateChoices(out *dbSalvage, st *salvageState, res *RecoverResult) {
 	for _, id := range res.RecoveredIDs {
 		out.unreadable = append(out.unreadable, st.columns[id]...)
@@ -113,6 +122,7 @@ func finishDuplicateChoices(out *dbSalvage, st *salvageState, res *RecoverResult
 	}
 }
 
+// duplicateChoiceReason explains the evidence, ties and mirror warning (MTIX-107.78.2).
 func duplicateChoiceReason(st *salvageState, id string, winner exportNode) string {
 	mirror := st.duplicateMirror(id)
 	best := matchDuplicate(winner, mirror)
@@ -135,9 +145,18 @@ func duplicateChoiceReason(st *salvageState, id string, winner exportNode) strin
 	if tied && (best.uid || best.hash) {
 		reason += " then first-kept among equal matches"
 	}
-	return reason
+	return reason + duplicateMirrorWarning(st, best)
 }
 
+// duplicateMirrorWarning flags choices supported by an unverified mirror (MTIX-107.78.2).
+func duplicateMirrorWarning(st *salvageState, best duplicateMatch) string {
+	if st.mirror != nil && !st.mirror.verified && (best.uid || best.hash) {
+		return " (the mirror checksum did not verify)"
+	}
+	return ""
+}
+
+// repeatedChoiceNote distinguishes a kept row from a discarded repeat (MTIX-107.78.2).
 func repeatedChoiceNote(st *salvageState, key salvageKey) string {
 	if st.keptAt[key.id] == key.rowid {
 		return fmt.Sprintf("node %s: a second index entry for %s points at the same row, which is salvaged once", key.id, key.id)
@@ -145,6 +164,7 @@ func repeatedChoiceNote(st *salvageState, key salvageKey) string {
 	return fmt.Sprintf("node %s: a second index entry for %s points at the same discarded duplicate row (see the note on %s)", key.id, key.id, key.id)
 }
 
+// misreadChoiceNote describes an index entry against the final winner (MTIX-107.78.2).
 func misreadChoiceNote(st *salvageState, row misreadNote) string {
 	a, b := row.key.id, row.nodeID
 	note := fmt.Sprintf("node %s: the index entry for %s points at the row of %s; ", a, a, b)

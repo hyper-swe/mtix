@@ -225,8 +225,8 @@ func (p *Pool) GetOpenCollision(ctx context.Context, collisionID int64) (OpenCol
 
 // ResolveCollision records an admin's Option B decision: it flips the
 // collision to status='resolved', naming the winning create and the loser's
-// new display_path (ADR-003 §6.1). It is the hub-side bookkeeping AFTER the
-// caller has renumbered the loser locally via Store.RenumberSubtree (§5) — no
+// new display_path (ADR-003 §6.1). An empty path records acceptance BEFORE
+// the local move; CompleteCollisionMove records the resulting path afterwards. No
 // create event is ever deleted, so no node is lost. The older-claim default is
 // advisory; the admin (not this function) chooses the winner (audit F-5).
 //

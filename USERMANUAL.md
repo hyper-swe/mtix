@@ -599,9 +599,17 @@ left. To release a task that is still `blocked` (see `mtix blocked`)
 although every blocker shown by `mtix dep show <id>` is resolved, run
 `mtix unblock <id>`: it
 re-derives the task's status from its current blockers and never
-overrides a blocker that is still unresolved. No command recomputes
-stale progress; a node's progress is recomputed the next time one of
-its children changes status.
+overrides a blocker that is still unresolved. No general command rebuilds
+stale parent progress. The one repair is `mtix sync repair --status --apply`
+(a dry run without `--apply`): it re-derives workflow state from this
+replica's sync events, so it fixes a leaf's progress only on a node whose
+state differs from those events (nodes flagged for review need `--force`),
+and recomputes the parent's progress for each node it repairs. A node's progress is recomputed when one of its children is
+created, deleted, undeleted, cancelled, or moved through a status
+transition, such as to in_progress, done, deferred or reopened.
+`claim` and `unclaim` do
+not recompute progress, and neither does the status change that adding a
+blocking dependency makes.
 
 ### Reopen (Reverse Terminal State)
 

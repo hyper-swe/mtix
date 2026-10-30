@@ -77,7 +77,7 @@ func TestWakeGuidance_UnknownHeadPolicy_Conservative(t *testing.T) {
 	require.NotEmpty(t, wakeLaunchProblems("Use `echo inbox`.", true))
 	require.Empty(t, wakeLaunchProblems("An example such as echo inbox is ordinary prose here.", true))
 	require.Empty(t, wakeLaunchProblems("Use `$M --help` or `$TOOL run`.", true))
-	for _, text := range []string{"command -v fetch inbox", "command -V fetch inbox", "env", "sh --help", "bash script inbox"} {
+	for _, text := range []string{"command -v fetch", "command -V fetch", "env", "sh --help", "bash script input"} {
 		require.Empty(t, wakeLaunchProblems(text), "%s", text)
 		require.Empty(t, wakeLaunchProblems("Use `"+text+"`.", true), "%s", text)
 	}

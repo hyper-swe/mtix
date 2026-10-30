@@ -47,7 +47,7 @@ func TestWakeGuidance_UnknownReaderHeads_Checked(t *testing.T) {
 		}
 	}
 	for _, text := range []string{`$M --help`, `${M} --help`, `"$M" --help`, `$TOOL run`, "fetch --help",
-		`printf '%s\n' inbox`, `git add inbox`, `NOW=$(date -u)`,
+		`printf '%s\n' input`, `git add input`, `NOW=$(date -u)`,
 	} {
 		require.Empty(t, wakeLaunchProblems(text), "%s", text)
 		require.Empty(t, wakeLaunchProblems("Use `"+text+"`.", true), "%s", text)

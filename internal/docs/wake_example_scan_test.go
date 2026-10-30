@@ -76,7 +76,7 @@ func wakeCommandLines(text string, document ...bool) []string {
 				lines = append(lines, span[1])
 			}
 			remaining := wakeInlineRE.ReplaceAllString(line, "")
-			if wakeVariableRE.MatchString(remaining) || strings.Contains(remaining, "$(") {
+			if wakeVariableRE.MatchString(remaining) || strings.Contains(remaining, "$(") || wakeContainsInboxToken(remaining) {
 				lines = append(lines, line)
 			}
 		} else {

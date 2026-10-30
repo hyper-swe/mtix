@@ -4,77 +4,61 @@
 package docs
 
 import (
-	"path"
+	"regexp"
 	"strings"
 )
 
-// Known wrappers expose a lexical command or script body, never an expansion.
-func wakeUnwrappedReader(command string) bool {
-	head, tail := wakeShellWord(command)
-	if strings.Contains(head, "=") {
-		return wakeUnwrappedReader(tail)
-	}
-	name := path.Base(head)
-	switch name {
-	case "env", "nice", "nohup", "exec", "command", "time":
-		return wakeUnwrappedReader(wakeWrapperOptions(name, tail))
-	case "timeout":
-		_, tail = wakeShellWord(wakeWrapperOptions(name, tail))
-		return wakeUnwrappedReader(tail)
-	case "sh", "bash":
-		return wakeReaderSource(wakeShellBody(tail))
-	default:
-		return head != "" && head != ":" && wakeInboxAfterFlags(tail, wakeReaderAppearanceRE.MatchString(head+" "))
-	}
+// Wrapper and control-flow words are ordinary tokens, without interpretation.
+var wakeLogicalTokenRE = regexp.MustCompile(`\$|[^$\s;&|(){}!<>]+`)
+var wakeKnownReaderHeadRE = regexp.MustCompile(`^(?:(?:[A-Za-z_0-9./-]*/)?mtix|\$\{?MTIX_BIN\}?)$`)
+var wakeMetadataRedirectRE = regexp.MustCompile(`(?:[ \t]+[012]?>{1,2}(?:/dev/null|"\$WAKE_AGENT_LOG"))+$`)
+var wakeLeaseOccurrenceRE = regexp.MustCompile(`(?:^|[^$A-Za-z_0-9./-])(?:mtix|"?\$\{?MTIX_BIN\}?"?)[ \t]+inbox[ \t]+lease\b`)
+
+func wakeLogicalTokens(text string) []string {
+	text = strings.NewReplacer("\\", "", "\"", "", "'", "", "`", "$").Replace(text)
+	return wakeLogicalTokenRE.FindAllString(text, -1)
 }
 
-var wakeWrapperValueFlags = map[string]bool{
-	"-u": true, "--unset": true, "-C": true, "--chdir": true,
-	"-a": true, "--argv0": true, "-n": true, "--adjustment": true,
-	"-s": true, "--signal": true, "-k": true, "--kill-after": true,
-	"-o": true, "--output": true, "-f": true, "--format": true,
+func wakeContainsInboxToken(text string) bool {
+	for _, token := range wakeLogicalTokens(text) {
+		if token == "inbox" {
+			return true
+		}
+	}
+	return false
 }
 
-func wakeWrapperOptions(wrapper, text string) string {
-	for {
-		word, tail := wakeShellWord(text)
-		if word == "--" {
-			return tail
-		}
-		if !strings.HasPrefix(word, "-") || word == "-" {
-			return text
-		}
-		if wrapper == "command" && (word == "-v" || word == "-V") {
-			return ""
-		}
-		if wrapper == "env" && (word == "-S" || word == "--split-string" || strings.HasPrefix(word, "--split-string=")) {
-			body, rest := wakeShellWord(tail)
-			if _, value, found := strings.Cut(word, "="); found {
-				body, rest = value, tail
-			}
-			text = body + " " + rest
-			continue
-		}
-		if wakeWrapperValueFlags[word] {
-			_, tail = wakeShellWord(tail)
-		}
-		text = tail
+// Only a complete known metadata command can avoid source provenance. Redirects
+// are restricted to the documented lease log destinations, never a suffix command.
+func wakeExactMetadataSource(text string) bool {
+	if text == `ack: mtix inbox ack <seq> --agent <id> -C '<board>'` {
+		return true
 	}
+	head, tail, ok := wakeActualCommandHead(text)
+	if !ok || !wakeKnownReaderHeadRE.MatchString(head) {
+		return false
+	}
+	tail = wakeMetadataRedirectRE.ReplaceAllString(tail, "")
+	return wakeReaderReferenceRE.MatchString("mtix"+tail) &&
+		wakeInboxAfterFlags(tail, false) && !wakeInboxAfterFlags(tail, true)
 }
 
-func wakeShellBody(text string) string {
-	for {
-		word, tail := wakeShellWord(text)
-		if !strings.HasPrefix(word, "-") {
-			return ""
+// A protocol allowance cannot hide a second, unknown inbox occurrence.
+func wakeOnlyLeaseInbox(text string) bool {
+	rest := wakeLeaseOccurrenceRE.ReplaceAllString(text, " known-lease ")
+	for _, token := range wakeLogicalTokens(rest) {
+		if token == "inbox" {
+			return false
 		}
-		if !strings.HasPrefix(word, "--") && strings.Contains(word[1:], "c") {
-			body, _ := wakeShellWord(tail)
-			return body
-		}
-		if word == "--rcfile" || word == "--init-file" || word == "-O" || word == "-o" {
-			_, tail = wakeShellWord(tail)
-		}
-		text = tail
 	}
+	return true
+}
+
+func wakeDefinitionReadsInput(text string) bool {
+	for _, line := range strings.Split(text, "\n") {
+		if wakeReaderSource(line) && (!wakeOnlyLeaseInbox(line) || !wakeProtocolMetadataLine(line)) {
+			return true
+		}
+	}
+	return false
 }

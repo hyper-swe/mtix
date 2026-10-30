@@ -9,14 +9,11 @@ import (
 	"strings"
 )
 
-var wakeReaderAppearanceRE = regexp.MustCompile(`(?:^|[^A-Za-z_0-9./-])(?:["']?(?:[A-Za-z_0-9./-]*/)?mtix["']?|["']?\$\{?MTIX_BIN\}?["']?)[ \t]+`)
 var wakeFunctionStartRE = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z_0-9]*[ \t]*\([ \t]*\)|function[ \t]+[A-Za-z_][A-Za-z_0-9]*(?:[ \t]*\([ \t]*\))?)[ \t]*(?:\{|$)`)
 
 func wakeReaderSource(text string) bool {
-	for _, match := range wakeReaderAppearanceRE.FindAllStringIndex(text, -1) {
-		if wakeInboxAfterFlags(text[match[1]:], true) {
-			return true
-		}
+	if wakeExactMetadataSource(text) {
+		return false
 	}
 	return wakeUnknownReaderSource(text)
 }
@@ -68,12 +65,12 @@ func wakeReaderDefinitions(lines []string) []string {
 		if !opened || depth > 0 {
 			continue
 		}
-		if wakeReaderSource(definition.String()) {
+		if wakeDefinitionReadsInput(definition.String()) {
 			problems = append(problems, definition.String())
 		}
 		definition.Reset()
 	}
-	if definition.Len() > 0 && wakeReaderSource(definition.String()) {
+	if definition.Len() > 0 && wakeDefinitionReadsInput(definition.String()) {
 		problems = append(problems, definition.String())
 	}
 	return problems

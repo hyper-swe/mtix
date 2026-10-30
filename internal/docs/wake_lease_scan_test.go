@@ -42,7 +42,10 @@ func wakeLeaseLineAllowed(line string, inputs map[string]bool, protocol bool) bo
 	if !protocol {
 		return false
 	}
-	return wakeProtocolMetadataLine(line)
+	if line == `if [ "$STATUS" -ne 0 ]; then report "inbox read failed ($STATUS)"; exit "$STATUS"; fi` {
+		return true
+	}
+	return wakeOnlyLeaseInbox(line) && wakeProtocolMetadataLine(line)
 
 }
 

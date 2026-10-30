@@ -432,11 +432,13 @@ variants are checked too. Keep generated guidance templates and both plugin
 mirrors consistent. Inbox-derived values follow the documented constant-format
 standard-input routine regardless of variable or command name; unrelated shell
 variables do not need exact-line exemptions.
-Unknown command heads followed by the inbox verb are conservatively treated as
-reader sources. The checks do not expand variables or resolve shell aliases.
-Known wrappers are stripped before applying that rule. This deliberately refuses
-even an unrelated command such as 'echo inbox' inside a code span or executable
-fence; ordinary prose containing the same words is not scanned.
+A logical executable line with an inbox token after another token is
+conservatively treated as a reader source, regardless of groups, wrappers,
+reserved words or operators. Only complete approved capture, reference and
+lease forms are allowed. This is a token scan, without shell parsing, variable
+expansion or alias resolution. It deliberately refuses even unrelated literal
+data such as 'echo inbox' inside executable markup; ordinary prose containing
+the same words is not scanned.
 
 ## Testing sync changes (MTIX-15 / FR-18)
 

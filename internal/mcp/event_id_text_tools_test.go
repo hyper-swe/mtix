@@ -194,3 +194,22 @@ func TestInbox_HostilePulledCommentEventID_NeverAppearsInEnvelope(t *testing.T) 
 	assert.NotContains(t, text, `\x1b[31m`)
 	assertSafeEventText(t, text)
 }
+
+// TestResolveAnnotation_PrefixTyped_ResolvesAndReportsFullID pins the MCP
+// contract: a 12-character prefix resolves and the text names the full id.
+func TestResolveAnnotation_PrefixTyped_ResolvesAndReportsFullID(t *testing.T) {
+	env := newBehaviorTools(t)
+	id := seedHostileSyncNode(t, env)
+	n, err := env.store.GetNode(context.Background(), id)
+	require.NoError(t, err)
+	require.Len(t, n.Annotations, 1)
+	full := n.Annotations[0].ID
+	short := model.ShortAnnotationID(full)
+	require.Less(t, len(short), len(full), "fixture id must be longer than the short form")
+	out := behaviorCall(t, env.reg, "mtix_resolve_annotation",
+		jsonArgs(t, "id", id, "annotation_id", short, "author", "a"))
+	assert.Equal(t, "Annotation "+format.EventID(full)+" resolved on "+id, out)
+	n, err = env.store.GetNode(context.Background(), id)
+	require.NoError(t, err)
+	assert.True(t, n.Annotations[0].Resolved)
+}

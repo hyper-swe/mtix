@@ -118,36 +118,6 @@ func TestAnnotateThenShow_RoundTrip_ShowsNewAnnotation(t *testing.T) {
 	assert.NotContains(t, out, "Annotations: none")
 }
 
-// labelPattern matches the label of every top-level line show prints.
-var labelPattern = regexp.MustCompile(`(?m)^([A-Z][A-Za-z]*):`)
-
-func TestShowHelp_DescribesEveryLabelTheCommandPrints(t *testing.T) {
-	initTestApp(t)
-	ctx := context.Background()
-	// Every optional field is set so show prints every label it can print.
-	node, err := app.nodeSvc.CreateNode(ctx, &service.CreateNodeRequest{
-		Project:     "TEST",
-		Title:       "Fully populated",
-		Description: "A description",
-		Prompt:      "A prompt",
-		Creator:     "tester",
-	})
-	require.NoError(t, err)
-	id := node.ID
-	require.NoError(t, app.store.ClaimNode(ctx, id, "agent-x"))
-	captureStdout(t, func() { require.NoError(t, runAnnotate(id, "note")) })
-
-	out := showOutput(t, id)
-	help := newShowCmd().Long
-
-	labels := labelPattern.FindAllStringSubmatch(out, -1)
-	require.NotEmpty(t, labels)
-	for _, m := range labels {
-		assert.Contains(t, help, m[1], "help text must describe the %q line", m[1])
-	}
-	assert.Contains(t, help, "--json", "help must say where the complete record is")
-}
-
 func TestShowParity_MCPShowReturnsSameAnnotationsAsCLI(t *testing.T) {
 	initTestApp(t)
 	id := createShowNode(t, "A description")

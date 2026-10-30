@@ -2207,7 +2207,9 @@ values (`pending`, `pushed`, `applied`, `open_conflicts`,
 `project_prefix`). `open_conflicts` counts unresolved conflicts only: an
 lww conflict is unresolved until `mtix sync conflicts resolve` records a
 decision for its node and field, and a later conflict on the same node
-and field is unresolved again. Above 50 unresolved conflicts, status
+and field is unresolved again. Rows written before 0.5.4 by the replay
+of this store's own pushed events (self-replay rows, below) are not
+counted. Above 50 unresolved conflicts, status
 prints a banner that points at `mtix sync conflicts list --batch
 <node-id>`. There is no `conflicted` count: no sync path ever marks an
 event conflicted, so earlier versions always showed 0 there.
@@ -3480,6 +3482,32 @@ input, and the error names the newest conflict id of that node and field
 stands). Passing the id of a `manual` row is refused as invalid input as
 well: resolve the conflict it answers instead (`--all` shows both).
 
+**Phantom conflicts after upgrading from 0.5.3 or earlier.** Before 0.5.4,
+`mtix sync pull` replayed the events this store had pushed itself as if
+they came from another machine, and logged every own event older than a
+newer local write to the same field as an lww conflict. A store with a
+single writer could show dozens of unresolved conflicts that never were
+conflicts, and resolving them doubled the count. 0.5.4 stopped writing
+these rows (MTIX-95.2) but still counted the old ones. Since this version
+they are recognized when read, with nothing to run and nothing written
+(`sync_conflicts` stays append-only): an lww row is a self-replay row when
+both its winner and its loser event are in this store's own event log and
+were emitted by this store (any `sync_status` except `applied`). Two
+events of one machine are ordered by clock, so such a pair cannot be a
+genuine conflict. Self-replay rows are not counted by `mtix sync status`,
+not listed by `mtix sync conflicts list`, and shown by `--all` with
+`unresolved=false` and `self_replay=true` (`--json` carries both keys).
+They neither hide nor reopen a genuine conflict on the same node and
+field, and `resolve` refuses their ids. A decision recorded on such a row
+with 0.5.4 (a `manual` row whose winner and loser are both events of this
+store) is ignored the same way: it does not resolve an earlier genuine
+conflict of the node and field. A conflict with an event from
+another machine stays counted, and so does a row whose events this store
+no longer holds. `mtix sync doctor` has an informational check,
+`self-replay conflict rows`, that always passes and reports how many rows
+this covers; its fix is `none required; inspect with mtix sync conflicts
+list --all`.
+
 For whole-project escapes (many conflicts, divergent history):
 
 ```bash
@@ -3539,8 +3567,9 @@ mtix sync doctor             # health checks: PG reachable, schema current,
                              #   queue draining, no orphan applied,
                              #   board matches sync log, quarantined
                              #   events, valid node ids, unique node
-                             #   uids, held push events, secrets file
-                             #   mode, hub triggers, hub privileges
+                             #   uids, held push events, self-replay
+                             #   conflict rows (informational), secrets
+                             #   file mode, hub triggers, hub privileges
 ```
 
 The `board matches sync log` check runs on a project that syncs. It
@@ -4119,6 +4148,7 @@ change the node's status with the normal commands instead.
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
 | `mtix sync backup` fails with `a hub table was not found` (`pg_dump` names the table above it) | `pg_dump` found no table of that name through the search_path of the role the DSN names; no file was left. The hub has not been initialized since an upgrade added the table; or the hub's schema is named only in the DSN, which `pg_dump` does not receive; or the DSN's role lacks USAGE on the hub's schema, which leaves that schema off its search_path | Run `mtix sync init` with the DSN naming the table owner, then back up again; for a hub whose schema only the DSN names, first run the printed `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`, which takes precedence over a role-wide `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`; for a DSN role without USAGE, run the GRANT statements the backup prints: the schema's owner grants USAGE on the schema (find it with `SELECT nspowner::regrole FROM pg_catalog.pg_namespace WHERE nspname = '<schema>';`; for `public` in a database created on PostgreSQL 15 or later it is `pg_database_owner`, that is, the database's owner), and the table owner grants SELECT on each sync table and sync-table sequence by name (`GRANT SELECT ON TABLE <schema>.applied_events, <schema>.audit_log, ... TO <the DSN's role>;`), so the role gets nothing else in the schema; then keep that role with `--keep-role` so `mtix sync harden --apply` leaves its access |
 | An id in mtix text looks like `"evt\u00e9"` or `"a\nb"`, with quotes and backslash escapes | mtix prints a sync event id, and the ids that come from sync (a task uid, an annotation id), in plain text output as double-quoted, printable-ASCII text, so a control character, bidirectional mark or non-ASCII letter in a stored id cannot alter a terminal or log. The stored id is unchanged; `mtix sync collisions list` shows both held and incoming task uids in full with the same quoting and escaping, without truncation; its `--json` output preserves the exact uids. REST, MCP and gRPC do the same in their text and error messages; their JSON and protobuf fields carry the exact id. Validator refusals, local store and apply-path errors, and hub push and collision errors name the event id the same way; only rows recorded by older versions, in validator refusal reasons or local store error text, can still hold the raw id. An id or text a caller sends that a server repeats in an error or result message is escaped in the message (control, invisible and invalid bytes appear as `\n`, `\r`, `\t`, `\xNN`, `\uNNNN` or `\UNNNNNNNN`; printable text stays readable; a literal backslash is not escaped, so read the escapes as a hint); the JSON fields still carry what was sent. The exact id is in the quarantine `event_id` column and in `--json` output, not in a log field or error text | Read the escapes as the id (`\n` is a newline, `\u00e9` is é). Use the JSON output for the exact value, and give the quoted form to whoever runs the hub; never edit or rename the stored id |
+| `mtix sync status` counts conflicts after an upgrade from 0.5.3 or earlier although one machine wrote | Rows from the pre-0.5.4 replay of own events | None needed: they are not counted. `mtix sync conflicts list --all` shows them as `self_replay=true` |
 | `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
 | `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |
 

@@ -15,13 +15,16 @@ func TestWakeBudgetGuidance_SettingRowsDescribeCurrentEnforcement(t *testing.T) 
 	for _, path := range []string{"internal/docs/templates/skills/admin.md.tmpl", ".claude-plugin/skills/mtix-admin.md", ".codex-plugin/skills/admin/SKILL.md", "USERMANUAL.md"} {
 		t.Run(path, func(t *testing.T) {
 			body := readAgentInstruction(t, filepath.Join("..", "..", path))
-			for _, key := range []string{"wake.wakes_per_hour", "wake.backoff_after_unacked"} {
+			for _, key := range []string{"wake.wakes_per_hour", "wake.backoff_after_unacked", "wake.per_sender_per_hour"} {
 				require.Contains(t, wakeBudgetSettingLine(t, body, key), "callable dispatcher")
 			}
-			for _, key := range []string{"wake.per_sender_per_hour", "wake.remote_awake_daily_cap", "wake.reply_extensions_per_hour"} {
+			for _, key := range []string{"wake.remote_awake_daily_cap", "wake.reply_extensions_per_hour"} {
 				require.Contains(t, wakeBudgetSettingLine(t, body, key), "stored, not yet enforced")
 			}
 			require.Contains(t, body, "budget.rewind")
+			for _, phrase := range []string{"claimed author", "Legacy or unexplained credits", "Acknowledgements do not refund sender credits", "mtix config set wake.per_sender_per_hour <n> --agent <id>"} {
+				require.Contains(t, body, phrase)
+			}
 			require.NotContains(t, body, "Scanner discovery, budget and\nback-off enforcement")
 		})
 	}

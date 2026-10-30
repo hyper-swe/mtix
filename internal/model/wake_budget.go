@@ -25,6 +25,8 @@ type WakeBudgetSnapshot struct {
 
 // WakeBudgetProposal includes the fence before the admission decision is made.
 type WakeBudgetProposal struct {
+	// Sender is the addressed comment author, read inside the claim transaction.
+	Sender         string
 	Snapshot       WakeBudgetSnapshot
 	BoardCandidate string
 	Attempt        WakeAttempt

@@ -14,16 +14,12 @@ internal/store/sqlite/import_title_identity.go:refuseTitleMismatch:Errorf:60bff3
 internal/store/sqlite/import_workflow_report.go:writeWorkflowConflicts:Fprintf:33e5c7d6f24c9e83 | title uses %q, which escapes control and invisible characters in Go quoted-string syntax.
 cmd/mtix/relay_phase.go:runRelayPhase:Fprintf:7daed9048802c0c9 | tracked: MTIX-187.7.25
 cmd/mtix/sync.go:printAutoImportState:Printf:42e26db5d69953aa | tracked: MTIX-187.7.25
-cmd/mtix/sync_collisions.go:printCollisions:Fprintf:396318e5950a5956 | tracked: MTIX-187.7.25
-cmd/mtix/sync_collisions.go:printCollisions:Fprintf:fdc222d34c671b3b | tracked: MTIX-187.7.25
-cmd/mtix/sync_collisions.go:runSyncCollisionsResolve:Errorf:f318a3be8f418ce3 | tracked: MTIX-187.7.25
-cmd/mtix/sync_collisions.go:runSyncCollisionsResolve:Fprintf:181cf041b7ca3c4f | tracked: MTIX-187.7.25
-cmd/mtix/sync_collisions.go:runSyncCollisionsResolve:Fprintf:73fcc02deae0285f | tracked: MTIX-187.7.25
-cmd/mtix/sync_conflicts.go:checkResolveTarget:Errorf:2478afcc5ff8e9be | tracked: MTIX-187.7.25
-cmd/mtix/sync_conflicts.go:checkResolveTarget:Errorf:fe3efdb0fd90bb75 | tracked: MTIX-187.7.25
-cmd/mtix/sync_conflicts.go:printConflictsTable:Fprintf:2955868779c6ae4d | tracked: MTIX-187.7.25
+cmd/mtix/sync_collisions.go:resolveConnectedCollision:Fprintf:73fcc02deae0285f | tracked: MTIX-187.7.25
+cmd/mtix/sync_conflicts.go:printConflictsTable:Fprintf:34fa186ee748c307 | tracked: MTIX-187.7.25
 cmd/mtix/sync_conflicts.go:printResolveResult:Fprintf:bff076508c618da8 | tracked: MTIX-187.7.25
 cmd/mtix/sync_conflicts.go:printResolveResult:Fprintln:962426f84fe2becc | prints the encoding/json body, which escapes control characters.
+cmd/mtix/sync_conflicts_resolve_check.go:checkResolveTarget:Errorf:2478afcc5ff8e9be | tracked: MTIX-187.7.25
+cmd/mtix/sync_conflicts_resolve_check.go:checkResolveTarget:Errorf:fe3efdb0fd90bb75 | tracked: MTIX-187.7.25
 cmd/mtix/sync_doctor_node_ids.go:invalidNodeIDDetail:Sprintf:442957adbffebb5c | tracked: MTIX-187.7.25
 cmd/mtix/sync_pull_quarantine.go:retryQuarantinedEvents:Fprintf:2712cc30509683b2 | integer counts from a tuple result; no stored text is printed.
 cmd/mtix/sync_pull_quarantine.go:retryQuarantinedEvents:Fprintf:94549611c9be9ede | integer counts from a tuple result; no stored text is printed.

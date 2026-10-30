@@ -25,11 +25,11 @@ func TestValidateIngest_NodeIDCheck_MistypedForeignFieldCannotHideBadID(t *testi
 		want    string
 	}{
 		{"link_dep with a numeric parent_id", model.OpLinkDep,
-			`{"depends_on_node_id":"MTIX-9é","dep_type":"blocks","parent_id":5}`, `depends_on_node_id "MTIX-9é"`},
+			`{"depends_on_node_id":"MTIX-9é","dep_type":"blocks","parent_id":5}`, `depends_on_node_id "MTIX-9\u00e9"`},
 		{"unlink_dep with a numeric parent_id", model.OpUnlinkDep,
-			`{"depends_on_node_id":"MTIX-9é","parent_id":5}`, `depends_on_node_id "MTIX-9é"`},
+			`{"depends_on_node_id":"MTIX-9é","parent_id":5}`, `depends_on_node_id "MTIX-9\u00e9"`},
 		{"create_node with a numeric depends_on_node_id", model.OpCreateNode,
-			`{"title":"x","parent_id":"MTIX-1é","depends_on_node_id":5}`, `parent_id "MTIX-1é"`},
+			`{"title":"x","parent_id":"MTIX-1é","depends_on_node_id":5}`, `parent_id "MTIX-1\u00e9"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

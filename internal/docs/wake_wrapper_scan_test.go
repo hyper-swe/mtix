@@ -9,7 +9,7 @@ import (
 )
 
 // Wrapper and control-flow words are ordinary tokens, without interpretation.
-var wakeLogicalTokenRE = regexp.MustCompile(`\$|[^$\s;&|(){}!<>]+`)
+var wakeLogicalTokenRE = regexp.MustCompile(`\$|[^$\s;&|(){}!<>,=:-]+`)
 var wakeKnownReaderHeadRE = regexp.MustCompile(`^(?:(?:[A-Za-z_0-9./-]*/)?mtix|\$\{?MTIX_BIN\}?)$`)
 var wakeMetadataRedirectRE = regexp.MustCompile(`(?:[ \t]+[012]?>{1,2}(?:/dev/null|"\$WAKE_AGENT_LOG"))+$`)
 var wakeLeaseOccurrenceRE = regexp.MustCompile(`(?:^|[^$A-Za-z_0-9./-])(?:mtix|"?\$\{?MTIX_BIN\}?"?)[ \t]+inbox[ \t]+lease\b`)

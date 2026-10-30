@@ -434,8 +434,9 @@ standard-input routine regardless of variable or command name; unrelated shell
 variables do not need exact-line exemptions.
 A logical executable line with an inbox token after another token is
 conservatively treated as a reader source, regardless of groups, wrappers,
-reserved words or operators. Only complete approved capture, reference and
-lease forms are allowed. This is a token scan, without shell parsing, variable
+reserved words or operators. Commas, equals signs, colons and dashes also
+separate tokens. Only complete approved capture, reference, lease and documented
+status forms are allowed. This is a token scan, without shell parsing, variable
 expansion or alias resolution. It deliberately refuses even unrelated literal
 data such as 'echo inbox' inside executable markup; ordinary prose containing
 the same words is not scanned.

@@ -152,6 +152,57 @@ Each task carries a change log (field, old and new value for structured fields, 
 
 Never edit history entries in `.mtix/tasks.json` by hand (the checksum covers them), and never turn the switch on to work around a sync problem.
 
+### Removing sensitive text (0.6.0)
+
+These steps clean an editable current field and a fresh snapshot, not every
+retained copy. Coordinate with the team, pause other writers and syncing, and
+resolve any pending auto-import refusal before replacing the board file. Never
+paste secrets into tasks, comments or activity notes, and never print credentials
+while checking cleanup.
+
+1. Replace the affected editable field with a clean value. For example,
+   `mtix update PROJ-1 --description Clean` replaces the description; use the
+   appropriate flag for the affected field and replace `PROJ-1` with its task id.
+   This does not change other fields, comments or activity records. Free-text
+   task-history entries omit old and new text; structured fields retain values.
+   Overwriting labels or assignee leaves the old value in local history and,
+   while `history.export` is on, in exported history.
+2. `history.export` is `false` by default. If it was on, turn it off with
+   `mtix config set history.export false`, then verify `false` with
+   `mtix config get history.export`. This excludes history from a fresh export,
+   not the current fields, comments or activity that the export also carries.
+3. Re-export from the project root to a new private file, then replace
+   `.mtix/tasks.json` only if export succeeds. In a POSIX shell:
+
+   ```sh
+   (umask 077; set -C; mtix export > .mtix/tasks-clean.json) &&
+     mv .mtix/tasks-clean.json .mtix/tasks.json
+   ```
+
+   The temporary name must not already exist; the command refuses to overwrite
+   it. On failure, keep the original board file and do not publish the partial
+   export. On success, the fresh snapshot has no per-task or top-level history.
+   Do not hand-edit history or its checksum, and do not import an edited snapshot
+   expecting it to erase local entries: history import keeps local entries.
+
+The local SQLite store keeps task history even with export off. In 0.6.0, no
+supported command selectively removes a task-history entry. Retention can trim
+old ordinary change entries, but it is not targeted erasure and does not clean
+other copies.
+
+Sync sends task creation and field-change payloads, including free text,
+separately from the history export. Older queued events can still carry sensitive
+text after the current field is cleaned. mtix 0.6.0 cannot erase retained hub
+copies. Coordinate those copies and queued events with the operator before
+resuming sync; a clean snapshot or field does not purge them.
+
+Past Git history, other clones, copied exports and backups are outside mtix's
+reach. A new clean commit leaves past commits intact. Removing sensitive text
+from past commits requires a Git history rewrite and a team-coordinated
+force-push; every existing clone must re-clone from the rewritten repository.
+Do not push old history back. Re-cloning does not erase hub copies. Task-history
+redaction is planned for the protocol-2 release; it is not available in 0.6.0.
+
 ## Requirements checklist
 
 Before setup, confirm each item with the user or the database administrator:
@@ -299,6 +350,43 @@ Use the writer's DSN for daily sync. The owner's DSN is for the commands in the 
 
 For a development hub on this machine (loopback or a local socket only), `--insecure-tls` on the sync commands allows a weaker `sslmode`; never use it for a remote hub.
 
+## Init locking and deadlines
+
+`mtix sync init` allows 30 seconds to connect,
+then a separate `--migrate-timeout` (default `5m`, positive Go duration)
+for the entire migration, including waiting for the migration advisory lock.
+Other init callers and admin commands (`mtix sync migrate`,
+`mtix sync repair-uids` and `mtix sync harden --apply`) take this lock too;
+their own deadlines may end the wait first. Ordinary pushes and pulls do
+not acquire it. Migrations still replay to restore missing functions and triggers.
+Migrations 010 and 013 check the column catalog before ALTER: an up-to-date
+`sync_events` takes no `ACCESS EXCLUSIVE` column lock, so event SELECTs can
+continue. Adding a missing column blocks both event reads and writes until
+commit or rollback. The migration's index statements (including first builds
+of 014/015) take `SHARE` locks that block event writes until the transaction
+ends, even when every index already exists. Index statements alone allow
+event SELECTs. Migration 006 skips unchanged, enabled
+audit/conflict triggers, so an up-to-date hub takes no `ACCESS EXCLUSIVE`
+relation lock. Trigger repair drops and recreates a trigger, blocking reads
+and writes on its table until commit or rollback. Thus init can still delay
+a push, even on a current hub. A queued exclusive lock can also make later
+SELECTs wait. Schedule upgrades and restore initialization when a sync pause
+is acceptable.
+
+On migration deadline expiry, init names `--migrate-timeout`. Migration is
+atomic: an interrupted index build rolls back. Retry as the hub owner using
+the larger budget printed in the error. For a default-budget timeout,
+`mtix sync init --migrate-timeout=15m` is one example; increase it further for
+the hub's size, then run `mtix sync doctor`. This also applies to a joiner's first init and
+the post-restore runbook: repeated short retries cannot finish an index that
+always exceeds the budget. Locks last until commit or rollback, within the
+migration budget plus server cancellation/rollback cleanup; an earlier caller
+cancellation or server timeout can end the attempt sooner. Waiting pushes and
+pulls have their own statement timeout and retry limits (normally five
+10-second attempts plus backoff), and may fail before init ends. Their queued
+events and pull cursor survive; retry them after init succeeds. After migration,
+registry checks and hub registration get a fresh 30-second budget.
+
 ## Daily routine
 
 - At session start run `mtix sync push`, then `mtix sync pull`. Push first, so a pull never runs while local changes are unpushed.
@@ -370,6 +458,32 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 - **A local store that is lost or damaged.** Back up what remains, make a fresh project directory with `mtix init`, and run `mtix sync clone` there. Clone refuses while the hub holds an event that fails the pull checks, and names it; on the fresh store the recovery is `mtix sync pull`, which quarantines that event.
 - **Local changes the hub never received.** Run `mtix sync push` first and check that `mtix sync status` shows `pending` 0. Never discard local state while anything is pending.
 - **The hub itself.** `mtix sync backup --output <new file>` writes a portable SQL dump of every hub table with `pg_dump`. It never overwrites a file, so choose a new path each time. A restore needs the owner: the admin skill has the runbook (restore, `mtix sync init`, a passing `hub-triggers` check, then `mtix sync mark-restored` exactly once). A dump holds no privileges, so grant the writer the list above again afterwards and run `mtix sync doctor` with the writer's DSN.
+
+## Workflow conflict history
+
+When `mtix import .mtix/tasks.json --mode merge` refuses a workflow conflict,
+read each field's local and file history before choosing `--prefer ours|theirs`
+or `--ours ID,ID` / `--theirs ID,ID`. The report shows five entries per side,
+newest first (entry id breaks timestamp ties), and a more count for omitted
+entries. Identical shared entry records form the available common history and
+are omitted; this is an identity comparison, not a wall-clock guess about
+causality. When there is no shared history, every available entry is eligible.
+Missing or empty history is no proof of no changes: the peer may have
+`history.export` off, use an older build, or have trimmed entries. The activity
+hint remains a hint; never infer the correct choice from absent history.
+
+With `--json`, a refused workflow merge writes an object to stdout containing
+`applied: false` and `workflow_conflicts`. Each field contains `local_history`,
+`file_history`, `local_history_more` and `file_history_more`; text guidance
+remains on stderr and the command exits with an error. History values and actor
+identities are quoted in text output; JSON carries their original data.
+Resolving either way keeps the union of both sides' history and adds one
+value-free `resolution` record per task, even when ours leaves its values
+unchanged. Its field is `resolution:<side>:<fields>`, identifying the choice and
+conflicting field names without copying values. The receipt and choice commit
+in one transaction. Repeating an import after the values agree adds no new
+resolution receipt. Ordinary field changes are still recorded separately;
+resolution records are exempt from ordinary change-entry retention. Imports reject valued or malformed resolution records before any write; the refusal names the task and entry, never the values. Ask the source writer to regenerate a valid board; do not hand-edit history or bypass its checksum.
 
 ## When to ask the user
 

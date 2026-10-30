@@ -2274,6 +2274,8 @@ creation, and the same pull then applies the edit. A recovered claim or
 status change that is older than the task's current one changes
 nothing; it is only recorded as received.
 
+A push that stalls is ended by the hub: after one minute idle, or (on Postgres 17 and later) after ten minutes in total. None of that push's events are committed, and mtix retries the push automatically, pushing the same events again without duplicates. You see an error only if the retries are exhausted; the events stay pending and the next `mtix sync` tries again.
+
 - **First pull after upgrading.** It compares the full hub event history
   once and prints `late-event sweep (first run, full hub history): N
   late events recovered`. Changes missed before the upgrade arrive

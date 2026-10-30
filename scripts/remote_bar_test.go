@@ -461,8 +461,13 @@ func TestRemoteBar_Snapshot_KeepsTrackedFilesDespiteIgnoreRules(t *testing.T) {
 // realistic JSON, applying the --jq expression it is given with jq.
 func stubGh(t *testing.T) (binDir, logFile string) {
 	t.Helper()
-	if _, err := exec.LookPath("jq"); err != nil {
-		t.Skip("jq not installed; the gh stub cannot apply the --jq filters (install jq to run this check)")
+	_, lookErr := exec.LookPath("jq")
+	switch decision, reason := decideJQ(lookErr == nil, os.Getenv); decision {
+	case jqFail:
+		t.Fatal(reason)
+	case jqSkip:
+		t.Skip(reason)
+	case jqProceed:
 	}
 	binDir = t.TempDir()
 	logFile = filepath.Join(binDir, "gh.log")

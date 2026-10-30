@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -61,14 +62,16 @@ func TestContextWarning_MentionsCompletenessTest(t *testing.T) {
 	assert.Contains(t, got, "zero conversation")
 }
 
-// captureStderr redirects os.Stderr for the duration of fn and returns what was written.
+// captureStderr redirects os.Stderr for the duration of fn and returns what was
+// written. os.Stderr is restored when fn returns (or panics), not only at the
+// end of the test, so a later stderr write in the same test works and nested
+// captures unwind in order (MTIX-211).
 func captureStderr(t *testing.T, fn func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
 	require.NoError(t, err)
 	orig := os.Stderr
 	os.Stderr = w
-	t.Cleanup(func() { os.Stderr = orig })
 
 	done := make(chan struct{})
 	var buf bytes.Buffer
@@ -77,9 +80,20 @@ func captureStderr(t *testing.T, fn func()) string {
 		close(done)
 	}()
 
-	fn()
-	_ = w.Close()
+	var finish sync.Once
+	restore := func() {
+		finish.Do(func() {
+			os.Stderr = orig
+			_ = w.Close()
+		})
+	}
+	t.Cleanup(restore) // a FailNow inside fn skips the return path; Cleanup still runs
+	func() {
+		defer restore() // also runs when fn panics
+		fn()
+	}()
 	<-done
+	_ = r.Close()
 	return buf.String()
 }
 

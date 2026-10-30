@@ -696,6 +696,10 @@ An event can reach the hub without this replica recording it: push marks an even
 - Never run `mtix sync reconcile --discard-local` to clear a pending queue that does not drain: it deletes every unpushed change and local task, and it needs the ticket count typed at an interactive terminal (no flag supplies it), so it cannot run unattended.
 - Never delete the hold of an event under the same id with other content, or edit the event to match the hub's copy.
 
+## Serving on the network
+
+`mtix serve` binds to loopback by default and needs no credential there. Binding anywhere else needs `--insecure-bind` and a bearer token. **Recognize:** `mtix serve --addr <address>` refuses with a message naming `--insecure-bind`, or `mtix doctor` shows a `serve.exposure` warning or failure. **Routine:** run the exact command the message prints, `mtix serve --addr <address> --insecure-bind`; the first run creates the token in the operator-local state directory and prints only its path. Clients send `Authorization: Bearer <token>` on every request. **Verify:** `mtix doctor` shows `serve.exposure` passing, and a request without the token gets `401`. **Rotate:** delete the token file and restart. **Never:** print, paste, log, commit or put the token in a URL; use `--insecure-bind` on an untrusted network; keep the token file inside a project.
+
 ## Operator-local state
 
 `mtix hooks status` and `mtix hooks status --json` validate the operator-local state directory and show corrective guidance. This check creates no state and grants no hook approval. The directory is `$XDG_CONFIG_HOME/mtix` (default `~/.config/mtix`) on macOS and Linux, or `%APPDATA%\mtix` on Windows. Use an operator-owned directory with mode 0700 and files with mode 0600; Windows requires a protected user-only ACL. Keep it outside projects, git work trees, temporary directories, `~/.codex`, `CODEX_HOME` and harness writable roots, with no symlink components. Never commit or dotfile-sync it.

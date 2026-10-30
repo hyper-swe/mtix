@@ -384,3 +384,7 @@ mtix is a pre-funding open-source project. Triage is best-effort. Critical issue
 | 1.5 | unreleased | Recorded the accepted agent-inbox and attach requirements, beta defaults, operator-local confirmation diagnostics and release boundaries. |
 
 Changes that alter the trust model (adding/removing a guarantee, adding a new threat) require a documented version bump and a corresponding `CHANGELOG.md` security note.
+
+## Network exposure of `mtix serve`
+
+`mtix serve` binds to loopback by default (`--addr`, else `api.bind`) and a loopback bind needs no credential. Any other address is refused unless the operator passes `--insecure-bind` and a bearer token exists; `Server.Start` repeats the check so a library caller cannot skip it. The token is 32 random bytes in the operator-local state directory (mode 0600, never inside a project; a group or world readable, malformed or in-project file is refused), is checked in constant time before the Host, Origin and CSRF checks, and is never printed or logged. A WebSocket offers it as the `mtix.auth.<token>` subprotocol and receives only the fixed name `mtix.auth` back. Residual risk: the transport is plain HTTP, so the token and task data are readable by anyone on the path; use a trusted network or a tunnel the operator runs. The gRPC server listens on `127.0.0.1` only, and a test pins it.

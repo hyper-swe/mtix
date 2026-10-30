@@ -1556,7 +1556,9 @@ The UI connects to `/ws/events` via WebSocket for live updates. Connection statu
 | `--addr` | `127.0.0.1` | Bind address |
 | `--port` | `8377` | HTTP port |
 
-The server binds to localhost by default. To reach it from another machine, bind to the address that clients use, for example `--addr 192.168.1.20`. The API has no authentication, so do this only on a trusted network; the server prints a warning at startup for any bind address that is not loopback.
+The server binds to localhost by default (`--addr`, else the `api.bind` setting, else `127.0.0.1`). A loopback bind needs no credential.
+
+To reach the server from another machine, bind to the address that clients use and opt in explicitly: `mtix serve --addr 192.168.1.20 --insecure-bind`. A non-loopback address (including `0.0.0.0` and `::`) is refused without `--insecure-bind`, and the refusal prints this exact command. With it, every request needs a bearer token: the first run creates a random 32-byte token in the operator-local state directory (`serve-token.json`, mode 0600, never inside a project) and prints only its path, never the token. Read it yourself with `jq -r .data.token <path>`, and send it as `Authorization: Bearer <token>` on every request, health and the OpenAPI document included. A browser WebSocket cannot set a header, so it offers the subprotocols `mtix.auth` and `mtix.auth.<token>`; the server answers with `mtix.auth` only and never repeats the token. Never put the token in a URL. A wrong or missing token gets `401 AUTH_REQUIRED` before any other check. To rotate the token, delete the file and restart. The traffic is plain HTTP, so use it on a trusted network or behind a tunnel you run. A configured `api.bind` that is not loopback now triggers the same refusal. `mtix doctor` shows a `serve.exposure` row when the effective bind is not loopback: a warning with the exact fix when no token exists yet, a failure when the token file is unusable (group or world readable, malformed, or inside a project). The gRPC server listens on `127.0.0.1` only.
 
 ### Accepted Requests
 

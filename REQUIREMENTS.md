@@ -1405,9 +1405,9 @@ After bulk data operations that may bypass row-level triggers (e.g., `mtix impor
 
 **NFR-5.1** All user/agent-generated content (title, description, prompt, annotations, comments) MUST be rendered in the web UI using a sanitized markdown renderer. Raw HTML MUST NOT be permitted in rendered output. The renderer MUST strip `<script>`, `<iframe>`, `onerror`, `javascript:` URIs, and all event handler attributes.
 
-**NFR-5.2** The HTTP server MUST default to binding on `127.0.0.1` (localhost only). A `--bind` flag and `api.bind` config option MUST allow overriding this. Binding to `0.0.0.0` MUST emit a warning about unauthenticated network exposure.
+**NFR-5.2** The HTTP server MUST default to binding on `127.0.0.1` (localhost only). The `--addr` flag and the `api.bind` config option MUST allow overriding this; the flag wins, then the setting. A non-loopback bind (`0.0.0.0`, `::`, a network address or a host name) MUST be refused unless `--insecure-bind` is given and bearer authentication is configured (NFR-5.3, NFR-5.7); the refusal MUST name both and print the exact fix. A permitted network bind MUST still print a warning that traffic is unencrypted. The gRPC server MUST listen on `127.0.0.1` only.
 
-**NFR-5.3** For Phase 1 (local mode): no authentication required. For cloud sync mode (Phase 5+): API key authentication (`Authorization: Bearer <key>`) MUST be supported. Keys stored in config, one per agent/user.
+**NFR-5.3** For Phase 1 (local mode, loopback bind): no authentication required. On a non-loopback bind every HTTP and WebSocket request MUST carry `Authorization: Bearer <token>` (a WebSocket may instead offer the `mtix.auth.<token>` subprotocol; the server answers with the fixed `mtix.auth` and never echoes the token), compared in constant time, and refused with 401 before any other check. The token is 32 random bytes kept in the operator-local state directory at mode 0600, outside any project, created on first use by `mtix serve --insecure-bind`, and never printed or logged. For cloud sync mode (Phase 5+): API key authentication (`Authorization: Bearer <key>`) MUST be supported. Keys stored in config, one per agent/user.
 
 **NFR-5.4** Cloud sync MUST use TLS 1.3. Cloud storage MUST encrypt data at rest. Team isolation MUST ensure projects are only accessible to authorized team members.
 
@@ -1415,7 +1415,7 @@ After bulk data operations that may bypass row-level triggers (e.g., `mtix impor
 
 **NFR-5.6** All API responses MUST include `Cache-Control: no-store` and `Pragma: no-cache` headers. This prevents sensitive data (assembled prompts, node content, agent activity) from leaking via browser caches, proxy caches, or CDN caches.
 
-**NFR-5.7** When `api.bind` is set to anything other than `127.0.0.1`, the server MUST refuse to start unless authentication is configured (NFR-5.3 API key), OR the user explicitly passes `--insecure-bind` to acknowledge the risk. This prevents accidental network exposure without auth.
+**NFR-5.7** When the effective bind (`--addr`, else `api.bind`) is not loopback, the server MUST refuse to start unless `--insecure-bind` is given AND the bearer token of NFR-5.3 exists. Server.Start enforces this too, so a library caller cannot skip it. `mtix doctor` MUST report a configured non-loopback bind and whether the token is present, with the exact fix and `--json` output.
 
 **NFR-5.8** All SQL queries MUST use parameterized queries (`?` placeholders). String concatenation for SQL query construction is FORBIDDEN — no exceptions. This applies to all `LIKE` patterns, `INSERT`, `UPDATE`, `DELETE`, and `SELECT` statements. Subtree queries using the materialized path pattern MUST use `WHERE id LIKE ? ESCAPE '\'` with the pattern passed as a parameter (e.g., `PROJ-42.1.%`). Even though FR-2.1a restricts prefix characters, defense-in-depth requires parameterization everywhere.
 

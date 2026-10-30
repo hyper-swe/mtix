@@ -201,7 +201,7 @@ When an agent calls `mtix_context` for `PROJ-1.3.2`, it receives the **assembled
 ```
 
 The response includes:
-- **Ancestor chain** — root to target; by default each entry has id, depth, tier, title and status, and the ancestor prompts and unresolved annotations appear once in `assembled_prompt`. Pass `"chain": true` to also get each entry's description, prompt and annotations as structured fields (about 3x the size)
+- **Ancestor chain** — root to target; by default each entry has id, depth, tier, title, status and description, and the ancestor prompts and unresolved annotations appear once in `assembled_prompt`. Pass `"chain": true` to also get each entry's prompt, creator and annotations as structured fields (the prompts then appear twice)
 - **Siblings** — peer tasks at the same level (for coordination awareness)
 - **Blockers** — dependency nodes that must complete first
 - **Assembled prompt** — the complete briefing, ready to execute from

@@ -75,7 +75,7 @@ Call `mcp__mtix__mtix_session_start` with your agent ID and the {{ .ProjectPrefi
 Call `mcp__mtix__mtix_ready` to list nodes available for pickup. These are unassigned, unblocked nodes in `open` status.
 
 ### 3. Read Context (MANDATORY)
-Call `mcp__mtix__mtix_context` with the node ID. Read the ENTIRE `assembled_prompt` field (ancestor prompts and unresolved annotations appear there once; the structured `chain` carries only id, tier, title and status unless you pass `chain: true`). This is your briefing — business goal, technical constraints, exact instructions, acceptance criteria, and test specifications.
+Call `mcp__mtix__mtix_context` with the node ID. Read the ENTIRE `assembled_prompt` field (ancestor prompts and unresolved annotations appear there once; the structured `chain` carries id, tier, title, status and description but no prompt, creator or annotations unless you pass `chain: true`). This is your briefing — business goal, technical constraints, exact instructions, acceptance criteria, and test specifications.
 
 ### 4. Claim
 Call `mcp__mtix__mtix_claim` with the node ID and your agent ID. This prevents other agents from picking up the same work.

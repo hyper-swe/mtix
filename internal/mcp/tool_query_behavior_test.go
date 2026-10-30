@@ -188,7 +188,7 @@ func TestToolQuery_Context_DefaultChainIsSlimAndPromptsInAssembled(t *testing.T)
 		require.Equal(t, n.Title, got.Chain[i].Title)
 		require.Equal(t, n.Status, got.Chain[i].Status)
 		require.Empty(t, got.Chain[i].Prompt, "MTIX-225: prompt lives in assembled_prompt only")
-		require.Empty(t, got.Chain[i].Description)
+		require.Equal(t, n.Description, got.Chain[i].Description, "description is not in assembled_prompt, so slim keeps it")
 	}
 	require.Contains(t, got.AssembledPrompt, root.Prompt)
 	require.Contains(t, got.AssembledPrompt, child.Prompt)

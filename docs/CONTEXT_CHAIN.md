@@ -19,7 +19,7 @@ When you call `mtix context <id>` or `mtix_context`:
 
 The assembled prompt is the agent's primary briefing document. It contains everything needed to execute the task without reading any other source.
 
-**JSON and MCP payload.** `mtix context <id> --json` and `mtix_context` return each ancestor's prompt and unresolved annotations once, inside `assembled_prompt`. The structured `chain` array lists only `id`, `depth`, `tier`, `title` and `status` for each node. Read `assembled_prompt` for the briefing. If you need the per-ancestor `prompt`, `description`, `creator` or `annotations` as separate fields, ask for them with `mtix context <id> --json --chain` or `mtix_context` with `{"chain": true}`; that roughly triples the payload because the same text then appears twice.
+**JSON and MCP payload.** `mtix context <id> --json` and `mtix_context` return each ancestor's prompt and unresolved annotations once, inside `assembled_prompt`. The structured `chain` array lists `id`, `depth`, `tier`, `title`, `status` and `description` (the description is not in `assembled_prompt`, and is omitted for ancestors more than 2 levels above the target) and drops `prompt`, `creator` and `annotations`. Read `assembled_prompt` for the briefing. If you need the per-ancestor `prompt`, `creator` or `annotations` as separate fields, ask for them with `mtix context <id> --json --chain` or `mtix_context` with `{"chain": true}`; the prompts then appear twice, so the payload grows.
 
 ## Writing Context-Rich Descriptions
 

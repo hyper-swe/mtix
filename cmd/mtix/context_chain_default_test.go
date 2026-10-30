@@ -19,9 +19,9 @@ import (
 // payload carries each ancestor's prompt once, in assembled_prompt. The full
 // structured chain is opt-in (--chain / chain:true).
 
-// ctxFiller makes each prompt a realistic size (about 400 characters), so the
+// ctxFiller makes each prompt a realistic size (about 900 characters), so the
 // fixed per-entry metadata of the slim chain is measured against real prompts.
-var ctxFiller = strings.Repeat(" The agent must read the constraints, keep the change small and cover every error path.", 5)
+var ctxFiller = strings.Repeat(" The agent must read the constraints, keep the change small and cover every error path.", 10)
 
 var (
 	ctxPromptRoot  = "ROOT-PROMPT-ALPHA-7731 build the whole subsystem carefully." + ctxFiller
@@ -89,9 +89,14 @@ func TestContextJSON_DefaultDepth3_EachAncestorPromptOnce(t *testing.T) {
 		assert.NotEmpty(t, e.Title)
 		assert.NotEmpty(t, e.Status)
 		assert.Empty(t, e.Prompt, "entry %d prompt", i)
-		assert.Empty(t, e.Description, "entry %d description", i)
 		assert.Empty(t, e.Annotations, "entry %d annotations", i)
 	}
+	// Descriptions are NOT in assembled_prompt, so slim keeps them (the
+	// FR-12.2 rule still omits them for ancestors more than 2 levels away).
+	assert.Empty(t, p.Chain[0].Description, "root is 3 levels from the target")
+	assert.Equal(t, "Epic description", p.Chain[1].Description)
+	assert.Equal(t, "Issue description", p.Chain[2].Description)
+	assert.Equal(t, "Leaf description", p.Chain[3].Description)
 }
 
 func TestContextJSON_DefaultDepth3_SizeWithin1Point3OfAssembledPrompt(t *testing.T) {
@@ -170,4 +175,22 @@ func TestMCPContext_Description_NamesChainOptIn(t *testing.T) {
 		}
 	}
 	t.Fatal("mtix_context not registered")
+}
+
+// TestContextCmd_ExecuteChainFlag_WiresThroughToRunContext drives the cobra
+// command, so a RunE that ignores --chain is caught.
+func TestContextCmd_ExecuteChainFlag_WiresThroughToRunContext(t *testing.T) {
+	id := seedDepth3Context(t)
+	app.jsonOutput = true
+
+	run := func(args ...string) string {
+		return captureStdout(t, func() {
+			_, err := executeCmd(newContextCmd(), args...)
+			require.NoError(t, err)
+		})
+	}
+	assertAncestorPromptsOnce(t, run(id), 1)
+	out := run(id, "--chain")
+	assertAncestorPromptsOnce(t, out, 2)
+	assert.Equal(t, ctxPromptRoot, decodeCtxPayload(t, out).Chain[0].Prompt)
 }

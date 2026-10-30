@@ -737,11 +737,11 @@ mtix context PROJ-1.1.1 --max-tokens 4000
 # Machine-readable: ancestor content appears once, in assembled_prompt
 mtix context PROJ-1.1.1 --json
 
-# Also return each ancestor's prompt, description and annotations as structured fields
+# Also return each ancestor's prompt, creator and annotations as structured fields
 mtix context PROJ-1.1.1 --json --chain
 ```
 
-By default `--json` (and the MCP tool `mtix_context`) keeps ancestor prompts and unresolved annotations in `assembled_prompt` only; the `chain` array lists `id`, `depth`, `tier`, `title` and `status`. `--chain` (MCP argument `chain: true`) restores the full structured chain, at about three times the size because the same text then appears twice.
+By default `--json` (and the MCP tool `mtix_context`) keeps ancestor prompts and unresolved annotations in `assembled_prompt` only; the `chain` array lists `id`, `depth`, `tier`, `title`, `status` and `description` (descriptions are not in `assembled_prompt`) and omits `prompt`, `creator` and `annotations`. `--chain` (MCP argument `chain: true`) restores the full structured chain; the prompts then appear twice, so the payload grows.
 
 The assembled context includes:
 1. **Ancestor chain** — from root story down to the target node, with prompts at each level

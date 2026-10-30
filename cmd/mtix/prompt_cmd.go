@@ -128,7 +128,7 @@ func newContextCmd() *cobra.Command {
 	cmd.Flags().IntVar(&maxTokens, "max-tokens", 0,
 		"Maximum token budget for assembled prompt (0 = unlimited)")
 	cmd.Flags().BoolVar(&withChain, "chain", false,
-		"With --json, include the full structured ancestor chain (prompt, description, annotations)")
+		"With --json, add prompt, creator and annotations to each structured chain entry (default: they appear once, in assembled_prompt)")
 
 	return cmd
 }

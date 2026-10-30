@@ -9,7 +9,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"math"
 	"path/filepath"
 
 	"github.com/google/uuid"
@@ -21,8 +20,8 @@ type wakeBudgetQuery interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-// WakeAckMark counts effective covered sequence positions without mutation.
-// Selective rows below the cumulative cursor do not add coverage twice.
+// WakeAckMark counts acknowledged recipient inbox events without mutation.
+// Direct and hook deliveries, and overlapping acknowledgements, count once.
 func (s *Store) WakeAckMark(ctx context.Context, agent string) (int64, error) {
 	mark, err := readWakeAckMark(ctx, s.readDB, agent)
 	if err != nil {
@@ -32,17 +31,22 @@ func (s *Store) WakeAckMark(ctx context.Context, agent string) (int64, error) {
 }
 
 func readWakeAckMark(ctx context.Context, q wakeBudgetQuery, agent string) (int64, error) {
-	var cursor, count int64
-	err := q.QueryRowContext(ctx, `SELECT c.cursor,COUNT(a.event_seq)
-		FROM (SELECT COALESCE((SELECT cursor FROM agent_inbox_cursor WHERE agent_id=?),0) AS cursor) c
-		LEFT JOIN agent_inbox_ack a ON a.agent_id=? AND a.event_seq>c.cursor`, agent, agent).Scan(&cursor, &count)
+	var cursor int64
+	if err := q.QueryRowContext(ctx, `SELECT COALESCE(
+  (SELECT cursor FROM agent_inbox_cursor WHERE agent_id=?),0)`, agent).Scan(&cursor); err != nil {
+		return 0, fmt.Errorf("read wake acknowledgement cursor: %w", err)
+	}
+	if cursor < 0 {
+		return 0, fmt.Errorf("wake acknowledgement coverage is invalid: %w", model.ErrInvalidInput)
+	}
+	// Use the inbox eligibility set, rather than the global journal cursor:
+	// advancing over foreign or already selectively acked events has no effect.
+	var pending, total int64
+	err := q.QueryRowContext(ctx, inboxCountSQL, agent, agent, agent, agent).Scan(&pending, &total)
 	if err != nil {
 		return 0, fmt.Errorf("read effective wake acknowledgement: %w", err)
 	}
-	if cursor < 0 || count < 0 || count > math.MaxInt64-cursor {
-		return 0, fmt.Errorf("wake acknowledgement coverage is invalid: %w", model.ErrInvalidInput)
-	}
-	return cursor + count, nil
+	return total - pending, nil
 }
 
 // WakeBudgetSource identifies this canonical database location without mutation.

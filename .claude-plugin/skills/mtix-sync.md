@@ -152,6 +152,57 @@ Each task carries a change log (field, old and new value for structured fields, 
 
 Never edit history entries in `.mtix/tasks.json` by hand (the checksum covers them), and never turn the switch on to work around a sync problem.
 
+### Removing sensitive text (0.6.0)
+
+These steps clean an editable current field and a fresh snapshot, not every
+retained copy. Coordinate with the team, pause other writers and syncing, and
+resolve any pending auto-import refusal before replacing the board file. Never
+paste secrets into tasks, comments or activity notes, and never print credentials
+while checking cleanup.
+
+1. Replace the affected editable field with a clean value. For example,
+   `mtix update PROJ-1 --description Clean` replaces the description; use the
+   appropriate flag for the affected field and replace `PROJ-1` with its task id.
+   This does not change other fields, comments or activity records. Free-text
+   task-history entries omit old and new text; structured fields retain values.
+   Overwriting labels or assignee leaves the old value in local history and,
+   while `history.export` is on, in exported history.
+2. `history.export` is `false` by default. If it was on, turn it off with
+   `mtix config set history.export false`, then verify `false` with
+   `mtix config get history.export`. This excludes history from a fresh export,
+   not the current fields, comments or activity that the export also carries.
+3. Re-export from the project root to a new private file, then replace
+   `.mtix/tasks.json` only if export succeeds. In a POSIX shell:
+
+   ```sh
+   (umask 077; set -C; mtix export > .mtix/tasks-clean.json) &&
+     mv .mtix/tasks-clean.json .mtix/tasks.json
+   ```
+
+   The temporary name must not already exist; the command refuses to overwrite
+   it. On failure, keep the original board file and do not publish the partial
+   export. On success, the fresh snapshot has no per-task or top-level history.
+   Do not hand-edit history or its checksum, and do not import an edited snapshot
+   expecting it to erase local entries: history import keeps local entries.
+
+The local SQLite store keeps task history even with export off. In 0.6.0, no
+supported command selectively removes a task-history entry. Retention can trim
+old ordinary change entries, but it is not targeted erasure and does not clean
+other copies.
+
+Sync sends task creation and field-change payloads, including free text,
+separately from the history export. Older queued events can still carry sensitive
+text after the current field is cleaned. mtix 0.6.0 cannot erase retained hub
+copies. Coordinate those copies and queued events with the operator before
+resuming sync; a clean snapshot or field does not purge them.
+
+Past Git history, other clones, copied exports and backups are outside mtix's
+reach. A new clean commit leaves past commits intact. Removing sensitive text
+from past commits requires a Git history rewrite and a team-coordinated
+force-push; every existing clone must re-clone from the rewritten repository.
+Do not push old history back. Re-cloning does not erase hub copies. Task-history
+redaction is planned for the protocol-2 release; it is not available in 0.6.0.
+
 ## Requirements checklist
 
 Before setup, confirm each item with the user or the database administrator:
@@ -299,6 +350,43 @@ Use the writer's DSN for daily sync. The owner's DSN is for the commands in the 
 
 For a development hub on this machine (loopback or a local socket only), `--insecure-tls` on the sync commands allows a weaker `sslmode`; never use it for a remote hub.
 
+## Init locking and deadlines
+
+`mtix sync init` allows 30 seconds to connect,
+then a separate `--migrate-timeout` (default `5m`, positive Go duration)
+for the entire migration, including waiting for the migration advisory lock.
+Other init callers and admin commands (`mtix sync migrate`,
+`mtix sync repair-uids` and `mtix sync harden --apply`) take this lock too;
+their own deadlines may end the wait first. Ordinary pushes and pulls do
+not acquire it. Migrations still replay to restore missing functions and triggers.
+Migrations 010 and 013 check the column catalog before ALTER: an up-to-date
+`sync_events` takes no `ACCESS EXCLUSIVE` column lock, so event SELECTs can
+continue. Adding a missing column blocks both event reads and writes until
+commit or rollback. The migration's index statements (including first builds
+of 014/015) take `SHARE` locks that block event writes until the transaction
+ends, even when every index already exists. Index statements alone allow
+event SELECTs. Migration 006 skips unchanged, enabled
+audit/conflict triggers, so an up-to-date hub takes no `ACCESS EXCLUSIVE`
+relation lock. Trigger repair drops and recreates a trigger, blocking reads
+and writes on its table until commit or rollback. Thus init can still delay
+a push, even on a current hub. A queued exclusive lock can also make later
+SELECTs wait. Schedule upgrades and restore initialization when a sync pause
+is acceptable.
+
+On migration deadline expiry, init names `--migrate-timeout`. Migration is
+atomic: an interrupted index build rolls back. Retry as the hub owner using
+the larger budget printed in the error. For a default-budget timeout,
+`mtix sync init --migrate-timeout=15m` is one example; increase it further for
+the hub's size, then run `mtix sync doctor`. This also applies to a joiner's first init and
+the post-restore runbook: repeated short retries cannot finish an index that
+always exceeds the budget. Locks last until commit or rollback, within the
+migration budget plus server cancellation/rollback cleanup; an earlier caller
+cancellation or server timeout can end the attempt sooner. Waiting pushes and
+pulls have their own statement timeout and retry limits (normally five
+10-second attempts plus backoff), and may fail before init ends. Their queued
+events and pull cursor survive; retry them after init succeeds. After migration,
+registry checks and hub registration get a fresh 30-second budget.
+
 ## Daily routine
 
 - At session start run `mtix sync push`, then `mtix sync pull`. Push first, so a pull never runs while local changes are unpushed.
@@ -318,6 +406,18 @@ Listen hold: `sync.listen` is `live` or `off` (shipped default: `live`). In this
 ## Verify with doctor
 
 Run `mtix sync doctor`, or `mtix sync doctor --json` for machine-readable output. Exit code 0 means no check failed; 2 means at least one did. Each check names its fix, and the fix names who runs it: the table owner, a role administrator, or you.
+
+When `PG reachable` fails, `queue draining`, `schema current` and
+`hub-privileges` are `SKIPPED` with a hub-unreachable reason. Restore hub
+connectivity and run `mtix sync doctor` again before diagnosing the pusher.
+A reachable hub still makes `queue draining` fail when eligible events
+have been pending for over an hour; a schema failure alone does not skip
+that queue check. Relay-only queue checks are unchanged. In
+`mtix sync doctor --json`, these skipped rows have `"pass": false` and
+`"skipped": true`; `skipped` is omitted on other rows. A skipped row does
+not itself fail the report, but the failed `PG reachable` check still
+returns exit code 2. Unified `mtix doctor` reports the skipped rows as
+`INFO` (`"status": "info"` in JSON), with the same reason.
 
 | Check | What it verifies |
 |-------|------------------|
@@ -348,10 +448,10 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 | `schema current` names a role that cannot execute `record_restore_collision`, or can write collision rows | the writer's grants differ from the list above | Ask the table owner to run the GRANT or REVOKE the check prints. |
 | `schema current` names the node-number registry index | the index is not valid or not ready | Ask the table owner to run `mtix sync migrate --yes`, then `mtix sync init` again if init asked for it. |
 | `pending` never goes down; `queue draining` fails | an earlier push delivered events whose confirmation was lost | Run `mtix sync push`: it acknowledges events already on the hub (the `already on the hub` count) and pushes the rest. |
-| `quarantined events` fails | `mtix sync pull` held events it could not validate or apply | Run `mtix sync pull` again. If events remain, run `mtix sync quarantine list` and give the user the event ids and reasons. Never delete quarantine rows or raise `sync.max_lamport_jump`. Text output shows each event id double-quoted with control and non-ASCII characters escaped (for example `"0193fb00-0000-7000-8000-000000000001"`). That form is display only: never paste it into a command, and take the exact id from the `--json` output. Refusal reasons written by the event validator (tracked in MTIX-187.4.4), error text from the local store layer, and rows recorded by older versions can still show an id as received, so always take the exact id from the `--json` output. |
+| `quarantined events` fails | `mtix sync pull` held events it could not validate or apply | Run `mtix sync pull` again. If events remain, run `mtix sync quarantine list` and give the user the event ids and reasons. Never delete quarantine rows or raise `sync.max_lamport_jump`. Text output shows each event id double-quoted with control and non-ASCII characters escaped (for example `"0193fb00-0000-7000-8000-000000000001"`). That form is display only: never paste it into a command, and take the exact id from the `--json` output. Only rows recorded by older versions can still show an id as received in validator refusal reasons or local store error text, so always take the exact id from the `--json` output. |
 | `held push events` fails, or a `WARN: ... over the 65536-byte sync limit` line | push holds an event the hub would refuse | Follow the fix doctor prints for each event: shorten or split the field and save it again; for a held task creation, stop editing that task and tell the user. |
 | `quarantined events` names an `invalid node id` | a pulled event names a task id outside the node id grammar, such as `AA-1é.4`; it is never applied | Inspect with `mtix sync quarantine list --json` and report the event ids, nodes and reasons to whoever runs the hub. No retry applies these events. After review, record a local receipt with `mtix sync quarantine acknowledge --handle <handle> --reason <text>` (the handle is in the HANDLE column of `mtix sync quarantine list` and in doctor's Fix; it works for every id, including ones with NUL or invalid UTF-8) (invalid-node-id pull/sweep only; reason up to 500 UTF-8 bytes; no terminal required). It stays retained and unapplied; doctor passes this check only when no unacknowledged pulled event remains. Doctor's Fix names the event by its handle: the first 12 hex characters of the SHA-256 of the exact event id bytes, which `mtix sync quarantine list` also prints in a HANDLE column (`handle` and `event_id_sha256` in `--json`). The handle is always printable and typeable, even when the id holds NUL, invalid UTF-8 or shell metacharacters, so the printed command can be copied as it is: `mtix sync quarantine acknowledge --handle <handle> --reason '<your explanation>'`. Replace `<your explanation>` with why this event is safe to accept as unapplied; without `--reason` the command is refused. A handle may be shortened to 8 hex characters; one that matches more than one event is refused with the length that separates them. Use the positional `<event-id>` form only for an ordinary id. Then run doctor again after each acknowledgement. Use `mtix sync quarantine list --json` to report the original id to the operator; JSON keeps NUL and escapable bytes in the id exactly but shows invalid UTF-8 bytes as U+FFFD; `event_id_sha256` and the handle always name the exact stored bytes. A printed handle may be longer than 12 characters when two retained events share a shorter prefix. See the admin invalid-node-id routine. |
-| an id in output is quoted with backslash escapes, such as `"a\nb"` | ids that can come from sync (sync event ids, including the winner and loser of `mtix sync conflicts list`, task uids, annotation ids) are shown in plain text output as double-quoted printable ASCII, so control or non-ASCII characters in a stored id cannot affect a terminal or log; the stored id is unchanged; `mtix sync collisions list` shows both held and incoming task uids in full with the same quoting and escaping, without truncation; its `--json` output preserves the exact uids. REST, MCP and gRPC do the same in text and error messages; their JSON and protobuf fields carry the exact id. Validator refusals (and the quarantine reasons recorded from them from now on) and hub push and collision errors name the event id the same way; reasons from the apply path follow with MTIX-187.4.3, and a reason recorded by an earlier version can still hold the raw id. An id or text a caller sends that a server repeats in an error or result message is escaped in the message (control, invisible and invalid bytes appear as `\n`, `\r`, `\t`, `\xNN`, `\uNNNN` or `\UNNNNNNNN`; printable text stays readable; a literal backslash is not escaped, so read the escapes as a hint); the JSON fields still carry what was sent. The exact id is in the quarantine event_id column and in --json output, not in a log field or error text | Read the escapes as the id and report the quoted form; use the JSON output for the exact value. Never edit or rename a stored id. |
+| an id in output is quoted with backslash escapes, such as `"a\nb"` | ids that can come from sync (sync event ids, including the winner and loser of `mtix sync conflicts list`, task uids, annotation ids) are shown in plain text output as double-quoted printable ASCII, so control or non-ASCII characters in a stored id cannot affect a terminal or log; the stored id is unchanged; `mtix sync collisions list` shows both held and incoming task uids in full with the same quoting and escaping, without truncation; its `--json` output preserves the exact uids. REST, MCP and gRPC do the same in text and error messages; their JSON and protobuf fields carry the exact id. Validator refusals, local store and apply-path errors, and hub push and collision errors name the event id the same way; only rows recorded by older versions, in validator refusal reasons or local store error text, can still hold the raw id. An id or text a caller sends that a server repeats in an error or result message is escaped in the message (control, invisible and invalid bytes appear as `\n`, `\r`, `\t`, `\xNN`, `\uNNNN` or `\UNNNNNNNN`; printable text stays readable; a literal backslash is not escaped, so read the escapes as a hint); the JSON fields still carry what was sent. The exact id is in the quarantine event_id column and in --json output, not in a log field or error text | Read the escapes as the id and report the quoted form; use the JSON output for the exact value. Never edit or rename a stored id. |
 | `valid node ids` WARN | an earlier sync brought in a task whose id is outside the node id grammar | The task stays readable and editable here (`mtix show <uid>`), but other replicas quarantine its changes. Recreate each task you still need with `mtix create` and stop using the old one. |
 | `unique node uids` fails | two tasks share a uid | Do not edit the database. Follow the recovery the check names, and ask the user. |
 | `board matches sync log` fails | a replace import of an earlier version deleted tasks whose events stay in the local sync log; a pull acknowledges those events instead of applying them, so it cannot restore the tasks | Tell the user. The steps the check prints rebuild the board from the hub, run one at a time: `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull`. The discard deletes every local task and unpushed change, which is why `pending` 0 comes first; it asks for the ticket count typed at an interactive terminal, so the user runs it. |
@@ -359,6 +459,7 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 | `hub-triggers` WARN or FAIL | a hub function or trigger is missing, rebound or disabled | Ask the table owner to run `mtix sync init` or the `ALTER TABLE ... ENABLE TRIGGER` statement the check prints. |
 | `hub-privileges` WARN | roles besides the owner can use the sync tables | Acceptable on a private network. To restrict, the owner runs `mtix sync harden` (dry run) and, with the user's approval of its role list, `--apply`. |
 | `mtix sync conflicts list` shows conflicts | two machines changed the same field | `mtix sync conflicts resolve <id>` records a decision and changes no task: apply the chosen value with `mtix update`, then push. |
+| `mtix sync status` counts unresolved conflicts after upgrading from 0.5.3 or earlier, although only one machine ever wrote | before 0.5.4 a pull replayed this store's own pushed events and logged them as lww conflicts; both events of such a row were emitted by this store | Nothing to run: such rows are not counted, and the count clears by itself on upgrade, with no write to the store. `mtix sync conflicts list --all` shows them as `self_replay=true`, and `mtix sync doctor` reports their number in its `self-replay conflict rows` check (always PASS, fix: none required). Do not resolve one: it is refused. A conflict with an event from another machine, or with an event this store no longer holds, is still counted. |
 | a task is blocked on a restore collision | the hub was restored and two settled tasks claim one number | `mtix sync collisions list` shows them; ask the user, who resolves with `mtix sync collisions resolve`. |
 | a task is `in_progress` again after `mtix done`, with `closed_at` still set | own-event replay, below | `mtix sync repair --status`, below. |
 
@@ -370,6 +471,32 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 - **A local store that is lost or damaged.** Back up what remains, make a fresh project directory with `mtix init`, and run `mtix sync clone` there. Clone refuses while the hub holds an event that fails the pull checks, and names it; on the fresh store the recovery is `mtix sync pull`, which quarantines that event.
 - **Local changes the hub never received.** Run `mtix sync push` first and check that `mtix sync status` shows `pending` 0. Never discard local state while anything is pending.
 - **The hub itself.** `mtix sync backup --output <new file>` writes a portable SQL dump of every hub table with `pg_dump`. It never overwrites a file, so choose a new path each time. A restore needs the owner: the admin skill has the runbook (restore, `mtix sync init`, a passing `hub-triggers` check, then `mtix sync mark-restored` exactly once). A dump holds no privileges, so grant the writer the list above again afterwards and run `mtix sync doctor` with the writer's DSN.
+
+## Workflow conflict history
+
+When `mtix import .mtix/tasks.json --mode merge` refuses a workflow conflict,
+read each field's local and file history before choosing `--prefer ours|theirs`
+or `--ours ID,ID` / `--theirs ID,ID`. The report shows five entries per side,
+newest first (entry id breaks timestamp ties), and a more count for omitted
+entries. Identical shared entry records form the available common history and
+are omitted; this is an identity comparison, not a wall-clock guess about
+causality. When there is no shared history, every available entry is eligible.
+Missing or empty history is no proof of no changes: the peer may have
+`history.export` off, use an older build, or have trimmed entries. The activity
+hint remains a hint; never infer the correct choice from absent history.
+
+With `--json`, a refused workflow merge writes an object to stdout containing
+`applied: false` and `workflow_conflicts`. Each field contains `local_history`,
+`file_history`, `local_history_more` and `file_history_more`; text guidance
+remains on stderr and the command exits with an error. History values and actor
+identities are quoted in text output; JSON carries their original data.
+Resolving either way keeps the union of both sides' history and adds one
+value-free `resolution` record per task, even when ours leaves its values
+unchanged. Its field is `resolution:<side>:<fields>`, identifying the choice and
+conflicting field names without copying values. The receipt and choice commit
+in one transaction. Repeating an import after the values agree adds no new
+resolution receipt. Ordinary field changes are still recorded separately;
+resolution records are exempt from ordinary change-entry retention. Imports reject valued or malformed resolution records before any write; the refusal names the task and entry, never the values. Ask the source writer to regenerate a valid board; do not hand-edit history or bypass its checksum.
 
 ## When to ask the user
 

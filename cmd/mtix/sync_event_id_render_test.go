@@ -13,6 +13,7 @@ import (
 	"go/parser"
 	"go/token"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -144,7 +145,8 @@ func TestRunSyncQuarantineList_HostileEventID_TextSafeAndJSONUnchanged(t *testin
 // is a selector or identifier named like one (EventID, WinnerEventID, eventID,
 // or the id fields and locals listed in eventIDNames). The scan must see
 // files, formatting calls and format.EventID calls, so it cannot pass by
-// finding nothing.
+// finding nothing. Quarantine Fix commands use service.QuarantineHandleAmong
+// instead of displaying an id; that handle conversion is also safe.
 func TestEventIDPrints_NoRawEventIDInFormattedText(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	require.NoError(t, err)
@@ -173,11 +175,13 @@ func TestEventIDPrints_NoRawEventIDInFormattedText(t *testing.T) {
 // scanRawEventIDs returns the positions in file where an event id reaches
 // text outside format.EventID: as an argument of a formatting call or of
 // errors.New, or inside a string concatenation. It also counts the formatting
-// calls and format.EventID calls it saw. Functions in rawIDFuncs are skipped.
+// calls and format.EventID calls it saw. Functions in rawIDFuncs are skipped;
+// service.QuarantineHandleAmong converts an id to a safe command-line handle.
 func scanRawEventIDs(file *ast.File, name string) (sites []token.Pos, calls, safe int) {
 	seen := map[token.Pos]bool{}
+	handlePkg := serviceImportName(file)
 	add := func(a ast.Expr) {
-		for _, pos := range rawEventIDUses(a, name) {
+		for _, pos := range rawEventIDUses(a, name, handlePkg) {
 			if !seen[pos] {
 				seen[pos] = true
 				sites = append(sites, pos)
@@ -237,17 +241,13 @@ func isErrorsNewCall(call *ast.CallExpr) bool {
 // rawIDFuncs are functions that build a stored reason from an id on purpose:
 // refuseBehindQuarantinedCreate stores the creation id as received, and the
 // id is rendered when the reason is printed (displayHoldReason).
-// quarantineAcknowledgementCommand builds a copyable shell command that must
-// carry the id itself; recoveryHintNeedsInspection sends any id with a
-// non-printable rune to the quoted form instead (MTIX-187.2.6.3). A printable
-// non-ASCII id still appears raw there until MTIX-187.7.6.
 var rawIDFuncs = map[string]bool{
-	"refuseBehindQuarantinedCreate":    true,
-	"quarantineAcknowledgementCommand": true,
+	"refuseBehindQuarantinedCreate": true,
 }
 
 // TestScanRawEventIDs_FlagsEveryWrapperAndPassesSafeRendering is the positive
 // control of the scan: each bypass shape is flagged, each safe form is not.
+// Use the formerly exempt Fix helper name to prevent restoring its exemption.
 func TestScanRawEventIDs_FlagsEveryWrapperAndPassesSafeRendering(t *testing.T) {
 	tests := []struct {
 		name string
@@ -265,16 +265,52 @@ func TestScanRawEventIDs_FlagsEveryWrapperAndPassesSafeRendering(t *testing.T) {
 		{"conflict winner field", `fmt.Fprintf(w, "winner=%s", r.EventIDWinner)`, 1},
 		{"conflict loser through a truncating helper", `fmt.Fprintf(w, "loser=%s", shortHashForCLI(r.EventIDLoser))`, 1},
 		{"conflict winner and loser in one call", `fmt.Fprintf(w, "%s %s", shortHashForCLI(r.EventIDWinner), r.EventIDLoser)`, 2},
+		{"held uid through truncation", `fmt.Fprintf(w, "%s", shortHashForCLI(c.HeldUID))`, 1},
+		{"incoming uid", `fmt.Sprint(c.IncomingUID)`, 1},
+		{"safe held uid", `fmt.Sprint(format.EventID(c.HeldUID))`, 0},
+		{"safe incoming uid", `fmt.Sprint(format.EventID(c.IncomingUID))`, 0},
 		{"suffix-form field", `fmt.Sprint(d.WinnerEventID)`, 1},
 		{"infix-form field", `fmt.Sprint(d.PriorEventIDWinner)`, 1},
 		{"conflict winner rendered safely", `fmt.Fprintf(w, "winner=%s", format.EventID(r.EventIDWinner))`, 0},
 		{"safe rendering in Errorf", `fmt.Errorf("apply %s", format.EventID(e.EventID))`, 0},
 		{"safe rendering in concatenation", `errors.New("apply " + format.EventID(e.EventID))`, 0},
+		{"safe quarantine handle", `fmt.Sprintf("--handle %s", service.QuarantineHandleAmong(allIDs, eventID))`, 0},
+		{"other handle helper", `fmt.Sprintf("--handle %s", other.QuarantineHandleAmong(allIDs, eventID))`, 1},
+		{"other method of the service package", `fmt.Sprintf("--handle %s", service.OtherHelper(eventID))`, 1},
 		{"no id", `errors.New("apply " + name)`, 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			src := "package main\nfunc f() {\n" + tt.body + "\n}\n"
+			src := "package main\nimport \"" + servicePkgPath + "\"\nfunc quarantineAcknowledgementCommand() {\n" + tt.body + "\n}\n"
+			parsed, err := parser.ParseFile(token.NewFileSet(), "sync_probe.go", src, 0)
+			require.NoError(t, err)
+			sites, _, _ := scanRawEventIDs(parsed, "sync_probe.go")
+			require.Len(t, sites, tt.want)
+		})
+	}
+}
+
+// TestScanRawEventIDs_HandleCallMatchedByImportPath proves the safe handle call
+// is recognised by the import path of the service package, whatever local name
+// the file gives it, and that the same name without that import is not trusted.
+func TestScanRawEventIDs_HandleCallMatchedByImportPath(t *testing.T) {
+	const call = `fmt.Sprintf("--handle %s", %s.QuarantineHandleAmong(allIDs, eventID))`
+	tests := []struct {
+		name    string
+		imports string
+		pkg     string
+		want    int
+	}{
+		{"default import name", `import "` + servicePkgPath + `"`, "service", 0},
+		{"aliased import", `import svc "` + servicePkgPath + `"`, "svc", 0},
+		{"default name after aliasing", `import svc "` + servicePkgPath + `"`, "service", 1},
+		{"look-alike package named service", `import "example.com/other/service"`, "service", 1},
+		{"no import at all", ``, "service", 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			src := "package main\n" + tt.imports + "\nfunc quarantineAcknowledgementCommand() {\n" +
+				strings.Replace(call, "%s.", tt.pkg+".", 1) + "\n}\n"
 			parsed, err := parser.ParseFile(token.NewFileSet(), "sync_probe.go", src, 0)
 			require.NoError(t, err)
 			sites, _, _ := scanRawEventIDs(parsed, "sync_probe.go")
@@ -323,9 +359,42 @@ func isFormatEventIDCall(call *ast.CallExpr) bool {
 	return ok && x.Name == "format"
 }
 
+// servicePkgPath is the import path of the package that owns the safe handle
+// conversion.
+const servicePkgPath = "github.com/hyper-swe/mtix/internal/service"
+
+// serviceImportName returns the local name file gives the service package
+// (its alias, or the package name), or "" when the file does not import it,
+// so a look-alike package of the same local name is never trusted.
+func serviceImportName(file *ast.File) string {
+	for _, imp := range file.Imports {
+		if path, err := strconv.Unquote(imp.Path.Value); err != nil || path != servicePkgPath {
+			continue
+		}
+		if imp.Name != nil {
+			return imp.Name.Name
+		}
+		return "service"
+	}
+	return ""
+}
+
+// isQuarantineHandleCall recognizes the safe handle conversion used in Fix
+// lines: QuarantineHandleAmong called through pkg, the local name of the
+// imported service package.
+func isQuarantineHandleCall(call *ast.CallExpr, pkg string) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || pkg == "" || sel.Sel.Name != "QuarantineHandleAmong" {
+		return false
+	}
+	x, ok := sel.X.(*ast.Ident)
+	return ok && x.Name == pkg
+}
+
 // rawEventIDUses returns the positions in a where an event id appears
-// outside a format.EventID call, however it is wrapped or joined.
-func rawEventIDUses(a ast.Expr, file string) []token.Pos {
+// outside a format.EventID or service.QuarantineHandleAmong call, however it
+// is wrapped or joined.
+func rawEventIDUses(a ast.Expr, file, handlePkg string) []token.Pos {
 	if rawIDAllowed[file] {
 		return nil
 	}
@@ -334,21 +403,40 @@ func rawEventIDUses(a ast.Expr, file string) []token.Pos {
 	ast.Inspect(a, func(n ast.Node) bool {
 		switch v := n.(type) {
 		case *ast.CallExpr:
-			if isFormatEventIDCall(v) || isQuoteToASCII(v) {
-				return false
-			}
+			return !isSafeIDCall(v, handlePkg)
 		case *ast.SelectorExpr:
-			if strings.Contains(strings.ToLower(v.Sel.Name), "eventid") || (syncFile && v.Sel.Name == "id") {
+			if isRawIDSelector(v, syncFile) {
 				out = append(out, v.Pos())
 			}
 		case *ast.Ident:
-			if eventIDNames[v.Name] || (syncFile && v.Name == "id") {
+			if isRawIDIdent(v, syncFile) {
 				out = append(out, v.Pos())
 			}
 		}
 		return true
 	})
 	return out
+}
+
+// isSafeIDCall reports whether call renders its arguments safely, so the
+// guard does not look inside it.
+func isSafeIDCall(call *ast.CallExpr, handlePkg string) bool {
+	return isFormatEventIDCall(call) || isQuoteToASCII(call) || isQuarantineHandleCall(call, handlePkg)
+}
+
+// isRawIDSelector reports whether sel names an event id or, in a sync file, an
+// id or a held or incoming uid.
+func isRawIDSelector(sel *ast.SelectorExpr, syncFile bool) bool {
+	if strings.Contains(strings.ToLower(sel.Sel.Name), "eventid") {
+		return true
+	}
+	return syncFile && (sel.Sel.Name == "id" || sel.Sel.Name == "HeldUID" || sel.Sel.Name == "IncomingUID")
+}
+
+// isRawIDIdent reports whether id is a known event id name or, in a sync file,
+// the bare name id.
+func isRawIDIdent(id *ast.Ident, syncFile bool) bool {
+	return eventIDNames[id.Name] || (syncFile && id.Name == "id")
 }
 
 // hostileRaw is ackCLIRaw carrying hostileEventID as its event_id, so the

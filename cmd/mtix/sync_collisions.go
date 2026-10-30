@@ -6,13 +6,13 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strconv"
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
@@ -87,9 +87,13 @@ keeps the contested number:
   held      the create that currently holds the number on the hub keeps it
   incoming  the blocked (queued) create keeps it
 
-The LOSER renumbers to the next free number under its parent via
-Store.RenumberSubtree (no create event is deleted, no node is lost). The
-moved node may have external references that need updating.`,
+The hub accepts the choice first; only then does the LOSER renumber to the
+next free number under its parent via Store.RenumberSubtree (no create event
+is deleted, no node is lost). A hub that refuses the update leaves this local
+store unchanged. If the local move fails after the hub accepted, the command
+prints the exact command to run again on the client that owns the losing task;
+a repeat is safe and a completed collision is a no-op. The moved node may have
+external references that need updating.`,
 		Args: syncExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runSyncCollisionsResolve(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
@@ -130,16 +134,77 @@ func runSyncCollisionsList(ctx context.Context, stdout, stderr io.Writer,
 	if err != nil {
 		return wrapSyncErr(stderr, "list collisions", err)
 	}
-	if app.jsonOutput {
-		body, mErr := json.MarshalIndent(open, "", "  ")
+	pending, err := pool.ListPendingCollisionMoves(ctx, prefix)
+	if err != nil {
+		return wrapSyncErr(stderr, "list pending collision moves", err)
+	}
+	return writeCollisionList(stdout, open, pending, app.jsonOutput)
+}
+
+// collisionListEntry is one row of `collisions list --json`: an open collision
+// (no extra fields, as before) or an accepted one whose local move is pending.
+type collisionListEntry struct {
+	transport.OpenCollision
+	PendingLocalMove bool   `json:"pending_local_move,omitempty"`
+	Winner           string `json:"winner,omitempty"`
+}
+
+// pendingWinnerChoice maps the recorded winning event to the --winner value
+// that resumes the move ("" when it matches neither side).
+func pendingWinnerChoice(m transport.PendingCollisionMove) string {
+	switch m.WinnerEventID {
+	case m.HeldEventID:
+		return collisionWinnerHeld
+	case m.IncomingEventID:
+		return collisionWinnerIncoming
+	}
+	return ""
+}
+
+// writeCollisions lists open collisions only.
+func writeCollisions(stdout io.Writer, open []transport.OpenCollision, jsonOutput bool) error {
+	return writeCollisionList(stdout, open, nil, jsonOutput)
+}
+
+// writeCollisionList preserves exact ids in JSON and renders them safely in
+// text. Accepted collisions whose local move is still pending are listed after
+// the open ones, with the command that finishes them.
+func writeCollisionList(stdout io.Writer, open []transport.OpenCollision, pending []transport.PendingCollisionMove, jsonOutput bool) error {
+	if jsonOutput {
+		var entries []collisionListEntry // nil stays null in JSON, as before
+		for _, c := range open {
+			entries = append(entries, collisionListEntry{OpenCollision: c})
+		}
+		for _, m := range pending {
+			entries = append(entries, collisionListEntry{OpenCollision: m.OpenCollision, PendingLocalMove: true, Winner: pendingWinnerChoice(m)})
+		}
+		body, mErr := json.MarshalIndent(entries, "", "  ")
 		if mErr != nil {
 			return mErr
 		}
-		_, err = fmt.Fprintln(stdout, string(body))
+		_, err := fmt.Fprintln(stdout, string(body))
 		return err
 	}
 	printCollisions(stdout, open)
+	printPendingCollisionMoves(stdout, pending)
 	return nil
+}
+
+// printPendingCollisionMoves lists accepted collisions that wait for the local
+// move, each with the exact command to run on the client that owns the loser.
+func printPendingCollisionMoves(w io.Writer, pending []transport.PendingCollisionMove) {
+	if len(pending) == 0 {
+		return
+	}
+	fmt.Fprintf(w, "\n%d accepted collision(s) waiting for the local move — run the command on the client that owns the losing task:\n", len(pending))
+	for _, m := range pending {
+		choice := pendingWinnerChoice(m)
+		if choice == "" {
+			choice = "held|incoming"
+		}
+		fmt.Fprintf(w, "[%d] %s: mtix sync collisions resolve %d --winner %s\n",
+			m.CollisionID, format.EventID(m.DisplayPath), m.CollisionID, choice)
+	}
 }
 
 func runSyncCollisionsResolve(ctx context.Context, stdout, stderr io.Writer,
@@ -167,12 +232,19 @@ func runSyncCollisionsResolve(ctx context.Context, stdout, stderr io.Writer,
 	}
 	defer pool.Close()
 
-	c, err := pool.GetOpenCollision(ctx, collisionID)
+	if err := resolveConnectedCollision(ctx, stdout, pool, collisionID, winner); err != nil {
+		return wrapSyncErr(stderr, "resolve collision", err)
+	}
+	return nil
+}
+
+func resolveConnectedCollision(ctx context.Context, stdout io.Writer, hub collisionHub, collisionID int64, winner string) error {
+	c, decision, completedPath, err := hub.GetCollision(ctx, collisionID)
 	if err != nil {
-		return wrapSyncErr(stderr, "load collision", err)
+		return fmt.Errorf("load collision: %w", err)
 	}
 	if c.CollisionID == 0 {
-		return fmt.Errorf("mtix sync collisions resolve: no open collision with id %d", collisionID)
+		return fmt.Errorf("mtix sync collisions resolve: no collision with id %d", collisionID)
 	}
 
 	// Pick winner/loser. The loser renumbers locally; no create is deleted.
@@ -181,30 +253,30 @@ func runSyncCollisionsResolve(ctx context.Context, stdout, stderr io.Writer,
 		winnerEventID, loserUID = c.IncomingEventID, c.HeldUID
 	}
 
-	// Renumber the loser's subtree to the next free number under its parent
-	// (Store.RenumberSubtree via the ordinary renumber path, MTIX-30.5/30.7).
-	// The loser node must exist in THIS client's local store — run resolve on
-	// the client that owns the loser. No node is lost: the create is re-stamped
-	// to the new path and re-queued, never deleted.
-	loserNewPath, err := app.store.RenumberForHubRejection(ctx, loserUID)
-	if err != nil {
-		if errors.Is(err, model.ErrNotFound) {
-			return fmt.Errorf(
-				"mtix sync collisions resolve: the losing node (uid %s) is not in this local store; "+
-					"run resolve on the client that owns it", loserUID)
-		}
-		return wrapSyncErr(stderr, "renumber loser", err)
+	if decision != "" && decision != winnerEventID {
+		return fmt.Errorf("collision %d was resolved with a different winner; local store unchanged", collisionID)
 	}
-
-	resolved, err := pool.ResolveCollision(ctx, collisionID, winnerEventID, loserNewPath, syncActor())
-	if err != nil {
-		return wrapSyncErr(stderr, "resolve collision", err)
-	}
-	if !resolved {
-		fmt.Fprintf(stderr,
-			"warning: collision %d was already resolved by another operator; the local renumber to %s still stands\n",
-			collisionID, loserNewPath)
+	if completedPath != "" {
+		fmt.Fprintf(stdout, "collision %d already resolved; loser renumbered to %s (no-op)\n", collisionID, completedPath)
 		return nil
+	}
+	// Check read-only that this client holds the loser BEFORE the hub row is
+	// touched: a run on the wrong client must leave the collision open.
+	if _, locateErr := locateCollisionLoser(ctx, loserUID); locateErr != nil {
+		return locateErr
+	}
+	move := collisionMove{
+		accept: func(ctx context.Context) error { return acceptCollision(ctx, hub, collisionID, winnerEventID) },
+		renumber: func(ctx context.Context, uid string) (string, error) {
+			return renumberCollisionLoser(ctx, uid, c.DisplayPath)
+		},
+		finish: func(ctx context.Context, path string) error {
+			return hub.CompleteCollisionMove(ctx, collisionID, winnerEventID, path)
+		},
+	}
+	loserNewPath, err := resolveCollisionMove(ctx, c, winner, loserUID, move)
+	if err != nil {
+		return err
 	}
 
 	fmt.Fprintf(stdout,
@@ -235,10 +307,10 @@ func printCollisions(w io.Writer, open []transport.OpenCollision) {
 	for _, c := range open {
 		fmt.Fprintf(w, "[%d] %s (detected epoch %d)\n", c.CollisionID, c.DisplayPath, c.DetectedEpoch)
 		fmt.Fprintf(w, "    held     uid=%s epoch=%d claim_ts=%d  %s\n",
-			shortHashForCLI(c.HeldUID), c.HeldEpoch, c.HeldWallClockTS,
+			format.EventID(c.HeldUID), c.HeldEpoch, c.HeldWallClockTS,
 			advisoryOlder(c.HeldWallClockTS, c.IncomingWallClockTS))
 		fmt.Fprintf(w, "    incoming uid=%s epoch=%d claim_ts=%d  %s\n",
-			shortHashForCLI(c.IncomingUID), c.DetectedEpoch, c.IncomingWallClockTS,
+			format.EventID(c.IncomingUID), c.DetectedEpoch, c.IncomingWallClockTS,
 			advisoryOlder(c.IncomingWallClockTS, c.HeldWallClockTS))
 	}
 }

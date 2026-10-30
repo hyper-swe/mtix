@@ -47,9 +47,14 @@ func collectSyncDoctor(ctx context.Context, req syncDoctorCollection) DoctorRepo
 		report = appendRegistrationChecks(ctx, report)
 	}
 	report = appendAlertsCheck(ctx, report)
+	report = appendHubContactChecks(report) // MTIX-112.20.1
 	if req.Postgres {
 		report = appendDoctorCheck(report, checkHubObjects(ctx, req.DSN, hubReady, req.Options))
-		report = appendDoctorCheck(report, checkHubPrivileges(ctx, req.DSN, hubReady, req.Options))
+		if doctorHubUnreachable(report) {
+			report = appendDoctorCheck(report, skippedHubCheck(hubPrivilegesName))
+		} else {
+			report = appendDoctorCheck(report, checkHubPrivileges(ctx, req.DSN, hubReady, req.Options))
+		}
 	}
 	report = scrubDoctorReport(report)
 	if req.Relay {
@@ -64,9 +69,12 @@ func doctorSyncRows(report DoctorReport) []service.DoctorResult {
 	rows := make([]service.DoctorResult, 0, len(report.Checks))
 	for _, check := range report.Checks {
 		status := service.DoctorPass
-		if !check.Pass {
+		switch {
+		case check.Skipped:
+			status = service.DoctorInfo
+		case !check.Pass:
 			status = service.DoctorFail
-		} else if check.Warn {
+		case check.Warn:
 			status = service.DoctorWarn
 		}
 		id := strings.Join(strings.Fields(strings.ToLower(check.Name)), "-")

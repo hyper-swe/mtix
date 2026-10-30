@@ -323,3 +323,138 @@ func TestDeleteNode_InvalidateBeforeDelete_WhenRerunDelete(t *testing.T) {
 	_, err = s.GetNode(ctx, "PROJ-1")
 	assert.ErrorIs(t, err, model.ErrNotFound)
 }
+
+// TestDeleteNodeWithRoot_RejectsInvalidGroups verifies boundary validation
+// before a grouped delete can mutate a node (MTIX-107.20).
+func TestDeleteNodeWithRoot_RejectsInvalidGroups(t *testing.T) {
+	s := newTestStore(t)
+	deleter, ok := any(s).(interface {
+		DeleteNodeWithRoot(context.Context, string, string, string) error
+	})
+	require.True(t, ok, "store supports explicit recovery groups")
+	for _, rootID := range []string{"", "TEST-2", "TEST-1.10", "TEST-1.1.1"} {
+		t.Run(rootID, func(t *testing.T) {
+			err := deleter.DeleteNodeWithRoot(context.Background(), "TEST-1.1", rootID, "admin")
+			assert.ErrorIs(t, err, model.ErrInvalidInput)
+		})
+	}
+	err := deleter.DeleteNodeWithRoot(context.Background(), "TEST-1.1", "TEST-1", "admin")
+	assert.ErrorIs(t, err, model.ErrNotFound)
+}
+
+// TestDeleteNodeWithRoot_SiblingSharingARootPrefix_IsRejected pins the
+// dot boundary of the root check: TEST-1.10 starts with the text TEST-1.1 but
+// is a sibling of TEST-1.1, not a descendant, so TEST-1.1 cannot be its group.
+func TestDeleteNodeWithRoot_SiblingSharingARootPrefix_IsRejected(t *testing.T) {
+	s := newTestStore(t)
+	deleter, ok := any(s).(interface {
+		DeleteNodeWithRoot(context.Context, string, string, string) error
+	})
+	require.True(t, ok, "store supports explicit recovery groups")
+	err := deleter.DeleteNodeWithRoot(context.Background(), "TEST-1.10", "TEST-1.1", "admin")
+	assert.ErrorIs(t, err, model.ErrInvalidInput)
+	err = deleter.DeleteNodeWithRoot(context.Background(), "TEST-1.1.1", "TEST-1.1", "admin")
+	assert.ErrorIs(t, err, model.ErrNotFound, "a real descendant passes validation")
+}
+
+// TestDeleteNodeWithRoot_AncestorRoot_DeletesOnlyTheNode is the positive store
+// path without grouping effects: one call deletes exactly one node and never
+// cascades to its children or parent.
+func TestDeleteNodeWithRoot_AncestorRoot_DeletesOnlyTheNode(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	now := time.Now().UTC()
+	require.NoError(t, s.CreateNode(ctx, makeRootNode("PROJ-1", "PROJ", "Parent", now)))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1", "PROJ-1", "PROJ", "Child", 1, 1, now)))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1.1", "PROJ-1.1", "PROJ", "Grandchild", 2, 1, now)))
+	deleter, ok := any(s).(interface {
+		DeleteNodeWithRoot(context.Context, string, string, string) error
+	})
+	require.True(t, ok, "store supports explicit recovery groups")
+
+	require.NoError(t, deleter.DeleteNodeWithRoot(ctx, "PROJ-1.1", "PROJ-1", "admin"))
+	_, err := s.GetNode(ctx, "PROJ-1.1")
+	assert.ErrorIs(t, err, model.ErrNotFound, "the node itself is deleted")
+	for _, id := range []string{"PROJ-1", "PROJ-1.1.1"} {
+		_, getErr := s.GetNode(ctx, id)
+		assert.NoError(t, getErr, "%s is not deleted: the call does not cascade", id)
+	}
+}
+
+// TestDeleteNodeWithRoot_AncestorRoot_RecalculatesParentProgress pins FR-5.7
+// for a grouped delete: deleting a child under an ancestor recovery root
+// (the root differs from the deleted id) still recomputes the surviving
+// parent's progress in the same transaction (MTIX-107.20.1).
+func TestDeleteNodeWithRoot_AncestorRoot_RecalculatesParentProgress(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, s.CreateNode(ctx, makeRootNode("PROJ-1", "PROJ", "Parent", now)))
+	done := makeChildNode("PROJ-1.1", "PROJ-1", "PROJ", "Done Child", 1, 1, now)
+	done.Progress = 1.0
+	done.Status = model.StatusDone
+	require.NoError(t, s.CreateNode(ctx, done))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.2", "PROJ-1", "PROJ", "Open Child", 1, 2, now)))
+	before, err := s.GetNode(ctx, "PROJ-1")
+	require.NoError(t, err)
+	require.Equal(t, 0.5, before.Progress, "one done and one open child")
+
+	require.NoError(t, s.DeleteNodeWithRoot(ctx, "PROJ-1.2", "PROJ-1", "admin"))
+
+	after, err := s.GetNode(ctx, "PROJ-1")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, after.Progress, "only the done child remains, so the parent rolls up to 1.0")
+}
+
+// TestDeleteNodeWithRoot_GrandparentRoot_RecalculatesDirectParentAndGrandparent
+// pins FR-5.7 when the recovery root is two levels above the deleted node: the
+// rollup starts at the direct parent (not at the root) and reaches the
+// grandparent too (MTIX-107.20.1).
+func TestDeleteNodeWithRoot_GrandparentRoot_RecalculatesDirectParentAndGrandparent(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, s.CreateNode(ctx, makeRootNode("PROJ-1", "PROJ", "Grandparent", now)))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1", "PROJ-1", "PROJ", "Parent", 1, 1, now)))
+	done := makeChildNode("PROJ-1.1.1", "PROJ-1.1", "PROJ", "Done Grandchild", 2, 1, now)
+	done.Progress = 1.0
+	done.Status = model.StatusDone
+	require.NoError(t, s.CreateNode(ctx, done))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1.2", "PROJ-1.1", "PROJ", "Open Grandchild", 2, 2, now)))
+	for _, id := range []string{"PROJ-1.1", "PROJ-1"} {
+		before, err := s.GetNode(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, 0.5, before.Progress, "%s starts at one done and one open leaf", id)
+	}
+
+	require.NoError(t, s.DeleteNodeWithRoot(ctx, "PROJ-1.1.2", "PROJ-1", "admin"))
+
+	for _, id := range []string{"PROJ-1.1", "PROJ-1"} {
+		after, err := s.GetNode(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, 1.0, after.Progress, "%s rolls up to 1.0 once the open leaf is deleted", id)
+	}
+}
+
+// TestDeleteNodeWithRoot_SharedRoot_OneUndeleteRestoresTheGroup pins the
+// grouping: nodes deleted one by one under the same root come back together.
+func TestDeleteNodeWithRoot_SharedRoot_OneUndeleteRestoresTheGroup(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	now := time.Now().UTC()
+	require.NoError(t, s.CreateNode(ctx, makeRootNode("PROJ-1", "PROJ", "Parent", now)))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1", "PROJ-1", "PROJ", "Child", 1, 1, now)))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1.1", "PROJ-1.1", "PROJ", "Grandchild", 2, 1, now)))
+	deleter, ok := any(s).(interface {
+		DeleteNodeWithRoot(context.Context, string, string, string) error
+	})
+	require.True(t, ok, "store supports explicit recovery groups")
+
+	require.NoError(t, deleter.DeleteNodeWithRoot(ctx, "PROJ-1.1.1", "PROJ-1.1", "admin"))
+	require.NoError(t, deleter.DeleteNodeWithRoot(ctx, "PROJ-1.1", "PROJ-1.1", "admin"))
+	require.NoError(t, s.UndeleteNode(ctx, "PROJ-1.1"))
+	for _, id := range []string{"PROJ-1.1", "PROJ-1.1.1"} {
+		_, err := s.GetNode(ctx, id)
+		assert.NoError(t, err, "%s is restored by one undelete of the group root", id)
+	}
+}

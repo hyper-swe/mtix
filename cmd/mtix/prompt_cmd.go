@@ -114,23 +114,26 @@ func runResolveAnnotation(nodeID, annotID string) error {
 // newContextCmd creates the mtix context command per FR-12.2.
 func newContextCmd() *cobra.Command {
 	var maxTokens int
+	var withChain bool
 
 	cmd := &cobra.Command{
 		Use:   "context <id>",
 		Short: "Show assembled context chain for a node",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runContext(args[0], maxTokens)
+			return runContext(args[0], maxTokens, withChain)
 		},
 	}
 
 	cmd.Flags().IntVar(&maxTokens, "max-tokens", 0,
 		"Maximum token budget for assembled prompt (0 = unlimited)")
+	cmd.Flags().BoolVar(&withChain, "chain", false,
+		"With --json, include the full structured ancestor chain (prompt, description, annotations)")
 
 	return cmd
 }
 
-func runContext(id string, maxTokens int) error {
+func runContext(id string, maxTokens int, withChain bool) error {
 	if app.ctxSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -143,6 +146,11 @@ func runContext(id string, maxTokens int) error {
 	}
 
 	if app.jsonOutput {
+		// MTIX-225: ancestor content appears once, in assembled_prompt; the
+		// full structured chain is opt-in via --chain.
+		if !withChain {
+			return NewOutputWriter(true).WriteJSON(resp.Slim())
+		}
 		return NewOutputWriter(true).WriteJSON(resp)
 	}
 	fmt.Println("=== Context Chain ===")

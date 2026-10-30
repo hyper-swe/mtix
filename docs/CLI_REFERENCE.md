@@ -458,6 +458,7 @@ Show assembled context chain for a node
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--chain` |  | With --json, include the full structured ancestor chain (prompt, description, annotations) | false |
 | `--max-tokens` |  | Maximum token budget for assembled prompt (0 = unlimited) | 0 |
 ---
 

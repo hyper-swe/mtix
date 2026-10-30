@@ -34,7 +34,7 @@ func printableASCIILines(t *testing.T, out string) {
 	}
 }
 
-func TestQuarantinedCreatePrefix_MatchesTheSentinelText(t *testing.T) {
+func TestQuarantinedCreatePrefix_SentinelError_MatchesTextAndSpace(t *testing.T) {
 	require.Equal(t, sqlite.ErrBehindQuarantinedCreate.Error()+" ", quarantinedCreatePrefix)
 }
 
@@ -157,9 +157,10 @@ func TestRefuseBehindQuarantinedCreate_HostileCreationID_PrintsPrintableASCIIOnP
 	require.Contains(t, out.String(), quarantinedCreatePrefix+format.EventID(oneLine(hostileEventID)))
 }
 
-// TestCloneRefusal_HostileDependencyReasons covers the clone refusal's reason
-// rendering separately from the refused event id (MTIX-187.4.13, mutant M18).
-func TestCloneRefusal_HostileDependencyReasons(t *testing.T) {
+// TestCloneRefusal_HostileDependencyReasons_RendersPrintableASCII covers the
+// clone refusal's reason rendering separately from the refused event id
+// (MTIX-187.4.13, mutant M18).
+func TestCloneRefusal_HostileDependencyReasons_RendersPrintableASCII(t *testing.T) {
 	for _, prefix := range []string{holdDependsPrefix, quarantinedCreatePrefix} {
 		t.Run(prefix, func(t *testing.T) {
 			id := strings.ReplaceAll(hostileEventID, "\n", "")

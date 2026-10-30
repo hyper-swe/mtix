@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/procinfo"
 	"github.com/hyper-swe/mtix/internal/service"
@@ -83,18 +84,18 @@ func (j *listenerJoin) Join(refresh, recheck <-chan time.Time) (leave func()) {
 	p := j.plan()
 	if !p.Join {
 		if !p.Quiet {
-			fmt.Fprintf(j.out, "mtix: listener not started: %s\n", p.Reason)
+			fmt.Fprintf(j.out, "mtix: listener not started: %s\n", format.SafeLine(p.Reason))
 		}
 		return func() {}
 	}
 	st, err := j.startTime(j.pid)
 	if err != nil {
-		fmt.Fprintf(j.out, "mtix: listener not started: cannot identify this waiter (%v)\n", err)
+		fmt.Fprintf(j.out, "mtix: listener not started: cannot identify this waiter (%s)\n", format.SafeLine(err.Error()))
 		return func() {}
 	}
 	lease := oplocal.ListenLease{PID: j.pid, StartTime: st, Agent: j.agent, ArmedAt: j.now()}
 	if err := j.state.WriteListenLease(j.key, lease); err != nil {
-		fmt.Fprintf(j.out, "mtix: listener not started: cannot write the waiter lease (%v); fix: mtix doctor\n", err)
+		fmt.Fprintf(j.out, "mtix: listener not started: cannot write the waiter lease (%s); fix: mtix doctor\n", format.SafeLine(err.Error()))
 		return func() {}
 	}
 	if j.clamped() {
@@ -109,7 +110,7 @@ func (j *listenerJoin) Join(refresh, recheck <-chan time.Time) (leave func()) {
 		close(stop)
 		<-finished
 		if err := j.state.RemoveListenLease(j.key, j.pid); err != nil {
-			fmt.Fprintf(j.out, "mtix: could not remove the waiter lease (%v); it expires on its own\n", err)
+			fmt.Fprintf(j.out, "mtix: could not remove the waiter lease (%s); it expires on its own\n", format.SafeLine(err.Error()))
 		}
 	}
 }
@@ -132,7 +133,7 @@ func (j *listenerJoin) ensureListener() (string, error) {
 
 func (j *listenerJoin) report(state string, err error) {
 	if err != nil {
-		fmt.Fprintf(j.out, "mtix: listener not started: %v; fix: mtix daemon --listen\n", err)
+		fmt.Fprintf(j.out, "mtix: listener not started: %s; fix: mtix daemon --listen\n", format.SafeLine(err.Error()))
 		return
 	}
 	fmt.Fprintf(j.out, "mtix: hub listener %s for this board; it exits when the last waiter ends (opt out: mtix config set sync.listen off)\n", state)
@@ -150,7 +151,7 @@ func (j *listenerJoin) keepAlive(lease oplocal.ListenLease, refresh, recheck <-c
 		case <-refresh:
 			lease.RefreshedAt = j.now()
 			if err := j.state.WriteListenLease(j.key, lease); err != nil {
-				fmt.Fprintf(j.out, "mtix: could not refresh the waiter lease (%v)\n", err)
+				fmt.Fprintf(j.out, "mtix: could not refresh the waiter lease (%s)\n", format.SafeLine(err.Error()))
 			}
 		}
 	}
@@ -212,7 +213,7 @@ func joinListener(agent string, out io.Writer) func() {
 	j, err := productionListenerJoin(agent, out)
 	if err != nil || j == nil {
 		if err != nil {
-			fmt.Fprintf(out, "mtix: listener not started: %v\n", err)
+			fmt.Fprintf(out, "mtix: listener not started: %s\n", format.SafeLine(err.Error()))
 		}
 		return func() {}
 	}

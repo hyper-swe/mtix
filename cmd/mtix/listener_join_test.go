@@ -326,3 +326,20 @@ func TestDaemonLockHeld_IsReadOnly_NeverWritesThePIDFile(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, string(before), string(after), "the probe leaves the owner's PID file alone")
 }
+
+func TestListenerJoin_HostileErrorText_RendersWithoutControlCharacters(t *testing.T) {
+	src := hubSourceFixture(t, listenerHubConfig)
+	cfg, err := service.NewConfigService(src.configPath())
+	require.NoError(t, err)
+	var out bytes.Buffer
+	spawns := 0
+	j := joinFor(t, src, 32, &spawns, &out, cfg)
+	j.spawn = func() error { return errors.New("bad\x1b[2Jline\nforged: ok\a") }
+	j.Join(nil, nil)()
+	got := out.String()
+	require.Contains(t, got, "listener not started")
+	require.Equal(t, 1, strings.Count(got, "\n"), "the hostile newline must not start a second line")
+	for _, r := range strings.TrimSuffix(got, "\n") {
+		require.False(t, r < 0x20 || r == 0x7f, "control character %q in %q", r, got)
+	}
+}

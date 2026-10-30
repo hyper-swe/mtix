@@ -10,6 +10,7 @@ package scripts_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -505,7 +506,7 @@ case "$1 $2" in
     steps='{"name":"Set up job","conclusion":"success"}'
     old="$IFS"; IFS='|'; for n in $STUB_STEPS; do steps="$steps,{\"name\":\"$n\",\"conclusion\":\"failure\"}"; done; IFS="$old"
     emit "{\"jobs\":[{\"steps\":[$steps]}]}" ;;
-  *"--log-failed"*) echo "stub failed log" ;;
+  *"--log-failed"*) if [ -n "$STUB_FAILED_LOG" ]; then cat "$STUB_FAILED_LOG"; else echo "stub failed log"; fi ;;
   esac ;;
 esac
 `
@@ -558,6 +559,41 @@ func TestRemoteBar_Run_MapsRunOutcomesToExitCodesAndDeletesBranch(t *testing.T) 
 			require.NotContains(t, string(logged), "run cancel", "a finished run is not cancelled")
 		})
 	}
+}
+
+// TestRemoteBar_Run_FailedLogListsFailingTestsAheadOfTheTail pins MTIX-215: a
+// failed run prints the failing-test lines of the whole log first (they can lie
+// far outside the last 200 lines), deduplicated and capped, then the tail; the
+// verdict line and exit code are unchanged and the captured log is cleaned up.
+func TestRemoteBar_Run_FailedLogListsFailingTestsAheadOfTheTail(t *testing.T) {
+	var log strings.Builder
+	log.WriteString("bar\trun\t2026-10-30T01:00:00.0000000Z --- FAIL: TestEarly_One (0.01s)\n")
+	log.WriteString("bar\trun\t2026-10-30T01:00:01.0000000Z --- FAIL: TestEarly_One (0.02s)\n")
+	log.WriteString("bar\trun\t2026-10-30T01:00:02.0000000Z panic: boom [recovered]\n")
+	log.WriteString("bar\trun\t2026-10-30T01:00:03.0000000Z FAIL\tgithub.com/hyper-swe/mtix/internal/early\t0.5s\n")
+	log.WriteString("bar\trun\t2026-10-30T01:00:04.0000000Z FAIL github.com/hyper-swe/mtix/internal/broken [build failed]\n")
+	log.WriteString("bar\trun\t2026-10-30T01:00:05.0000000Z panic: test timed out after 20m0s\n")
+	for i := 0; i < 300; i++ {
+		fmt.Fprintf(&log, "bar\trun\t2026-10-30T01:01:00.0000000Z filler line %d\n", i)
+	}
+	logFile := filepath.Join(t.TempDir(), "failed.log")
+	require.NoError(t, os.WriteFile(logFile, []byte(log.String()), 0o600))
+
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed failure", "STUB_STEPS=Run committed bar", "STUB_FAILED_LOG="+logFile)
+
+	require.Equal(t, 1, code, out)
+	require.Contains(t, out, " workflow_ref=main workflow_sha=")
+	header := strings.Index(out, "failing tests:")
+	require.GreaterOrEqual(t, header, 0, "a failing tests block is printed:\n%s", out)
+	tail := strings.Index(out, "filler line 100")
+	require.Greater(t, tail, header, "the tail follows the failing tests block")
+	block := out[header:tail]
+	for _, want := range []string{"--- FAIL: TestEarly_One", "panic: boom", "FAIL\tgithub.com/hyper-swe/mtix/internal/early", "[build failed]", "test timed out"} {
+		require.Contains(t, block, want)
+	}
+	require.Equal(t, 1, strings.Count(block, "--- FAIL: TestEarly_One"), "duplicates collapse")
+	require.NotContains(t, out, "filler line 99\n", "only the last 200 lines are tailed")
+	require.Contains(t, out, "filler line 299")
 }
 
 func TestRemoteBar_Run_TimeoutCancelsTheRunAndReportsInfraFailure(t *testing.T) {

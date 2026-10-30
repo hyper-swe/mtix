@@ -336,7 +336,7 @@ Each delete records which delete removed each node it soft-deletes, and `mtix un
 
 That record also carries the node's deletion time and author, and mtix uses it only while they still match the node. Earlier mtix versions did not record which delete removed each descendant. An earlier 0.5.x binary that opens the same database restores without clearing records and deletes without writing them. A delete that arrives through sync or an import carries no record either. When you undelete a node without a usable record, mtix restores the descendants without a usable record that were deleted in the same second by the same author. That can include a descendant that was deleted separately in that second.
 
-After `mtix rerun --strategy delete`, undelete restores one node at a time, because rerun deletes each descendant separately. To bring the subtree back, undelete each node, starting from the top.
+After `mtix rerun --strategy delete`, undeleting a direct child restores its subtree removed by that rerun. Previously deleted descendants stay deleted.
 
 Undelete is local: it emits no sync event. Other replicas keep the node deleted.
 
@@ -635,7 +635,7 @@ Available strategies:
 - `delete` — soft-delete descendants for fresh start
 - `review` — mark for manual review
 
-`--strategy delete` invalidates each descendant and then deletes it separately, so `mtix undelete` restores one node at a time: undeleting a child leaves its own children deleted. To bring the subtree back, undelete each node, starting from the top, then use `mtix restore` to return each one from `invalidated` to its previous status.
+`--strategy delete` invalidates and deletes each descendant separately, emitting one sync delete event per node. Each direct child and its descendants share a recovery group: `mtix undelete CHILD_ID` restores that child and the descendants removed by the rerun. Other direct child subtrees and previously deleted descendants stay deleted. Restored nodes remain `invalidated`; use `mtix restore` on each node to return it to its previous status. This recovery is local to the machine that ran the rerun: other machines receive only the per-node delete events, with no recovery record, so a copy elsewhere has to restore its nodes one at a time; undelete does not emit sync events.
 
 ### Restore (After Invalidation)
 
@@ -775,6 +775,8 @@ When an annotation has been addressed:
 ```bash
 mtix resolve-annotation PROJ-1.1 <annotation-id>
 ```
+
+`mtix show PROJ-1.1` prints each annotation with its short id, for example `[2026-09-01T09:30:00Z] (id "01ARZ3NDEKTS") reviewer-a: PASS`. The short id is the first 12 characters of the annotation id; give it as `<annotation-id>`. The full id (shown by `mtix show --json`) always works. A prefix of at least 12 characters works when it matches exactly one annotation. If it matches several, mtix refuses and lists their full ids; if it matches none, you get a not found error. The MCP tool `mtix_resolve_annotation` follows the same rule.
 
 Resolved annotations are excluded from context assembly.
 
@@ -1284,7 +1286,7 @@ mtix config delete auto_claim
 
 ### Host wake settings
 
-This build stores and reports `wake.live` and `wake.max_hop_depth`.
+This build stores and reports `wake.live` and `wake.max_hop_depth`, and applies `wake.confirm_window` now in `mtix inbox status`.
 Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
 when the wake scanner ships. They do not control live delivery in this build.
 
@@ -1319,6 +1321,7 @@ Existing flat envelope and strict-identity settings remain readable.
 | `wake.envelope_max_total_bytes` | unset, unlimited | Total envelope bytes |
 | `wake.max_hop_depth` | `32` | Scanner hop guard; depth 32 will be allowed, 33 held |
 | `wake.backoff_after_unacked` | `5` | Enforced by the callable dispatcher: durable unacknowledged-wake backoff |
+| `wake.confirm_window` | `30` | Seconds a sent nudge may stay unseen before `mtix inbox status` and `mtix comment --to` show it as `unconfirmed` (read-time only, no timer, no inbox event). An ordinary setting, not a guard: whole seconds 1 to 86400, and setting it never needs a terminal |
 | `inbox.strict_board_identity` | `false` | Also require matching hub identity |
 
 Read a value with `mtix config get wake.max_hop_depth`, or append `--agent worker`.
@@ -1336,6 +1339,39 @@ source under `wake.settings`, including configured agent overrides.
 `mtix config set` remedies. Remove those keys from `.mtix/config.yaml` and
 configure desired values operator-locally. Doctor is read-only, including
 with `--fix`; it never changes these settings or grants permission.
+
+### Wake delivery status
+
+`mtix comment --to <agent>` prints the addressee's wake state under its confirmation line, and with
+`--json` adds `wake` (`state`, `reason`, `fix`; `route` and `since` appear only on rows read from the wake ledger). `mtix inbox status --agent <agent> [--json] [--limit N]`
+shows the current state and the last wake outcomes with their age. It reads local state only and never contacts a hub.
+The message is always in the inbox: any state other than `confirmed` means the wake is unconfirmed, never that the
+message is lost.
+
+| State | Meaning | Next step |
+|---|---|---|
+| `queued` | A session and a dispatcher exist and no nudge is recorded yet | `mtix inbox status --agent <agent>` |
+| `nudged` | A nudge was sent and the confirmation window is open | wait, then `mtix inbox status --agent <agent>` |
+| `unconfirmed` | A nudge was sent and `wake.confirm_window` passed unseen | `mtix inbox --agent <agent> --wait` |
+| `confirmed` | The session was seen acting on the nudge | none |
+| `held` | The route needs approval: `mtix agent allow <agent>` | read the inbox: `mtix inbox --agent <agent>` |
+| `undeliverable` | No route could deliver; `reason` says why | `mtix inbox --agent <agent> --wait` |
+| `off` | Live wake is off for the agent | `mtix config set wake.live on --agent <agent>` |
+| `no-live-session` | The agent has no registered session on this host | `mtix agent register <agent>` |
+| `no-dispatcher` | No dispatcher heartbeat: nothing nudges, the event waits in the inbox | `mtix inbox --agent <agent> --wait` |
+| `unknown` | A source could not be read; `reason` names it | `mtix doctor --json` |
+
+`unconfirmed` is derived at read time from `wake.confirm_window` (default 30 seconds; set it with
+`mtix config set wake.confirm_window 60`, whole seconds 1 to 86400; it is an ordinary setting and needs no terminal). It is never written as an inbox event and no timer runs.
+In this build the states `nudged`, `unconfirmed`, `confirmed`, `held` and `undeliverable` come from wake ledger
+rows, and nothing writes ledger rows until the wake scanner ships, so they are seeded-only today. Approving a held
+wake does not yet send a fresh nudge (follow-up MTIX-112.40.10); read the inbox yourself.
+
+`mtix doctor --json` reports `wake.listener.routes`, `wake.listener.dispatcher` and `wake.listener.unconfirmed-rate`
+(warns above 20 percent unconfirmed over 24 hours), each with a runnable `fix`. The rows `wake.listener.hook-installed`,
+`wake.listener.waiter-armed`, `wake.listener.route-contract` and `wake.listener.bypass-hold` are present as INFO rows
+with `data.reachable` false and `data.blocked_by` naming the ticket whose adapter is not built yet (hook waiter
+MTIX-112.40.4 and install MTIX-112.40.5, session socket MTIX-112.40.3): they are not reachable in this build and are never silently skipped.
 
 Addressed-comment payloads carry optional nonnegative integer `hop` context;
 missing means zero; malformed sync metadata warns and is read as zero without
@@ -1419,6 +1455,57 @@ these guards; an empty list is the normal state.
 ### Task history in tasks.json (experimental)
 
 mtix records a change log per task (field, old and new value for structured fields, actor, origin, time). By default `.mtix/tasks.json` omits it and stays readable by every released mtix. `mtix config set history.export true` writes the file in export format 2.1.0 with the log: each node carries a `history` list, and the history of tasks that no longer exist travels in an optional top-level `history` list; the checksum covers both (see `docs/EXPORT-FORMAT.md`). mtix 0.5.4 and earlier cannot read such a file: their import fails with `checksum verification failed`, and their automatic import loads nothing. Turn the switch on only when every machine and daemon that touches the board runs this version or later; no doctor check verifies that yet. `mtix config set history.export false` returns to 2.0.0 at the next write. `mtix import` (replace or merge) and the automatic import union the file's history into the store by entry id: a local entry is never dropped or changed, importing the same file twice adds nothing, an entry id the store holds with other content keeps the local entry and is reported as a conflict (count and first entry ids, no content), and entries keyed by an old dot id rather than a task uid are skipped and counted. `mtix import --json` reports `history_added`, `history_skipped`, `history_conflicts` and `history_skipped_legacy_key`. An entry id the file repeats with different content is stored in neither copy and counts as a conflict. The automatic import reports conflicts and skipped legacy-key entries once per imported file on stderr. While `history.export` is on, a file last written by an mtix older than the first mtix release that keeps task history (0.6.0 today), or by one that recorded no version, makes the import warn "history may be incomplete: board last written by mtix X; upgrade mtix on that machine" ("of an unrecorded version" in place of "X" when none was recorded); a writer at or above that release, a development build and a board with `history.export` off never warn. Upgrade that machine and let it write the board again. `history.max_entries_per_task` bounds the log: over the limit, the next change to a task trims its oldest change entries to 90% of the limit and writes a `retention_drop` marker (count dropped in `new`, cutoff time in `old`); markers and redactions are never trimmed, lowering the limit trims only at the next change, and an import or sync skips an incoming change entry at or before the cutoff this copy of the board recorded when it trimmed the task (a local record, never exported, imported or synced), so trimmed entries stay gone. The cutoff is local to each copy: trimming on one machine does not trim the others. An incoming entry dated more than 24 hours ahead of this machine's clock is skipped and counted, and a cutoff is never later than this machine's clock: a change entry dated ahead of the clock (inside the 24 hour allowance) is neither counted toward the limit nor trimmed until the clock passes it (`mtix doctor` reports how many in `ahead_of_clock`). A cutoff recorded while the clock ran ahead and now later than the clock counts as the clock on import (entries trimmed meanwhile may return from a peer); doctor warns and shows the fix, counting these in `cutoffs_ahead_of_clock`. A marker received from another machine is stored but is never a cutoff, and a marker with an unreadable cutoff or count is skipped with a warning. A long-running process reads the limit when it starts. `mtix doctor` adds a `history.size` row (rows, tasks, the largest tasks, the limit, tasks over it) once the board has history or a limit, and warns, naming the key and the exact fix, when a hand-edited limit is not a positive whole number (it is then read as unset); `--json` carries the numbers in the row's `data` object, which only some rows have (every other row keeps exactly `id`, `status`, `detail` and `fix`). `mtix show <id> --history` lists the history newest first (`--history-limit`, default 50) and `mtix show <id> --json` includes it as `history` (an empty list when the task has none); free-text fields list no text. The switch is experimental until a later release adds the doctor check.
+
+#### Removing sensitive text (0.6.0)
+
+These steps clean an editable current field and a fresh snapshot, not every
+retained copy. Coordinate with the team, pause other writers and syncing, and
+resolve any pending auto-import refusal before replacing the board file. Never
+paste secrets into tasks, comments or activity notes, and never print credentials
+while checking cleanup.
+
+1. Replace the affected editable field with a clean value. For example,
+   `mtix update PROJ-1 --description Clean` replaces the description; use the
+   appropriate flag for the affected field and replace `PROJ-1` with its task id.
+   This does not change other fields, comments or activity records. Free-text
+   task-history entries omit old and new text; structured fields retain values.
+   Overwriting labels or assignee leaves the old value in local history and,
+   while `history.export` is on, in exported history.
+2. `history.export` is `false` by default. If it was on, turn it off with
+   `mtix config set history.export false`, then verify `false` with
+   `mtix config get history.export`. This excludes history from a fresh export,
+   not the current fields, comments or activity that the export also carries.
+3. Re-export from the project root to a new private file, then replace
+   `.mtix/tasks.json` only if export succeeds. In a POSIX shell:
+
+   ```sh
+   (umask 077; set -C; mtix export > .mtix/tasks-clean.json) &&
+     mv .mtix/tasks-clean.json .mtix/tasks.json
+   ```
+
+   The temporary name must not already exist; the command refuses to overwrite
+   it. On failure, keep the original board file and do not publish the partial
+   export. On success, the fresh snapshot has no per-task or top-level history.
+   Do not hand-edit history or its checksum, and do not import an edited snapshot
+   expecting it to erase local entries: history import keeps local entries.
+
+The local SQLite store keeps task history even with export off. In 0.6.0, no
+supported command selectively removes a task-history entry. Retention can trim
+old ordinary change entries, but it is not targeted erasure and does not clean
+other copies.
+
+Sync sends task creation and field-change payloads, including free text,
+separately from the history export. Older queued events can still carry sensitive
+text after the current field is cleaned. mtix 0.6.0 cannot erase retained hub
+copies. Coordinate those copies and queued events with the operator before
+resuming sync; a clean snapshot or field does not purge them.
+
+Past Git history, other clones, copied exports and backups are outside mtix's
+reach. A new clean commit leaves past commits intact. Removing sensitive text
+from past commits requires a Git history rewrite and a team-coordinated
+force-push; every existing clone must re-clone from the rewritten repository.
+Do not push old history back. Re-cloning does not erase hub copies. Task-history
+redaction is planned for the protocol-2 release; it is not available in 0.6.0.
 
 ---
 
@@ -1510,17 +1597,20 @@ The UI connects to `/ws/events` via WebSocket for live updates. Connection statu
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--addr` | `127.0.0.1` | Bind address |
+| `--addr` | `127.0.0.1` | Bind address (when not given, the `api.bind` setting applies, else `127.0.0.1`); a non-loopback address needs `--insecure-bind` |
+| `--insecure-bind` | `false` | Allow a non-loopback bind; the server then requires a bearer token (see below) |
 | `--port` | `8377` | HTTP port |
 
-The server binds to localhost by default. To reach it from another machine, bind to the address that clients use, for example `--addr 192.168.1.20`. The API has no authentication, so do this only on a trusted network; the server prints a warning at startup for any bind address that is not loopback.
+The server binds to localhost by default (`--addr`, else the `api.bind` setting, else `127.0.0.1`). A loopback bind needs no credential.
+
+To reach the server from another machine, bind to the address that clients use and opt in explicitly: `mtix serve --addr 192.168.1.20 --insecure-bind`. A non-loopback address (including `0.0.0.0` and `::`) is refused without `--insecure-bind`, and the refusal prints this exact command. With it, every request needs a bearer token: the first run creates a random 32-byte token in the operator-local state directory (`serve-token.json`, mode 0600, never inside a project) and prints only its path, never the token. Read it yourself with `jq -r .data.token <path>`, and send it as `Authorization: Bearer <token>` on every request, health and the OpenAPI document included. A browser WebSocket cannot set a header, so it offers the subprotocols `mtix.auth` and `mtix.auth.<token>`; the server answers with `mtix.auth` only and never repeats the token. Never put the token in a URL. A wrong or missing token gets `401 AUTH_REQUIRED` before any other check. To rotate the token, delete the file and restart. The traffic is plain HTTP, so use it on a trusted network or behind a tunnel you run. A configured `api.bind` that is not loopback now triggers the same refusal. `mtix doctor` shows a `serve.exposure` row when the effective bind is not loopback: a warning with the exact fix when no token exists yet, a failure when the token file is unusable (group or world readable, malformed, or inside a project). The gRPC server listens on `127.0.0.1` only.
 
 ### Accepted Requests
 
 `mtix serve` answers a request only when it is addressed to this server and, for a browser, comes from a local page:
 
 - **Host.** The `Host` header must name `localhost` or a loopback address (`127.0.0.1`, `::1` and the rest of the loopback range), on any port. When `--addr` is a specific address or host name, that exact address or name is accepted as well. A wildcard bind such as `--addr 0.0.0.0` or `--addr ::` adds no name, so it accepts loopback names only: bind to the specific address clients use. Other requests get `403` with error code `HOST_NOT_ALLOWED`.
-- **Browser origin.** A request that carries an `Origin` header is accepted when that origin is `http` or `https` on `localhost` or a loopback address, on any port (for example `http://localhost:5173` or `http://[::1]:8377`). When `--addr` is a specific address or host name, the server's own origin is accepted as well: `http`, that address or name, and the `--port` value (for example `http://192.168.1.20:8377` for `--addr 192.168.1.20 --port 8377`), so the web UI works when opened at that address. Any other origin gets `403`, with error code `ORIGIN_NOT_ALLOWED` for HTTP requests; the WebSocket upgrade at `/ws/events` applies the same rule. Clients that send no `Origin` header, such as the CLI, scripts and SDKs, are not affected.
+- **Browser origin.** A request that carries an `Origin` header is accepted when that origin is `http` or `https` on `localhost` or a loopback address, on any port (for example `http://localhost:5173` or `http://[::1]:8377`). When `--addr` is a specific address or host name, the server's own origin is accepted as well: `http`, that address or name, and the `--port` value (for example `http://192.168.1.20:8377` for `--addr 192.168.1.20 --port 8377`), so a page served from that address passes the origin check. Until the web UI can ask for the bearer token (a follow-up), the embedded web UI cannot load data on a network bind, because every route, the UI included, needs the token; use an API client there. Any other origin gets `403`, with error code `ORIGIN_NOT_ALLOWED` for HTTP requests; the WebSocket upgrade at `/ws/events` applies the same rule. Clients that send no `Origin` header, such as the CLI, scripts and SDKs, are not affected.
 - **Client address.** The client address in the request log is the address of the TCP connection. Behind a reverse proxy, the log shows the proxy's address.
 
 `GET /health` reports the version of the running `mtix` binary in its `version` field.
@@ -1830,9 +1920,35 @@ It also refreshes the conflict baseline, so a second pull before any write is im
 
 **Conflict baseline.** Every automatic export (after each write) and every applied import records a hash of the local store, the conflict baseline (`.mtix/data/sync-db.sha256`); `mtix export` does not. When the file changed and the store no longer matches that hash, both changed since the last sync: nothing is imported, and the refusal is recorded as a `conflict` (see the table below). **After upgrading from 0.3.0 through 0.5.3**, the baseline on disk is the one the older version recorded, over its 1.0.0 export. That export lacked the fields 0.5.4 exports (comments, activity and the other fields added in 2.0.0), and before 0.4 it had no uids either: the upgrade gives the tasks their uids. A baseline can also predate the uids a store gives its tasks without one when it opens. mtix recognizes such a baseline: when the store, unchanged, matches it in that older form, mtix records the baseline again in the current form and logs `sync_baseline_upgraded` once, and the first pull after the upgrade is not reported as a conflict, whether or not other commands ran before it. It can still be refused as a loss: when the local store holds data that boards written by an older version never carried (comments, activity entries, a previous status), a teammate whose store was filled from such boards lacks it, and so does the board they commit. The way out that keeps that data today is `mtix import .mtix/tasks.json --mode merge`, which can undo a teammate's change or your own, task by task (see the merge rule below): afterwards check `git log -p .mtix/tasks.json` and reapply what it undid. A fix is tracked. One case is not recognized: when the older version's last automatic import was not followed by a writing command. That version recorded no new baseline after an automatic import, and read-only commands record none either, so the baseline describes the store before that import, and the first pull after the upgrade is still refused as a conflict (see below for the way out). A change made while a baseline in an older form is on disk is still a conflict: a change you made before upgrading and never exported, or one made on 0.5.4 while a pulled board is kept, not imported. The exception is a change only to a field the older form lacks (a comment, an activity entry or another field added in 2.0.0, or a uid), which the older version did not detect either. The loss check below still compares those fields: a board that would delete a local comment or activity entry is refused. **A conflict although you changed nothing** (such as the case above): apply the pulled board through the automatic import, which still runs the loss check. From the project root, run `mtix sync --fix`, which records a new baseline and rewrites `.mtix/tasks.json` from the local store; then `git checkout HEAD -- .mtix/tasks.json`, which puts the pulled board back; then any command that imports, such as `mtix list`. That command imports the board and prints its one-line notice, or refuses it and lists what it would delete, as described below. Do not run `mtix sync --fix` without the checkout that follows it: alone, it drops every change in the file. `mtix import .mtix/tasks.json --mode replace` runs no loss check, so it deletes local data the file lacks, a comment for example; it needs the ticket count typed at an interactive terminal (no flag supplies it), so it cannot run unattended. **The merge rule.** The merge decides in two steps. First, per task, it compares status, assignee, agent state, wake time and deletion state with the file's; progress is not compared, and when the merge changes a task's status, deletion or progress it recalculates the ancestors' progress in the same transaction. Where any differ, the merge guesses nothing about who changed what (several writes leave no activity entry: `mtix update --assignee`, automatic blocking and unblocking, changes applied from the hub): it writes nothing, takes no backup, and lists each conflicting task with the field, your value, the file's value and a hint from the two activity streams (a hint, never a verdict). Rerun it with `--prefer theirs` (take the file's values for every listed task) or `--prefer ours` (keep yours), or per task with `--theirs ID,ID` and `--ours ID,ID`, which win over `--prefer`; a conflicting task that no flag covers still refuses, and an id with no conflict is rejected. The choice moves the task's whole status group together (status, previous status, progress, closed time, wake time, assignee, agent state), is applied in one transaction after the usual backup, and is recorded in the task's activity as a system entry by `import`. The flags apply to `--mode merge` only. Second, where those values agree, the content decides, as before: when your copy's content (title, description, prompt, acceptance and labels) matches the file's, every other local field value stays; when it differs, the file's copy wins, so your own edits to that task (a prompt edit, for example) are undone, except values the file leaves empty in a copy that is not current. Comments and activity entries from both sides are kept. After a merge, check `git log -p .mtix/tasks.json` and reapply what it undid. An automatic three-way merge that uses the board at git's merge base as the common ancestor, so that only true conflicts need a choice, is planned for 0.6.0.
 
+#### Workflow conflict history
+
+When `mtix import .mtix/tasks.json --mode merge` refuses a workflow conflict,
+read each field's local and file history before choosing `--prefer ours|theirs`
+or `--ours ID,ID` / `--theirs ID,ID`. The report shows five entries per side,
+newest first (entry id breaks timestamp ties), and a more count for omitted
+entries. Identical shared entry records form the available common history and
+are omitted; this is an identity comparison, not a wall-clock guess about
+causality. When there is no shared history, every available entry is eligible.
+Missing or empty history is no proof of no changes: the peer may have
+`history.export` off, use an older build, or have trimmed entries. The activity
+hint remains a hint; never infer the correct choice from absent history.
+
+With `--json`, a refused workflow merge writes an object to stdout containing
+`applied: false` and `workflow_conflicts`. Each field contains `local_history`,
+`file_history`, `local_history_more` and `file_history_more`; text guidance
+remains on stderr and the command exits with an error. History values and actor
+identities are quoted in text output; JSON carries their original data.
+Resolving either way keeps the union of both sides' history and adds one
+value-free `resolution` record per task, even when ours leaves its values
+unchanged. Its field is `resolution:<side>:<fields>`, identifying the choice and
+conflicting field names without copying values. The receipt and choice commit
+in one transaction. Repeating an import after the values agree adds no new
+resolution receipt. Ordinary field changes are still recorded separately;
+resolution records are exempt from ordinary change-entry retention. Imports reject valued or malformed resolution records before any write; the refusal names the task and entry, never the values. Ask the source writer to regenerate a valid board; do not hand-edit history or bypass its checksum.
+
 **Backup.** mtix first checks the whole file: its format and schema version, its node count, checksum and time values, whether the local store can be read, and whether anything would be lost (below). Only a file that passes every check is backed up and imported. The backup is a verified copy of the local database (`VACUUM INTO`, then `PRAGMA quick_check`) at `.mtix/data/backups/pre-sync-<UTC time>.db`, with a `-2`, `-3`, ... suffix for further imports in the same second. Every import that applies takes a new backup of the store as it is then, even of a file imported before (a board checked out again after local writes). The one exception is a retry: when an import fails while writing, its retries reuse that backup as long as the store has not changed since. mtix keeps the newest 5 and deletes older `pre-sync-*` files only; the rolling `mtix-*.db` backups and any other file in the directory are left alone, so failing or refused imports never rotate good backups away. If the backup cannot be written, the import is skipped with a warning. To return to the state before an import, stop every mtix process (the MCP server, `mtix serve` and the sync daemon), copy the backup over `.mtix/data/mtix.db`, delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`, then continue. mtix 0.5.3 and earlier kept one overwritten copy, `.mtix/data/pre-sync-backup.db`; 0.5.4 no longer writes it and leaves an existing one in place. `.mtix/data/` is local state: keep it out of git.
 
-**What counts as a loss.** The automatic import compares the node and dependency data of the store with the file, node by node. Agents and sessions are runtime state and are always replaced. These are always a loss when the file lacks them: a task, a comment (annotation), the resolution of a comment, an activity entry, and a dependency. A field value the file leaves empty (an assignee, a description, a closed time, a wake time, a deletion) is a loss unless the file's copy of the task is current: it holds every activity entry the local copy holds, and its `updated_at` is not older than the local one. Activity only grows, and the writes that record no activity (`mtix update`, `mtix delete`) still move `updated_at`, so a current copy has seen your latest change, and a field it cleared was cleared on purpose: a teammate's `mtix unclaim`, `mtix reopen`, undeferral, `mtix undelete` or later `mtix update` applies. A copy that lacks one of your entries or is older is stale, and a file written by a client older than 0.5.4 carries no activity at all, so the fields such files leave empty are losses. A task whose id the file gives to a different task is a loss of the whole task: both copies carry a uid and the uids differ, as when you and a teammate each created `PROJ-3`, or you created a task while a refusal was pending and it took an id the pulled board already uses. It is listed as `PROJ-3: a different task under this id (local "<your title>", file "<their title>")`. A task whose id the file holds with another title while the file's copy has no uid to compare (a board from a client at 0.3 or older, or one never re-exported after an upgrade) may be a different task too: it is listed as `PROJ-3: a task under this id with a different title and no uid to compare (local "<your title>", file "<their title>")`, and the merge renumbers your task with `--confirm`. Two copies under different uids are the same task only when they have the same creation time and one of the uids was given to the task after it was created: a backfill uid (mtix gives one to every task it imports without a uid, and to every such task a store holds when it opens), whatever its time, or a uid given more than an hour after creation, when a clone upgraded from before uids were shared; the import then takes the file's uid. A file without uids does not lose a backfill uid: when the task has the same title, the missing uid is no loss, and the replace keeps your uid (a task with another title is a different task: it gets a new uid), so each pull of a teammate's board from a client at 0.3 or older imports as before; a uid your client gave the task at creation that such a file leaves out is still a loss. Every other pair, such as two tasks two clones created in the same second, is two different tasks. A task the file holds under another id with the same uid (another clone renumbered it) is not a loss either: the import moves it there. Clocks that disagree between machines can make a current copy look older; that refuses, the safe side. Three things this comparison does not treat as a loss. A stale copy can still change a non-empty value back (an older title, say), as checking out an older board does on purpose; the backup keeps the state before. A teammate's copy with a later `updated_at` counts as current even when it missed your `mtix update` or `mtix delete`, which record no activity (after you both edited the same task, or when the teammate's clock runs ahead), so a field that copy leaves empty is applied as cleared; the backup keeps the state before. And a dependency a teammate removed on purpose still counts as a loss, so their `mtix dep remove` is refused until you choose.
+**What counts as a loss.** The automatic import compares the node and dependency data of the store with the file, node by node. Agents and sessions are runtime state and are always replaced. These are always a loss when the file lacks them: a task, a comment (annotation), the resolution of a comment, an activity entry. A missing dependency is a loss unless the file proves its removal as described below. A field value the file leaves empty (an assignee, a description, a closed time, a wake time, a deletion) is a loss unless the file's copy of the task is current: the local task has activity, the file's copy holds every activity entry the local copy holds, and its `updated_at` is not older than the local one. A local task with no activity entry is never treated as current, so a dependency removal on such a source task is never proven: merge keeps the edge, and explicit replace takes the file. Activity only grows, and the writes that record no activity (`mtix update`, `mtix delete`) still move `updated_at`, so a current copy has seen your latest change, and a field it cleared was cleared on purpose: a teammate's `mtix unclaim`, `mtix reopen`, undeferral, `mtix undelete` or later `mtix update` applies. A copy that lacks one of your entries or is older is stale, and a file written by a client older than 0.5.4 carries no activity at all, so the fields such files leave empty are losses. A task whose id the file gives to a different task is a loss of the whole task: both copies carry a uid and the uids differ, as when you and a teammate each created `PROJ-3`, or you created a task while a refusal was pending and it took an id the pulled board already uses. It is listed as `PROJ-3: a different task under this id (local "<your title>", file "<their title>")`. A task whose id the file holds with another title while the file's copy has no uid to compare (a board from a client at 0.3 or older, or one never re-exported after an upgrade) may be a different task too: it is listed as `PROJ-3: a task under this id with a different title and no uid to compare (local "<your title>", file "<their title>")`, and the merge renumbers your task with `--confirm`. Two copies under different uids are the same task only when they have the same creation time and one of the uids was given to the task after it was created: a backfill uid (mtix gives one to every task it imports without a uid, and to every such task a store holds when it opens), whatever its time, or a uid given more than an hour after creation, when a clone upgraded from before uids were shared; the import then takes the file's uid. A file without uids does not lose a backfill uid: when the task has the same title, the missing uid is no loss, and the replace keeps your uid (a task with another title is a different task: it gets a new uid), so each pull of a teammate's board from a client at 0.3 or older imports as before; a uid your client gave the task at creation that such a file leaves out is still a loss. Every other pair, such as two tasks two clones created in the same second, is two different tasks. A task the file holds under another id with the same uid (another clone renumbered it) is not a loss either: the import moves it there. Clocks that disagree between machines can make a current copy look older; that refuses, the safe side. Three things this comparison does not treat as a loss. A stale copy can still change a non-empty value back (an older title, say), as checking out an older board does on purpose; the backup keeps the state before. A teammate's copy with a later `updated_at` counts as current even when it missed your `mtix update` or `mtix delete`, which record no activity (after you both edited the same task, or when the teammate's clock runs ahead), so a field that copy leaves empty is applied as cleared; the backup keeps the state before. A teammate's `mtix dep remove` applies when the file's source task is current and carries a new system activity entry recording removal of that exact dependency (target and type). Removal appends that entry on the source and updates its `updated_at` in the same transaction. A stale board without this evidence, or one carrying only a removal entry already held locally before an edge was re-added, is still refused (MTIX-107.44).
 
 **Refusal.** When the file would lose anything, mtix refuses the automatic import. Nothing is imported, no backup is taken, and the stored hash is not updated, so the refusal repeats, printed once, on every command until you choose. The refusal lists what would be lost, task by task, for example:
 
@@ -2006,6 +2122,41 @@ mtix sync init
 
 Positional DSN arguments are no longer accepted; set `MTIX_SYNC_DSN` or `.mtix/secrets`.
 
+**Init locking and deadlines.** `mtix sync init` allows 30 seconds to connect,
+then a separate `--migrate-timeout` (default `5m`, positive Go duration)
+for the entire migration, including waiting for the migration advisory lock.
+Other init callers and admin commands (`mtix sync migrate`,
+`mtix sync repair-uids` and `mtix sync harden --apply`) take this lock too;
+their own deadlines may end the wait first. Ordinary pushes and pulls do
+not acquire it. Migrations still replay to restore missing functions and triggers.
+Migrations 010 and 013 check the column catalog before ALTER: an up-to-date
+`sync_events` takes no `ACCESS EXCLUSIVE` column lock, so event SELECTs can
+continue. Adding a missing column blocks both event reads and writes until
+commit or rollback. The migration's index statements (including first builds
+of 014/015) take `SHARE` locks that block event writes until the transaction
+ends, even when every index already exists. Index statements alone allow
+event SELECTs. Migration 006 skips unchanged, enabled
+audit/conflict triggers, so an up-to-date hub takes no `ACCESS EXCLUSIVE`
+relation lock. Trigger repair drops and recreates a trigger, blocking reads
+and writes on its table until commit or rollback. Thus init can still delay
+a push, even on a current hub. A queued exclusive lock can also make later
+SELECTs wait. Schedule upgrades and restore initialization when a sync pause
+is acceptable.
+
+On migration deadline expiry, init names `--migrate-timeout`. Migration is
+atomic: an interrupted index build rolls back. Retry as the hub owner using
+the larger budget printed in the error. For a default-budget timeout,
+`mtix sync init --migrate-timeout=15m` is one example; increase it further for
+the hub's size, then run `mtix sync doctor`. This also applies to a joiner's first init and
+the post-restore runbook: repeated short retries cannot finish an index that
+always exceeds the budget. Locks last until commit or rollback, within the
+migration budget plus server cancellation/rollback cleanup; an earlier caller
+cancellation or server timeout can end the attempt sooner. Waiting pushes and
+pulls have their own statement timeout and retry limits (normally five
+10-second attempts plus backoff), and may fail before init ends. Their queued
+events and pull cursor survive; retry them after init succeeds. After migration,
+registry checks and hub registration get a fresh 30-second budget.
+
 **Never commit the DSN to a tracked yaml.** `mtix sync init` scans
 `.mtix/config.{yaml,yml,json}` for DSN-shaped keys and refuses to
 proceed if any are present (fail-closed).
@@ -2100,7 +2251,9 @@ values (`pending`, `pushed`, `applied`, `open_conflicts`,
 `project_prefix`). `open_conflicts` counts unresolved conflicts only: an
 lww conflict is unresolved until `mtix sync conflicts resolve` records a
 decision for its node and field, and a later conflict on the same node
-and field is unresolved again. Above 50 unresolved conflicts, status
+and field is unresolved again. Rows written before 0.5.4 by the replay
+of this store's own pushed events (self-replay rows, below) are not
+counted. Above 50 unresolved conflicts, status
 prints a banner that points at `mtix sync conflicts list --batch
 <node-id>`. There is no `conflicted` count: no sync path ever marks an
 event conflicted, so earlier versions always showed 0 there.
@@ -2165,6 +2318,8 @@ creation, and the same pull then applies the edit. A recovered claim or
 status change that is older than the task's current one changes
 nothing; it is only recorded as received.
 
+A push that stalls is ended by the hub: after one minute idle, or (on Postgres 17 and later) after ten minutes in total. None of that push's events are committed, and mtix retries the push automatically, pushing the same events again without duplicates. You see an error only if the retries are exhausted; the events stay pending and the next `mtix sync` tries again.
+
 - **First pull after upgrading.** It compares the full hub event history
   once and prints `late-event sweep (first run, full hub history): N
   late events recovered`. Changes missed before the upgrade arrive
@@ -2195,14 +2350,13 @@ nothing; it is only recorded as received.
   hub owner's DSN. It adds two indexes on the hub:
   `idx_sync_events_created_at`, so each sweep reads only recent events,
   and `idx_sync_events_lamport_event_id`, so each pull batch reads from
-  its saved position. `mtix sync init` runs in one transaction, and
-  pushes and pulls both wait until it finishes, longer on a large hub
-  while it builds the indexes. A waiting push or pull retries for about
-  50 seconds and normally completes once `mtix sync init` finishes; only
-  if the wait outlasts that does it fail, and then nothing is lost: run
-  it again. Run `mtix sync init` when a pause in sync is acceptable. `mtix sync init` stops after 30 seconds; if building
-  the indexes takes longer it changes nothing, and pulls keep working
-  without them.
+  its saved position. Index statements block event writes until the migration
+  transaction ends even when every index already exists; event SELECTs can
+  continue when the columns already exist.
+  Adding a missing column blocks reads too. Init has a separate five-minute
+  migration deadline; after a timeout, retry as the owner with the larger
+  `--migrate-timeout` printed in the error, then `mtix sync doctor`.
+  See "Init locking and deadlines" above for other locks and retry behavior.
   Until then pulls fetch the same events as with the indexes, only
   slower: each page the sweep lists scans the hub's whole event table
   (once per pull for the usual window, and once per page of the
@@ -2273,10 +2427,9 @@ pull's position either, so later changes keep arriving.
   event, and the id inside the "depends on held create" and "depends on a
   quarantined create" reasons. The quoted form is display only: take the
   exact id from the `--json` output. `--json` output and the stored id are
-  unchanged. Refusal reasons written by the event validator (tracked in
-  MTIX-187.4.4), error text from the local store layer, and rows recorded
-  by older versions can still show an id as received, so always take the
-  exact id from `--json`.
+  unchanged. Only rows recorded by older versions can still show an id as
+  received in validator refusal reasons or local store error text, so
+  always take the exact id from `--json`.
 - **What to do.** Run `mtix sync pull` again first. An event waiting for
   a task or dependency target that has not been pushed yet applies once
   its teammate pushes it. An event that fails the size, shape or clock
@@ -2586,6 +2739,13 @@ or how it arrived (local CLI, MCP server, sync-arrival from the hub, or
 another process writing the same `.mtix`). A durable per-`(hook, event)`
 **dispatch ledger** makes firing exactly-once per host across restarts,
 concurrent triggers, and out-of-order arrival.
+
+Losing workflow events (claim, unclaim, status transition or defer) are
+skipped by the hook journal: replication records them, but they changed no
+node column and must not report a state change to any adapter. The skip
+decision is saved atomically at ingest and survives restart. A workflow
+event that won at ingest stays eligible even if superseded before dispatch.
+Events ingested by older versions are not retroactively reclassified.
 
 **Placement is designation.** A hook fires on every host whose
 `hooks.yaml` configures it — once per host. Put a wake `exec` only in
@@ -3088,6 +3248,14 @@ interactive operator terminal outside agent sessions. Agents never run this
 approval command themselves. Changing one hook or its project script requires
 review of that hook; other hook approvals remain independent.
 
+Webhook hooks need the same operator consent for each origin. `mtix hooks status`
+lists every webhook origin that is not consented, with the exact fix. An agent
+asks the operator to run `mtix hooks allow-origin <url>` from an interactive
+operator terminal outside agent sessions; agents never run it themselves.
+Loopback, link-local and private destinations stay refused unless the operator
+lists that origin with `--allow-private`. A webhook without consent is skipped
+and recorded; redirects to an origin that is not consented are not followed.
+
 The approval records are stored outside the project, bound to the local host
 and canonical project identity. Each record pins the selected hook stanza and
 its project script contents. For example, after reviewing the `wake` hook:
@@ -3314,6 +3482,35 @@ same-file checks apply and a multiply linked file is refused at delivery (as is 
 link count cannot be read), but
 `mtix hooks status` does not list it and permission bits are not reported.
 
+
+### Webhook origin consent
+
+A webhook hook delivers only to an origin (scheme, host and port) that the
+operator consented to on this host. The consent list is stored outside the
+project, so a cloned repository cannot grant it. To configure and verify:
+
+```sh
+mtix hooks status --json        # origins[] names each refused hook and the exact fix
+mtix hooks allow-origin 'https://hooks.example.com'
+mtix hooks allow-origin --allow-private 'http://127.0.0.1:9000'
+mtix hooks log                  # skipped-untrusted rows show the reason and the fix
+```
+
+`mtix doctor --json` carries the same check as the `hooks.origins` row (shown only
+when `.mtix/hooks.yaml` exists): PASS means every configured webhook origin is
+consented, WARN lists each hook that would be skipped with the exact fix command.
+Run doctor again after the operator consents, until the row is PASS. Doctor only
+reads; it never writes consent state.
+
+The consent command needs an interactive terminal outside agent sessions. List
+a loopback, link-local or private destination only with `--allow-private`, and
+only when it is intended. The check applies to the address actually connected,
+so a name that later resolves to a private address is refused, and the skipped row names the origin and the exact `--allow-private` command. Status and doctor resolve each consented name once (no request is sent to the webhook) and warn for a name that resolves to a private address without the opt-in. A name that cannot be resolved (offline, resolver error or a 2 second timeout) is also a warning, "could not verify", never a pass: re-run the check when online or check the host resolver. Redirects are
+followed only to other consented origins. If the consent state cannot be read,
+every webhook is skipped; run `mtix hooks status --json` and correct the
+reported path or access rules. An agent never edits the consent record and
+never works around a skip: it reports the fix to the operator.
+
 ### Conflict handling
 
 When two teammates edit the same field concurrently, Last-Write-Wins
@@ -3368,6 +3565,32 @@ input, and the error names the newest conflict id of that node and field
 stands). Passing the id of a `manual` row is refused as invalid input as
 well: resolve the conflict it answers instead (`--all` shows both).
 
+**Phantom conflicts after upgrading from 0.5.3 or earlier.** Before 0.5.4,
+`mtix sync pull` replayed the events this store had pushed itself as if
+they came from another machine, and logged every own event older than a
+newer local write to the same field as an lww conflict. A store with a
+single writer could show dozens of unresolved conflicts that never were
+conflicts, and resolving them doubled the count. 0.5.4 stopped writing
+these rows (MTIX-95.2) but still counted the old ones. Since this version
+they are recognized when read, with nothing to run and nothing written
+(`sync_conflicts` stays append-only): an lww row is a self-replay row when
+both its winner and its loser event are in this store's own event log and
+were emitted by this store (any `sync_status` except `applied`). Two
+events of one machine are ordered by clock, so such a pair cannot be a
+genuine conflict. Self-replay rows are not counted by `mtix sync status`,
+not listed by `mtix sync conflicts list`, and shown by `--all` with
+`unresolved=false` and `self_replay=true` (`--json` carries both keys).
+They neither hide nor reopen a genuine conflict on the same node and
+field, and `resolve` refuses their ids. A decision recorded on such a row
+with 0.5.4 (a `manual` row whose winner and loser are both events of this
+store) is ignored the same way: it does not resolve an earlier genuine
+conflict of the node and field. A conflict with an event from
+another machine stays counted, and so does a row whose events this store
+no longer holds. `mtix sync doctor` has an informational check,
+`self-replay conflict rows`, that always passes and reports how many rows
+this covers; its fix is `none required; inspect with mtix sync conflicts
+list --all`.
+
 For whole-project escapes (many conflicts, divergent history):
 
 ```bash
@@ -3410,13 +3633,26 @@ for the full tradeoff.
 
 ### Hub health checks
 
+When `PG reachable` fails, `queue draining`, `schema current` and
+`hub-privileges` are `SKIPPED` with a hub-unreachable reason. Restore hub
+connectivity and run `mtix sync doctor` again before diagnosing the pusher.
+A reachable hub still makes `queue draining` fail when eligible events
+have been pending for over an hour; a schema failure alone does not skip
+that queue check. Relay-only queue checks are unchanged. In
+`mtix sync doctor --json`, these skipped rows have `"pass": false` and
+`"skipped": true`; `skipped` is omitted on other rows. A skipped row does
+not itself fail the report, but the failed `PG reachable` check still
+returns exit code 2. Unified `mtix doctor` reports the skipped rows as
+`INFO` (`"status": "info"` in JSON), with the same reason.
+
 ```bash
 mtix sync doctor             # health checks: PG reachable, schema current,
                              #   queue draining, no orphan applied,
                              #   board matches sync log, quarantined
                              #   events, valid node ids, unique node
-                             #   uids, held push events, secrets file
-                             #   mode, hub triggers, hub privileges
+                             #   uids, held push events, self-replay
+                             #   conflict rows (informational), secrets
+                             #   file mode, hub triggers, hub privileges
 ```
 
 The `board matches sync log` check runs on a project that syncs. It
@@ -3994,7 +4230,8 @@ change the node's status with the normal commands instead.
 | `mtix sync init`, or a `mtix sync harden --apply` that would restore or replace a TRUNCATE guard, fails with `the sync tables are in schema …, but the first schema on the search_path is …` (and `mtix sync doctor`'s `hub-triggers` says so) | The session's search_path puts another schema before the one holding the sync tables, so new objects would land away from them; nothing was changed. The usual cause is a schema named after the connecting role, which the default search_path (`"$user", public`) puts first | Set the search_path so the sync tables' schema comes first: `ALTER ROLE <owner> SET search_path = public` when the tables are in `public`, else `ALTER ROLE <owner> SET search_path = <schema>, public` (or `options=-c search_path=...` in the DSN); then run the command again. To keep a separate hub in the first schema instead (one hub per search_path), put that schema alone on the search_path (`ALTER ROLE <owner> SET search_path = <first schema>`). A `mtix sync harden --apply` that only changes privileges is not affected |
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
 | `mtix sync backup` fails with `a hub table was not found` (`pg_dump` names the table above it) | `pg_dump` found no table of that name through the search_path of the role the DSN names; no file was left. The hub has not been initialized since an upgrade added the table; or the hub's schema is named only in the DSN, which `pg_dump` does not receive; or the DSN's role lacks USAGE on the hub's schema, which leaves that schema off its search_path | Run `mtix sync init` with the DSN naming the table owner, then back up again; for a hub whose schema only the DSN names, first run the printed `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`, which takes precedence over a role-wide `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`; for a DSN role without USAGE, run the GRANT statements the backup prints: the schema's owner grants USAGE on the schema (find it with `SELECT nspowner::regrole FROM pg_catalog.pg_namespace WHERE nspname = '<schema>';`; for `public` in a database created on PostgreSQL 15 or later it is `pg_database_owner`, that is, the database's owner), and the table owner grants SELECT on each sync table and sync-table sequence by name (`GRANT SELECT ON TABLE <schema>.applied_events, <schema>.audit_log, ... TO <the DSN's role>;`), so the role gets nothing else in the schema; then keep that role with `--keep-role` so `mtix sync harden --apply` leaves its access |
-| An id in mtix text looks like `"evt\u00e9"` or `"a\nb"`, with quotes and backslash escapes | mtix prints a sync event id, and the ids that come from sync (a task uid, an annotation id), in plain text output as double-quoted, printable-ASCII text, so a control character, bidirectional mark or non-ASCII letter in a stored id cannot alter a terminal or log. The stored id is unchanged; `mtix sync collisions list` shows both held and incoming task uids in full with the same quoting and escaping, without truncation; its `--json` output preserves the exact uids. REST, MCP and gRPC do the same in their text and error messages; their JSON and protobuf fields carry the exact id. So do validator refusals (and the quarantine reasons recorded from them from now on) and hub push and collision errors; reasons from the apply path follow with MTIX-187.4.3, and a reason recorded by an earlier version can still hold the raw id. An id or text a caller sends that a server repeats in an error or result message is escaped in the message (control, invisible and invalid bytes appear as `\n`, `\r`, `\t`, `\xNN`, `\uNNNN` or `\UNNNNNNNN`; printable text stays readable; a literal backslash is not escaped, so read the escapes as a hint); the JSON fields still carry what was sent. The exact id is in the quarantine `event_id` column and in `--json` output, not in a log field or error text | Read the escapes as the id (`\n` is a newline, `\u00e9` is é). Use the JSON output for the exact value, and give the quoted form to whoever runs the hub; never edit or rename the stored id |
+| An id in mtix text looks like `"evt\u00e9"` or `"a\nb"`, with quotes and backslash escapes | mtix prints a sync event id, and the ids that come from sync (a task uid, an annotation id), in plain text output as double-quoted, printable-ASCII text, so a control character, bidirectional mark or non-ASCII letter in a stored id cannot alter a terminal or log. The stored id is unchanged; `mtix sync collisions list` shows both held and incoming task uids in full with the same quoting and escaping, without truncation; its `--json` output preserves the exact uids. REST, MCP and gRPC do the same in their text and error messages; their JSON and protobuf fields carry the exact id. Validator refusals, local store and apply-path errors, and hub push and collision errors name the event id the same way; only rows recorded by older versions, in validator refusal reasons or local store error text, can still hold the raw id. An id or text a caller sends that a server repeats in an error or result message is escaped in the message (control, invisible and invalid bytes appear as `\n`, `\r`, `\t`, `\xNN`, `\uNNNN` or `\UNNNNNNNN`; printable text stays readable; a literal backslash is not escaped, so read the escapes as a hint); the JSON fields still carry what was sent. The exact id is in the quarantine `event_id` column and in `--json` output, not in a log field or error text | Read the escapes as the id (`\n` is a newline, `\u00e9` is é). Use the JSON output for the exact value, and give the quoted form to whoever runs the hub; never edit or rename the stored id |
+| `mtix sync status` counts conflicts after an upgrade from 0.5.3 or earlier although one machine wrote | Rows from the pre-0.5.4 replay of own events | None needed: they are not counted. `mtix sync conflicts list --all` shows them as `self_replay=true` |
 | `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
 | `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |
 
@@ -4260,6 +4497,25 @@ moved node may have external references (a commit, a PR) that need
 updating — `collisions resolve` reports the old and new number so you can
 fix them.
 
+The hub must accept the winner before mtix renumbers locally. If the hub refuses
+(for example, `permission denied for table sync_node_collisions`), the local
+store stays unchanged. Resolve with a role allowed to UPDATE that table.
+If acceptance succeeds but local renumbering fails, mtix reports
+`hub accepted collision <id> but local renumber failed`. If the local move
+succeeds but recording its completion on the hub fails, mtix reports
+`hub accepted collision <id> but recording completion on the hub failed`.
+Both failures print the exact recovery command: `mtix sync collisions resolve <id> --winner held|incoming`
+(with the original winner filled in). Fix the reported cause, then run that
+command on the client that owns the losing node, with the same hub configured.
+The decision is already recorded on the hub, so the collision no longer shows
+as open; `collisions list` shows it as accepted with the local move pending
+(text, and `--json` with `pending_local_move` and `winner`) together with the
+same command, so it can be found again after a crash. A client that does not
+hold the losing task is refused before the hub is touched, and the collision
+stays open. Retry resumes the move; if the move already committed, it
+records its new number without moving it again. A completed resolve is a no-op
+when repeated. A different winner is refused without changing the local store.
+
 While a collision is open, only that one node is blocked. Every other
 node keeps syncing normally; one unresolved collision never wedges the
 team's sync stream.
@@ -4359,7 +4615,7 @@ If mtix reports `database … is truncated`, `integrity check … failed` or `da
 1. **Stop. Do not delete anything** — especially not `mtix.db-wal` or `mtix.db-shm`; the WAL may be the only intact copy of your latest commits.
 2. Copy the entire `.mtix/data/` directory to another volume as evidence.
 3. Run `mtix recover`. It reads the damaged database read-only — salvaging every readable row individually — fills gaps from the `.mtix/tasks.json` mirror, synthesizes placeholders for lost parents, and writes an importable export to `.mtix/recovered-<timestamp>.json` together with a salvage report (recovered / from-mirror / lost IDs). It never modifies the damaged files.
-   A task whose row is readable but whose comments (annotations), activity, `code_refs` or `commit_refs` cannot be parsed (the case `mtix export` and the automatic import report, naming the task, the field and `mtix recover`) is salvaged from the database, and that field is taken from the task's copy in `.mtix/tasks.json` when the copy is usable: the file holds exactly one task under that ID, with the same uid when both carry one; the file's `schema_version` is 2.0.0 or later (a file written before 0.5.4 carries none of these fields); and the copy's times pass the checks import applies. The report then prints, for that task and field, `restored from the mirror <path>` with the number of entries the copy held. The copy is whatever `.mtix/tasks.json` holds: the last export, or a file a `git pull` or checkout put there (for example one whose automatic import was refused), which is another clone's copy of the task and can hold that clone's comments and lack yours. Compare each restored field with the local history (for example `git log -p .mtix/tasks.json`) before you import the salvage file. When the file's checksum does not verify, the copy is still used, as salvage of last resort, and the note ends `(the mirror checksum did not verify)`: the file may have been edited by hand, so check that field with particular care. Otherwise the note says the field is dropped and why (for example `the mirror holds no copy of this node`, or `a different task` when the uids differ), and the task is salvaged without that field. `mtix recover` reads every row by the rowid its primary-key index entry points at, so a row keeps its own ID and the salvage file holds each task once. When a damaged index entry for task A points at task B's row, the report says `node A: the index entry for A points at the row of B` and what happened to that row: it is salvaged once, as B, and not again when another entry already salvaged it. Nothing from that row is salvaged as A. A itself ends up exactly one way: salvaged from the database when another index entry reaches A's own row (counted under from database), taken from `.mtix/tasks.json` when the mirror holds it (counted under from mirror), or listed as lost (on the LOST line). A second index entry for the same task that points at the same row is skipped with a note, so the task is read and counted once. When the table itself holds two rows with the ID of task B, `mtix recover` salvages the first row it reads as B, lists B once, and does not salvage the other row: the report says `node B: the table holds two rows with id B`, names the rowid of each row, and holds the content of the row that is not salvaged as exported JSON, so no row is dropped without a note. Show that note to the user and have them decide which content to keep before importing the salvage file. Check such tasks with particular care before you import the salvage file.
+   A task whose row is readable but whose comments (annotations), activity, `code_refs` or `commit_refs` cannot be parsed (the case `mtix export` and the automatic import report, naming the task, the field and `mtix recover`) is salvaged from the database, and that field is taken from the task's copy in `.mtix/tasks.json` when the copy is usable: the file holds exactly one task under that ID, with the same uid when both carry one; the file's `schema_version` is 2.0.0 or later (a file written before 0.5.4 carries none of these fields); and the copy's times pass the checks import applies. The report then prints, for that task and field, `restored from the mirror <path>` with the number of entries the copy held. The copy is whatever `.mtix/tasks.json` holds: the last export, or a file a `git pull` or checkout put there (for example one whose automatic import was refused), which is another clone's copy of the task and can hold that clone's comments and lack yours. Compare each restored field with the local history (for example `git log -p .mtix/tasks.json`) before you import the salvage file. When the file's checksum does not verify, the copy is still used, as salvage of last resort, and the note ends `(the mirror checksum did not verify)`: the file may have been edited by hand, so check that field with particular care. Otherwise the note says the field is dropped and why (for example `the mirror holds no copy of this node`, or `a different task` when the uids differ), and the task is salvaged without that field. `mtix recover` reads every row by the rowid its primary-key index entry points at, so a row keeps its own ID and the salvage file holds each task once. When a damaged index entry for task A points at task B's row, the report says `node A: the index entry for A points at the row of B` and what happened to that row: it is salvaged once, as B, and not again when another entry already salvaged it. Nothing from that row is salvaged as A. A itself ends up exactly one way: salvaged from the database when another index entry reaches A's own row (counted under from database), taken from `.mtix/tasks.json` when the mirror holds it (counted under from mirror), or listed as lost (on the LOST line). A second index entry for the same task that points at the same row is skipped with a note, so the task is read and counted once. When the table itself holds two or more rows with the ID of task B, `mtix recover` prefers a nonempty `uid` match to a mirror copy under that ID, provided there is exactly one such copy and its times pass import validation, then a nonempty `content_hash` match. A hash breaks UID ties; equal matches or no eligible match preserve the existing first-kept order. B is still listed once, and every losing row is reported. The report begins `kept the row by <reason>; node B: the table holds two rows with id B: ...`: the reason names `uid-match`, `hash-match` and `first-kept` as applicable. When a mirror match determines the choice and the mirror checksum did not verify, the reason includes `(the mirror checksum did not verify)`. The note names the rowid of each row and holds the content of the row that is not salvaged as exported JSON, so no row is dropped without a note. The JSON preserves every readable exported field of each losing row; any unreadable JSON columns are named separately in the same note. Show that note to the user and have them decide which content to keep before importing the salvage file. Check such tasks with particular care before you import the salvage file.
 4. Review the report, then restore (the replace import needs the ticket count typed at an interactive terminal): `mtix import --mode replace .mtix/recovered-<timestamp>.json` into a fresh `mtix init` project (or this one, after moving the damaged `data/` aside). Alternatively restore a `mtix backup` snapshot if you have a newer one: stop every mtix process, copy the snapshot over `.mtix/data/mtix.db`, delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`, then continue (this is a restore, unlike the corrupted store in step 1, whose WAL you keep).
 5. For hand-reconstructed export files (e.g., rebuilt from session transcripts), `mtix import --recompute-checksum` replaces the stale integrity checksum — loudly — so the standard import accepts them.
 6. `MTIX_SKIP_INTEGRITY_CHECK=1` bypasses the open-time integrity gates (both the truncation check and quick_check) so `mtix verify`, `mtix backup`, and `mtix export` can reach a damaged file during recovery. mtix logs a loud DANGER line while it is set. Never use it to keep writing.

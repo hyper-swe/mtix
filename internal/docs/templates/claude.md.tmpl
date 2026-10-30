@@ -184,13 +184,21 @@ operator to review the named hook, then run `mtix hooks trust <hook>` from an
 interactive operator terminal outside agent sessions. Agents never run this
 approval command themselves. Changing one hook or its project script requires
 review of that hook; other hook approvals remain independent.
+
+Webhook hooks need the same operator consent for each origin. `mtix hooks status`
+lists every webhook origin that is not consented, with the exact fix. An agent
+asks the operator to run `mtix hooks allow-origin <url>` from an interactive
+operator terminal outside agent sessions; agents never run it themselves.
+Loopback, link-local and private destinations stay refused unless the operator
+lists that origin with `--allow-private`. A webhook without consent is skipped
+and recorded; redirects to an origin that is not consented are not followed.
 <!-- END AUTO-GENERATED -->
 
 ## Health diagnostics
 
 <!-- AUTO-GENERATED: HEALTH_DIAGNOSTICS -->
 
-This build stores and reports `wake.live` and `wake.max_hop_depth`.
+This build stores and reports `wake.live` and `wake.max_hop_depth`, and applies `wake.confirm_window` now in `mtix inbox status`.
 Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
 when the wake scanner ships. They do not control live delivery in this build.
 
@@ -211,6 +219,13 @@ backoff. A new acknowledgement resets the host recipient's delay; already
 acknowledged events do not reset it or return rate allowance. `budget.rewind`
 reports protected accounting after a restore. Held wakes re-arm from the registration's own high-water mark; scanner discovery
 remains separate; settings do not install a route.
+
+Wake status: `mtix comment --to <agent>` and `mtix inbox status --agent <agent> --json` show whether the addressee can be woken
+(`queued`, `nudged`, `unconfirmed`, `confirmed`, `held`, `undeliverable`, `off`, `no-live-session`, `no-dispatcher`, `unknown`) with a runnable
+fix; the message is always in the inbox. `wake.confirm_window` (default 30 seconds) sets when a nudge reads as `unconfirmed`. The doctor
+`wake.listener.*` rows give exact fixes. The ledger-backed states are seeded-only until the wake scanner ships; approving a held wake does not yet send
+a fresh nudge (MTIX-112.40.10). See the multi-agent skill.
+
 
 On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
 `--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.

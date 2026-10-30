@@ -8,6 +8,8 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/hyper-swe/mtix/internal/service"
 )
 
 // newCommentCmd creates the mtix comment command per FR-6.3 / FR-19.1.
@@ -45,16 +47,26 @@ func runComment(id, text, to string) error {
 		return err
 	}
 
+	// Show the sender whether the addressee can be woken (MTIX-112.40.6); never a silent skip.
+	var wake service.WakeStatus
+	if to != "" {
+		wake = newCLIWakeStatusService().Current(ctx, to)
+	}
 	switch {
 	case app.jsonOutput:
-		out := map[string]string{"id": id, "status": "annotation_added"}
+		out := map[string]any{"id": id, "status": "annotation_added"}
 		if to != "" {
 			out["to"] = to
+			out["wake"] = wake
 		}
 		data, _ := json.Marshal(out)
 		fmt.Println(string(data))
 	case to != "":
 		fmt.Printf("Added annotation to %s (→ %s inbox)\n", id, to)
+		fmt.Printf("  wake: %s\n", wakeStatusLine(wake))
+		if wake.Fix != "" {
+			fmt.Printf("  fix: %s\n", wake.Fix)
+		}
 	default:
 		fmt.Printf("Added annotation to %s\n", id)
 	}

@@ -50,6 +50,7 @@ func TestCommandFreshness_ParsedMixedModes(t *testing.T) {
 		{"hooks trust", []string{"sample", "--status"}, freshnessRead},
 		{"hooks trust", []string{"sample"}, freshnessWrite},
 		{"hooks strict", nil, freshnessRead},
+		{"inbox status", []string{"--agent", "worker"}, freshnessRead},
 		{"hooks strict", []string{"status"}, freshnessRead},
 		{"hooks strict", []string{"on"}, freshnessWrite},
 		{"hooks strict", []string{"off"}, freshnessWrite},

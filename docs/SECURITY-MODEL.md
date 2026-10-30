@@ -381,7 +381,7 @@ mtix is a pre-funding open-source project. Triage is best-effort. Critical issue
 | 1.2 | 2026-06 | MTIX-30 / ADR-003 restore-epoch trust model: operator-gated epoch is the un-forgeable Option-B discriminator; client "previously-settled" flag rejected as a forgeable signal on a safety-critical trigger; calibration that a compromised client cannot reach Option B in normal operation |
 | 1.3 | 2026-07 | FR-20 origin-independent dispatch: hooks fire for events of any origin on hosts that configure them (placement is designation); inbox content is prompt input for exec-wake and channel-push delivery; hub write access now implies prompt-injection reach into federated agents |
 | 1.4 | 2026-10 | Corrected claims the code does not meet (MTIX-95.8.4): `audit_log` is never written by mtix and the event record is `sync_events` plus `sync_conflicts`; the owner or a superuser can drop or disable the append-only triggers; the least-privilege block carries the proven grant set as SQL; dedupe is the local `sync_events` row first, `applied_events` second; the pooler mode is not checked by doctor. |
-| 1.5 | unreleased | Recorded the accepted agent-inbox and attach requirements, beta defaults, operator-local confirmation diagnostics and release boundaries. |
+| 1.5 | unreleased | Recorded the accepted agent-inbox and attach requirements, beta defaults, operator-local confirmation diagnostics and release boundaries; `mtix serve` now refuses a non-loopback bind without `--insecure-bind` and a bearer token (MTIX-220). |
 
 Changes that alter the trust model (adding/removing a guarantee, adding a new threat) require a documented version bump and a corresponding `CHANGELOG.md` security note.
 

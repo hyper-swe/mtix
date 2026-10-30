@@ -211,6 +211,7 @@ func TestServeExposureResult_BindAndTokenStates_ReportsExactFix(t *testing.T) {
 			assert.Equal(t, tc.status, row.Status)
 			assert.Contains(t, row.Fix, tc.fix)
 			assert.Equal(t, tc.bind, row.Data["bind"])
+			assert.Equal(t, tc.token != "" && tc.err == nil, row.Data["token_present"], "token_present tells a machine reader the truth")
 			encoded, err := json.Marshal(row)
 			require.NoError(t, err)
 			assert.NotContains(t, string(encoded), secret, "the token never appears in doctor output")

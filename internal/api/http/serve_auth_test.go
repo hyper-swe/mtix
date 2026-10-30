@@ -70,16 +70,19 @@ func TestServer_Start_RefusesNetworkBindWithoutInsecureBindAndToken(t *testing.T
 		name string
 		cfg  ServerConfig
 	}{
-		{"neither", ServerConfig{Bind: "0.0.0.0", Port: "0"}},
-		{"flag only", ServerConfig{Bind: "0.0.0.0", Port: "0", InsecureBind: true}},
-		{"token only", ServerConfig{Bind: "0.0.0.0", Port: "0", AuthToken: authTestToken}},
+		{"neither", ServerConfig{Bind: "0.0.0.0", Port: "-1"}},
+		{"flag only", ServerConfig{Bind: "0.0.0.0", Port: "-1", InsecureBind: true}},
+		{"token only", ServerConfig{Bind: "0.0.0.0", Port: "-1", AuthToken: authTestToken}},
 	}
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			s := testServerWith(t, logger, tc.cfg)
+			// Port -1 cannot listen, so a Start that lost the check still
+			// returns (with a listen error) instead of blocking the package.
 			err := s.Start()
 			require.Error(t, err)
+			assert.ErrorIs(t, err, ErrExposureRefused)
 			assert.Contains(t, err.Error(), "--insecure-bind")
 		})
 	}
@@ -297,5 +300,86 @@ func TestWebSocket_NetworkBind_AcceptsBearerHeaderOrSubprotocolOnly(t *testing.T
 			require.NotNil(t, resp)
 			assert.Equal(t, http.StatusUnauthorized, resp.StatusCode)
 		})
+	}
+}
+
+// TestWebSocket_NetworkBind_NeverEchoesTheTokenWhateverTheOfferOrder pins the
+// never-echo amendment for every offer order: the answered subprotocol is the
+// fixed name or none, never the token form.
+func TestWebSocket_NetworkBind_NeverEchoesTheTokenWhateverTheOfferOrder(t *testing.T) {
+	_, url := wsAuthServer(t)
+	offers := [][]string{
+		{"mtix.auth", "mtix.auth." + authTestToken},
+		{"mtix.auth." + authTestToken, "mtix.auth"},
+		{"mtix.auth." + authTestToken},
+	}
+	for _, offer := range offers {
+		dialer := websocket.Dialer{Subprotocols: offer}
+		conn, resp, err := dialer.Dial(url, nil)
+		require.NoError(t, err, offer)
+		answered := resp.Header.Get("Sec-WebSocket-Protocol")
+		assert.NotContains(t, answered, authTestToken, offer)
+		assert.Contains(t, []string{"", "mtix.auth"}, answered, offer)
+		_ = conn.Close()
+	}
+}
+
+// TestServer_NetworkBind_PreflightBypassKeysOnTheMethodAlone pins that only a
+// real OPTIONS request skips auth: a GET or POST that merely claims to be a
+// preflight is refused, and an OPTIONS answer carries no data.
+func TestServer_NetworkBind_PreflightBypassKeysOnTheMethodAlone(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	s := testServerWith(t, logger, ServerConfig{Bind: "192.0.2.10", Port: "8377", InsecureBind: true, AuthToken: authTestToken})
+	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete, http.MethodPatch} {
+		req := authRequest(method, "/api/v1/nodes", "192.0.2.10:8377", "")
+		req.Header.Set("Access-Control-Request-Method", "GET")
+		req.Header.Set("Origin", "http://192.0.2.10:8377")
+		w := httptest.NewRecorder()
+		s.Router().ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code, method)
+	}
+	for _, origin := range []string{"", "http://192.0.2.10:8377"} {
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/nodes", nil)
+		req.Host = "192.0.2.10:8377"
+		if origin != "" {
+			req.Header.Set("Origin", origin)
+		}
+		w := httptest.NewRecorder()
+		s.Router().ServeHTTP(w, req)
+		assert.Equal(t, http.StatusNoContent, w.Code, "origin %q", origin)
+		assert.Empty(t, w.Body.String(), "an OPTIONS answer carries no data")
+	}
+}
+
+// TestServer_NetworkBind_SubprotocolCredentialWorksOnlyOnTheWebSocketRoute pins
+// that the mtix.auth.TOKEN subprotocol authenticates /ws/events alone: sent to
+// a REST route it is not a credential.
+func TestServer_NetworkBind_SubprotocolCredentialWorksOnlyOnTheWebSocketRoute(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	s := testServerWith(t, logger, ServerConfig{Bind: "192.0.2.10", Port: "0", InsecureBind: true, AuthToken: authTestToken})
+	for _, path := range []string{"/api/v1/nodes", "/health", "/api/openapi.json", "/"} {
+		req := authRequest(http.MethodGet, path, "192.0.2.10:8377", "")
+		req.Header.Set("Sec-WebSocket-Protocol", "mtix.auth, mtix.auth."+authTestToken)
+		w := httptest.NewRecorder()
+		s.Router().ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code, path)
+	}
+}
+
+// TestServer_NetworkBind_NearCollisionTokensAreRefused pins the comparison
+// behaviourally: tokens that differ from the real one in a single position are
+// refused wherever that position is.
+func TestServer_NetworkBind_NearCollisionTokensAreRefused(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
+	s := testServerWith(t, logger, ServerConfig{Bind: "192.0.2.10", Port: "0", InsecureBind: true, AuthToken: authTestToken})
+	for _, pos := range []int{0, 1, len(authTestToken) / 2, len(authTestToken) - 2, len(authTestToken) - 1} {
+		near := []byte(authTestToken)
+		near[pos] = 'f' + byte(0)
+		if near[pos] == authTestToken[pos] {
+			near[pos] = 'e'
+		}
+		w := httptest.NewRecorder()
+		s.Router().ServeHTTP(w, authRequest(http.MethodGet, "/health", "192.0.2.10:8377", "Bearer "+string(near)))
+		assert.Equal(t, http.StatusUnauthorized, w.Code, "differs at %d", pos)
 	}
 }

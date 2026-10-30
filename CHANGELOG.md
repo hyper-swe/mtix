@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`mtix serve` refuses a non-loopback bind without `--insecure-bind` and bearer authentication (MTIX-220).** Behaviour change: a non-loopback address now needs `--insecure-bind` and a bearer token (created on first use in the operator-local state directory, mode 0600, never printed), enforced on every HTTP route and the WebSocket upgrade. `serve` now also honours the `api.bind` setting when `--addr` is not given, so a configured non-loopback `api.bind` triggers the same refusal. `mtix doctor` adds a `serve.exposure` row for a configured network bind. The gRPC server stays loopback-only, now pinned by a test.
 - Document manual sensitive-text cleanup for current fields and fresh snapshots, with the local, hub and Git limits before protocol-2 redaction (MTIX-95.31.19.14).
 - Workflow merge conflicts show each side's field history, with bounded text and JSON reports; explicit resolutions preserve both histories and record the choice.
 

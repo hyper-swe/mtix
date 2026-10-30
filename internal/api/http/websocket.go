@@ -193,6 +193,9 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 		CheckOrigin: func(r *http.Request) bool {
 			return allowedOrigin(r.Header.Get("Origin"), s.config.Bind, s.config.Port)
 		},
+		// MTIX-220: the only subprotocol ever answered is the fixed name, so
+		// a client's mtix.auth.<token> offer is never echoed back.
+		Subprotocols:    []string{wsAuthProtocol},
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 	}

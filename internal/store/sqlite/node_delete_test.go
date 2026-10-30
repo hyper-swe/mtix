@@ -406,6 +406,36 @@ func TestDeleteNodeWithRoot_AncestorRoot_RecalculatesParentProgress(t *testing.T
 	assert.Equal(t, 1.0, after.Progress, "only the done child remains, so the parent rolls up to 1.0")
 }
 
+// TestDeleteNodeWithRoot_GrandparentRoot_RecalculatesDirectParentAndGrandparent
+// pins FR-5.7 when the recovery root is two levels above the deleted node: the
+// rollup starts at the direct parent (not at the root) and reaches the
+// grandparent too (MTIX-107.20.1).
+func TestDeleteNodeWithRoot_GrandparentRoot_RecalculatesDirectParentAndGrandparent(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, s.CreateNode(ctx, makeRootNode("PROJ-1", "PROJ", "Grandparent", now)))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1", "PROJ-1", "PROJ", "Parent", 1, 1, now)))
+	done := makeChildNode("PROJ-1.1.1", "PROJ-1.1", "PROJ", "Done Grandchild", 2, 1, now)
+	done.Progress = 1.0
+	done.Status = model.StatusDone
+	require.NoError(t, s.CreateNode(ctx, done))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1.2", "PROJ-1.1", "PROJ", "Open Grandchild", 2, 2, now)))
+	for _, id := range []string{"PROJ-1.1", "PROJ-1"} {
+		before, err := s.GetNode(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, 0.5, before.Progress, "%s starts at one done and one open leaf", id)
+	}
+
+	require.NoError(t, s.DeleteNodeWithRoot(ctx, "PROJ-1.1.2", "PROJ-1", "admin"))
+
+	for _, id := range []string{"PROJ-1.1", "PROJ-1"} {
+		after, err := s.GetNode(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, 1.0, after.Progress, "%s rolls up to 1.0 once the open leaf is deleted", id)
+	}
+}
+
 // TestDeleteNodeWithRoot_SharedRoot_OneUndeleteRestoresTheGroup pins the
 // grouping: nodes deleted one by one under the same root come back together.
 func TestDeleteNodeWithRoot_SharedRoot_OneUndeleteRestoresTheGroup(t *testing.T) {

@@ -97,11 +97,11 @@ func TestCheckHubPrivileges_InvalidKeepRoles_Fails(t *testing.T) {
 	require.Contains(t, c.Detail, "sync.keep_roles in .mtix/config.yaml")
 }
 
-// TestRunSyncDoctor_HubUnavailable_HubPrivilegesSkippedAsWarn: when the hub
+// TestRunSyncDoctor_HubUnavailable_HubPrivilegesSkipped: when the hub
 // DSN is unset or the hub refuses connections, the hub-privileges check is
-// skipped as a WARN without a connection of its own, while the doctor's
+// explicitly skipped without a connection of its own, while the doctor's
 // other failing checks still exit 2 (MTIX-95.1).
-func TestRunSyncDoctor_HubUnavailable_HubPrivilegesSkippedAsWarn(t *testing.T) {
+func TestRunSyncDoctor_HubUnavailable_HubPrivilegesSkipped(t *testing.T) {
 	tests := []struct {
 		name string
 		dsn  string
@@ -125,8 +125,9 @@ func TestRunSyncDoctor_HubUnavailable_HubPrivilegesSkippedAsWarn(t *testing.T) {
 					continue
 				}
 				found = true
-				require.True(t, c.Pass)
-				require.True(t, c.Warn)
+				require.False(t, c.Pass)
+				require.False(t, c.Warn)
+				require.True(t, c.Skipped)
 				require.Contains(t, c.Detail, "skipped")
 				require.NotContains(t, c.Detail, "could not verify", "no second connection is attempted")
 			}

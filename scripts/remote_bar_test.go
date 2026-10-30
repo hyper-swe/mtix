@@ -10,6 +10,7 @@ package scripts_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -459,11 +460,9 @@ func TestRemoteBar_Snapshot_KeepsTrackedFilesDespiteIgnoreRules(t *testing.T) {
 
 // stubGh writes a gh stub that records its arguments and answers with
 // realistic JSON, applying the --jq expression it is given with jq.
-func stubGh(t *testing.T) (binDir, logFile string) {
+func stubGh(t testing.TB) (binDir, logFile string) {
 	t.Helper()
-	if _, err := exec.LookPath("jq"); err != nil {
-		t.Skip("jq not installed; the gh stub cannot apply the --jq filters (install jq to run this check)")
-	}
+	requireJQ(t, exec.LookPath, os.Getenv)
 	binDir = t.TempDir()
 	logFile = filepath.Join(binDir, "gh.log")
 	script := `#!/bin/sh
@@ -505,7 +504,7 @@ case "$1 $2" in
     steps='{"name":"Set up job","conclusion":"success"}'
     old="$IFS"; IFS='|'; for n in $STUB_STEPS; do steps="$steps,{\"name\":\"$n\",\"conclusion\":\"failure\"}"; done; IFS="$old"
     emit "{\"jobs\":[{\"steps\":[$steps]}]}" ;;
-  *"--log-failed"*) echo "stub failed log" ;;
+  *"--log-failed"*) if [ -n "$STUB_FAILED_LOG" ]; then cat "$STUB_FAILED_LOG"; else echo "stub failed log"; fi ;;
   esac ;;
 esac
 `
@@ -558,6 +557,128 @@ func TestRemoteBar_Run_MapsRunOutcomesToExitCodesAndDeletesBranch(t *testing.T) 
 			require.NotContains(t, string(logged), "run cancel", "a finished run is not cancelled")
 		})
 	}
+}
+
+// TestRemoteBar_Run_FailedLogListsFailingTestsAheadOfTheTail pins MTIX-215: a
+// failed run prints the failing-test lines of the whole log first (they can lie
+// far outside the last 200 lines), deduplicated and capped, then the tail; the
+// verdict line and exit code are unchanged and the captured log is cleaned up.
+func TestRemoteBar_Run_FailedLogListsFailingTestsAheadOfTheTail(t *testing.T) {
+	var log strings.Builder
+	log.WriteString("bar\trun\t2026-10-30T01:00:00.0000000Z --- FAIL: TestEarly_One (0.01s)\n")
+	log.WriteString("bar\trun\t2026-10-30T01:00:01.0000000Z --- FAIL: TestEarly_One (0.02s)\n")
+	log.WriteString("bar\trun\t2026-10-30T01:00:02.0000000Z panic: boom [recovered]\n")
+	log.WriteString("bar\trun\t2026-10-30T01:00:03.0000000Z FAIL\tgithub.com/hyper-swe/mtix/internal/early\t0.5s\n")
+	log.WriteString("bar\trun\t2026-10-30T01:00:04.0000000Z FAIL github.com/hyper-swe/mtix/internal/broken [build failed]\n")
+	log.WriteString("bar\trun\t2026-10-30T01:00:05.0000000Z panic: test timed out after 20m0s\n")
+	for i := 0; i < 300; i++ {
+		fmt.Fprintf(&log, "bar\trun\t2026-10-30T01:01:00.0000000Z filler line %d\n", i)
+	}
+	logFile := filepath.Join(t.TempDir(), "failed.log")
+	require.NoError(t, os.WriteFile(logFile, []byte(log.String()), 0o600))
+
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed failure", "STUB_STEPS=Run committed bar", "STUB_FAILED_LOG="+logFile)
+
+	require.Equal(t, 1, code, out)
+	require.Contains(t, out, " workflow_ref=main workflow_sha=")
+	header := strings.Index(out, "failing tests:")
+	require.GreaterOrEqual(t, header, 0, "a failing tests block is printed:\n%s", out)
+	tail := strings.Index(out, "filler line 100")
+	require.Greater(t, tail, header, "the tail follows the failing tests block")
+	block := out[header:tail]
+	for _, want := range []string{"--- FAIL: TestEarly_One", "panic: boom", "FAIL\tgithub.com/hyper-swe/mtix/internal/early", "[build failed]", "test timed out"} {
+		require.Contains(t, block, want)
+	}
+	require.Equal(t, 1, strings.Count(block, "--- FAIL: TestEarly_One"), "duplicates collapse")
+	require.NotContains(t, out, "filler line 99\n", "only the last 200 lines are tailed")
+	require.Contains(t, out, "filler line 299")
+}
+
+// failedLogFile writes lines as a fake gh failed-run log and returns its path.
+func failedLogFile(t *testing.T, lines []string) string {
+	t.Helper()
+	logFile := filepath.Join(t.TempDir(), "failed.log")
+	require.NoError(t, os.WriteFile(logFile, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+	return logFile
+}
+
+// failingBlock returns the lines printed between the failing tests header and
+// the log tail header, failing the test when either header is missing or
+// misordered.
+func failingBlock(t *testing.T, out string) []string {
+	t.Helper()
+	header := strings.Index(out, "failing tests:\n")
+	tail := strings.Index(out, "log tail (last 200 lines):\n")
+	require.GreaterOrEqual(t, header, 0, "failing tests header:\n%s", out)
+	require.Greater(t, tail, header, "log tail header follows the failing tests block:\n%s", out)
+	return strings.Split(strings.TrimSpace(out[header+len("failing tests:\n"):tail]), "\n")
+}
+
+// TestRemoteBar_Run_FailingTestsBlockIsCappedAtOneHundredLines pins the cap:
+// 150 distinct failures print exactly the first 100.
+func TestRemoteBar_Run_FailingTestsBlockIsCappedAtOneHundredLines(t *testing.T) {
+	var lines []string
+	for i := 0; i < 150; i++ {
+		lines = append(lines, fmt.Sprintf("bar\trun\t2026-10-30T01:00:00.0000000Z --- FAIL: TestCap_%03d (0.01s)", i))
+	}
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed failure", "STUB_STEPS=Run committed bar", "STUB_FAILED_LOG="+failedLogFile(t, lines))
+
+	require.Equal(t, 1, code, out)
+	block := failingBlock(t, out)
+	require.Len(t, block, 100, "exactly 100 lines")
+	require.Equal(t, "--- FAIL: TestCap_000", block[0])
+	require.Equal(t, "--- FAIL: TestCap_099", block[99])
+	require.NotContains(t, strings.Join(block, "\n"), "TestCap_100")
+}
+
+// TestRemoteBar_Run_FailingTestsBlockMatchesEachMarkerAloneAndNothingElse pins
+// every marker on its own line, and that bare FAIL, ok and lowercase lines
+// stay out of the block.
+func TestRemoteBar_Run_FailingTestsBlockMatchesEachMarkerAloneAndNothingElse(t *testing.T) {
+	ts := "bar\trun\t2026-10-30T01:00:00.0000000Z "
+	lines := []string{
+		ts + "--- FAIL: TestMarker_Sub (0.01s)",
+		ts + "FAIL\tpkg/one\t0.5s",
+		ts + "panic: marker only",
+		ts + "pkg/two [build failed]",
+		ts + "test timed out after 10m0s",
+		ts + "FAIL",
+		ts + "ok  \tpkg/fine\t0.1s",
+		ts + "fail: lowercase noise",
+		ts + "FAIL\tpkg/one\t0.9s",
+	}
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed failure", "STUB_STEPS=Run committed bar", "STUB_FAILED_LOG="+failedLogFile(t, lines))
+
+	require.Equal(t, 1, code, out)
+	want := []string{"--- FAIL: TestMarker_Sub", "FAIL\tpkg/one", "panic: marker only", "pkg/two [build failed]", "test timed out after 10m0s"}
+	require.Equal(t, want, failingBlock(t, out), "each marker once, durations ignored for dedup, noise excluded")
+}
+
+// TestRemoteBar_Run_GreenRunPrintsNoFailedLog pins that the failed-log output
+// is limited to failing runs.
+func TestRemoteBar_Run_GreenRunPrintsNoFailedLog(t *testing.T) {
+	lines := []string{"bar\trun\t2026-10-30T01:00:00.0000000Z --- FAIL: TestIgnored (0.01s)"}
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed success", "STUB_FAILED_LOG="+failedLogFile(t, lines))
+
+	require.Equal(t, 0, code, out)
+	require.NotContains(t, out, "failing tests:")
+	require.NotContains(t, out, "log tail (last 200 lines):")
+	require.NotContains(t, out, "TestIgnored")
+}
+
+// TestRemoteBar_Run_FailedRunLeavesNoTempFilesBehind pins that the captured
+// failed log is removed with the temp dir.
+func TestRemoteBar_Run_FailedRunLeavesNoTempFilesBehind(t *testing.T) {
+	tmp := t.TempDir()
+	lines := []string{"bar\trun\t2026-10-30T01:00:00.0000000Z --- FAIL: TestLeak (0.01s)"}
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed failure", "STUB_STEPS=Run committed bar",
+		"STUB_FAILED_LOG="+failedLogFile(t, lines), "TMPDIR="+tmp)
+
+	require.Equal(t, 1, code, out)
+	require.Contains(t, out, "TestLeak", "the failed log was captured and printed")
+	entries, err := os.ReadDir(tmp)
+	require.NoError(t, err)
+	require.Empty(t, entries, "no remote-bar temp dir or failed.log is left behind")
 }
 
 func TestRemoteBar_Run_TimeoutCancelsTheRunAndReportsInfraFailure(t *testing.T) {

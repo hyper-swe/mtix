@@ -80,6 +80,7 @@ func TestCollisionMove_RetryRenumbersOnce(t *testing.T) {
 				expected = "hub accepted collision 42 but recording completion on the hub failed"
 			}
 			require.ErrorContains(t, err, expected)
+			require.ErrorContains(t, err, "fix the cause, then run on the client that owns the losing node")
 			require.Contains(t, err.Error(), "mtix sync collisions resolve 42 --winner held")
 			fail = false
 			for range 2 {

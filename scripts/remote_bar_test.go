@@ -656,6 +656,71 @@ func TestRemoteBar_Run_FailingTestsBlockMatchesEachMarkerAloneAndNothingElse(t *
 	require.Equal(t, want, failingBlock(t, out), "each marker once, durations ignored for dedup, noise excluded")
 }
 
+// TestRemoteBar_Run_FailingTestsBlockDeduplicatesBeforeTheCap pins MTIX-215.2:
+// duplicates are collapsed BEFORE the 100-line cap, so repeated failure lines
+// cannot use up cap slots and hide distinct ones. 60 copies of one failure are
+// followed by 120 distinct failures; the block holds 100 distinct lines.
+func TestRemoteBar_Run_FailingTestsBlockDeduplicatesBeforeTheCap(t *testing.T) {
+	ts := "bar\trun\t2026-10-30T01:00:00.0000000Z "
+	var lines []string
+	for i := 0; i < 60; i++ {
+		lines = append(lines, ts+"--- FAIL: TestDup_Repeated (0.01s)")
+	}
+	for i := 0; i < 120; i++ {
+		lines = append(lines, fmt.Sprintf("%s--- FAIL: TestDup_%03d (0.01s)", ts, i))
+	}
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed failure", "STUB_STEPS=Run committed bar", "STUB_FAILED_LOG="+failedLogFile(t, lines))
+
+	require.Equal(t, 1, code, out)
+	block := failingBlock(t, out)
+	require.Len(t, block, 100, "exactly 100 lines")
+	seen := map[string]bool{}
+	for _, l := range block {
+		require.False(t, seen[l], "no duplicate line in the block: %s", l)
+		seen[l] = true
+	}
+	require.Equal(t, "--- FAIL: TestDup_Repeated", block[0])
+	require.Equal(t, "--- FAIL: TestDup_098", block[99], "distinct lines past the repeats still fill the cap")
+}
+
+// TestRemoteBar_Run_FailingTestsBlockMatchingIsCaseSensitive pins that every
+// marker matches in its documented case only: lowercase and mixed-case
+// lookalikes stay out of the block.
+func TestRemoteBar_Run_FailingTestsBlockMatchingIsCaseSensitive(t *testing.T) {
+	ts := "bar\trun\t2026-10-30T01:00:00.0000000Z "
+	lines := []string{
+		ts + "--- fail: TestLower (0.01s)",
+		ts + "fail\tpkg/lower\t0.5s",
+		ts + "Fail\tpkg/mixed\t0.5s",
+		ts + "PANIC: shouted",
+		ts + "pkg/lower [Build Failed]",
+		ts + "Test Timed Out after 10m0s",
+		ts + "--- FAIL: TestReal (0.01s)",
+	}
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed failure", "STUB_STEPS=Run committed bar", "STUB_FAILED_LOG="+failedLogFile(t, lines))
+
+	require.Equal(t, 1, code, out)
+	require.Equal(t, []string{"--- FAIL: TestReal"}, failingBlock(t, out), "only the exact-case marker is listed")
+}
+
+// TestRemoteBar_Run_FailingTestsBlockFailMarkerNeedsALineOrWordStart pins the
+// start anchor of the package FAIL marker: FAIL must begin the line or follow
+// whitespace. FAIL glued to the end of another word is not a marker.
+func TestRemoteBar_Run_FailingTestsBlockFailMarkerNeedsALineOrWordStart(t *testing.T) {
+	ts := "bar\trun\t2026-10-30T01:00:00.0000000Z "
+	lines := []string{
+		ts + "NOFAIL\tpkg/glued\t0.5s",
+		ts + "xFAIL pkg/glued2",
+		ts + "FAIL\tpkg/start\t0.5s",
+		ts + "note: FAIL pkg/afterspace",
+	}
+	out, code, _, _ := runWithStub(t, "STUB_STATE=completed failure", "STUB_STEPS=Run committed bar", "STUB_FAILED_LOG="+failedLogFile(t, lines))
+
+	require.Equal(t, 1, code, out)
+	want := []string{"FAIL\tpkg/start", "note: FAIL pkg/afterspace"}
+	require.Equal(t, want, failingBlock(t, out), "line-start and after-whitespace FAIL list; glued FAIL does not")
+}
+
 // TestRemoteBar_Run_GreenRunPrintsNoFailedLog pins that the failed-log output
 // is limited to failing runs.
 func TestRemoteBar_Run_GreenRunPrintsNoFailedLog(t *testing.T) {

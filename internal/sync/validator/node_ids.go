@@ -78,7 +78,9 @@ func payloadNodeRef(e *model.SyncEvent) (field, id string, err error) {
 // it is outside the node id grammar, and nil otherwise.
 func checkNodeID(e *model.SyncEvent, field, id string) error {
 	if err := model.ValidateSyncNodeID(id); err != nil {
-		return fmt.Errorf("%w: event %s %s %q: %w", ErrInvalidNodeID, format.EventID(e.EventID), field, id, err)
+		// The model diagnostic also repeats the hostile id; escape it as well.
+		return fmt.Errorf("%w: event %s %s %s: %s: %w", ErrInvalidNodeID,
+			format.EventID(e.EventID), field, format.EventID(id), format.EventID(err.Error()), model.ErrInvalidInput)
 	}
 	return nil
 }

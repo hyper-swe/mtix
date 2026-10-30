@@ -278,7 +278,11 @@ func TestPendingRefusal_WritesKeepTasksJSONUntilResolved(t *testing.T) {
 			if resolve == "sync --fix" {
 				captureStdout(t, func() { require.NoError(t, runSync(cmd, true)) })
 			} else {
-				captureStdout(t, func() { require.NoError(t, runImport(tasksPath, importFlags{mode: "merge"})) })
+				// runPreRun's capture has closed its pipe; provide a live stderr
+				// while the import publishes its checked reconciliation report.
+				captureStderr(t, func() {
+					captureStdout(t, func() { require.NoError(t, runImport(tasksPath, importFlags{mode: "merge"})) })
+				})
 				require.NoError(t, app.syncSvc.AutoExport(testContext(t), app.mtixDir))
 			}
 			rewritten, err := os.ReadFile(tasksPath)

@@ -14,6 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 - Collision resolution errors identify whether local renumbering or recording completion on the hub failed, while preserving the retry command (MTIX-107.46.2).
+- `mtix doctor` reports oversized daemon capture logs with read-only text/JSON diagnostics and manual retention remedies; daemon guidance documents native macOS rotation and Linux journal limits (MTIX-228).
+
 - **`mtix serve` refuses a non-loopback bind without `--insecure-bind` and bearer authentication (MTIX-220).** Behaviour change: a non-loopback address now needs `--insecure-bind` and a bearer token (created on first use in the operator-local state directory, mode 0600, never printed), enforced on every HTTP route and the WebSocket upgrade. `serve` now also honours the `api.bind` setting when `--addr` is not given, so a configured non-loopback `api.bind` triggers the same refusal. `mtix doctor` adds a `serve.exposure` row for a configured network bind. The gRPC server stays loopback-only, now pinned by a test.
 - `scripts/remote-bar.sh` prints a failing tests block (Go test failure lines from the whole failed log, deduplicated, at most 100) before the last 200 log lines, so failing-test names no longer fall outside the tail (MTIX-215).
 - Refine wake-guidance checks for explicit command markup and unrelated variables, with recording fixtures for external command selection (MTIX-112.26).

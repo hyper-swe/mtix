@@ -33,6 +33,8 @@ type hookStatusReport struct {
 	AppendFile []hooks.AppendFileIssue `json:"append_file"`
 	// Strict reports strict program mode and the program approvals.
 	Strict hooks.StrictStatus `json:"strict"`
+	// Origins lists webhook hooks whose delivery origin consent would refuse (W15).
+	Origins []hooks.OriginIssue `json:"origins"`
 }
 
 func runHooksStatus(state *oplocal.State) error {
@@ -69,11 +71,13 @@ func inspectHookStatus(state *oplocal.State) (hookStatusReport, error) {
 	}
 	cfg, warnings := hooks.Load(app.mtixDir)
 	appendIssues := appendFileIssues(cfg)
+	origins, originsErr := hooks.ReadOrigins(state)
+	originIssues := hooks.WebhookOriginIssues(origins, originsErr, cfg)
 	if warnings == nil {
 		warnings = []string{}
 	}
 	strict := approvals.StrictStatus(cfg)
-	return hookStatusReport{Status: status, Hooks: entries, Legacy: hooks.LegacyStatus(app.mtixDir), Warnings: warnings, AppendFile: appendIssues, Strict: strict}, errors.Join(err, hookErr)
+	return hookStatusReport{Status: status, Hooks: entries, Legacy: hooks.LegacyStatus(app.mtixDir), Warnings: warnings, AppendFile: appendIssues, Strict: strict, Origins: originIssues}, errors.Join(err, hookErr)
 }
 
 func renderHookStatus(out OutputWriter, report hookStatusReport) {
@@ -99,6 +103,9 @@ func renderHookStatus(out OutputWriter, report hookStatusReport) {
 	}
 	for _, issue := range report.AppendFile {
 		out.WriteHuman("hook %q append-file: %s\nFix: %s\n", issue.Hook, issue.Reason, issue.Fix)
+	}
+	for _, issue := range report.Origins {
+		out.WriteHuman("hook %q webhook: %s\nFix: %s\n", issue.Hook, issue.Reason, issue.Fix)
 	}
 	for _, warning := range report.Warnings {
 		out.WriteHuman("%s\nFix: edit .mtix/hooks.yaml, then run mtix hooks status --json\n", warning)

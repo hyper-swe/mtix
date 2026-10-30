@@ -828,6 +828,7 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 
 ### Subcommands
 
+- `allow-origin <url>` — Consent to webhook deliveries to one origin on this host
 - `exec-dispatch [any|daemon|off]` — Get or set this host's local exec dispatch policy
 - `fire` — Test hooks.yaml against a sample event (dry-run only, for now)
 - `list` — List configured hooks with their events and delivery adapters
@@ -835,6 +836,21 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `status` — Show operator-local state and per-hook approvals
 - `strict <on|off|status>` — Show or change strict program mode for exec hooks on this host
 - `trust <hook>` — Review and approve one exec hook on this host
+---
+
+## allow-origin
+
+**Usage:** `allow-origin <url>`
+
+Consent to webhook deliveries to one origin on this host
+
+Save operator consent, outside the project, for webhook deliveries to the origin (scheme, host, port) of the URL. Without consent a webhook hook is skipped and reported by hooks status. Loopback, link-local and private destinations are refused unless the origin is listed with --allow-private. Requires terminal stdin outside an agent session.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--allow-private` |  | Also allow loopback, link-local and private destinations for this origin | false |
 ---
 
 ## exec-dispatch
@@ -1388,6 +1404,15 @@ Rerun invalidates descendants with configurable strategies:
 **Usage:** `resolve-annotation <node-id> <annotation-id>`
 
 Resolve an annotation on a node
+
+Resolve an annotation on a node.
+
+The annotation id is the full id (as in mtix show --json) or the short id that
+mtix show prints, which is the first 12 characters. A prefix works when it is at
+least 12 characters and matches one annotation; an exact full id always wins.
+Several matches are refused with the full ids listed, and no match is a not
+found error. An id with unusual characters prints escaped in mtix show, so copy
+it from mtix show --json instead.
 ---
 
 ## restore
@@ -1487,21 +1512,26 @@ Show a node's details and annotations as labeled lines, in this order:
                time, or for other statuses even with a stale wake time
   Priority     priority (1 = critical ... 5 = backlog)
   Type         node type
+  Issue type   issue type (only when set)
   Assignee     current assignee (only when set)
   Desc         full description (only when set; omitted when it holds only
                whitespace, control characters or invisible formatting
                characters), further lines indented
   Annotations  every annotation, oldest first (equal times by id): its ISO-8601 UTC timestamp
-               ("unknown time" when none was recorded), author, addressee
+               ("unknown time" when none was recorded), its short id in
+               the form (id "01ARZ3NDEKTS") when it has one (the first 12
+               characters; mtix resolve-annotation accepts it, and --json
+               has the full id), author, addressee
                and resolved marker when present, then the text, with
                further lines indented and "(empty)" for an empty text;
                "Annotations: none" when the node has none
-  Prompt       the prompt, cut to 100 characters ending in "..." when
-               longer (only when set; omitted when it holds only
+  Prompt       up to 100 characters (Unicode code points) of the normalized prompt;
+               longer prompts are cut to 97 characters followed by ...
+               (only when set; omitted when it holds only
                whitespace, control characters or invisible formatting
                characters), further lines indented
   Progress     progress bar
-  Created      creation time
+  Created      creation time: 2006-01-02 15:04 (UTC, no zone)
   History      with --history: the change history, newest first, at most
                --history-limit entries (default 50), one line each with the
                UTC time, field, actor, origin and, for a structured field,
@@ -1525,8 +1555,8 @@ kept, so a lone mark can still change how digits are ordered. The
 --history list follows the same rule and prints each entry on one line,
 with line breaks shown as spaces. Quote exact text from --json.
 
-Acceptance criteria, labels, dependencies, activity and the full prompt are
-not printed. Use --json for the complete node record, including every
+Other fields, for example acceptance criteria, labels, dependencies, activity
+and the full prompt, are not printed. Use --json for the complete node record, including every
 annotation.
 
 ### Flags

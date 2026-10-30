@@ -768,6 +768,8 @@ When an annotation has been addressed:
 mtix resolve-annotation PROJ-1.1 <annotation-id>
 ```
 
+`mtix show PROJ-1.1` prints each annotation with its short id, for example `[2026-09-01T09:30:00Z] (id "01ARZ3NDEKTS") reviewer-a: PASS`. The short id is the first 12 characters of the annotation id; give it as `<annotation-id>`. The full id (shown by `mtix show --json`) always works. A prefix of at least 12 characters works when it matches exactly one annotation. If it matches several, mtix refuses and lists their full ids; if it matches none, you get a not found error. The MCP tool `mtix_resolve_annotation` follows the same rule.
+
 Resolved annotations are excluded from context assembly.
 
 ---
@@ -3334,6 +3336,14 @@ interactive operator terminal outside agent sessions. Agents never run this
 approval command themselves. Changing one hook or its project script requires
 review of that hook; other hook approvals remain independent.
 
+Webhook hooks need the same operator consent for each origin. `mtix hooks status`
+lists every webhook origin that is not consented, with the exact fix. An agent
+asks the operator to run `mtix hooks allow-origin <url>` from an interactive
+operator terminal outside agent sessions; agents never run it themselves.
+Loopback, link-local and private destinations stay refused unless the operator
+lists that origin with `--allow-private`. A webhook without consent is skipped
+and recorded; redirects to an origin that is not consented are not followed.
+
 The approval records are stored outside the project, bound to the local host
 and canonical project identity. Each record pins the selected hook stanza and
 its project script contents. For example, after reviewing the `wake` hook:
@@ -3559,6 +3569,35 @@ delivery would refuse, with the reason and the exact fix: text output prints
 same-file checks apply and a multiply linked file is refused at delivery (as is a file whose
 link count cannot be read), but
 `mtix hooks status` does not list it and permission bits are not reported.
+
+
+### Webhook origin consent
+
+A webhook hook delivers only to an origin (scheme, host and port) that the
+operator consented to on this host. The consent list is stored outside the
+project, so a cloned repository cannot grant it. To configure and verify:
+
+```sh
+mtix hooks status --json        # origins[] names each refused hook and the exact fix
+mtix hooks allow-origin 'https://hooks.example.com'
+mtix hooks allow-origin --allow-private 'http://127.0.0.1:9000'
+mtix hooks log                  # skipped-untrusted rows show the reason and the fix
+```
+
+`mtix doctor --json` carries the same check as the `hooks.origins` row (shown only
+when `.mtix/hooks.yaml` exists): PASS means every configured webhook origin is
+consented, WARN lists each hook that would be skipped with the exact fix command.
+Run doctor again after the operator consents, until the row is PASS. Doctor only
+reads; it never writes consent state.
+
+The consent command needs an interactive terminal outside agent sessions. List
+a loopback, link-local or private destination only with `--allow-private`, and
+only when it is intended. The check applies to the address actually connected,
+so a name that later resolves to a private address is refused, and the skipped row names the origin and the exact `--allow-private` command. Status and doctor resolve each consented name once (no request is sent to the webhook) and warn for a name that resolves to a private address without the opt-in. A name that cannot be resolved (offline, resolver error or a 2 second timeout) is also a warning, "could not verify", never a pass: re-run the check when online or check the host resolver. Redirects are
+followed only to other consented origins. If the consent state cannot be read,
+every webhook is skipped; run `mtix hooks status --json` and correct the
+reported path or access rules. An agent never edits the consent record and
+never works around a skip: it reports the fix to the operator.
 
 ### Conflict handling
 

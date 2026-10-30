@@ -3522,6 +3522,18 @@ for the full tradeoff.
 
 ### Hub health checks
 
+When `PG reachable` fails, `queue draining`, `schema current` and
+`hub-privileges` are `SKIPPED` with a hub-unreachable reason. Restore hub
+connectivity and run `mtix sync doctor` again before diagnosing the pusher.
+A reachable hub still makes `queue draining` fail when eligible events
+have been pending for over an hour; a schema failure alone does not skip
+that queue check. Relay-only queue checks are unchanged. In
+`mtix sync doctor --json`, these skipped rows have `"pass": false` and
+`"skipped": true`; `skipped` is omitted on other rows. A skipped row does
+not itself fail the report, but the failed `PG reachable` check still
+returns exit code 2. Unified `mtix doctor` reports the skipped rows as
+`INFO` (`"status": "info"` in JSON), with the same reason.
+
 ```bash
 mtix sync doctor             # health checks: PG reachable, schema current,
                              #   queue draining, no orphan applied,

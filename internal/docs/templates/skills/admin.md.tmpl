@@ -10,7 +10,7 @@ allowed-tools:
 
 ## Host wake settings
 
-This build stores and reports `wake.live` and `wake.max_hop_depth`.
+This build stores and reports `wake.live` and `wake.max_hop_depth`, and applies `wake.confirm_window` now in `mtix inbox status`.
 Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
 when the wake scanner ships. They do not control live delivery in this build.
 
@@ -45,6 +45,7 @@ Existing flat envelope and strict-identity settings remain readable.
 | `wake.envelope_max_total_bytes` | unset, unlimited | Total envelope bytes |
 | `wake.max_hop_depth` | `32` | Scanner hop guard; depth 32 will be allowed, 33 held |
 | `wake.backoff_after_unacked` | `5` | Enforced by the callable dispatcher: durable unacknowledged-wake backoff |
+| `wake.confirm_window` | `30` | Seconds a sent nudge may stay unseen before `mtix inbox status` and `mtix comment --to` show it as `unconfirmed` (read-time only, no timer, no inbox event). An ordinary setting, not a guard: whole seconds 1 to 86400, and setting it never needs a terminal |
 | `inbox.strict_board_identity` | `false` | Also require matching hub identity |
 
 Read a value with `mtix config get wake.max_hop_depth`, or append `--agent worker`.
@@ -358,9 +359,11 @@ The append-only tables (`audit_log`, `sync_conflicts`, `sync_events`) refuse TRU
 **Resolving restore collisions:** The hub must accept the winner before mtix renumbers locally. If the hub refuses
 (for example, `permission denied for table sync_node_collisions`), the local
 store stays unchanged. Resolve with a role allowed to UPDATE that table.
-If acceptance succeeds but local completion fails, mtix reports
-`hub accepted collision <id> but local completion failed` and prints the exact
-recovery command: `mtix sync collisions resolve <id> --winner held|incoming`
+If acceptance succeeds but local renumbering fails, mtix reports
+`hub accepted collision <id> but local renumber failed`. If the local move
+succeeds but recording its completion on the hub fails, mtix reports
+`hub accepted collision <id> but recording completion on the hub failed`.
+Both failures print the exact recovery command: `mtix sync collisions resolve <id> --winner held|incoming`
 (with the original winner filled in). Fix the reported cause, then run that
 command on the client that owns the losing node, with the same hub configured.
 The decision is already recorded on the hub, so the collision no longer shows

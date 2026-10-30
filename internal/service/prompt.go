@@ -123,17 +123,41 @@ func (svc *PromptService) AddAnnotation(ctx context.Context, nodeID, text, autho
 }
 
 // ResolveAnnotation sets the resolved flag on an annotation per FR-3.4.
-// Returns ErrNotFound if the annotation ID does not exist on the node.
+// The annotation is named by its full id or by an unambiguous prefix (see
+// ResolveAnnotationRef). Returns ErrNotFound if no annotation matches and
+// ErrInvalidInput if the reference is too short or ambiguous.
 func (svc *PromptService) ResolveAnnotation(
-	ctx context.Context, nodeID, annotationID string, resolved bool,
+	ctx context.Context, nodeID, annotationRef string, resolved bool,
 ) error {
-	// One atomic store update by annotation ID (MTIX-148).
+	_, err := svc.ResolveAnnotationRef(ctx, nodeID, annotationRef, resolved)
+	return err
+}
+
+// ResolveAnnotationRef is ResolveAnnotation that also returns the full id of
+// the annotation it changed, so callers can report it (FR-3.4, MTIX-100.3).
+// A full id is an exact match and always wins. Otherwise the reference is a
+// prefix of at least model.AnnotationShortIDLen characters, the length
+// `mtix show` prints. Several matches are refused with ErrInvalidInput that
+// lists the full ids; none is ErrNotFound. Every id in an error is rendered
+// with format.EventID.
+func (svc *PromptService) ResolveAnnotationRef(
+	ctx context.Context, nodeID, annotationRef string, resolved bool,
+) (string, error) {
+	node, err := svc.store.GetNode(ctx, nodeID)
+	if err != nil {
+		return "", fmt.Errorf("resolve annotation %s on node %s: %w", format.EventID(annotationRef), nodeID, err)
+	}
+	annotationID, err := matchAnnotationRef(node.Annotations, annotationRef)
+	if err != nil {
+		return "", fmt.Errorf("resolve annotation on node %s: %w", nodeID, err)
+	}
+	// One atomic store update by the full annotation ID (MTIX-148).
 	if err := svc.store.ResolveAnnotation(ctx, nodeID, annotationID, resolved); err != nil {
-		return fmt.Errorf("resolve annotation %s on node %s: %w", format.EventID(annotationID), nodeID, err)
+		return "", fmt.Errorf("resolve annotation %s on node %s: %w", format.EventID(annotationID), nodeID, err)
 	}
 
 	svc.broadcastPromptEvent(ctx, EventNodeUpdated, nodeID, "", nil)
-	return nil
+	return annotationID, nil
 }
 
 // broadcastPromptEvent broadcasts a domain event for prompt/annotation operations.

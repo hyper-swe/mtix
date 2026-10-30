@@ -124,7 +124,7 @@ func registerResolveAnnotationTool(reg *ToolRegistry, svc *service.PromptService
 			Type: "object",
 			Properties: map[string]SchemaProp{
 				"id":            {Type: "string", Description: "Node ID"},
-				"annotation_id": {Type: "string", Description: "Annotation ULID to resolve"},
+				"annotation_id": {Type: "string", Description: "Annotation id to resolve: the full id or an unambiguous prefix of at least 12 characters"},
 				"author":        {Type: "string", Description: "Author resolving the annotation"},
 			},
 			Required: []string{"id", "annotation_id", "author"},
@@ -139,10 +139,11 @@ func registerResolveAnnotationTool(reg *ToolRegistry, svc *service.PromptService
 			return nil, fmt.Errorf("parse resolve annotation args: %w", err)
 		}
 
-		if err := svc.ResolveAnnotation(ctx, p.ID, p.AnnotationID, true); err != nil {
+		fullID, err := svc.ResolveAnnotationRef(ctx, p.ID, p.AnnotationID, true)
+		if err != nil {
 			return nil, err
 		}
 
-		return SuccessResult(textAnnotationResolved(format.EventID(p.AnnotationID), p.ID)), nil
+		return SuccessResult(textAnnotationResolved(format.EventID(fullID), p.ID)), nil
 	})
 }

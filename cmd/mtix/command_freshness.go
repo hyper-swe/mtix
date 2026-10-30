@@ -68,7 +68,7 @@ func fixedCommandFreshness(path string) freshnessScope {
 	switch path {
 	case "agent list", "agent work", "blocked", "config get", "context",
 		"daemon status", "dep show", "hooks fire", "hooks list", "hooks log",
-		"hooks status", "inbox", "list", "orphans", "progress", "projects",
+		"hooks status", "inbox", "inbox status", "list", "orphans", "progress", "projects",
 		"ready", "search", "session summary", "show", "stale", "stats",
 		"sync collisions list", "sync conflicts list", "sync doctor",
 		"sync quarantine list", "sync relay status", "sync status", "tree", "verify":

@@ -434,6 +434,9 @@ standard-input routine regardless of variable or command name; unrelated shell
 variables do not need exact-line exemptions.
 Unknown command heads followed by the inbox verb are conservatively treated as
 reader sources. The checks do not expand variables or resolve shell aliases.
+Known wrappers are stripped before applying that rule. This deliberately refuses
+even an unrelated command such as 'echo inbox' inside a code span or executable
+fence; ordinary prose containing the same words is not scanned.
 
 ## Testing sync changes (MTIX-15 / FR-18)
 

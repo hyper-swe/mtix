@@ -21,13 +21,7 @@ func wakeReaderSource(text string) bool {
 	return wakeUnknownReaderSource(text)
 }
 
-func wakeReaderWord(text string) (string, string) {
-	match := wakeCommandWordRE.FindStringSubmatchIndex(text)
-	if match == nil {
-		return "", ""
-	}
-	return strings.Trim(text[match[2]:match[3]], "\"'"), text[match[1]:]
-}
+func wakeReaderWord(text string) (string, string) { return wakeShellWord(text) }
 
 func wakeInboxAfterFlags(text string, metadataAllowed bool) bool {
 	for {

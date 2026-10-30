@@ -12,14 +12,12 @@ var wakeCommandStartRE = regexp.MustCompile(`(?:^|[;&|({\n])\s*`)
 
 // MTIX-112.26 treats an unknown command's inbox verb as a reader source.
 // This inspects lexical command frames without resolving aliases or variables.
+// It deliberately refuses unrelated executable text such as echo inbox too;
+// ordinary document prose is outside this scan.
 func wakeUnknownReaderSource(text string) bool {
 	for _, start := range wakeCommandStartRE.FindAllStringIndex(text, -1) {
 		command := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(text[start[1]:]), "#"))
-		head, tail, ok := wakeActualCommandHead(command)
-		for ok && strings.Contains(head, "=") {
-			head, tail, ok = wakeActualCommandHead(tail)
-		}
-		if ok && head != ":" && wakeInboxAfterFlags(tail, wakeReaderAppearanceRE.MatchString(head+" ")) {
+		if wakeUnwrappedReader(command) {
 			return true
 		}
 	}

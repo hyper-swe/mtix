@@ -60,5 +60,6 @@ func TestWakeGuidance_ReferencePipe_DistinguishesOperands(t *testing.T) {
 
 func TestWakeGuidance_MultilineSpan_PreservesSource(t *testing.T) {
 	text := "Capture `FRESH=\"$(mtix\ninbox --agent worker --format prompt)\"`.\nThen use `courier \"$FRESH\"`."
+	require.Equal(t, []string{`FRESH="$(mtix inbox --agent worker --format prompt)"`, `courier "$FRESH"`}, wakeCommandLines(text, true))
 	require.NotEmpty(t, wakeLaunchProblems(text, true))
 }

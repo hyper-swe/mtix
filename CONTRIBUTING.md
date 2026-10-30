@@ -432,6 +432,8 @@ variants are checked too. Keep generated guidance templates and both plugin
 mirrors consistent. Inbox-derived values follow the documented constant-format
 standard-input routine regardless of variable or command name; unrelated shell
 variables do not need exact-line exemptions.
+Unknown command heads followed by the inbox verb are conservatively treated as
+reader sources. The checks do not expand variables or resolve shell aliases.
 
 ## Testing sync changes (MTIX-15 / FR-18)
 

@@ -14,11 +14,11 @@ var wakeFunctionStartRE = regexp.MustCompile(`^(?:[A-Za-z_][A-Za-z_0-9]*[ \t]*\(
 
 func wakeReaderSource(text string) bool {
 	for _, match := range wakeReaderAppearanceRE.FindAllStringIndex(text, -1) {
-		if wakeInboxAfterFlags(text[match[1]:]) {
+		if wakeInboxAfterFlags(text[match[1]:], true) {
 			return true
 		}
 	}
-	return false
+	return wakeUnknownReaderSource(text)
 }
 
 func wakeReaderWord(text string) (string, string) {
@@ -29,12 +29,12 @@ func wakeReaderWord(text string) (string, string) {
 	return strings.Trim(text[match[2]:match[3]], "\"'"), text[match[1]:]
 }
 
-func wakeInboxAfterFlags(text string) bool {
+func wakeInboxAfterFlags(text string, metadataAllowed bool) bool {
 	for {
 		word, tail := wakeReaderWord(text)
 		if word == "inbox" {
 			next, _ := wakeReaderWord(tail)
-			return next != "lease" && next != "ack"
+			return !metadataAllowed || next != "lease" && next != "ack"
 		}
 		if !strings.HasPrefix(word, "-") {
 			return false

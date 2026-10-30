@@ -40,7 +40,8 @@ type RecoverResult struct {
 //
 //  1. Open the database read-only with cell_size_check off and walk the
 //     primary-key index for IDs; read each row individually so one torn
-//     page does not hide every other row.
+//     page does not hide every other row. Duplicate rows use the mirror
+//     as uid/hash evidence when an eligible copy is available.
 //  2. Fill rows the database lost from the mirror, which is written on
 //     every mutation on every interface (FR-15.3). A JSON column the
 //     database cannot read is taken from the mirror's copy of the same
@@ -53,15 +54,16 @@ type RecoverResult struct {
 // source — partial damage yields a partial result plus Notes.
 func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger *slog.Logger) (*RecoverResult, error) {
 	res := &RecoverResult{}
-	db, dbErr := salvageFromDB(ctx, dbPath, res)
+	mirrorNotes := &RecoverResult{}
+	mirror := readMirrorSource(mirrorPath, mirrorNotes)
+	db, dbErr := salvageFromDB(ctx, dbPath, res, mirror)
 	if dbErr != nil {
 		res.Notes = append(res.Notes, fmt.Sprintf("database unusable: %v", dbErr))
 		logger.Warn("recover: database unusable, falling back to mirror", "error", dbErr)
 		db = &dbSalvage{nodes: map[string]exportNode{}}
 	}
+	res.Notes = append(res.Notes, mirrorNotes.Notes...)
 	nodes := db.nodes
-
-	mirror := readMirrorSource(mirrorPath, res)
 	// MTIX-95.31.3: a JSON column the database could not read comes from
 	// the mirror's copy of the same node when that copy is usable; the note
 	// names the mirror, or says the column was dropped and why.
@@ -168,7 +170,7 @@ type dbSalvage struct {
 // is written into res as a side effect. A node whose JSON column cannot be
 // read is salvaged without it, and the column is listed in the result's
 // unreadable.
-func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult) (*dbSalvage, error) {
+func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult, mirror *mirrorSource) (*dbSalvage, error) {
 	if _, err := os.Stat(dbPath); err != nil {
 		return nil, fmt.Errorf("stat database: %w", err)
 	}
@@ -191,7 +193,7 @@ func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult) (*dbS
 	}
 
 	out := &dbSalvage{nodes: map[string]exportNode{}}
-	salvageRows(ctx, db, keys, out, res)
+	salvageRows(ctx, db, keys, out, res, mirror)
 
 	// Secondary tables, best effort: their loss never blocks node salvage.
 	out.deps = salvageDeps(ctx, db, res)

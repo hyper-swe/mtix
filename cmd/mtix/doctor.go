@@ -121,17 +121,7 @@ func writeDoctorRows(out io.Writer, rows []service.DoctorResult, jsonOutput bool
 }
 
 func newConfiguredDoctorService() (*service.DoctorService, error) {
-	known := knownSyncDSNs()
-	opts := service.DoctorOptions{Platform: runtime.GOOS, Scrub: func(text string) string { return redact.Known(text, known...) }}
-	if app.mtixDir != "" {
-		request := configuredDoctorCollection()
-		if request.Postgres || request.Relay {
-			opts.CollectSync = func(ctx context.Context) ([]service.DoctorResult, error) {
-				return doctorSyncRows(collectSyncDoctor(ctx, request)), nil
-			}
-		}
-	}
-	svc := service.NewDoctorService(opts)
+	svc := service.NewDoctorService(configuredDoctorOptions())
 	if err := registerHistorySizeCheck(svc); err != nil { // MTIX-95.31.19.4
 		return nil, fmt.Errorf("register history size check: %w", err)
 	}
@@ -171,6 +161,20 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 		return nil, fmt.Errorf("register wake doctor checks: %w", err)
 	}
 	return svc, nil
+}
+
+func configuredDoctorOptions() service.DoctorOptions {
+	known := knownSyncDSNs()
+	opts := service.DoctorOptions{Platform: runtime.GOOS, Scrub: func(text string) string { return redact.Known(text, known...) }}
+	if app.mtixDir != "" {
+		request := configuredDoctorCollection()
+		if request.Postgres || request.Relay {
+			opts.CollectSync = func(ctx context.Context) ([]service.DoctorResult, error) {
+				return doctorSyncRows(collectSyncDoctor(ctx, request)), nil
+			}
+		}
+	}
+	return opts
 }
 
 func registerWakeDoctorChecks(svc *service.DoctorService) error {

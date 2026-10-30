@@ -147,16 +147,8 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	if err := svc.Register(documentFreshnessCheck(filepath.Dir(app.mtixDir))); err != nil {
 		return nil, fmt.Errorf("register documentation check: %w", err)
 	}
-	if hooksFileExists(app.mtixDir) {
-		if err := svc.Register(hooksProgramsCheck(app.mtixDir)); err != nil {
-			return nil, fmt.Errorf("register hook program check: %w", err)
-		}
-		if err := svc.Register(hooksStrictCheck(app.mtixDir)); err != nil {
-			return nil, fmt.Errorf("register hook strict check: %w", err)
-		}
-		if err := svc.Register(hooksOriginsCheck(app.mtixDir)); err != nil {
-			return nil, fmt.Errorf("register hook origin check: %w", err)
-		}
+	if err := registerHookDoctorChecks(svc); err != nil {
+		return nil, err
 	}
 	// Attach rows (setup.shim, glue.<h>, attach.failures, skew.dispatchers)
 	// appear only when something is installed, marked, alerted or beating.
@@ -171,6 +163,25 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 		return nil, fmt.Errorf("register wake doctor checks: %w", err)
 	}
 	return svc, nil
+}
+
+// registerHookDoctorChecks registers the hook program, strict and origin
+// checks when the checkout has a hooks file. Split out of
+// newConfiguredDoctorService to keep its cyclomatic complexity within bounds.
+func registerHookDoctorChecks(svc *service.DoctorService) error {
+	if !hooksFileExists(app.mtixDir) {
+		return nil
+	}
+	if err := svc.Register(hooksProgramsCheck(app.mtixDir)); err != nil {
+		return fmt.Errorf("register hook program check: %w", err)
+	}
+	if err := svc.Register(hooksStrictCheck(app.mtixDir)); err != nil {
+		return fmt.Errorf("register hook strict check: %w", err)
+	}
+	if err := svc.Register(hooksOriginsCheck(app.mtixDir)); err != nil {
+		return fmt.Errorf("register hook origin check: %w", err)
+	}
+	return nil
 }
 
 func registerWakeDoctorChecks(svc *service.DoctorService) error {

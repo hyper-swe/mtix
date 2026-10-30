@@ -355,6 +355,23 @@ The append-only tables (`audit_log`, `sync_conflicts`, `sync_events`) refuse TRU
 
 **Restore collisions:** the hub stamps every event with its own restore epoch (a trigger on `sync_events` sets it from `sync_hub_state` on every insert). A syncing role records restore collisions only through the hub function `record_restore_collision`, which runs as the table owner and records a collision only when the hub's own data shows an earlier-epoch create holding the number, so the role needs EXECUTE on that function and no INSERT on `sync_node_collisions`. When `mtix sync init` adds this function to an existing hub (migration 017), the table owner then grants EXECUTE on it to each syncing role (`GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;`) and revokes the privileges the least-privilege list no longer names (`REVOKE INSERT ON sync_node_collisions FROM <role>;` and `REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;`). Upgrade every syncing client first, then run the REVOKE statements; if the REVOKE comes first, an older client's push that meets a restore collision fails until that client upgrades. `mtix sync doctor`'s `schema current` check, run with a syncing role's DSN, reports each of these as a WARN by default and a FAIL in strict mode, with the fix the table owner runs: a hub without migration 017 (pushes keep working; the fix is `mtix sync init`), a role that cannot execute the function (a push that meets a restore collision fails until the table owner runs the printed GRANT), create events stamped with a restore epoch below 0 or above the hub's current epoch (restore-collision checks treat each as not earlier than the current epoch; the fix is the printed UPDATE, which sets each to the current epoch), and a role that can write collision rows: it holds INSERT on `sync_node_collisions` or USAGE on its sequence (a grant, or a predefined role such as `pg_write_all_data`), owns the schema that holds the sync tables, can reach, through a chain of SET ROLE and ADMIN OPTION, a role that holds either or owns that schema, or a superuser it can then SET ROLE to, has CREATEROLE before PostgreSQL 16, or is a member of `pg_execute_server_program` or `pg_write_server_files`. The check skips the table owner, roles that inherit it, and superusers. The fix is the exact REVOKE the table owner runs for a plain grant the owner made, and, for every other path, the path by name, with the chain that reaches it, which a role administrator removes (see "Hub health checks" in the user manual). `mtix sync harden --apply` revokes EXECUTE on the function from every role that is not kept, so keep each syncing role with `--keep-role`.
 
+**Resolving restore collisions:** The hub must accept the winner before mtix renumbers locally. If the hub refuses
+(for example, `permission denied for table sync_node_collisions`), the local
+store stays unchanged. Resolve with a role allowed to UPDATE that table.
+If acceptance succeeds but local completion fails, mtix reports
+`hub accepted collision <id> but local completion failed` and prints the exact
+recovery command: `mtix sync collisions resolve <id> --winner held|incoming`
+(with the original winner filled in). Fix the reported cause, then run that
+command on the client that owns the losing node, with the same hub configured.
+The decision is already recorded on the hub, so the collision no longer shows
+as open; `collisions list` shows it as accepted with the local move pending
+(text, and `--json` with `pending_local_move` and `winner`) together with the
+same command, so it can be found again after a crash. A client that does not
+hold the losing task is refused before the hub is touched, and the collision
+stays open. Retry resumes the move; if the move already committed, it
+records its new number without moving it again. A completed resolve is a no-op
+when repeated. A different winner is refused without changing the local store.
+
 **Init locking and deadlines.** `mtix sync init` allows 30 seconds to connect,
 then a separate `--migrate-timeout` (default `5m`, positive Go duration)
 for the entire migration, including waiting for the migration advisory lock.

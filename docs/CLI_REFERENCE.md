@@ -828,6 +828,7 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 
 ### Subcommands
 
+- `allow-origin <url>` — Consent to webhook deliveries to one origin on this host
 - `exec-dispatch [any|daemon|off]` — Get or set this host's local exec dispatch policy
 - `fire` — Test hooks.yaml against a sample event (dry-run only, for now)
 - `list` — List configured hooks with their events and delivery adapters
@@ -835,6 +836,21 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `status` — Show operator-local state and per-hook approvals
 - `strict <on|off|status>` — Show or change strict program mode for exec hooks on this host
 - `trust <hook>` — Review and approve one exec hook on this host
+---
+
+## allow-origin
+
+**Usage:** `allow-origin <url>`
+
+Consent to webhook deliveries to one origin on this host
+
+Save operator consent, outside the project, for webhook deliveries to the origin (scheme, host, port) of the URL. Without consent a webhook hook is skipped and reported by hooks status. Loopback, link-local and private destinations are refused unless the origin is listed with --allow-private. Requires terminal stdin outside an agent session.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--allow-private` |  | Also allow loopback, link-local and private destinations for this origin | false |
 ---
 
 ## exec-dispatch

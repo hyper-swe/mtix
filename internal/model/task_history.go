@@ -15,6 +15,9 @@ const (
 	// HistoryKindRedaction is reserved for the redaction marker (MTIX-95.31.19.1).
 	HistoryKindRedaction HistoryKind = "redaction"
 
+	// HistoryKindResolution records an explicit merge workflow choice.
+	HistoryKindResolution HistoryKind = "resolution"
+
 	// HistoryKindRetentionDrop is reserved for the retention-drop marker (MTIX-95.31.19.4).
 	HistoryKindRetentionDrop HistoryKind = "retention_drop"
 )

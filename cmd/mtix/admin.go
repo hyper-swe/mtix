@@ -10,11 +10,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/spf13/cobra"
 
-	mtixhttp "github.com/hyper-swe/mtix/internal/api/http"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -244,15 +242,10 @@ func runImport(filePath string, f importFlags) error {
 
 	// The report is loud whether or not the import applied (ADR-003 §6): always
 	// surface it, and persist the uid-keyed remap when one was produced.
-	if report != nil {
-		fmt.Fprint(os.Stderr, report.String())
-		if writeErr := writeRemapFile(f.remapFile, report); writeErr != nil {
-			if !report.Applied {
-				return nothingWritten(writeErr)
-			}
-			return writeErr
-		}
+	if reportErr := writeImportReport(report, f.remapFile); reportErr != nil {
+		return reportErr
 	}
+
 	if err != nil {
 		// Every import error but ErrImportIncomplete leaves the store
 		// unchanged (MTIX-95.31.1), so the auto-export is skipped for it.
@@ -390,65 +383,6 @@ func newMigrateCmd() *cobra.Command {
 	}
 }
 
-// newServeCmd creates the mtix serve command per FR-6.4. Its help names
-// only what serve starts: the HTTP server, which also serves the web UI
-// and the WebSocket event stream (MTIX-95.14).
-func newServeCmd() *cobra.Command {
-	var (
-		addr string
-		port int
-	)
-
-	cmd := &cobra.Command{
-		Use:   "serve",
-		Args:  cobra.NoArgs,
-		Short: "Start the mtix HTTP and WebSocket server",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runServe(addr, port)
-		},
-	}
-
-	cmd.Flags().StringVar(&addr, "addr", "127.0.0.1",
-		"Bind address (default localhost; non-localhost exposes API without auth)")
-	cmd.Flags().IntVar(&port, "port", 8377, "HTTP port")
-
-	return cmd
-}
-
-func runServe(addr string, port int) error {
-	if app.store == nil {
-		return fmt.Errorf("not in an mtix project")
-	}
-
-	// Mirror parity per FR-15.3 / MTIX-26.1: serve mutations reach the
-	// tasks.json mirror without a process exit.
-	defer wireMirrorExporter(app.logger)()
-
-	// MTIX-53: dispatch hooks on every mutation host-side, same as the CLI and
-	// MCP server, so a REST/gRPC mutation can fire an exec cold-start. After the
-	// mirror wiring so it keeps on-commit slot 0.
-	defer wireHookDispatch()()
-
-	clock := func() time.Time { return time.Now().UTC() }
-
-	dependencies := service.NewDependencyServiceFromNodeService(app.nodeSvc)
-	admin := service.NewAdminService(app.store)
-	services := mtixhttp.Services{
-		Read: mtixhttp.ReadServices{
-			Nodes: app.nodeSvc, Background: app.bgSvc, Sessions: app.sessionSvc,
-			Agents: app.agentSvc, Config: app.configSvc, Dependencies: dependencies, Admin: admin,
-		},
-		Write: mtixhttp.WriteServices{
-			Nodes: app.nodeSvc, Background: app.bgSvc, Sessions: app.sessionSvc,
-			Agents: app.agentSvc, Config: app.configSvc, Dependencies: dependencies, Admin: admin,
-		},
-	}
-	srv := mtixhttp.NewServer(services, app.logger, serveConfig(addr, port), clock)
-
-	fmt.Printf("Starting mtix server at %s:%d\n", addr, port)
-	return srv.ListenAndServeWithGracefulShutdown()
-}
-
 // importReplaceOp describes what 'mtix import --mode replace' destroys:
 // every existing node, replaced by the file's nodes.
 func importReplaceOp(ctx context.Context, incoming int) (destructiveOp, error) {
@@ -487,15 +421,4 @@ func guardImportReplace(ctx context.Context, exportData *sqlite.ExportData) erro
 	}
 	_, err = guardDestructive(ctx, os.Stderr, op)
 	return err
-}
-
-// serveConfig builds the HTTP server configuration for `mtix serve`,
-// including the build version injected at link time, which /health
-// reports (FR-7.3b, MTIX-95.14).
-func serveConfig(addr string, port int) mtixhttp.ServerConfig {
-	return mtixhttp.ServerConfig{
-		Bind:    addr,
-		Port:    fmt.Sprintf("%d", port),
-		Version: version,
-	}
 }

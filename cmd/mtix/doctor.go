@@ -138,6 +138,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	if err := registerExportSchemaCheck(svc); err != nil { // MTIX-168
 		return nil, fmt.Errorf("register export schema check: %w", err)
 	}
+	if err := registerServeExposureCheck(svc); err != nil { // MTIX-220
+		return nil, fmt.Errorf("register serve exposure check: %w", err)
+	}
 	if err := svc.Register(documentFreshnessCheck(filepath.Dir(app.mtixDir))); err != nil {
 		return nil, fmt.Errorf("register documentation check: %w", err)
 	}
@@ -147,6 +150,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 		}
 		if err := svc.Register(hooksStrictCheck(app.mtixDir)); err != nil {
 			return nil, fmt.Errorf("register hook strict check: %w", err)
+		}
+		if err := svc.Register(hooksOriginsCheck(app.mtixDir)); err != nil {
+			return nil, fmt.Errorf("register hook origin check: %w", err)
 		}
 	}
 	// Attach rows (setup.shim, glue.<h>, attach.failures, skew.dispatchers)
@@ -176,6 +182,9 @@ func registerWakeDoctorChecks(svc *service.DoctorService) error {
 	}
 	if err := registerConfiguredWakeLedgerDoctor(svc); err != nil {
 		return fmt.Errorf("register wake ledger diagnostics: %w", err)
+	}
+	if err := registerWakeListenerDoctor(svc); err != nil {
+		return fmt.Errorf("register wake listener diagnostics: %w", err)
 	}
 	return nil
 }

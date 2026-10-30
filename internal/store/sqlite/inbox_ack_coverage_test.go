@@ -68,3 +68,45 @@ func TestInboxAckCoverage_ReadFailureNeverPublishesEffect(t *testing.T) {
 		})
 	}
 }
+
+// Coverage counts recipient events once across direct and hook delivery routes.
+func TestInboxAckCoverage_ThroughCountsOnlyNewRecipientEvents(t *testing.T) {
+	s, _ := budgetDataStore(t)
+	first, middle, last := int64(2), int64(3), int64(4)
+	for _, event := range []struct{ id, op, payload string }{
+		{"foreign", "create_node", `{}`},
+		{"first", "comment", `{"to":"worker"}`},
+		{"middle", "comment", `{"to":"worker"}`},
+		{"last", "comment", `{"to":"worker"}`},
+	} {
+		_, err := s.WriteDB().ExecContext(t.Context(), `INSERT INTO sync_events
+   (event_id,project_prefix,node_id,op_type,payload,wall_clock_ts,lamport_clock,vector_clock,author_id,author_machine_hash,created_at)
+   VALUES (?,'TEST','TEST-1',?,?,0,1,'{}','sender','test','2000-01-01T00:00:00Z')`, event.id, event.op, event.payload)
+		require.NoError(t, err)
+	}
+	require.NoError(t, s.RecordInboxDelivery(t.Context(), "worker", first, "test-hook"))
+	require.NoError(t, s.RecordInboxDelivery(t.Context(), "hook-worker", middle, "test-hook"))
+	before, after, err := s.InboxAckCoverage(t.Context(), "foreign", first, false)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), before)
+	require.Equal(t, before, after, "a foreign selective acknowledgement has no recipient effect")
+	require.NoError(t, s.InboxAck(t.Context(), "worker", first))
+	for _, tc := range []struct {
+		agent         string
+		seq           int64
+		before, after int64
+	}{
+		{"worker", first, 1, 1},
+		{"worker", middle, 1, 2},
+		{"worker", middle, 2, 2},
+		{"worker", last, 2, 3},
+		{"foreign", last, 0, 0},
+		{"hook-worker", middle, 0, 1},
+		{"hook-worker", last, 1, 1},
+	} {
+		before, after, err := s.InboxAckCoverage(t.Context(), tc.agent, tc.seq, true)
+		require.NoError(t, err)
+		require.Equal(t, tc.before, before)
+		require.Equal(t, tc.after, after)
+	}
+}

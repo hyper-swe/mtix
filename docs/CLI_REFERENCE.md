@@ -1943,6 +1943,14 @@ Run health checks against the local store and the BYO Postgres hub:
                            sync tables, and whether every TRUNCATE guard is in
                            place (the check mtix sync harden runs)
 
+When PG reachable fails, queue draining, schema current and hub privileges
+are SKIPPED with a hub-unreachable reason. Fix connectivity and run doctor
+again before diagnosing the pusher. A reachable hub still fails queue
+draining for eligible events pending over 1h, even if its schema check
+fails. Skipped rows have pass=false and skipped=true in --json (skipped is
+omitted otherwise); they do not fail the report themselves. Unified mtix
+doctor maps them to INFO with the same reason. PG reachable still fails.
+
 Each hub check allows 30 s to connect, the same budget as mtix sync init,
 clone, push and pull, so a hub that is resuming from idle passes.
 
@@ -1997,9 +2005,9 @@ whenever mtix sync harden would report a finding, not only a role outside
 the list or a missing or disabled TRUNCATE guard, but also a kept role
 that can grant its access on or holds a privilege another role granted
 it, an mtix object owned by another role, and a membership through which
-a role can reach every table. If the check cannot run, it is a WARN by
-default and fails in strict mode. The check contacts the hub only while
-the doctor runs.
+a role can reach every table. If the hub is reachable but the check cannot
+run, it is a WARN by default and fails in strict mode. The check contacts
+the hub only while the doctor runs.
 
 Exit code: 0 on all-pass, including checks that pass with a WARN; 2 if
 any check fails. --json output for agents and CI consumption.

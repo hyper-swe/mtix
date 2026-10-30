@@ -66,7 +66,10 @@ func TestStrict_KnownSlotBehindALinkChainPastTheLimitIsNotKnown(t *testing.T) {
 		f := strictFixture(t, command)
 		_, err = f.approvals.PrepareExec(f.hook(t))
 		require.Error(t, err, "the slot needs an approval, it is not pinned: %s", name)
-		require.Contains(t, err.Error(), "strict program mode")
+		// The program is refused before strict judgement: either reason is a
+		// refusal, and the link-expansion refusal is pinned on its own below.
+		require.Regexp(t, "strict program mode|exceeds the link expansion limit", err.Error())
+		require.Contains(t, err.Error(), "exceeds the link expansion limit", "refused for the right reason: %s", name)
 	}
 }
 

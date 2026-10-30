@@ -41,4 +41,17 @@ ON CONFLICT (id) DO NOTHING;
 --
 -- DEFAULT 0 backfills legacy rows to the no-restore baseline, so pre-30.8
 -- creates read as epoch 0 and never spuriously trip the cross-epoch gate.
-ALTER TABLE sync_events ADD COLUMN IF NOT EXISTS restore_epoch BIGINT NOT NULL DEFAULT 0;
+-- MTIX-107.52: IF NOT EXISTS on ALTER itself still takes ACCESS EXCLUSIVE.
+-- Check the visible table's catalog first under the migration advisory lock.
+-- The released column definition and existing-row behavior stay identical.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_attribute
+        WHERE attrelid = 'sync_events'::regclass
+          AND attname = 'restore_epoch' AND NOT attisdropped
+    ) THEN
+        ALTER TABLE sync_events ADD COLUMN IF NOT EXISTS restore_epoch BIGINT NOT NULL DEFAULT 0;
+    END IF;
+END
+$$;

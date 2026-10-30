@@ -4,6 +4,7 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -78,9 +79,12 @@ func assertMessageFieldsSafe(t *testing.T, v any, path string) {
 }
 
 // assertNoControlBytes requires the raw response body to hold no control
-// bytes other than the whitespace JSON allows between tokens.
-func assertNoControlBytes(t *testing.T, body []byte) {
+// bytes other than the whitespace JSON allows between tokens. The route's
+// recorder lets its cleanup detect a missing call or the wrong response body.
+func assertNoControlBytes(t controlByteReporter, body []byte, checks *controlByteChecks) {
 	t.Helper()
+	checks.calls++
+	checks.body = bytes.Clone(body)
 	for i, c := range body {
 		if c < 0x20 && c != '\n' && c != '\r' && c != '\t' {
 			assert.Failf(t, "control byte in body", "byte 0x%02x at offset %d", c, i)
@@ -110,10 +114,15 @@ func TestHandlers_HostileUIDAndAnnotationID_MessagesAreSafeAndJSONExact(t *testi
 	}
 	for _, p := range paths {
 		t.Run(p, func(t *testing.T) {
+			var controlChecks controlByteChecks
 			w := hostileGet(s, p)
+			t.Cleanup(func() {
+				assert.Equal(t, 1, controlChecks.calls, "route %s must call assertNoControlBytes exactly once", p)
+				assert.Equal(t, w.Body.Bytes(), controlChecks.body, "route %s must check its actual response body", p)
+			})
 			var body any
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
-			assertNoControlBytes(t, w.Body.Bytes())
+			assertNoControlBytes(t, w.Body.Bytes(), &controlChecks)
 			assertMessageFieldsSafe(t, body, "$")
 		})
 	}

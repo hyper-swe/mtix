@@ -202,6 +202,11 @@ This build stores and reports `wake.live` and `wake.max_hop_depth`.
 Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
 when the wake scanner ships. They do not control live delivery in this build.
 
+The wake scan core ships in this build, but nothing constructs or runs it yet:
+no delivery route exists before a later release. So in this build no scan runs,
+no registration is marked stale by a scan and no stale registration is expired by
+one, and no agent is woken live.
+
 Store the host-local off setting with `mtix config set wake.live off`;
 append `--agent worker` for one agent. Limits default unlimited and the guards
 stay always on (hop depth 32, unacked threshold 5). Loosening requires terminal

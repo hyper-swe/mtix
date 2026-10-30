@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -33,7 +34,7 @@ func printableASCIILines(t *testing.T, out string) {
 	}
 }
 
-func TestQuarantinedCreatePrefix_MatchesTheSentinelText(t *testing.T) {
+func TestQuarantinedCreatePrefix_SentinelError_MatchesTextAndSpace(t *testing.T) {
 	require.Equal(t, sqlite.ErrBehindQuarantinedCreate.Error()+" ", quarantinedCreatePrefix)
 }
 
@@ -154,4 +155,27 @@ func TestRefuseBehindQuarantinedCreate_HostileCreationID_PrintsPrintableASCIIOnP
 	reportQuarantined(&out, "main", []*model.SyncEvent{dependent}, heldEvents{"ev-dep": refused})
 	printableASCIILines(t, out.String())
 	require.Contains(t, out.String(), quarantinedCreatePrefix+format.EventID(oneLine(hostileEventID)))
+}
+
+// TestCloneRefusal_HostileDependencyReasons_RendersPrintableASCII covers the
+// clone refusal's reason rendering separately from the refused event id
+// (MTIX-187.4.13, mutant M18).
+func TestCloneRefusal_HostileDependencyReasons_RendersPrintableASCII(t *testing.T) {
+	for _, prefix := range []string{holdDependsPrefix, quarantinedCreatePrefix} {
+		t.Run(prefix, func(t *testing.T) {
+			id := strings.ReplaceAll(hostileEventID, "\n", "")
+			raw := prefix + id
+			reason := errors.New(raw)
+			event := &model.SyncEvent{EventID: "ev-dependent"}
+			for _, written := range []bool{false, true} {
+				err := cloneRefusal(event, reason, written)
+				require.ErrorIs(t, err, errCloneRefused)
+				requirePrintableASCII(t, err.Error(), oneLine(id))
+				require.Contains(t, err.Error(), prefix+format.EventID(oneLine(id)))
+				require.NotContains(t, err.Error(), "\n", "a refusal stays on one line")
+				require.Equal(t, raw, reason.Error(), "rendering keeps the original reason")
+				require.Equal(t, "ev-dependent", event.EventID)
+			}
+		})
+	}
 }

@@ -286,3 +286,119 @@ func TestSyncConflictsResolve_SelfReplayRow_TakesNoPartInResolveCheck(t *testing
 	resolveConflict(t, genuine, "acknowledge")
 	require.JSONEq(t, "0", openConflictCount(t))
 }
+
+// TestSyncConflicts_OnlyLwwRowsAreSelfReplay: a manual or tombstone row whose
+// event ids are both own events is not tagged self_replay and is not counted
+// by the doctor check; only lww rows are self-replay.
+func TestSyncConflicts_OnlyLwwRowsAreSelfReplay(t *testing.T) {
+	initTestApp(t)
+	seedLocalEvent(t, "own-a", "pending")
+	seedLocalEvent(t, "own-b", "pushed")
+	lww := seedPairConflict(t, "TEST-1", "title", "lww", "own-a", "own-b")
+	manual := seedPairConflict(t, "TEST-2", "title", "manual", "own-a", "own-b")
+	tomb := seedPairConflict(t, "TEST-3", "", "tombstone", "own-a", "own-b")
+
+	want := map[int64]bool{lww: true, manual: false, tomb: false}
+	rows := listAllConflicts(t)
+	require.Len(t, rows, 3)
+	for _, r := range rows {
+		require.NotNil(t, r.SelfReplay)
+		require.Equalf(t, want[r.ConflictID], *r.SelfReplay, "conflict %d", r.ConflictID)
+	}
+
+	var out bytes.Buffer
+	app.jsonOutput = true
+	_ = runSyncDoctor(context.Background(), &out, nil, transport.Options{})
+	app.jsonOutput = false
+	check := doctorCheckFromJSON(t, out.Bytes(), "self-replay conflict rows")
+	require.Contains(t, check.Detail, "1 conflict rows", "only the lww row is counted")
+}
+
+// TestSyncConflictsResolve_TombstoneOnOwnPair_IsResolvable: a tombstone row
+// on an own pair is not a self-replay row, so resolve does not refuse it.
+func TestSyncConflictsResolve_TombstoneOnOwnPair_IsResolvable(t *testing.T) {
+	initTestApp(t)
+	seedLocalEvent(t, "own-a", "pending")
+	seedLocalEvent(t, "own-b", "pushed")
+	tomb := seedPairConflict(t, "TEST-1", "", "tombstone", "own-a", "own-b")
+	var stdout, stderr bytes.Buffer
+	require.NoError(t, runSyncConflictsResolve(context.Background(), &stdout, &stderr,
+		fmt.Sprint(tomb), "acknowledge"), stderr.String())
+}
+
+// TestSyncConflicts_ListAllText_MarksSelfReplay: the text list --all shows
+// self_replay=true for a self-replay row and self_replay=false for others.
+func TestSyncConflicts_ListAllText_MarksSelfReplay(t *testing.T) {
+	initTestApp(t)
+	seedLocalEvent(t, "own-a", "pending")
+	seedLocalEvent(t, "own-b", "pushed")
+	seedLocalEvent(t, "foreign", "applied")
+	self := seedPairConflict(t, "TEST-1", "title", "lww", "own-a", "own-b")
+	genuine := seedPairConflict(t, "TEST-2", "title", "lww", "foreign", "own-b")
+
+	app.jsonOutput = false
+	stdout, stderr, err := execSyncCLI(context.Background(), []string{"sync", "conflicts", "list", "--all"})
+	require.NoError(t, err, stderr)
+	require.Regexp(t, regexp.MustCompile(fmt.Sprintf(`(?m)^\[%d\] TEST-1 .* unresolved=false self_replay=true `, self)), stdout)
+	require.Regexp(t, regexp.MustCompile(fmt.Sprintf(`(?m)^\[%d\] TEST-2 .* unresolved=true self_replay=false `, genuine)), stdout)
+}
+
+// TestSyncConflictsResolve_GenuineDecisionStillCoversEarlier: an earlier
+// genuine conflict is still refused as already resolved once a later genuine
+// one has a decision, whatever own-pair rows (a tombstone or a self-replay
+// row) sit on the same node and field.
+func TestSyncConflictsResolve_GenuineDecisionStillCoversEarlier(t *testing.T) {
+	initTestApp(t)
+	seedLocalEvent(t, "own-a", "pending")
+	seedLocalEvent(t, "own-b", "pushed")
+	seedLocalEvent(t, "foreign", "applied")
+	first := seedPairConflict(t, "TEST-1", "title", "lww", "foreign", "own-b")
+	second := seedPairConflict(t, "TEST-1", "title", "lww", "foreign", "own-a")
+	resolveConflict(t, second, "acknowledge")
+	seedPairConflict(t, "TEST-1", "title", "tombstone", "own-a", "own-b")
+	seedPairConflict(t, "TEST-1", "title", "lww", "own-a", "own-b")
+
+	var stdout, stderr bytes.Buffer
+	err := runSyncConflictsResolve(context.Background(), &stdout, &stderr, fmt.Sprint(first), "acknowledge")
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+	require.Contains(t, err.Error(), "already resolved")
+	require.Contains(t, err.Error(), fmt.Sprintf("newest conflict is conflict_id %d", second))
+}
+
+// TestSyncConflicts_DecisionOnSelfReplayRow_NeverMasksGenuine: a manual row
+// recorded (on 0.5.4) against a self-replay row has own event ids, so it is
+// excluded from masking: an earlier genuine conflict stays unresolved and can
+// still be resolved. A manual row that answers a genuine conflict still masks.
+func TestSyncConflicts_DecisionOnSelfReplayRow_NeverMasksGenuine(t *testing.T) {
+	initTestApp(t)
+	seedLocalEvent(t, "own-a", "pending")
+	seedLocalEvent(t, "own-b", "pushed")
+	seedLocalEvent(t, "foreign", "applied")
+	genuine := seedPairConflict(t, "TEST-1", "title", "lww", "foreign", "own-b")
+	seedPairConflict(t, "TEST-1", "title", "lww", "own-a", "own-b")
+	seedPairConflict(t, "TEST-1", "title", "manual", "own-a", "own-b") // decision on the phantom row
+
+	ids, _ := listConflicts(t, false)
+	require.Equal(t, []int64{genuine}, ids, "the phantom decision does not resolve the genuine conflict")
+	require.JSONEq(t, "1", openConflictCount(t))
+
+	resolveConflict(t, genuine, "acknowledge") // not refused as already resolved
+	require.JSONEq(t, "0", openConflictCount(t))
+}
+
+// TestSyncConflictsResolve_TombstoneTarget_NamesNewestLww: for a tombstone
+// target with an older lww conflict and a later decision, the refusal names
+// the newest lww conflict, as the base query did, not the tombstone.
+func TestSyncConflictsResolve_TombstoneTarget_NamesNewestLww(t *testing.T) {
+	initTestApp(t)
+	seedLocalEvent(t, "own-b", "pushed")
+	seedLocalEvent(t, "foreign", "applied")
+	lww := seedPairConflict(t, "TEST-1", "title", "lww", "foreign", "own-b")
+	tomb := seedPairConflict(t, "TEST-1", "title", "tombstone", "foreign", "own-b")
+	seedPairConflict(t, "TEST-1", "title", "manual", "foreign", "own-b")
+
+	var stdout, stderr bytes.Buffer
+	err := runSyncConflictsResolve(context.Background(), &stdout, &stderr, fmt.Sprint(tomb), "acknowledge")
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+	require.Contains(t, err.Error(), fmt.Sprintf("newest conflict is conflict_id %d", lww))
+}

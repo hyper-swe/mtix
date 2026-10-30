@@ -95,10 +95,16 @@ unresolved ones: lww conflicts with no later manual resolution for the
 same node and field ('mtix sync conflicts resolve' records one). A later
 lww conflict on the same node and field is unresolved again.
 
+Self-replay rows are never listed by default and never unresolved: lww
+rows written before 0.5.4, when a pull replayed this store's own pushed
+events, whose winner and loser events were both emitted by this store.
+They are not conflicts, they neither hide nor reopen a genuine conflict,
+and nothing is written to the store to classify them.
+
 --all lists every row, manual resolutions and tombstone rows included,
-each marked unresolved=true or unresolved=false. Default output is a
-plain-text table; --json for agent and CI consumption (each row
-carries "unresolved").
+each marked unresolved=true or unresolved=false and self_replay=true or
+self_replay=false. Default output is a plain-text table; --json for agent
+and CI consumption (each row carries "unresolved" and "self_replay").
 
 When unresolved conflicts exceed 50, a banner is printed pointing
 at --batch <node_id> for batch resolution. --batch <node_id> filters
@@ -314,41 +320,14 @@ func printResolveResult(w io.Writer, original ConflictRow, action string) error 
 // written: sync_conflicts stays append-only. A pair with an applied
 // (mirrored foreign) event, or with an event no longer in sync_events
 // (pruned or compacted), is not self-replay and stays unresolved: the safe
-// direction. Manual rows keep their meaning and are never self-replay.
+// direction. Only lww rows are ever self-replay; manual and tombstone rows
+// are not. A manual row whose winner and loser form such an own pair is a
+// decision taken on a phantom row (0.5.4 allowed that): it is excluded from
+// masking, like the phantom row itself, so it never resolves an earlier
+// genuine conflict on the same node and field. Every other manual row
+// keeps its meaning.
 func readConflicts(ctx context.Context, store *sqlite.Store, nodeFilter string, all bool) ([]ConflictRow, error) {
-	// Each row with its flags: self_replay is derived from sync_events as
-	// above; an lww row that is not self-replay is unresolved until a manual
-	// row for the same node and field (NULL fields pair with each other)
-	// follows it in conflict_id order; a later lww row for the pair is
-	// unresolved again. Tombstone, manual and self-replay rows are never
-	// unresolved. The two parameters filter by node ('' for every node) and
-	// choose every row or only the unresolved ones.
-	rows, err := store.Query(ctx, `
-		SELECT conflict_id, event_id_winner, event_id_loser, node_id,
-		       field_name, resolution, resolved_at, resolved_by, unresolved, self_replay
-		FROM (
-		    SELECT c.conflict_id, c.event_id_winner, c.event_id_loser, c.node_id,
-		           COALESCE(c.field_name, '') AS field_name, c.resolution, c.resolved_at,
-		           COALESCE(c.resolved_by, '') AS resolved_by, c.self_replay,
-		           (c.resolution = 'lww' AND NOT c.self_replay AND NOT EXISTS (
-		               SELECT 1 FROM sync_conflicts m
-		               WHERE m.resolution = 'manual'
-		                 AND m.node_id = c.node_id
-		                 AND m.field_name IS c.field_name
-		                 AND m.conflict_id > c.conflict_id)) AS unresolved
-		    FROM (
-		        SELECT sc.*, (sc.resolution = 'lww'
-		            AND EXISTS (SELECT 1 FROM sync_events w
-		                        WHERE w.event_id = sc.event_id_winner AND w.sync_status <> 'applied')
-		            AND EXISTS (SELECT 1 FROM sync_events l
-		                        WHERE l.event_id = sc.event_id_loser AND l.sync_status <> 'applied')
-		        ) AS self_replay
-		        FROM sync_conflicts sc
-		        WHERE (?1 = '' OR sc.node_id = ?1)
-		    ) c
-		)
-		WHERE ?2 OR unresolved
-		ORDER BY conflict_id`, nodeFilter, all)
+	rows, err := store.Query(ctx, readConflictsSQL, nodeFilter, all)
 	if err != nil {
 		return nil, fmt.Errorf("read conflicts: %w", err)
 	}

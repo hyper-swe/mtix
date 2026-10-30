@@ -3495,7 +3495,10 @@ genuine conflict. Self-replay rows are not counted by `mtix sync status`,
 not listed by `mtix sync conflicts list`, and shown by `--all` with
 `unresolved=false` and `self_replay=true` (`--json` carries both keys).
 They neither hide nor reopen a genuine conflict on the same node and
-field, and `resolve` refuses their ids. A conflict with an event from
+field, and `resolve` refuses their ids. A decision recorded on such a row
+with 0.5.4 (a `manual` row whose winner and loser are both events of this
+store) is ignored the same way: it does not resolve an earlier genuine
+conflict of the node and field. A conflict with an event from
 another machine stays counted, and so does a row whose events this store
 no longer holds. `mtix sync doctor` has an informational check,
 `self-replay conflict rows`, that always passes and reports how many rows
@@ -3549,8 +3552,9 @@ mtix sync doctor             # health checks: PG reachable, schema current,
                              #   queue draining, no orphan applied,
                              #   board matches sync log, quarantined
                              #   events, valid node ids, unique node
-                             #   uids, held push events, secrets file
-                             #   mode, hub triggers, hub privileges
+                             #   uids, held push events, self-replay
+                             #   conflict rows (informational), secrets
+                             #   file mode, hub triggers, hub privileges
 ```
 
 The `board matches sync log` check runs on a project that syncs. It

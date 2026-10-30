@@ -79,7 +79,7 @@ func runWakeFixture(t *testing.T, source, input string) wakeCapture {
 	require.Equal(t, []string{"inbox", "--agent", "fixture-worker", "--format", "prompt"}, wakeArgs(args))
 	_, err = os.Stat(filepath.Join(dir, "unexpected"))
 	require.True(t, os.IsNotExist(err))
-	assertWakeRecordersUnused(t, dir)
+	require.NoError(t, wakeRecordersUnused(dir))
 	return wakeCapture{dir}
 }
 

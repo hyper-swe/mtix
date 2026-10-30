@@ -30,7 +30,7 @@ func assertWakeGuidanceForms(t *testing.T) {
 	paths := []string{"examples/hooks/wake-agent.sh", "USERMANUAL.md", "internal/docs/templates/skills/multi_agent.md.tmpl", ".claude-plugin/skills/mtix-multi-agent.md", ".codex-plugin/skills/multi-agent/SKILL.md"}
 	for _, path := range paths {
 		original := wakeSource(t, path)
-		document := !strings.HasSuffix(path, ".sh")
+		document := wakeDocumentFile(path, original)
 		require.Empty(t, wakeLaunchProblems(original, document), path)
 		for index, form := range wakeGuidanceForms() {
 			for _, second := range []bool{false, true} {

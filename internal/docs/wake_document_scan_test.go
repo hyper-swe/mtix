@@ -9,10 +9,10 @@ import (
 	"strings"
 )
 
-var wakeReaderReferenceRE = regexp.MustCompile(`^(?:command (?:-- )?)?mtix inbox(?: (?:[A-Za-z_0-9./:-]+|<[A-Za-z_-]+>|"\$\{?[A-Za-z_][A-Za-z_0-9]*\}?"))*$`)
+var wakeReaderReferenceRE = regexp.MustCompile(`^(?:command (?:-- )?)?mtix(?: (?:[A-Za-z_0-9./:=-]+(?:\\\|[A-Za-z_0-9./:-]+)*|<[A-Za-z_-]+>|"\$\{?[A-Za-z_][A-Za-z_0-9]*\}?"))*$`)
 var wakeConsumerRE = regexp.MustCompile(`\b(?:claude|codex|agent|xargs|eval)\b|--message\b`)
 var wakeReferenceRE = regexp.MustCompile(`^\$\{?[A-Za-z_][A-Za-z_0-9]*\}?(?:/[A-Za-z_0-9./-]*)?$`)
-var wakeFenceRE = regexp.MustCompile("^\\s*(?:>\\s*)?(`{3,}|~{3,})([A-Za-z0-9_-]*)\\s*$")
+var wakeFenceRE = regexp.MustCompile("^\\s*(?:>\\s*)?(`{3,}|~{3,})(.*)$")
 
 // wakeDocumentCommands follows the contributor markup convention: code spans and
 // executable fences contain commands; plain prose and lone variable spans are
@@ -27,8 +27,9 @@ func wakeDocumentCommands(text string) []string {
 			flush()
 			if fence == "" {
 				fence = match[1]
-				executable = match[2] == "" || match[2] == "sh" || match[2] == "bash" || match[2] == "shell" || match[2] == "console"
-			} else if match[1][0] == fence[0] && len(match[1]) >= len(fence) && match[2] == "" {
+				info := strings.Fields(strings.ToLower(match[2]))
+				executable = len(info) == 0 || info[0] == "sh" || info[0] == "bash" || info[0] == "shell" || info[0] == "console"
+			} else if match[1][0] == fence[0] && len(match[1]) >= len(fence) && strings.TrimSpace(match[2]) == "" {
 				fence = ""
 			}
 			continue
@@ -65,7 +66,7 @@ func wakeCodeSpans(line string) []string {
 		if end < 0 {
 			continue
 		}
-		span := strings.TrimSpace(line[:end])
+		span := strings.TrimSpace(strings.ReplaceAll(line[:end], "\n", " "))
 		if !wakeReferenceRE.MatchString(span) {
 			spans = append(spans, span)
 		}

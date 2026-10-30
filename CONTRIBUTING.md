@@ -425,7 +425,9 @@ redirects, inside the same span or fence. Use double backticks around a command
 that contains shell backticks, with a space inside each delimiter.
 
 The wake-guidance checks inspect code spans, unlabelled fences, and fences marked
-`sh`, `bash`, `shell` or `console`. Raw shell examples and their commented command
+`sh`, `bash`, `shell` or `console` (case-insensitive, with optional info text).
+Other fence labels, indented code blocks and HTML pre blocks are not scanned;
+use the supported fences or code spans for executable guidance. Raw shell examples and their commented command
 variants are checked too. Keep generated guidance templates and both plugin
 mirrors consistent. Inbox-derived values follow the documented constant-format
 standard-input routine regardless of variable or command name; unrelated shell

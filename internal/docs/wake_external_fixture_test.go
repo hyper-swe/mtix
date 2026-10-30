@@ -5,6 +5,7 @@
 package docs
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,18 +24,10 @@ func installWakeRecorders(t *testing.T, dir string) {
 	}
 }
 
-func assertWakeRecordersUnused(t *testing.T, dir string) {
-	t.Helper()
-	for _, name := range []string{"printf", "env", "xargs"} {
-		_, err := os.Stat(filepath.Join(dir, "external-"+name))
-		require.True(t, os.IsNotExist(err), "external %s invoked", name)
-	}
-}
-
 func TestWakeFixture_ExternalCommands_RecordInvocation(t *testing.T) {
-	got := runWakeFixture(t, wakeSource(t, "examples/hooks/wake-agent.sh"), "fixture input")
 	for _, name := range []string{"printf", "env", "xargs"} {
 		t.Run(name, func(t *testing.T) {
+			got := runWakeFixture(t, wakeSource(t, "examples/hooks/wake-agent.sh"), "fixture input")
 			_, err := os.Stat(filepath.Join(got.dir, name))
 			require.NoError(t, err)
 			cmd := exec.CommandContext(t.Context(), "/usr/bin/env", name, "fixture-operand")
@@ -44,6 +37,21 @@ func TestWakeFixture_ExternalCommands_RecordInvocation(t *testing.T) {
 			marker, err := os.ReadFile(filepath.Join(got.dir, "external-"+name))
 			require.NoError(t, err)
 			require.Equal(t, "called\n", string(marker))
+			require.ErrorContains(t, wakeRecordersUnused(got.dir), "external "+name+" invoked")
 		})
 	}
+}
+
+func wakeRecordersUnused(dir string) error {
+	for _, name := range []string{"printf", "env", "xargs"} {
+		_, err := os.Stat(filepath.Join(dir, "external-"+name))
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("check external %s recorder: %w", name, err)
+		}
+		return fmt.Errorf("external %s invoked", name)
+	}
+	return nil
 }

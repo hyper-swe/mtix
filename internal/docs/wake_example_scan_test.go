@@ -90,7 +90,7 @@ func wakeLaunchProblems(text string, document ...bool) []string {
 	lines := wakeCommandLines(text, document...)
 	inputs := wakeInputVariables(lines)
 	protocol := wakeIsLeaseScript(text)
-	var problems []string
+	problems := wakeReaderDefinitions(lines)
 	for _, line := range lines {
 		line = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))
 		line = strings.Join(strings.Fields(line), " ")
@@ -184,7 +184,7 @@ func wakeShippedFiles(t *testing.T) map[string]string {
 
 func TestWakeExample_ShippedGuidance_UsesStaticLaunchOperands(t *testing.T) {
 	for path, text := range wakeShippedFiles(t) {
-		t.Run(path, func(t *testing.T) { require.Empty(t, wakeLaunchProblems(text, !strings.HasSuffix(path, ".sh"))) })
+		t.Run(path, func(t *testing.T) { require.Empty(t, wakeLaunchProblems(text, wakeDocumentFile(path, text))) })
 	}
 }
 

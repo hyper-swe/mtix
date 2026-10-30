@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- `scripts/remote-bar.sh` prints a failing tests block (Go test failure lines from the whole failed log, deduplicated, at most 100) before the last 200 log lines, so failing-test names no longer fall outside the tail (MTIX-215).
 - Document manual sensitive-text cleanup for current fields and fresh snapshots, with the local, hub and Git limits before protocol-2 redaction (MTIX-95.31.19.14).
 - Workflow merge conflicts show each side's field history, with bounded text and JSON reports; explicit resolutions preserve both histories and record the choice.
 

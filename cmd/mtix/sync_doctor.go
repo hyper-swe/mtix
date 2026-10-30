@@ -89,6 +89,11 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  Self-replay conflict rows - informational, always PASS: counts conflict rows
+                           written before 0.5.4 by the replay of this store's
+                           own events; they are not conflicts and are not
+                           counted; fix: none required; inspect with
+                           'mtix sync conflicts list --all'
   board.id               - one committed board identity; a hub board also
                            needs a known local hub observation
   board.hub-identity-changed - warns when the observed hub differs from
@@ -285,6 +290,7 @@ func appendLocalChecks(ctx context.Context, report DoctorReport) DoctorReport {
 		report = appendWakeBudgetRewindCheck(ctx, report, app.store)
 	}
 	report = appendHeldPushCheck(ctx, report, app.store)
+	report = appendSelfReplayConflictCheck(ctx, report, app.store)
 	modeOK, detail := checkSecretsFileMode(app.mtixDir)
 	return appendCheck(report, "secrets file mode", modeOK, detail)
 }

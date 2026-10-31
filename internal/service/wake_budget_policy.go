@@ -16,8 +16,9 @@ import (
 )
 
 type wakeBudgetPolicy struct {
-	limit   int64
-	backoff int64
+	limit       int64
+	senderLimit int64
+	backoff     int64
 }
 
 func (b *wakeBudgets) policy(agent string) (wakeBudgetPolicy, error) {
@@ -33,6 +34,10 @@ func (b *wakeBudgets) policy(agent string) (wakeBudgetPolicy, error) {
 		return wakeBudgetPolicy{}, fmt.Errorf("wake backoff policy must be positive: %w", model.ErrInvalidInput)
 	}
 	policy := wakeBudgetPolicy{backoff: threshold}
+	policy.senderLimit, err = wakeSenderLimit(values["wake.per_sender_per_hour"].Value)
+	if err != nil {
+		return policy, err
+	}
 	value := values["wake.wakes_per_hour"].Value
 	if value == "" {
 		return policy, nil
@@ -45,12 +50,12 @@ func (b *wakeBudgets) policy(agent string) (wakeBudgetPolicy, error) {
 	return policy, nil
 }
 
-func wakeBudgetFix(agent string, limit int64) string {
+func wakeBudgetSettingFix(agent, key string, limit int64) string {
 	value := "unset"
 	if limit < math.MaxInt64 {
 		value = strconv.FormatInt(limit+1, 10)
 	}
-	return "mtix config set wake.wakes_per_hour " + value + " --agent " + wakeBudgetAgentArgument(agent)
+	return "mtix config set " + key + " " + value + " --agent " + wakeBudgetAgentArgument(agent)
 }
 
 func wakeBudgetAgentArgument(agent string) string {

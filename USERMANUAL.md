@@ -1321,7 +1321,7 @@ Existing flat envelope and strict-identity settings remain readable.
 |---|---|---|
 | `wake.live` | `true` | Live wake on/off setting for the scanner |
 | `wake.wakes_per_hour` | unset, unlimited | Enforced by the callable dispatcher: recipient wakes across boards per rolling hour |
-| `wake.per_sender_per_hour` | unset, unlimited | stored, not yet enforced: sender events per hour |
+| `wake.per_sender_per_hour` | unset, unlimited | Enforced by the callable dispatcher: admitted events per claimed sender to this recipient across boards, rolling hour |
 | `wake.remote_awake_daily_cap` | unset, unlimited | stored, not yet enforced: remote-induced awake seconds per day |
 | `wake.reply_extensions_per_hour` | unset, unlimited | stored, not yet enforced: reply-window extensions per hour |
 | `wake.envelope_max_events` | unset, unlimited | Events in one pulled envelope |
@@ -1394,10 +1394,26 @@ not an adversarial control. The scanner's held diagnostic will name the depth an
 exact configuration command; changing a guard never acknowledges the event.
 
 These settings do not install a wake route. The callable dispatcher enforces
-recipient budgets and durable backoff; held wakes re-arm in the same dispatcher; scanner discovery remains
+recipient and per-sender budgets and durable backoff; held wakes re-arm in the same dispatcher; scanner discovery remains
 a separate feature. A configured limit of 12 holds the 13th attempt in a rolling
 hour, before claim or send, across boards for the same agent, host and user.
 Duplicate claims and held events spend no allowance; transport failures do.
+Sender limits use the wake event's claimed author and the recipient's
+effective setting, across boards for the same host and user. Addressed comments
+and hook deliveries use the payload author when it decodes and is nonempty,
+otherwise the event envelope author, matching inbox reads. The sender is not
+a verified principal: a writer can name another sender and spend that sender's allowance,
+which can hold the real sender's wakes. The per-sender limit is a courtesy bound;
+a recipient budget remains the bound across sender names. Selected authors
+longer than 256 bytes, with invalid UTF-8 or control characters are treated as
+unattributed before budget checks and charging, so they cannot block delivery
+by failing the protected credit codec.
+Legacy or unexplained credits without sender attribution count against every
+sender until those credits leave the rolling hour. New events without an attributable sender
+are checked against the combined credits of all senders; if admitted, their
+unattributed credits count against every sender until expiry. Held wakes stay pending;
+the alert names the exact `mtix config set wake.per_sender_per_hour <n> --agent <id>`
+command to raise that recipient's limit. Acknowledgements do not refund sender credits.
 
 After five consecutive wakes without a new acknowledgement, the next wake
 waits 1 minute; each further unacknowledged attempt doubles the delay up to

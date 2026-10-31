@@ -19,7 +19,7 @@ func assertWakeGuidance(t *testing.T, body string) {
 		"stale\ncompletion is refused", "attempted send error is terminal",
 		"delivery is at least once", "acknowledge events explicitly after handling",
 		"held registrations do not stop it", "not automatically pruned",
-		"Host-dispatcher discovery, enrollment and setup wiring are\nnot supplied",
+		"Experimental host dispatch is available but disabled by default; enrollment\nis service-only until setup integration ships",
 	} {
 		assert.Contains(t, body, phrase)
 	}

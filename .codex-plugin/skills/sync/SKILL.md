@@ -114,6 +114,102 @@ Each daemon pass takes `dispatch.lock` before pending-mirror recovery, hub pull,
 
 A normal `mtix sync push` that drains its eligible queue releases the push lock, checks for committed arrivals, and reacquires before reading and pushing again. It performs at most three passes. An event arriving after the final pass stays durably pending and is not marked pushed; `mtix sync status` shows its pending count. Run the next explicit `mtix sync push` to deliver it. Held, unresolved deferred or no-progress work does not trigger fruitless repeat passes. `--force` keeps its single lock-free pass, and hook mode keeps its transient-error warning behavior. A contender exits successfully with its event still durable; holder delivery is not promised at the cap. Other non-pusher owners include automatic import, `mtix sync backfill`, and merge-import UID adoption; each can hold the push lock without pushing, so work skipped under any of them remains pending for the next push. The daemon remains a pull/dispatch loop and does not autonomously push these events unless a configured hook invokes push.
 
+## Daemon log retention
+
+Idle daemon ticks leave an unchanged mirror's bytes, `exported_at`, mtime and
+inode intact, including after restart. Debug-only `sync_export_completed`
+messages describe actual automatic publications; routine idle ticks produce no
+export-success lines at the default log level. Direct explicit exports retain
+their timestamp contract.
+
+On macOS, launchd captures stdout and stderr in `.mtix/logs/daemon.out.log` and
+`.mtix/logs/daemon.err.log`. This capture is unbounded unless an administrator
+configures retention; mtix does not rotate it. Linux's generated systemd user
+service uses the journal instead. Windows Task Scheduler has no mtix-managed
+log-retention guarantee.
+
+`mtix doctor` adds `daemon.logs` when either project log exists: it warns above
+10 MiB (10485760 bytes) per file, passes at or below that boundary, and omits the
+row when both are absent. Text and `--json` include filenames, byte counts and
+operator remedies. Inspection errors and nonregular files warn for manual
+inspection. Symlinked logs report `symlink, not inspected`: doctor does not
+follow the link or claim a size. It reads file metadata only; `--fix` does not create, truncate,
+rotate or delete these logs. This check does not measure the system journal.
+Preserve any needed records before enabling retention.
+
+**macOS native policy (administrator required).** Install a root-controlled
+`/etc/newsyslog.d/mtix-daemon.conf` using actual absolute project paths and the
+service user's `USER:GROUP`. The example paths must contain no whitespace;
+verify the installed `newsyslog.conf(5)` syntax for your paths before use.
+The columns below are path, owner, mode, archive count, size in KiB, time,
+flags, PID file and signal:
+
+```text
+/absolute/project/.mtix/logs/daemon.out.log USER:GROUP 600 3 10240 * - /absolute/project/.mtix/sync.daemon.pid 15
+/absolute/project/.mtix/logs/daemon.err.log USER:GROUP 600 3 10240 * - /absolute/project/.mtix/sync.daemon.pid 15
+```
+
+This retains three archives per file and sets a rotation threshold of 10240 KiB.
+Newsyslog checks whether that threshold is reached; doctor warns strictly above
+10 MiB. See `newsyslog.conf(5)` for the columns and `newsyslog(8)` for invocation
+options; `-` is the supported no-special-processing flags placeholder.
+Signal 15 is SIGTERM: the daemon exits and launchd's KeepAlive restarts it,
+briefly interrupting service and reopening the capture files. The two entries
+use the same PID-file path and signal: newsyslog defers signaling until all
+selected rotations finish and sends one SIGTERM per invocation for that pair.
+When both files rotate in that invocation, one restart reopens both; separate
+invocations can each restart the service. A rename alone,
+or rotation with signaling disabled, leaves inherited descriptors writing to
+the old file. mtix publishes its own `.mtix/sync.daemon.pid` after acquiring the
+ownership lock, but a crash can leave a stale PID; PID reuse could signal an
+unrelated process. An administrator must trust the board directory and PID
+file, verify the live service identity before enabling this policy, and resolve
+stale PID files before invoking rotation. This is not a stale-PID-proof policy.
+Do not use an unsupported newsyslog `R` configuration flag.
+
+After installing and checking the configuration, run
+`sudo /usr/sbin/newsyslog -f /etc/newsyslog.d/mtix-daemon.conf`.
+Confirm the system's periodic newsyslog job includes `/etc/newsyslog.d/`.
+A periodic size policy is not a hard byte cap: files may exceed the threshold
+between runs, and retained archives add to disk usage.
+
+**Optional file policy where logrotate is installed.** Configure the following
+in administrator-controlled `/etc/logrotate.d/mtix-daemon`, substituting the
+real paths and service user/group:
+
+```text
+"/absolute/project/.mtix/logs/daemon.out.log" "/absolute/project/.mtix/logs/daemon.err.log" {
+    su USER GROUP
+    size 10M
+    rotate 3
+    copytruncate
+    missingok
+    notifempty
+}
+```
+
+Then run `sudo logrotate /etc/logrotate.d/mtix-daemon` and arrange its periodic
+scheduler. `copytruncate` preserves open descriptors but can lose records
+written between copying and truncating. This also is a periodic threshold,
+not a strict byte cap. Choose one file-rotation policy, not both.
+
+**Linux journal policy (host administrator).** In a journald drop-in such as
+`/etc/systemd/journald.conf.d/mtix-retention.conf`, set:
+
+```ini
+[Journal]
+SystemMaxUse=100M
+RuntimeMaxUse=100M
+SystemMaxFileSize=10M
+RuntimeMaxFileSize=10M
+```
+
+Apply it with `sudo systemctl restart systemd-journald`. These limits affect
+the host's journal, not just mtix; coordinate with the host administrator.
+Persistent and runtime storage have separate budgets. Only archived journal
+files are removed to reclaim space; active files can keep usage above a target,
+and vacuuming the journal does not rotate the project's `.mtix/logs` files.
+
 ## Pending mirror exports
 
 Mirror exports read nodes, dependencies, agents and sessions from one read-only WAL snapshot, allowing writers to commit while the export reads. The mirror file and its conflict baseline describe that same snapshot; publication writes the file before its hashes. A write committed after the snapshot is handled by a later export.
@@ -237,8 +333,8 @@ below; each one maps to one mtix setting.
   it once (run any trivial query) before `mtix sync init`, or keep it active
   during setup. mtix does not poll the hub on a timer from the CLI, and the daemon
   contacts it only after activity by default (`sync.hub_contact`), so an idle
-  database stays idle unless you set an interval (a listener-based hold,
-  `sync.listen`, is configured but inert until a later release).
+  database stays idle unless you set an interval (a waiting session's
+  listener, `sync.listen`, keeps the hub contacted while it waits; `sync.listen off` stops that).
 - **Tables exposed over an HTTP API.** If your platform can expose tables
   through an HTTP API, keep the mtix tables unexposed. `mtix sync doctor`
   confirms reachability and schema; it does not check exposure, so verify that
@@ -402,7 +498,7 @@ Every `mtix sync init`, `push`, `pull`, `clone`, `doctor`, `backup`, `harden`, `
 
 mtix does not poll the hub on a timer from the CLI. After activity, sync (session start and after changes), never in a loop. When `mtix daemon` contacts the hub is set by `sync.hub_contact` (read fresh every pass, so a change applies without a restart): `activity` (the default for new boards) contacts the hub every 5 seconds for 10 minutes after real activity, every 60 seconds until 30 minutes, then not at all, so a database that pauses when idle can pause; `interval:<duration>` (at least 1s) contacts it on that period all day and keeps such a database awake around the clock; `manual` never contacts it from the daemon. `mtix config get sync.hub_contact` shows the effective mode. Real activity is recorded operator-locally (outside the board, never synced) by: a local mutation command, an addressed `mtix comment --to`, a commit made through the MCP server, `mtix agent heartbeat` (run by a model turn or a person), the attach glue's session-start and prompt-submit. It is not recorded by reads, `mtix inbox`, any wait, or any waiter arming, re-arming or refreshing a lease (a second waiter process that re-arms after the first exits never moves the activity window or the clamp). The first message to a host that has been idle past the window waits for that host's next activity (or for the listen hold below). A board created before this key existed keeps contacting the hub at the daemon's own `--interval` until you set the key, and `mtix doctor` row `sync.hub-contact` says so and prints `mtix config set sync.hub_contact activity`. With `interval:<duration>` the daemon prints a one-time cost warning at start. Local work (pending-export recovery, relay, hook dispatch) runs on every pass and never depends on the hub.
 
-Listen hold: `sync.listen` is `live` or `off` (shipped default: `live`). In this build the hold is inert: no listener arms a lease yet (a later release adds one), so `sync.listen` is accepted and stored but changes nothing, and `mtix doctor` shows no live listener lease. The rest of this paragraph describes what the hold does once a listener runs. While it is `live`, a live listener lease on this host makes the daemon contact the hub every `sync.listen_interval` (default `10s`) even after the activity window closed, so an idle session can be woken by a message from another machine; `off` is strict activity-only contact. There is exactly one clamp: the hold ends `sync.listen_max_idle` (default `8h`, at most `72h`) after the last real activity, or sooner when the last lease's process is gone or `sync.listen` is set to `off`; re-arming or refreshing a lease never extends it. A live listening session therefore keeps a scale-to-zero database awake, at about 360 contacts an hour per board at the default interval, until that clamp; if the user does not want that, run `mtix config set sync.listen off`. `manual` overrides the hold. `sync.push_on_addressed_send` is reserved: it has no effect in this build. Verify with `mtix doctor`: row `sync.hub-contact` shows the mode, the last activity, the last contact and whether any contact will happen; row `sync.listen` shows whether the hold is on, its route (`poll`), the interval, the idle clamp and when the current hold ends; each failing row prints the exact `mtix config set` command. `mtix doctor` reads only local state and never contacts the hub for these rows. Never start `mtix daemon` or a cron job or a short-interval hook that pulls without telling the user what it costs. `mtix sync daemon` is the deprecated alias and keeps a fixed 5 second cadence.
+Listen hold: `sync.listen` is `live` or `off` (shipped default: `live`). A waiter (`mtix inbox --wait --agent X`) on a board that syncs through a hub or relay arms a lease and, when no daemon runs for the board, starts one detached `mtix daemon --listen` for it (the same binary, no extra argument, nothing secret on its command line) and prints one line saying so; if it starts nothing it prints why, for example `sync.listen` off or `sync.hub_contact` manual. Two waiters share one listener. While the hold is armed (real activity within `sync.listen_max_idle`) and `sync.listen` is `live`, a live waiter lease on this host makes the listener contact the hub every `sync.listen_interval` (default `10s`) even after the activity window closed, so an idle session can be woken by a message from another machine; `off` is strict activity-only contact. There is exactly one clamp: the hold ends `sync.listen_max_idle` (default `8h`, at most `72h`) after the last real activity, or sooner when the last lease's process is gone or `sync.listen` is set to `off`; re-arming or refreshing a lease never extends it. A live listening session therefore keeps a scale-to-zero database awake, at about 360 contacts an hour per board at the default interval, until that clamp; if the user does not want that, run `mtix config set sync.listen off`. `manual` overrides the hold. The listener exits within one local pass (about 5 seconds) after the last waiter lease ends, a lease whose waiter stopped refreshing it expires after 15 minutes so a crashed session cannot keep the hub awake, and after it exits nothing contacts the hub. A relay board has no database to wake, so its listener ingests the relay folder while a waiter lives. A waiter restarts a listener that exited early, but not while the board is idle-clamped (no respawn, no restart line, a quiet park). A listener started past the clamp, or on a board with no recorded activity, makes no hub contact and exits at once: a waiter that re-parks every few minutes costs the hub nothing until real activity (an addressed message or a local write) re-arms the hold. `mtix doctor` row `wake.listener.no-hub-listener` fails when waiters are parked with no listener on an armed hold and prints the fix `mtix daemon --listen`; past the clamp it passes as idle-clamped; it reads local state only. `sync.push_on_addressed_send` is reserved: it has no effect in this build. Verify with `mtix doctor`: row `sync.hub-contact` shows the mode, the last activity, the last contact and whether any contact will happen; row `sync.listen` shows whether the hold is on, its route (`poll`), the interval, the idle clamp and when the current hold ends; each failing row prints the exact `mtix config set` command. `mtix doctor` reads only local state and never contacts the hub for these rows. Never start `mtix daemon` or a cron job or a short-interval hook that pulls without telling the user what it costs. `mtix sync daemon` is the deprecated alias and keeps a fixed 5 second cadence.
 
 ## Verify with doctor
 
@@ -460,6 +556,7 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 | `hub-triggers` WARN or FAIL | a hub function or trigger is missing, rebound or disabled | Ask the table owner to run `mtix sync init` or the `ALTER TABLE ... ENABLE TRIGGER` statement the check prints. |
 | `hub-privileges` WARN | roles besides the owner can use the sync tables | Acceptable on a private network. To restrict, the owner runs `mtix sync harden` (dry run) and, with the user's approval of its role list, `--apply`. |
 | `mtix sync conflicts list` shows conflicts | two machines changed the same field | `mtix sync conflicts resolve <id>` records a decision and changes no task: apply the chosen value with `mtix update`, then push. |
+| `mtix sync status` counts unresolved conflicts after upgrading from 0.5.3 or earlier, although only one machine ever wrote | before 0.5.4 a pull replayed this store's own pushed events and logged them as lww conflicts; both events of such a row were emitted by this store | Nothing to run: such rows are not counted, and the count clears by itself on upgrade, with no write to the store. `mtix sync conflicts list --all` shows them as `self_replay=true`, and `mtix sync doctor` reports their number in its `self-replay conflict rows` check (always PASS, fix: none required). Do not resolve one: it is refused. A conflict with an event from another machine, or with an event this store no longer holds, is still counted. |
 | a task is blocked on a restore collision | the hub was restored and two settled tasks claim one number | `mtix sync collisions list` shows them; ask the user, who resolves with `mtix sync collisions resolve`. |
 | a task is `in_progress` again after `mtix done`, with `closed_at` still set | own-event replay, below | `mtix sync repair --status`, below. |
 

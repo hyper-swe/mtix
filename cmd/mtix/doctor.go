@@ -121,17 +121,7 @@ func writeDoctorRows(out io.Writer, rows []service.DoctorResult, jsonOutput bool
 }
 
 func newConfiguredDoctorService() (*service.DoctorService, error) {
-	known := knownSyncDSNs()
-	opts := service.DoctorOptions{Platform: runtime.GOOS, Scrub: func(text string) string { return redact.Known(text, known...) }}
-	if app.mtixDir != "" {
-		request := configuredDoctorCollection()
-		if request.Postgres || request.Relay {
-			opts.CollectSync = func(ctx context.Context) ([]service.DoctorResult, error) {
-				return doctorSyncRows(collectSyncDoctor(ctx, request)), nil
-			}
-		}
-	}
-	svc := service.NewDoctorService(opts)
+	svc := service.NewDoctorService(configuredDoctorOptions())
 	if err := registerHistorySizeCheck(svc); err != nil { // MTIX-95.31.19.4
 		return nil, fmt.Errorf("register history size check: %w", err)
 	}
@@ -140,6 +130,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	}
 	if err := registerServeExposureCheck(svc); err != nil { // MTIX-220
 		return nil, fmt.Errorf("register serve exposure check: %w", err)
+	}
+	if err := registerDaemonLogsCheck(svc); err != nil {
+		return nil, fmt.Errorf("register daemon logs check: %w", err)
 	}
 	if err := svc.Register(documentFreshnessCheck(filepath.Dir(app.mtixDir))); err != nil {
 		return nil, fmt.Errorf("register documentation check: %w", err)
@@ -150,6 +143,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 		}
 		if err := svc.Register(hooksStrictCheck(app.mtixDir)); err != nil {
 			return nil, fmt.Errorf("register hook strict check: %w", err)
+		}
+		if err := svc.Register(hooksOriginsCheck(app.mtixDir)); err != nil {
+			return nil, fmt.Errorf("register hook origin check: %w", err)
 		}
 	}
 	// Attach rows (setup.shim, glue.<h>, attach.failures, skew.dispatchers)
@@ -167,6 +163,20 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	return svc, nil
 }
 
+func configuredDoctorOptions() service.DoctorOptions {
+	known := knownSyncDSNs()
+	opts := service.DoctorOptions{Platform: runtime.GOOS, Scrub: func(text string) string { return redact.Known(text, known...) }}
+	if app.mtixDir != "" {
+		request := configuredDoctorCollection()
+		if request.Postgres || request.Relay {
+			opts.CollectSync = func(ctx context.Context) ([]service.DoctorResult, error) {
+				return doctorSyncRows(collectSyncDoctor(ctx, request)), nil
+			}
+		}
+	}
+	return opts
+}
+
 func registerWakeDoctorChecks(svc *service.DoctorService) error {
 	if err := registerPermissionDoctor(svc); err != nil {
 		return fmt.Errorf("register wake permission diagnostics: %w", err)
@@ -179,6 +189,9 @@ func registerWakeDoctorChecks(svc *service.DoctorService) error {
 	}
 	if err := registerConfiguredWakeLedgerDoctor(svc); err != nil {
 		return fmt.Errorf("register wake ledger diagnostics: %w", err)
+	}
+	if err := registerWakeListenerDoctor(svc); err != nil {
+		return fmt.Errorf("register wake listener diagnostics: %w", err)
 	}
 	return nil
 }

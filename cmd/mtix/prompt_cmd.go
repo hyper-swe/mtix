@@ -83,7 +83,15 @@ func newResolveAnnotationCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "resolve-annotation <node-id> <annotation-id>",
 		Short: "Resolve an annotation on a node",
-		Args:  cobra.ExactArgs(2),
+		Long: `Resolve an annotation on a node.
+
+The annotation id is the full id (as in mtix show --json) or the short id that
+mtix show prints, which is the first 12 characters. A prefix works when it is at
+least 12 characters and matches one annotation; an exact full id always wins.
+Several matches are refused with the full ids listed, and no match is a not
+found error. An id with unusual characters prints escaped in mtix show, so copy
+it from mtix show --json instead.`,
+		Args: cobra.ExactArgs(2),
 		RunE: withAutoExport(func(_ *cobra.Command, args []string) error {
 			return runResolveAnnotation(args[0], args[1])
 		}),
@@ -96,17 +104,19 @@ func runResolveAnnotation(nodeID, annotID string) error {
 	}
 
 	ctx := mutationContext()
-	if err := app.promptSvc.ResolveAnnotation(ctx, nodeID, annotID, true); err != nil {
+	// The service resolves a short prefix to the full id and reports it.
+	fullID, err := app.promptSvc.ResolveAnnotationRef(ctx, nodeID, annotID, true)
+	if err != nil {
 		return err
 	}
 
 	if app.jsonOutput {
 		data, _ := json.Marshal(map[string]string{
-			"node_id": nodeID, "annotation_id": annotID, "status": "resolved",
+			"node_id": nodeID, "annotation_id": fullID, "status": "resolved",
 		})
 		fmt.Println(string(data))
 	} else {
-		fmt.Printf("Resolved annotation %s on %s\n", annotID, nodeID)
+		fmt.Printf("Resolved annotation %s on %s\n", format.EventID(fullID), nodeID)
 	}
 	return nil
 }

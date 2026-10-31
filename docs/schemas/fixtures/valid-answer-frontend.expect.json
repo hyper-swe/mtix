@@ -1,0 +1,8 @@
+{
+  "class": "valid",
+  "kind": "answer",
+  "had_duplicates": false,
+  "canonical": "{\"attestation\":{\"clicked_at\":\"2026-10-30T12:00:00Z\",\"frontend\":\"chatbridge\",\"user\":\"alice\"},\"channel\":\"frontend:chatbridge\",\"decider\":{\"kind\":\"human\",\"model\":\"\"},\"kind\":\"answer\",\"option\":\"approve\",\"request_key\":\"a2\",\"target\":\"evt-1\",\"v\":1}",
+  "payload_sha256": "15c4438174bb61f8b2affd62ce6b9f9b19a963e9ea60cfd9e7d2a0eb43c0829d",
+  "content_sha256": "c894068a1fc159bf25108f0730a75c336f984719517e1caea8a1ea6a4055c677"
+}

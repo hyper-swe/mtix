@@ -1,0 +1,1 @@
+{"v":1,"kind":"outcome","request_key":"o2","target":"evt-1","answer":"evt-2","seen_answers":["evt-2","evt-3"],"result":"refused","refusal":{"text":"The review changed after the answer.","code":"stale"}}

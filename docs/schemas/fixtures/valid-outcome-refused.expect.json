@@ -1,0 +1,8 @@
+{
+  "class": "valid",
+  "kind": "outcome",
+  "had_duplicates": false,
+  "canonical": "{\"answer\":\"evt-2\",\"kind\":\"outcome\",\"refusal\":{\"code\":\"stale\",\"text\":\"The review changed after the answer.\"},\"request_key\":\"o2\",\"result\":\"refused\",\"seen_answers\":[\"evt-2\",\"evt-3\"],\"target\":\"evt-1\",\"v\":1}",
+  "payload_sha256": "0c767093f6285a5a0420582d6243fd51692d815d1be8de003901b329f4e9fa84",
+  "content_sha256": "6e9658c185552b7ef660ba476349e0149a8571ce860ad0b0396653c63c30ae54"
+}

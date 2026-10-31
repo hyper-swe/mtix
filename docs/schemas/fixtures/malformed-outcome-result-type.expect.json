@@ -1,0 +1,8 @@
+{
+  "class": "malformed",
+  "kind": "outcome",
+  "had_duplicates": false,
+  "canonical": "{\"answer\":\"evt-2\",\"kind\":\"outcome\",\"request_key\":\"o1\",\"result\":7,\"target\":\"evt-1\",\"v\":1}",
+  "payload_sha256": "4c0b15246ae577244f99e291cc5c7a07312085306cfa2947a845e0e9b594bc41",
+  "content_sha256": "0abcfce78104b74ec9d4ec423052d3d1a286ad1ce8e7e19eabb7e5c797925b29"
+}

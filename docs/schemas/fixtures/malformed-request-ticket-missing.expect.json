@@ -1,0 +1,8 @@
+{
+  "class": "malformed",
+  "kind": "request",
+  "had_duplicates": false,
+  "canonical": "{\"kind\":\"request\",\"question\":\"Q?\",\"request_key\":\"6f1c\",\"v\":1}",
+  "payload_sha256": "5d56d873260e28a69cf0ad85bae8610c1a1c4dec6087cddacfccb4b058c97955",
+  "content_sha256": "f37631fedb72e18511c1fd25473f154755933b21240f87601432d2e09cd41535"
+}

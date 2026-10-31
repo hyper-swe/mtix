@@ -116,3 +116,35 @@ func TestURL_Command_RegisteredExemptFromRoutingAndDeclaredRead(t *testing.T) {
 	assert.Error(t, cmd.Args(cmd, []string{}))
 	assert.NoError(t, cmd.Args(cmd, []string{"TEST-1"}))
 }
+
+func TestURL_ExtraArgs_Rejected(t *testing.T) {
+	cmd := newURLCmd()
+	assert.Error(t, cmd.Args(cmd, []string{"TEST-1", "TEST-2"}))
+}
+
+func TestURL_NotInProject_FailsWithEmptyStdout(t *testing.T) {
+	saveAndResetApp(t)
+	var err error
+	out := captureStdout(t, func() { err = runURL("TEST-1") })
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not in an mtix project")
+	assert.Empty(t, out)
+}
+
+func TestURL_MtixDirMissing_ReportsErrorWithEmptyStdout(t *testing.T) {
+	initTestApp(t)
+	id := newURLTestNode(t)
+	t.Chdir(t.TempDir())
+
+	var err error
+	out := captureStdout(t, func() { err = runURL(id) })
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), ".mtix directory not found")
+	assert.Empty(t, out)
+}
+
+func TestURL_Help_DocumentsLoopbackOnlyLimit(t *testing.T) {
+	help := newURLCmd().Long
+	assert.Contains(t, help, "loopback")
+	assert.Contains(t, help, "--insecure-bind")
+}

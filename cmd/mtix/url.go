@@ -21,8 +21,11 @@ the running web UI. It needs a running 'mtix serve' for this project; with no
 serve running the command prints nothing on stdout and exits non-zero.
 
 The id must be a display id such as MTIX-12.3. An unknown id fails with not
-found. With --json the output is {"id": ..., "url": ...}. The address is the
-loopback address of the serve this project started.`
+found. With --json the output is {"id": ..., "url": ...}.
+
+The link always uses the loopback address 127.0.0.1 and the serve's port. A serve
+bound to another address with --insecure-bind is not reachable at that link:
+replace the host by hand.`
 
 // newURLCmd creates the mtix url command (MTIX-230).
 func newURLCmd() *cobra.Command {

@@ -4,6 +4,7 @@
  */
 
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { isValidNodeId } from "../utils/nodeId";
 import { deselectedPath, parseTicketLocation, ticketPath, type TicketLocation } from "../utils/ticketLocation";
 
 /** Available views in the main content area. */
@@ -65,18 +66,26 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
     }
   }, [leaveTicket]);
 
-  const selectNode = useCallback((nodeId: string) => {
-    setSelectedNodeId(nodeId);
-    setInvalid(false);
-    setView("node-detail");
-    window.history.pushState(null, "", ticketPath(nodeId, window.location.search));
-  }, []);
-
   const goBack = useCallback(() => {
     setView("all-issues");
     setSelectedNodeId(null);
     leaveTicket();
   }, [leaveTicket]);
+
+  const selectNode = useCallback((nodeId: string) => {
+    // An empty or malformed id (the not-found "Go back" button passes "") is a deselect.
+    if (!isValidNodeId(nodeId)) {
+      goBack();
+      return;
+    }
+    setSelectedNodeId(nodeId);
+    setInvalid(false);
+    setView("node-detail");
+    const target = ticketPath(nodeId, window.location.search);
+    if (target !== window.location.pathname + window.location.search) {
+      window.history.pushState(null, "", target);
+    }
+  }, [goBack]);
 
   return (
     <NavigationContext.Provider value={{ view, selectedNodeId, invalidTicketRef, navigateTo, selectNode, goBack }}>

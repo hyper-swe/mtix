@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi, afterEach } from "vitest";
 import { act, render, screen } from "@testing-library/react";
 import { NavigationProvider, useNavigation } from "../NavigationContext";
 
@@ -11,6 +11,9 @@ function Probe() {
       <span data-testid="invalid">{String(nav.invalidTicketRef)}</span>
       <button onClick={() => nav.selectNode("MTIX-7.1")}>select</button>
       <button onClick={() => nav.goBack()}>back</button>
+      <button onClick={() => nav.navigateTo("dashboard")}>dashboard</button>
+      <button onClick={() => nav.selectNode("")}>select-empty</button>
+      <button onClick={() => nav.selectNode("MTIX-7.1")}>select-again</button>
     </div>
   );
 }
@@ -26,6 +29,7 @@ function mount(url: string) {
 
 describe("NavigationProvider deep links (MTIX-230)", () => {
   beforeEach(() => window.history.replaceState(null, "", "/"));
+  afterEach(() => vi.restoreAllMocks());
 
   it("selects the ticket named by /ticket/<id> on first load", () => {
     mount("/ticket/MTIX-230.2");
@@ -34,7 +38,10 @@ describe("NavigationProvider deep links (MTIX-230)", () => {
   });
 
   it("rewrites ?node=<id> to the canonical path and keeps other filters", () => {
+    window.history.replaceState(null, "", "/?status=open&node=MTIX-5");
+    const before = window.history.length;
     mount("/?status=open&node=MTIX-5");
+    expect(window.history.length).toBe(before);
     expect(window.location.pathname).toBe("/ticket/MTIX-5");
     expect(window.location.search).toBe("?status=open");
     expect(screen.getByTestId("sel").textContent).toBe("MTIX-5");
@@ -64,6 +71,7 @@ describe("NavigationProvider deep links (MTIX-230)", () => {
       window.dispatchEvent(new PopStateEvent("popstate"));
     });
     expect(screen.getByTestId("sel").textContent).toBe("MTIX-9");
+    expect(screen.getByTestId("view").textContent).toBe("node-detail");
     act(() => {
       window.history.pushState(null, "", "/");
       window.dispatchEvent(new PopStateEvent("popstate"));
@@ -82,5 +90,68 @@ describe("NavigationProvider deep links (MTIX-230)", () => {
     expect(screen.getByTestId("view").textContent).toBe("node-detail");
     expect(screen.getByTestId("invalid").textContent).toBe("true");
     expect(window.location.pathname + window.location.search).toBe(new URL(p, "http://localhost").pathname);
+  });
+
+  it("navigateTo another view leaves /ticket/<id> and keeps the filter query", () => {
+    mount("/ticket/MTIX-1?status=open");
+    act(() => screen.getByText("dashboard").click());
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.search).toBe("?status=open");
+    expect(screen.getByTestId("view").textContent).toBe("dashboard");
+    expect(screen.getByTestId("sel").textContent).toBe("none");
+  });
+
+  it("selecting a ticket after an invalid deep link clears the not-found state", () => {
+    mount("/ticket/%3Cscript%3E");
+    expect(screen.getByTestId("invalid").textContent).toBe("true");
+    act(() => screen.getByText("select").click());
+    expect(screen.getByTestId("invalid").textContent).toBe("false");
+    expect(screen.getByTestId("sel").textContent).toBe("MTIX-7.1");
+  });
+
+  it("popstate from an invalid deep link to a valid ticket clears the not-found state", () => {
+    mount("/ticket/%3Cscript%3E");
+    act(() => {
+      window.history.pushState(null, "", "/ticket/MTIX-2");
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    expect(screen.getByTestId("invalid").textContent).toBe("false");
+    expect(screen.getByTestId("sel").textContent).toBe("MTIX-2");
+  });
+
+  it("goBack from the invalid state leaves the not-found state", () => {
+    mount("/ticket/%3Cscript%3E");
+    act(() => screen.getByText("back").click());
+    expect(screen.getByTestId("invalid").textContent).toBe("false");
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("selecting an empty id (the Go back button) deselects to / and never pushes /ticket/", () => {
+    mount("/ticket/MTIX-1?status=open");
+    act(() => screen.getByText("select-empty").click());
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.search).toBe("?status=open");
+    expect(screen.getByTestId("sel").textContent).toBe("none");
+    expect(screen.getByTestId("view").textContent).toBe("all-issues");
+  });
+
+  it("reselecting the same ticket adds no duplicate history entry", () => {
+    mount("/");
+    act(() => screen.getByText("select").click());
+    const after = window.history.length;
+    act(() => screen.getByText("select-again").click());
+    expect(window.history.length).toBe(after);
+    expect(window.location.pathname).toBe("/ticket/MTIX-7.1");
+  });
+
+  it("removes its popstate listener on unmount", () => {
+    const add = vi.spyOn(window, "addEventListener");
+    const remove = vi.spyOn(window, "removeEventListener");
+    const { unmount } = mount("/");
+    const added = add.mock.calls.filter((c) => c[0] === "popstate").map((c) => c[1]);
+    expect(added.length).toBeGreaterThan(0);
+    unmount();
+    const removed = remove.mock.calls.filter((c) => c[0] === "popstate").map((c) => c[1]);
+    for (const fn of added) expect(removed).toContain(fn);
   });
 });

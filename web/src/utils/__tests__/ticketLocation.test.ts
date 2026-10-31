@@ -28,6 +28,11 @@ describe("isValidNodeId", () => {
     "MTIX-1\u0000",
     "MTIX-1\n",
     "A".repeat(40) + "-1",
+    "MTIX-01",
+    "MTIX-1.01",
+    "MTIX-1.uABC",
+    "MTIX-1.u",
+    "MTIX-1." + "1.".repeat(120) + "1",
   ])("rejects %j", (id) => expect(isValidNodeId(id)).toBe(false));
 });
 

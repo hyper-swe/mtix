@@ -24,6 +24,8 @@ type ConfigService struct {
 	ignoredWake map[string]string
 	values      map[string]string
 	path        string // Path to config file.
+	// historyGuard checks the history.export rollout guard (MTIX-95.31.19.6).
+	historyGuard func() (HistoryGuardReport, error)
 
 	// legacyHubContact is true when an existing config file predates
 	// sync.hub_contact and the operator has not set it since (MTIX-112.20.1).
@@ -105,6 +107,9 @@ func (cs *ConfigService) Set(key, value string) (string, error) {
 		}
 	}
 	if err := validateMaxLamportJump(key, value); err != nil {
+		return "", err
+	}
+	if err := cs.guardHistoryExport(key, value); err != nil {
 		return "", err
 	}
 	if key == "sync.keep_roles" {

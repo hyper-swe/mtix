@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Add a pure fold of decision events into a card state, with the ticket-deleted predicate, in `internal/service/decisionfold` (MTIX-219.7). Nothing calls it yet; default behaviour is unchanged.
 - Add the decision wire model in `internal/model`: types and validators for decision request, answer, outcome and withdraw objects, an RFC 8785 canonical form with `payload_sha256`, answer normalisation, the `d-` short id, and JSON Schemas with golden fixtures under `docs/schemas/` (MTIX-219.4). Nothing calls it yet; default behaviour is unchanged.
 - Collision resolution errors identify whether local renumbering or recording completion on the hub failed, while preserving the retry command (MTIX-107.46.2).
 - `mtix doctor` reports oversized daemon capture logs with read-only text/JSON diagnostics and manual retention remedies; daemon guidance documents native macOS rotation and Linux journal limits (MTIX-228).

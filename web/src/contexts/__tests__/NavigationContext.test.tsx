@@ -12,6 +12,8 @@ function Probe() {
       <button onClick={() => nav.selectNode("MTIX-7.1")}>select</button>
       <button onClick={() => nav.goBack()}>back</button>
       <button onClick={() => nav.navigateTo("dashboard")}>dashboard</button>
+      <button onClick={() => nav.navigateTo("stale")}>stale</button>
+      <button onClick={() => nav.navigateTo("agents")}>agents</button>
       <button onClick={() => nav.selectNode("")}>select-empty</button>
       <button onClick={() => nav.selectNode("MTIX-7.1")}>select-again</button>
     </div>
@@ -135,13 +137,43 @@ describe("NavigationProvider deep links (MTIX-230)", () => {
     expect(screen.getByTestId("view").textContent).toBe("all-issues");
   });
 
-  it("reselecting the same ticket adds no duplicate history entry", () => {
-    mount("/");
+  it("reselecting the same ticket adds no duplicate history entry, with a filter query present", () => {
+    mount("/?status=open");
     act(() => screen.getByText("select").click());
     const after = window.history.length;
     act(() => screen.getByText("select-again").click());
     expect(window.history.length).toBe(after);
     expect(window.location.pathname).toBe("/ticket/MTIX-7.1");
+    expect(window.location.search).toBe("?status=open");
+  });
+
+  it.each(["dashboard", "stale", "agents"])(
+    "selecting a ticket from the %s view opens the node detail view",
+    (viewButton) => {
+      mount("/");
+      act(() => screen.getByText(viewButton).click());
+      expect(screen.getByTestId("view").textContent).toBe(viewButton);
+      act(() => screen.getByText("select").click());
+      expect(screen.getByTestId("view").textContent).toBe("node-detail");
+      expect(screen.getByTestId("sel").textContent).toBe("MTIX-7.1");
+    },
+  );
+
+  it("goBack from an invalid ?node alias removes the alias and keeps the other query", () => {
+    mount("/?status=open&node=%3Cx%3E");
+    expect(screen.getByTestId("invalid").textContent).toBe("true");
+    act(() => screen.getByText("back").click());
+    expect(window.location.pathname).toBe("/");
+    expect(window.location.search).toBe("?status=open");
+    expect(screen.getByTestId("invalid").textContent).toBe("false");
+  });
+
+  it("navigateTo from / adds no history entry", () => {
+    mount("/?status=open");
+    const before = window.history.length;
+    act(() => screen.getByText("dashboard").click());
+    expect(window.history.length).toBe(before);
+    expect(window.location.pathname + window.location.search).toBe("/?status=open");
   });
 
   it("removes its popstate listener on unmount", () => {

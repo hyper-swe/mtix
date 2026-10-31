@@ -55,6 +55,9 @@ export function NavigationProvider({ children }: { children: React.ReactNode }) 
     setInvalid(false);
     if (window.location.pathname.startsWith("/ticket/")) {
       window.history.pushState(null, "", deselectedPath(window.location.search));
+    } else if (new URLSearchParams(window.location.search).has("node")) {
+      // A rejected ?node alias is dropped from the address, other parameters kept.
+      window.history.replaceState(null, "", deselectedPath(window.location.search));
     }
   }, []);
 

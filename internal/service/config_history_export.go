@@ -41,3 +41,32 @@ func validateHistoryExport(v string) error {
 	}
 	return nil
 }
+
+// SetHistoryExportGuard installs the rollout guard that Set consults before
+// turning history.export on (MTIX-95.31.19.6). With none installed, as in
+// library use, enabling is not guarded.
+func (cs *ConfigService) SetHistoryExportGuard(check func() (HistoryGuardReport, error)) {
+	cs.historyGuard = check
+}
+
+// guardHistoryExport refuses turning history.export on while the guard reports
+// an older build touching the board, or cannot tell (fail closed); nothing is
+// written then. Turning it off, other keys, and re-asserting a switch that is
+// already on pass untouched (ADR-006 A3.1).
+func (cs *ConfigService) guardHistoryExport(key, value string) error {
+	if key != "history.export" || cs.historyGuard == nil {
+		return nil
+	}
+	if on, err := strconv.ParseBool(strings.TrimSpace(value)); err != nil || !on || cs.HistoryExport() {
+		return nil
+	}
+	rep, err := cs.historyGuard()
+	if err != nil {
+		return fmt.Errorf("history.export stays off: could not check whether an older mtix touches the board (%v); "+
+			"run mtix doctor and fix what it reports: %w", err, model.ErrInvalidInput)
+	}
+	if rep.Clear() {
+		return nil
+	}
+	return fmt.Errorf("%s: %w", rep.Refusal(), model.ErrInvalidInput)
+}

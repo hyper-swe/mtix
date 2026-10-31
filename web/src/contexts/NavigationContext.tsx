@@ -3,7 +3,8 @@
  * This is the glue between sidebar navigation, main content, and command palette.
  */
 
-import { createContext, useCallback, useContext, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { deselectedPath, parseTicketLocation, ticketPath, type TicketLocation } from "../utils/ticketLocation";
 
 /** Available views in the main content area. */
 export type ViewType = "all-issues" | "node-detail" | "dashboard" | "stale" | "agents" | "kanban";
@@ -13,6 +14,8 @@ interface NavigationState {
   view: ViewType;
   /** Currently selected node ID (for node-detail view). */
   selectedNodeId: string | null;
+  /** True when the URL names a ticket whose id failed validation (never fetched). */
+  invalidTicketRef?: boolean;
   /** Navigate to a specific view. */
   navigateTo: (view: ViewType) => void;
   /** Navigate to a node detail view. */
@@ -24,28 +27,59 @@ interface NavigationState {
 const NavigationContext = createContext<NavigationState | null>(null);
 
 export function NavigationProvider({ children }: { children: React.ReactNode }) {
-  const [view, setView] = useState<ViewType>("all-issues");
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+  const [loc, setLoc] = useState<TicketLocation>(() =>
+    parseTicketLocation(window.location.pathname, window.location.search));
+  const [view, setView] = useState<ViewType>(() => (loc.kind === "none" ? "all-issues" : "node-detail"));
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(() => (loc.kind === "ticket" ? loc.id : null));
+  const [invalidTicketRef, setInvalid] = useState<boolean>(() => loc.kind === "invalid");
+
+  const applyLocation = useCallback((l: TicketLocation) => {
+    setLoc(l);
+    setSelectedNodeId(l.kind === "ticket" ? l.id : null);
+    setInvalid(l.kind === "invalid");
+    setView(l.kind === "none" ? "all-issues" : "node-detail");
+  }, []);
+
+  // Rewrite the ?node alias to the canonical path; follow back/forward.
+  useEffect(() => {
+    if (loc.kind === "ticket" && loc.alias) {
+      window.history.replaceState(null, "", ticketPath(loc.id, window.location.search));
+    }
+    const onPop = () => applyLocation(parseTicketLocation(window.location.pathname, window.location.search));
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [loc, applyLocation]);
+
+  const leaveTicket = useCallback(() => {
+    setInvalid(false);
+    if (window.location.pathname.startsWith("/ticket/")) {
+      window.history.pushState(null, "", deselectedPath(window.location.search));
+    }
+  }, []);
 
   const navigateTo = useCallback((v: ViewType) => {
     setView(v);
     if (v !== "node-detail") {
       setSelectedNodeId(null);
+      leaveTicket();
     }
-  }, []);
+  }, [leaveTicket]);
 
   const selectNode = useCallback((nodeId: string) => {
     setSelectedNodeId(nodeId);
+    setInvalid(false);
     setView("node-detail");
+    window.history.pushState(null, "", ticketPath(nodeId, window.location.search));
   }, []);
 
   const goBack = useCallback(() => {
     setView("all-issues");
     setSelectedNodeId(null);
-  }, []);
+    leaveTicket();
+  }, [leaveTicket]);
 
   return (
-    <NavigationContext.Provider value={{ view, selectedNodeId, navigateTo, selectNode, goBack }}>
+    <NavigationContext.Provider value={{ view, selectedNodeId, invalidTicketRef, navigateTo, selectNode, goBack }}>
       {children}
     </NavigationContext.Provider>
   );

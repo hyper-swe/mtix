@@ -1519,6 +1519,12 @@ mtix serve --port 8377
 
 Open `http://127.0.0.1:8377` in your browser.
 
+### Sharing a ticket link
+
+Each ticket has its own address, `http://127.0.0.1:8377/ticket/<id>` (for example `/ticket/MTIX-12.3`). Opening it shows that ticket's detail (prompt, annotations, acceptance) on first load. Selecting a ticket in the UI updates the address (the active list filters stay in the query string), and the browser's back and forward buttons move between selections without a reload. `?node=<id>` on any web UI address is accepted and rewritten to the canonical path. The id in the address is treated as untrusted input: it is checked against the node id format before anything is fetched or shown, and an id that fails the check or names no ticket shows a "Ticket not found" state without an error page.
+
+`mtix url <id>` prints this link for the serve running in the current project (`--json` prints `{"id", "url"}`). With no serve running it prints nothing on stdout and exits non-zero with a message naming `mtix serve`. The server answers `/ticket/<id>` with the web UI page; it does not return the ticket itself, so use `mtix show <id>` or the REST API for data.
+
 ### Web UI security
 
 Ticket IDs, titles, descriptions, prompts and annotations are untrusted data.

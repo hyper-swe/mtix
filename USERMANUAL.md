@@ -1350,7 +1350,12 @@ Sender limits use the wake event's claimed author and the recipient's
 effective setting, across boards for the same host and user. Addressed comments
 and hook deliveries use the payload author when it decodes and is nonempty,
 otherwise the event envelope author, matching inbox reads. The sender is not
-a verified principal; a recipient budget remains the bound across sender names.
+a verified principal: a writer can name another sender and spend that sender's allowance,
+which can hold the real sender's wakes. The per-sender limit is a courtesy bound;
+a recipient budget remains the bound across sender names. Selected authors
+longer than 256 bytes, with invalid UTF-8 or control characters are treated as
+unattributed before budget checks and charging, so they cannot block delivery
+by failing the protected credit codec.
 Legacy or unexplained credits without sender attribution count against every
 sender until those credits leave the rolling hour. New events without an attributable sender
 are checked against the combined credits of all senders; if admitted, their

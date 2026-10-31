@@ -25,7 +25,9 @@ type WakeBudgetSnapshot struct {
 
 // WakeBudgetProposal includes the fence before the admission decision is made.
 type WakeBudgetProposal struct {
-	// Sender is the addressed comment author, read inside the claim transaction.
+	// Sender is the claimed payload author, or envelope author when absent,
+	// read inside the claim transaction for any wake-eligible event.
+	// Admission treats an unrepresentable identity as unattributed.
 	Sender         string
 	Snapshot       WakeBudgetSnapshot
 	BoardCandidate string

@@ -82,11 +82,20 @@ func validateWakeBudgetSource(source string, row WakeBudgetSource) error {
 	return nil
 }
 
+// NormalizeWakeBudgetSender returns a representable claimed sender (FR-20.3).
+// Unrepresentable identities are unattributed; they must not prevent wake admission.
+func NormalizeWakeBudgetSender(value string) string {
+	if !wakeBudgetIdentity(value) || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return ""
+	}
+	return value
+}
+
 func validateWakeBudgetCredits(credits []WakeBudgetCredit) error {
 	var total int64
 	for _, credit := range credits {
 		// Empty attribution remains valid for legacy and unexplained credits.
-		if credit.Sender != "" && (!wakeBudgetIdentity(credit.Sender) || strings.IndexFunc(credit.Sender, unicode.IsControl) >= 0) {
+		if credit.Sender != NormalizeWakeBudgetSender(credit.Sender) {
 			return invalid("wake budget credit sender is invalid")
 		}
 		if credit.Count <= 0 || !wakeBudgetTime(credit.At) || credit.Count > math.MaxInt64-total {

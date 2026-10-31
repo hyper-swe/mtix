@@ -20,6 +20,8 @@ func TestWakeSenderBudget_HookDeliveryUsesInboxAuthor(t *testing.T) {
 	}{
 		{"other addressee", model.OpComment, `{"to":"other","author_id":"sender-b"}`, "sender-b"},
 		{"non-comment", model.OpCreateNode, `{}`, "sender-b"},
+		{"non-comment malformed", model.OpCreateNode, `{`, "sender-b"},
+		{"non-comment wrong author type", model.OpCreateNode, `{"author_id":42}`, "sender-b"},
 		{"non-comment payload author", model.OpCreateNode, `{"author_id":"sender-c"}`, "sender-c"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

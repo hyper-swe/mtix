@@ -83,3 +83,24 @@ func TestWakeBudgetSource_UnavailableDatabase_NeverReturnsNewIdentity(t *testing
 		})
 	}
 }
+
+// A broken journal must fail the claim before admission can charge a credit.
+func TestWakeBudgetClaim_SenderReadErrorRollsBack(t *testing.T) {
+	s, key := budgetDataStore(t)
+	_, err := s.WriteDB().ExecContext(t.Context(), "ALTER TABLE sync_events RENAME COLUMN author_id TO unavailable_author")
+	require.NoError(t, err)
+	admitted := false
+	result, err := s.ClaimWakeBudget(t.Context(), key, time.Minute, func(model.WakeBudgetProposal) (model.WakeBudgetDecision, error) {
+		admitted = true
+		return model.WakeBudgetDecision{Allow: true}, nil
+	})
+	require.ErrorContains(t, err, "read wake sender")
+	require.False(t, admitted, "sender read failure must precede any protected charge")
+	require.False(t, result.Won)
+	stats, err := s.WakeLedgerStats(t.Context())
+	require.NoError(t, err)
+	require.Zero(t, stats.Rows)
+	rows, err := s.WakeBudgetCounters(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, rows)
+}

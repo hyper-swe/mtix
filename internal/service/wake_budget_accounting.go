@@ -71,6 +71,7 @@ func (a *wakeAdmission) prepareWakeAdmission(p model.WakeBudgetProposal) (model.
 	if p.Attempt.Token == "" || p.Attempt.Key != a.key {
 		return d, fmt.Errorf("proposed wake fence is mismatched: %w", model.ErrConflict)
 	}
+	p.Sender = oplocal.NormalizeWakeBudgetSender(p.Sender)
 	if a.holdWakeFrequency(p.Sender) {
 		return d, nil
 	}

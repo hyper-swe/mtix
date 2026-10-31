@@ -7,6 +7,7 @@ package service_test
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -37,7 +38,7 @@ func TestWakeSenderBudget_HoldsAndRollingHourReleases(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "wake.budget", rows[0].Class)
 	require.Equal(t, "mtix config set wake.per_sender_per_hour 3 --agent budget-worker", rows[0].Fix)
-	require.Contains(t, rows[0].Detail, "sender")
+	require.Equal(t, "held wake: sender rolling-hour budget 2 is spent; mtix config set wake.per_sender_per_hour 3 --agent budget-worker", rows[0].Detail)
 	f.now = f.now.Add(time.Hour - time.Nanosecond)
 	require.NoError(t, d.Pass(t.Context(), b.keys))
 	require.Equal(t, int64(2), f.sent.Load())
@@ -162,4 +163,40 @@ func TestWakeSenderBudget_ClockRollbackDoesNotRefund(t *testing.T) {
 	f.now = f.now.Add(-2 * time.Hour)
 	require.NoError(t, d.Pass(t.Context(), b.keys[1:]))
 	require.Equal(t, int64(1), f.sent.Load())
+}
+
+func TestWakeSenderBudget_UnrepresentableSenderUsesCombinedAllowance(t *testing.T) {
+	for _, author := range []string{"bad\tsender", "bad\x7fsender", "bad\u0085sender", strings.Repeat("a", 257)} {
+		t.Run(author, func(t *testing.T) {
+			f := newWakeBudgetFixture(t, "")
+			senderLimit(t, f, "2")
+			a := f.boardFrom(t, 1, "budget-worker", "sender-a")
+			b := f.boardFrom(t, 1, "budget-worker", "sender-b")
+			c := f.boardFrom(t, 1, "budget-worker", author)
+			for _, board := range []*wakeBudgetBoard{a, b, c} {
+				require.NoError(t, board.dispatcher(t, true, nil).Pass(t.Context(), board.keys))
+			}
+			require.Equal(t, int64(2), f.sent.Load(), "an unknown candidate must use all senders' credits")
+			require.Zero(t, budgetLedgerRows(t, c), "held unknown event must remain unclaimed")
+			entries, err := c.store.InboxList(t.Context(), "budget-worker")
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+		})
+	}
+}
+
+func TestWakeSenderBudget_InvalidUTF8EnvelopeStillWakes(t *testing.T) {
+	f := newWakeBudgetFixture(t, "")
+	b := hookSenderBoard(t, f, model.OpCreateNode, `{}`)
+	_, err := b.store.WriteDB().ExecContext(t.Context(), "UPDATE sync_events SET author_id=?", string([]byte{0xff}))
+	require.NoError(t, err)
+	require.NoError(t, b.dispatcher(t, true, nil).Pass(t.Context(), b.keys))
+	require.Equal(t, int64(2), f.sent.Load())
+	mirror, exists, err := f.state.ReadWakeBudget(b.keys[0].Recipient())
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Len(t, mirror.Credits, 2)
+	for _, credit := range mirror.Credits {
+		require.Empty(t, credit.Sender)
+	}
 }

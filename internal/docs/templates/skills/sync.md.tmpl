@@ -548,13 +548,13 @@ The relay is a second sync transport that carries the same events through a shar
 
 **Configure** (only when the user asks for a relay; use a directory every peer can see):
 
-1. First peer: `mtix sync relay init <dir>`, then `mtix config set sync.relay.dir <dir>`. The store needs at least one task first. `init` creates an authenticated relay and a key under `.mtix/relay/keys/<epoch>` (mode 0600). `--no-auth` creates an unauthenticated relay and is a security trade-off: only on the user's say-so.
+1. First peer: `mtix sync relay init <dir>`, then `mtix config set sync.relay.dir <dir>`. The store needs at least one task first. `init` creates an authenticated relay and a key under `.mtix/relay/keys/<epoch>` (mode 0600). `--no-auth` creates an unauthenticated relay and is a security trade-off: only on the user's say-so. Every peer must then attach with `sync.relay.require_auth=false`, and `relay privacy` keeps failing in doctor.
 2. Each other peer: ask the user to move the key file to that peer out of band (never through the relay directory, and never by printing it), then `mtix config set sync.relay.dir <dir>` and `mtix sync relay attach <dir>`. A peer that has no store yet then runs `mtix sync relay clone` to import the bootstrap snapshot.
 3. Optional settings: `sync.relay.peer_id` (an identity that survives a rebuilt workspace), `sync.relay.poll_interval` (seconds, default 5, `0` for a tick-only peer), `sync.relay.retention_days` (default 7), `sync.relay.silent_peer_days` (default 14), `sync.relay.require_auth`, `sync.relay.max_segment_bytes`.
 
 **Use.** `mtix daemon` carries the relay on every pass. A peer with no resident daemon (a turn-driven agent, a scheduled job) runs `mtix sync relay tick` at session start, whenever it wants to exchange work, and once at session end; it converges on its next tick and is not degraded. `mtix sync relay clone --export` writes a bootstrap snapshot for a late joiner. When a rejoining peer's `clone` lists conflicts it writes nothing; rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, after the user decides.
 
-**Verify.** Run `mtix sync doctor` (`--json` for machine-readable rows). With `sync.relay.dir` unset it passes `relay configured`; when set, it adds `relay reachable`, `relay record`, `relay key`, `relay publishing`, `relay peers`, `relay poll cadence`, `relay snapshots` and `relay privacy`. A failing row prints its exact fix on a `fix:` line; run doctor again after each fix. `mtix sync relay status --json` lists peers, positions and outstanding problems.
+**Verify.** Run `mtix sync doctor` (`--json` for machine-readable rows). With `sync.relay.dir` unset it passes `relay configured`; when set, it adds `relay reachable`, `relay record`, `relay key`, `relay publishing`, `relay peers`, `relay poll cadence`, `relay snapshots` and `relay privacy`. Most failing rows print the fix on a `fix:` line; `relay key` on `RELAY_META_CORRUPT`, `relay publishing` with no local store and an error without a registry code print the error alone, so report that to the user and do not guess; run doctor again after each fix. `mtix sync relay status --json` lists peers, positions and outstanding problems.
 
 **Troubleshoot.**
 
@@ -565,7 +565,7 @@ The relay is a second sync transport that carries the same events through a shar
 | `RELAY_KEY_ABSENT` | This peer lacks a key epoch | Ask the user to install the missing key epoch under `.mtix/relay/keys/` (mode 0600) |
 | `RELAY_FOREIGN_ENTRY` | A file that is not a relay file sits in the directory | Ask the user to remove it; mtix never deletes it |
 | `RELAY_PUBLISHER_DIVERGED` | The store was restored from a backup and publishing refused | Ask the user, then `mtix sync relay reset-peer` |
-| `relay snapshots` warns | A bootstrap snapshot is a full plaintext copy of a store left in the directory | Ask the user to remove it once every joiner has imported it |
+| `relay snapshots` fails | A bootstrap snapshot is a full plaintext copy of a store left in the directory | Ask the user to remove it once every joiner has imported it |
 | `relay poll cadence` fails | `sync.relay.poll_interval` exceeds the silence threshold | Lower `sync.relay.poll_interval` or raise `sync.relay.silent_peer_days` |
 
 **Recover.** These are operator actions: surface the situation, then run one only when the user asks. `mtix sync relay reset-peer` (after a restore; `--base-rs` and `--floor` are optional), `mtix sync relay retire-peer <peer-id>` (drops a vanished peer from the prune quorum; check `mtix sync doctor` first, because retiring a peer that returns prunes history it still needs), `mtix sync relay rotate-key` (installs the next key epoch) and `mtix sync relay republish --from <rs>` (re-emits into fresh segments and is safe to repeat).

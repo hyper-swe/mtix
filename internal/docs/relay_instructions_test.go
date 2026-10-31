@@ -85,10 +85,10 @@ func assertRelayGuidance(t *testing.T) {
 	for _, rel := range relaySkillFiles {
 		assert.Equal(t, skill, relaySection(t, rel, relaySkillHeading), rel)
 	}
-	for _, phrase := range []string{"experimental", "opt-in", "`sync.relay.dir`", "no relay command contacts a hub", "`mtix sync relay tick`", "`mtix sync doctor`", "Never"} {
+	for _, phrase := range []string{"experimental", "opt-in", "`sync.relay.dir`", "no relay command contacts a hub", "read, print, paste or commit a relay key", "where one exists", "`mtix sync relay tick`", "`mtix sync doctor`", "Never"} {
 		assert.Contains(t, managed, phrase)
 	}
-	for _, phrase := range []string{"experimental and opt-in", "0.6.0", "Hub contact and cost", "`sync.hub_contact`", "out of band", "**Configure**", "**Use.**", "**Verify.**", "**Troubleshoot.**", "**Recover.**", "**Never.**"} {
+	for _, phrase := range []string{"experimental and opt-in", "0.6.0", "Hub contact and cost", "never wakes a database that pauses when idle", "print the error alone", "`sync.relay.require_auth=false`", "`sync.hub_contact`", "out of band", "**Configure**", "**Use.**", "**Verify.**", "**Troubleshoot.**", "**Recover.**", "**Never.**"} {
 		assert.Contains(t, skill, phrase)
 	}
 	for _, text := range []string{managed, skill} {
@@ -104,12 +104,13 @@ func assertRelayGuidance(t *testing.T) {
 func assertRelayCommandsExist(t *testing.T, text string) {
 	t.Helper()
 	chapter, subs := relayCLIReference(t)
+	sections := relaySubcommandSections(chapter)
 	found := relayInvocation.FindAllStringSubmatch(text, -1)
 	require.NotEmpty(t, found)
 	for _, m := range found {
 		assert.Truef(t, subs[m[1]], "mtix sync relay %s is not in the build", m[1])
 		for _, flag := range relayFlagToken.FindAllString(m[2], -1) {
-			assert.Containsf(t, chapter, "`"+flag+"`", "flag %s of relay %s is not in the build", flag, m[1])
+			assert.Containsf(t, sections[m[1]], "`"+flag+"`", "flag %s is not a flag of mtix sync relay %s", flag, m[1])
 		}
 	}
 	for _, m := range relayFlagSpan.FindAllStringSubmatch(text, -1) {
@@ -117,11 +118,24 @@ func assertRelayCommandsExist(t *testing.T, text string) {
 	}
 }
 
+// relaySubcommandSections splits the relay chapter into one section per
+// subcommand, so a flag is checked against the subcommand that names it.
+func relaySubcommandSections(chapter string) map[string]string {
+	sections := map[string]string{}
+	for _, part := range strings.Split(chapter, "\n## ")[1:] {
+		name, body, _ := strings.Cut(part, "\n")
+		sections[strings.TrimSpace(name)] = body
+	}
+	return sections
+}
+
 func assertRelayConfigAndDoctorRows(t *testing.T, text string) {
 	t.Helper()
 	keys := relayRepoFile(t, "internal/service/config_keys.go")
 	for _, key := range relayConfigKey.FindAllString(text, -1) {
-		assert.Containsf(t, keys, `"`+key+`"`, "config key %s is not in the build", key)
+		// The allow-list entries read "key": true; the defaults map does not.
+		allowed := regexp.MustCompile(`"` + regexp.QuoteMeta(key) + `":\s+true,`)
+		assert.Truef(t, allowed.MatchString(keys), "config key %s is not an allowed key in the build", key)
 	}
 	doctor := relayRepoFile(t, "cmd/mtix/sync_doctor_relay.go")
 	for _, m := range relayDoctorRow.FindAllStringSubmatch(text, -1) {

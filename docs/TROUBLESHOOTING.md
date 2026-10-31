@@ -228,7 +228,7 @@ Each of them resolves the refusal. `mtix sync` shows the last refusal, its kind,
 
 ## File relay (experimental)
 
-The file relay (`sync.relay.dir`) is experimental and opt-in. Run `mtix sync doctor`: with the relay configured it adds the `relay reachable`, `relay record`, `relay key`, `relay publishing`, `relay peers`, `relay poll cadence`, `relay snapshots` and `relay privacy` rows, and each failure prints a `fix:` line. The `mtix-sync` skill has the symptom table (`RELAY_GAP`, `RELAY_KEY_ABSENT`, `RELAY_PUBLISHER_DIVERGED` and the others) and the recovery commands; run a recovery only when the user asks for it.
+The file relay (`sync.relay.dir`) is experimental and opt-in. Run `mtix sync doctor`: with the relay configured it adds the `relay reachable`, `relay record`, `relay key`, `relay publishing`, `relay peers`, `relay poll cadence`, `relay snapshots` and `relay privacy` rows, and a failing row prints a `fix:` line where one exists (otherwise the error alone). The `mtix-sync` skill has the symptom table (`RELAY_GAP`, `RELAY_KEY_ABSENT`, `RELAY_PUBLISHER_DIVERGED` and the others) and the recovery commands; run a recovery only when the user asks for it.
 
 ## Configuration Keys
 

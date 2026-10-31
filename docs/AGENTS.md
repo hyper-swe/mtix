@@ -310,7 +310,7 @@ The file relay carries sync events through a shared directory (a mounted folder,
 
 - **Use it** only when the user has asked for a shared-directory transport. Never turn it on to fix an unrelated problem.
 - **Routine** on a relay peer: `mtix sync relay tick` publishes this peer's events and ingests the others' in one pass. Run it at session start and session end, and whenever you need to exchange work. `mtix daemon` runs the same pass every `sync.relay.poll_interval` seconds (default 5, `0` means tick-only).
-- **Verify** with `mtix sync doctor` (the `relay configured` row is the first check; every failure prints a `fix:` line) and `mtix sync relay status --json`. The goal is a run with no FAIL.
+- **Verify** with `mtix sync doctor` (the `relay configured` row is the first check; a failing row prints a `fix:` line where one exists, otherwise the error alone, which you report to the user) and `mtix sync relay status --json`. The goal is a run with no FAIL.
 - **Never** read, print, paste or commit a relay key: the key files live under `.mtix/relay/keys/` with mode 0600, and the user copies them between peers out of band, never through the relay directory. **Never** edit, delete or hand-copy files inside the relay directory, share one `.mtix` between machines, or run `reset-peer`, `retire-peer`, `rotate-key` or `republish` unless the user asked for that recovery: the `mtix-sync` skill says when.
 
 ## Sync recovery (operator tasks — recognize, don't force)

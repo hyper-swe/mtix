@@ -173,7 +173,7 @@ Multiple values within one flag combine with OR; multiple flags combine with AND
 **Via MCP:** Call `mtix_briefing` instead of `mtix_list` to get briefing-formatted text directly. Accepts the same filter parameters (`under`, `status`, `type`, `assignee`, `priority`, `fields`, `limit`).
 
 ### 3. Read Context (MANDATORY)
-Call `mtix context <id>` or `mtix_context` — **this step is NON-NEGOTIABLE**. The assembled prompt is your complete briefing. Read it fully before proceeding.
+Call `mtix context <id>` or `mtix_context` — **this step is NON-NEGOTIABLE**. The assembled prompt is your complete briefing. Read it fully before proceeding. In `--json` and MCP output it is the `assembled_prompt` field; the `chain` array omits prompt, creator and annotations (they are in `assembled_prompt`) unless you pass `--chain` / `chain: true`.
 
 ### 4. Claim
 Call `mtix claim <id> --agent <agent_id>` or `mtix_claim`. This prevents other agents from working on the same node.
@@ -338,7 +338,7 @@ Mirror exports read nodes, dependencies, agents and sessions from one read-only 
 
 `mtix daemon` and `mtix sync daemon` share a lifetime OS lock at `.mtix/data/sync.daemon.lock` (flock on Unix, LockFileEx on Windows). A concurrent start exits cleanly while the owner keeps running. `.mtix/sync.daemon.pid` is diagnostic: stale or missing PID content cannot grant ownership. The PID is published only after acquiring the lock and removed only by its matching owner while the lock is held. Normal exit and process crash release the OS lock; the lock file stays in place so existing descriptors keep using the same inode. Other filesystem or OS errors are reported. Do not delete daemon lock files to force a second instance.
 
-Hub contact by the daemon follows `sync.hub_contact` (`activity` default, `interval:<duration>`, `manual`): `activity` contacts the hub only for 30 minutes after real activity so a database that pauses when idle can pause, `interval` keeps it awake around the clock, `manual` never contacts it. Real activity is a mutation command, an addressed comment, an MCP commit, `mtix agent heartbeat`, or glue session-start or prompt-submit; reads, `mtix inbox`, waits and any waiter arming a lease are not. `sync.listen` (shipped default: `{{ .ListenDefault }}`) configures a listen hold that takes effect only once a listener runs, which is a later release: in this build no listener arms a lease, so the hold is inert and `sync.listen` changes nothing today. Once a listener runs, `live` keeps the hub contacted every `sync.listen_interval` (10s) until `sync.listen_max_idle` (8h) after the last real activity, and `mtix config set sync.listen off` switches that off. `mtix doctor` rows `sync.hub-contact` and `sync.listen` show the state and print the fix command.
+Hub contact by the daemon follows `sync.hub_contact` (`activity` default, `interval:<duration>`, `manual`): `activity` contacts the hub only for 30 minutes after real activity so a database that pauses when idle can pause, `interval` keeps it awake around the clock, `manual` never contacts it. Real activity is a mutation command, an addressed comment, an MCP commit, `mtix agent heartbeat`, or glue session-start or prompt-submit; reads, `mtix inbox`, waits and any waiter arming a lease are not. `sync.listen` (shipped default: `{{ .ListenDefault }}`) configures a listen hold: parking `mtix inbox --wait` on a board that syncs through a hub or relay arms a lease and starts one detached `mtix daemon --listen` for the board (it prints one line saying so, or why not), shared by every waiter, and it exits within seconds of the last waiter ending. While a waiter lives, `live` keeps the hub contacted every `sync.listen_interval` (10s) until `sync.listen_max_idle` (8h) after the last real activity, and `mtix config set sync.listen off` switches that off. `mtix doctor` rows `sync.hub-contact` and `sync.listen` show the state and print the fix command; row `wake.listener.no-hub-listener` fails when waiters are parked with no listener and prints `mtix daemon --listen`.
 
 Mirror exports retain one durable local generation across restart; read count and oldest age with `mtix sync status` or `mtix sync doctor`, retry safely with the doctor's `mtix list` command, and follow the sync skill for pulled-board refusals and migration limits.
 
@@ -407,6 +407,14 @@ operator to review the named hook, then run `mtix hooks trust <hook>` from an
 interactive operator terminal outside agent sessions. Agents never run this
 approval command themselves. Changing one hook or its project script requires
 review of that hook; other hook approvals remain independent.
+
+Webhook hooks need the same operator consent for each origin. `mtix hooks status`
+lists every webhook origin that is not consented, with the exact fix. An agent
+asks the operator to run `mtix hooks allow-origin <url>` from an interactive
+operator terminal outside agent sessions; agents never run it themselves.
+Loopback, link-local and private destinations stay refused unless the operator
+lists that origin with `--allow-private`. A webhook without consent is skipped
+and recorded; redirects to an origin that is not consented are not followed.
 <!-- END AUTO-GENERATED -->
 
 ## Health diagnostics

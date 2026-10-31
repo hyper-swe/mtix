@@ -83,7 +83,15 @@ func newResolveAnnotationCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "resolve-annotation <node-id> <annotation-id>",
 		Short: "Resolve an annotation on a node",
-		Args:  cobra.ExactArgs(2),
+		Long: `Resolve an annotation on a node.
+
+The annotation id is the full id (as in mtix show --json) or the short id that
+mtix show prints, which is the first 12 characters. A prefix works when it is at
+least 12 characters and matches one annotation; an exact full id always wins.
+Several matches are refused with the full ids listed, and no match is a not
+found error. An id with unusual characters prints escaped in mtix show, so copy
+it from mtix show --json instead.`,
+		Args: cobra.ExactArgs(2),
 		RunE: withAutoExport(func(_ *cobra.Command, args []string) error {
 			return runResolveAnnotation(args[0], args[1])
 		}),
@@ -96,17 +104,19 @@ func runResolveAnnotation(nodeID, annotID string) error {
 	}
 
 	ctx := mutationContext()
-	if err := app.promptSvc.ResolveAnnotation(ctx, nodeID, annotID, true); err != nil {
+	// The service resolves a short prefix to the full id and reports it.
+	fullID, err := app.promptSvc.ResolveAnnotationRef(ctx, nodeID, annotID, true)
+	if err != nil {
 		return err
 	}
 
 	if app.jsonOutput {
 		data, _ := json.Marshal(map[string]string{
-			"node_id": nodeID, "annotation_id": annotID, "status": "resolved",
+			"node_id": nodeID, "annotation_id": fullID, "status": "resolved",
 		})
 		fmt.Println(string(data))
 	} else {
-		fmt.Printf("Resolved annotation %s on %s\n", annotID, nodeID)
+		fmt.Printf("Resolved annotation %s on %s\n", format.EventID(fullID), nodeID)
 	}
 	return nil
 }
@@ -114,23 +124,26 @@ func runResolveAnnotation(nodeID, annotID string) error {
 // newContextCmd creates the mtix context command per FR-12.2.
 func newContextCmd() *cobra.Command {
 	var maxTokens int
+	var withChain bool
 
 	cmd := &cobra.Command{
 		Use:   "context <id>",
 		Short: "Show assembled context chain for a node",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runContext(args[0], maxTokens)
+			return runContext(args[0], maxTokens, withChain)
 		},
 	}
 
 	cmd.Flags().IntVar(&maxTokens, "max-tokens", 0,
 		"Maximum token budget for assembled prompt (0 = unlimited)")
+	cmd.Flags().BoolVar(&withChain, "chain", false,
+		"With --json, add prompt, creator and annotations to each structured chain entry (default: they appear once, in assembled_prompt)")
 
 	return cmd
 }
 
-func runContext(id string, maxTokens int) error {
+func runContext(id string, maxTokens int, withChain bool) error {
 	if app.ctxSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -143,6 +156,11 @@ func runContext(id string, maxTokens int) error {
 	}
 
 	if app.jsonOutput {
+		// MTIX-225: ancestor content appears once, in assembled_prompt; the
+		// full structured chain is opt-in via --chain.
+		if !withChain {
+			return NewOutputWriter(true).WriteJSON(resp.Slim())
+		}
 		return NewOutputWriter(true).WriteJSON(resp)
 	}
 	fmt.Println("=== Context Chain ===")

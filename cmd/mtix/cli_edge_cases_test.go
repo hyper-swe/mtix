@@ -828,7 +828,7 @@ func TestPrintNodeList_JSONMode_Succeeds(t *testing.T) {
 // TestRunContext_NonExistent_ReturnsError verifies context for missing node.
 func TestRunContext_NonExistent_ReturnsError(t *testing.T) {
 	initTestApp(t)
-	err := runContext("NONEXIST-1", 0)
+	err := runContext("NONEXIST-1", 0, false)
 	assert.Error(t, err)
 }
 

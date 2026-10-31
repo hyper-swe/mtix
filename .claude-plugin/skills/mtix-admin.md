@@ -346,7 +346,7 @@ Key configuration options:
 - `session_timeout` — maximum session duration (default: 8h)
 - `data.soft_delete_retention` — how long to keep deleted data (default: 720h/30 days)
 - `sync.keep_roles` — comma-separated hub roles that `mtix sync harden` leaves with their access (default: none; see Hub Privileges). Setting it turns on strict mode for the doctor's `hub-privileges` check, which then fails whenever `mtix sync harden` would report a finding, or when the check cannot run
-- `history.export` — EXPERIMENTAL, default `false`. When `true`, `.mtix/tasks.json` is written in export format 2.1.0 with each task's change history; mtix 0.5.4 and earlier cannot read such a file (their import fails its checksum, and their automatic import loads nothing). Turn it on only when the user asks and every machine and daemon that touches the board runs this version or later; no doctor check verifies that yet, so ask the user. A running process follows `mtix config set history.export` without a restart
+- `history.export` — EXPERIMENTAL, default `false`. When `true`, `.mtix/tasks.json` is written in export format 2.1.0 with each task's change history; mtix 0.5.4 and earlier cannot read such a file (their import fails its checksum, and their automatic import loads nothing). Turn it on only when the user asks and every machine and daemon that touches the board runs this version or later; `mtix config set history.export true` is refused, with the fix, while a session registration or daemon heartbeat seen in the last 30 days lacks the task-history marker that every build from 0.6.0 writes, which means an older mtix (nothing is written; version strings are not judged). `mtix doctor` (text and `--json`) adds a `history.export.guard` row once the switch is on or an older build is detected: warn with the fix while the switch is off, fail while it is on, with the blockers and `min_version` in its `data` object; run doctor until it passes. The guard cannot see other machines, CI jobs or clones that read `.mtix/tasks.json` through git (mtix 0.5.4 records no registration and the file names no writer while the switch is off), so ask the user to confirm `mtix --version` on each of them before enabling. The switch lives in the tracked `.mtix/config.yaml`, so a clone that pulls `history: export: true` writes 2.1.0 without having run this guard: run `mtix doctor` in every clone after pulling the line; the `history.export.guard` row fails there when an older build is seen, and the fix is `mtix config set history.export false` until that machine is upgraded. A running process follows `mtix config set history.export` without a restart
 
 ## Hub Privileges (Sync Hub Owners)
 
@@ -728,6 +728,14 @@ interactive operator terminal outside agent sessions. Agents never run this
 approval command themselves. Changing one hook or its project script requires
 review of that hook; other hook approvals remain independent.
 
+Webhook hooks need the same operator consent for each origin. `mtix hooks status`
+lists every webhook origin that is not consented, with the exact fix. An agent
+asks the operator to run `mtix hooks allow-origin <url>` from an interactive
+operator terminal outside agent sessions; agents never run it themselves.
+Loopback, link-local and private destinations stay refused unless the operator
+lists that origin with `--allow-private`. A webhook without consent is skipped
+and recorded; redirects to an origin that is not consented are not followed.
+
 The approval records are stored outside the project, bound to the local host
 and canonical project identity. Each record pins the selected hook stanza and
 its project script contents. For example, after reviewing the `wake` hook:
@@ -953,3 +961,32 @@ delivery would refuse, with the reason and the exact fix: text output prints
 same-file checks apply and a multiply linked file is refused at delivery (as is a file whose
 link count cannot be read), but
 `mtix hooks status` does not list it and permission bits are not reported.
+
+
+### Webhook origin consent
+
+A webhook hook delivers only to an origin (scheme, host and port) that the
+operator consented to on this host. The consent list is stored outside the
+project, so a cloned repository cannot grant it. To configure and verify:
+
+```sh
+mtix hooks status --json        # origins[] names each refused hook and the exact fix
+mtix hooks allow-origin 'https://hooks.example.com'
+mtix hooks allow-origin --allow-private 'http://127.0.0.1:9000'
+mtix hooks log                  # skipped-untrusted rows show the reason and the fix
+```
+
+`mtix doctor --json` carries the same check as the `hooks.origins` row (shown only
+when `.mtix/hooks.yaml` exists): PASS means every configured webhook origin is
+consented, WARN lists each hook that would be skipped with the exact fix command.
+Run doctor again after the operator consents, until the row is PASS. Doctor only
+reads; it never writes consent state.
+
+The consent command needs an interactive terminal outside agent sessions. List
+a loopback, link-local or private destination only with `--allow-private`, and
+only when it is intended. The check applies to the address actually connected,
+so a name that later resolves to a private address is refused, and the skipped row names the origin and the exact `--allow-private` command. Status and doctor resolve each consented name once (no request is sent to the webhook) and warn for a name that resolves to a private address without the opt-in. A name that cannot be resolved (offline, resolver error or a 2 second timeout) is also a warning, "could not verify", never a pass: re-run the check when online or check the host resolver. Redirects are
+followed only to other consented origins. If the consent state cannot be read,
+every webhook is skipped; run `mtix hooks status --json` and correct the
+reported path or access rules. An agent never edits the consent record and
+never works around a skip: it reports the fix to the operator.

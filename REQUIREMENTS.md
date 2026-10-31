@@ -746,7 +746,7 @@ sync:
   auto_sync: true              # Automatic import of a changed .mtix/tasks.json (FR-15.2j); false turns it off; exports never overwrite a pulled board (FR-15.3e)
   hub_contact: activity        # When the daemon contacts the hub: activity | interval:<dur> | manual (MTIX-112.20.1)
   push_on_addressed_send: true # Reserved: no effect until the addressed-send auto-push (MTIX-112.20.2)
-  listen: live                 # live: once a listener runs (later release; inert in this build) a live lease keeps the hub contacted while idle; off: activity-only
+  listen: live                 # live: while a waiter (mtix inbox --wait) holds a lease and its board listener runs, the lease keeps the hub contacted while idle; off: activity-only
   listen_interval: 10s         # Hub contact period while the listen hold is armed (>= 1s)
   listen_max_idle: 8h          # The hold ends this long after the last real activity (<= 72h)
   interval: "30s"

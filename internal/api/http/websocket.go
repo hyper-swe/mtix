@@ -178,9 +178,9 @@ func matchesFilter(filter *subscriptionFilter, event service.Event) bool {
 
 // handleWebSocket handles WS /ws/events per FR-7.5. The upgrade accepts
 // the same origins as HTTP requests (allowedOrigin with the server's bind
-// address and port): none, for a non-browser client; http/https on
-// localhost or a loopback IP; or the server's own origin on a bind address
-// that names it. Any other Origin is refused with 403 (MTIX-95.14).
+// address, port and allowed origins): none, for a non-browser client; the
+// server's own origin; or an allowed origin. Any other Origin is refused
+// with 403 (MTIX-95.14, MTIX-221).
 func (s *Server) handleWebSocket(c *gin.Context) {
 	if s.wsHub == nil {
 		c.JSON(http.StatusServiceUnavailable, gin.H{
@@ -191,7 +191,7 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool {
-			return allowedOrigin(r.Header.Get("Origin"), s.config.Bind, s.config.Port)
+			return allowedOrigin(r.Header.Get("Origin"), s.config.Bind, s.config.Port, s.config.AllowedOrigins)
 		},
 		// MTIX-220: the only subprotocol ever answered is the fixed name, so
 		// a client's mtix.auth.<token> offer is never echoed back.

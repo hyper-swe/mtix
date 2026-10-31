@@ -1459,6 +1459,7 @@ Start the mtix HTTP and WebSocket server
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--addr` |  | Bind address (default: the api.bind setting, else localhost); a non-loopback address needs --insecure-bind | 127.0.0.1 |
+| `--allow-origin` |  | Also accept browser requests from this exact origin, written as scheme://host[:port] (repeatable) | [] |
 | `--insecure-bind` |  | Allow a non-loopback bind: the server requires a bearer token, created on first use in the operator-local state directory (NFR-5.2) | false |
 | `--port` |  | HTTP port | 8377 |
 ---

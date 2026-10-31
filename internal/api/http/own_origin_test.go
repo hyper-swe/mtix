@@ -27,13 +27,15 @@ type bindOriginCase struct {
 }
 
 // bindOriginCases lists how the bind address changes the origin rule
-// (MTIX-95.14): a server bound to a specific non-loopback address also
-// accepts exactly its own origin (http, the bind host, the configured
-// port); loopback and wildcard binds accept local origins only.
+// (MTIX-95.14, MTIX-221): every bind accepts its own origin (http and the
+// configured port) written with a loopback alias, and a bind address that
+// names the server is accepted as that origin's host too. Other ports are
+// refused, whatever the host.
 func bindOriginCases() []bindOriginCase {
 	return []bindOriginCase{
 		{"network bind: own origin", "192.0.2.10", "8377", "http://192.0.2.10:8377", true},
-		{"network bind: local origin", "192.0.2.10", "8377", "http://localhost:3000", true},
+		{"network bind: local origin", "192.0.2.10", "8377", "http://localhost:3000", false},
+		{"network bind: localhost on own port", "192.0.2.10", "8377", "http://localhost:8377", true},
 		{"network bind: another port", "192.0.2.10", "8377", "http://192.0.2.10:8378", false},
 		{"network bind: default port", "192.0.2.10", "8377", "http://192.0.2.10", false},
 		{"network bind: neighbouring address", "192.0.2.10", "8377", "http://192.0.2.11:8377", false},
@@ -57,6 +59,8 @@ func bindOriginCases() []bindOriginCase {
 		{"ipv6 wildcard bind: its own address", "::", "8377", "http://[::]:8377", false},
 		{"loopback bind: network address", "127.0.0.1", "8377", "http://192.0.2.10:8377", false},
 		{"loopback bind: own origin", "127.0.0.1", "8377", "http://127.0.0.1:8377", true},
+		{"loopback bind: another port", "127.0.0.1", "8377", "http://127.0.0.1:8378", false},
+		{"ipv4 wildcard bind: localhost on another port", "0.0.0.0", "8377", "http://localhost:3000", false},
 		{"no bind: empty host", "", "8377", "http://:8377", false},
 	}
 }

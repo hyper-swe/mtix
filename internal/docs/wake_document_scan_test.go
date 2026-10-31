@@ -22,7 +22,7 @@ func wakeDocumentCommands(text string) []string {
 	var prose strings.Builder
 	flush := func() { commands = append(commands, wakeCodeSpans(prose.String())...); prose.Reset() }
 	fence, executable := "", false
-	for _, line := range strings.Split(strings.ReplaceAll(text, "\\\n", " "), "\n") {
+	for _, line := range strings.Split(strings.ReplaceAll(text, "\\\n", ""), "\n") {
 		if match := wakeFenceRE.FindStringSubmatch(line); match != nil {
 			flush()
 			if fence == "" {

@@ -5,6 +5,7 @@ package docs
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -36,10 +37,11 @@ func TestWakeGuidance_InboxTokenClass_Checked(t *testing.T) {
 
 func assertWakeTokenPolicy(t *testing.T, text string, accepted bool) {
 	t.Helper()
+	delimiter := strings.Repeat("`", strings.Count(text, "`")+2)
 	for _, tt := range []struct {
 		text string
 		doc  bool
-	}{{text, false}, {"Use `` " + text + " ``.", true}, {"```sh\n" + text + "\n```", true}} {
+	}{{text, false}, {"Use " + delimiter + " " + text + " " + delimiter + ".", true}, {"```sh\n" + text + "\n```", true}} {
 		require.Equal(t, accepted, len(wakeLaunchProblems(tt.text, tt.doc)) == 0, "%s", tt.text)
 	}
 	require.Empty(t, wakeLaunchProblems("An explanation of "+text+" is ordinary prose here.", true))

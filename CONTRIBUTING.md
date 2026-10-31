@@ -434,11 +434,22 @@ standard-input routine regardless of variable or command name; unrelated shell
 variables do not need exact-line exemptions.
 A logical executable line with an inbox token after another token is
 conservatively treated as a reader source, regardless of groups, wrappers,
-reserved words or operators. Only complete approved capture, reference and
-lease forms are allowed. This is a token scan, without shell parsing, variable
-expansion or alias resolution. It deliberately refuses even unrelated literal
-data such as 'echo inbox' inside executable markup; ordinary prose containing
-the same words is not scanned.
+reserved words or operators. Word runs use ASCII letters, digits and underscores;
+dollar and star markers also retain command position. A word with no ordinary
+word run retains an unknown position, including punctuation and non-ASCII heads.
+In executable contexts,
+words containing shell-special characters are additionally checked after literal
+escape decoding: the letters i, n, b, o, x appearing in order classify the line
+as a reader, even with other letters between them. Unquoted whitespace and
+operators separate words. Within a word, literal non-letter characters separate
+segments; quotes, escapes and expansion syntax do not. The letter check applies
+per segment, retaining substitution bodies, brace groups and glob patterns
+together without evaluating their output.
+Backslash-newline continuations are joined before scanning. Only complete
+approved capture, reference, lease and documented status forms are allowed.
+This conservative rule intentionally refuses some unrelated variable names,
+paths and literal data in executable markup. It does not evaluate commands or
+variable values. Ordinary prose is not scanned.
 
 ## Testing sync changes (MTIX-15 / FR-18)
 

@@ -26,7 +26,7 @@ func TestHostDispatcher_PendingRouting_DrainedOnNextKnownBoardPass(t *testing.T)
 	f := newHostFixture(t)
 	payload, err := json.Marshal(map[string]string{"agent_id": "worker", "harness": "codex", "lane_path": f.root})
 	require.NoError(t, err)
-	_, err = f.store.EnqueueAttachPending(t.Context(), sqlite.AttachPending{Kind: "list", BoardKey: f.key, Path: f.root, Payload: string(payload), QueuedAt: f.now.Format(time.RFC3339Nano)})
+	_, err = f.store.EnqueueAttachPending(t.Context(), sqlite.AttachPending{Kind: "lane", BoardKey: f.key, Path: f.root, Payload: string(payload), QueuedAt: f.now.Format(time.RFC3339Nano)})
 	require.NoError(t, err)
 	rows, err := f.store.ListAttachPending(t.Context())
 	require.NoError(t, err)
@@ -39,6 +39,9 @@ func TestHostDispatcher_PendingRouting_DrainedOnNextKnownBoardPass(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, listed, 1)
 	require.Equal(t, f.instance, listed[0].StoreInstanceID)
+	ids, err := f.state.LaneIDs(t.Context(), oplocal.LaneLocation{Harness: "codex", BoardKey: f.key, Root: f.root, Path: f.root})
+	require.NoError(t, err)
+	require.Equal(t, []string{"worker"}, ids)
 }
 
 func TestHostDispatcher_DispatchLockContention_ScanStillRunsAndEffectsRetry(t *testing.T) {
@@ -100,7 +103,7 @@ func TestHostEnrollment_InvalidSecret_GrantsNothing(t *testing.T) {
 			case "oversize":
 				require.NoError(t, os.WriteFile(secret, make([]byte, 65537), 0600))
 			}
-			require.Error(t, f.localEnrollment().Enroll(t.Context(), service.EnrollmentRequest{Path: f.root, Mode: "yes", Source: "test"}))
+			require.Error(t, f.hubEnrollment().Enroll(t.Context(), service.EnrollmentRequest{Path: f.root, Mode: "yes", Source: "test"}))
 			registry, err := f.state.DispatchBoards(t.Context())
 			require.NoError(t, err)
 			require.Empty(t, registry.Enrolled)
@@ -209,4 +212,30 @@ func TestHostDispatcher_MultipleEnrollments_IsolateCheckoutSecrets(t *testing.T)
 	require.Equal(t, []string{"second-checkout-secret"}, two.secrets)
 	require.Zero(t, listed.dials)
 	require.Zero(t, listed.hooks)
+}
+
+func TestHostDispatcher_SecretModeChanged_RefusesPull(t *testing.T) {
+	f := newHostFixture(t)
+	secret := filepath.Join(f.root, ".mtix", "secrets")
+	require.NoError(t, os.WriteFile(secret, []byte("checkout-secret"), 0600))
+	require.NoError(t, f.hubEnrollment().Enroll(t.Context(), service.EnrollmentRequest{Path: f.root, Mode: "yes", Source: "test"}))
+	require.NoError(t, os.Chmod(secret, 0644))
+	require.Error(t, f.pass())
+	require.Zero(t, f.dials)
+	require.Zero(t, f.hooks)
+}
+
+func TestHostDispatcher_BoardIDCreated_RekeysSameStore(t *testing.T) {
+	f := newHostFixture(t)
+	require.NoError(t, os.Remove(filepath.Join(f.root, ".mtix", "board-id")))
+	require.NoError(t, f.state.WriteJSON("boards", oplocal.DispatchBoards{Listed: []oplocal.ListedBoard{{Key: f.instance, Path: f.root, StoreInstanceID: f.instance}}}))
+	require.NoError(t, f.pass())
+	id, err := service.CreateBoardID(filepath.Join(f.root, ".mtix"))
+	require.NoError(t, err)
+	require.NoError(t, f.pass())
+	rows, err := f.state.ListedBoards(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, []oplocal.ListedBoard{{Key: id, Path: f.root, StoreInstanceID: f.instance}}, rows)
+	require.Zero(t, f.dials)
+	require.Zero(t, f.hooks)
 }

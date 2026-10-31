@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/google/uuid"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -74,4 +75,56 @@ func TestHostDispatcher_UnreadableRegistry_DefaultOffWarnsInstalledFails(t *test
 			require.Contains(t, rows[0].Detail, "cannot be read")
 		})
 	}
+}
+
+func TestHostDispatcher_EnrollmentDoctorError_ReportsRow(t *testing.T) {
+	for _, installed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "default-off", true: "installed"}[installed], func(t *testing.T) {
+			initRegistrationApp(t)
+			require.NoError(t, runAgentRegister("doctor-worker", sessionOptions{}))
+			state, err := operatorState()
+			require.NoError(t, err)
+			require.NoError(t, state.WriteJSON("dispatcher-service", hostServiceRecord{Installed: installed}))
+			require.NoError(t, app.store.Close())
+			svc := service.NewDoctorService(service.DoctorOptions{})
+			require.NoError(t, registerHostDispatcherDoctor(svc))
+			rows, runErr := svc.Run(t.Context(), service.DoctorRunOptions{})
+			if installed {
+				require.ErrorIs(t, runErr, service.ErrDoctorChecksFailed)
+			} else {
+				require.NoError(t, runErr)
+			}
+			found := false
+			for _, row := range rows {
+				if row.ID == "board.dispatcher-metadata" {
+					found = true
+					require.Contains(t, row.Detail, "cannot inspect")
+					if installed {
+						require.Equal(t, service.DoctorFail, row.Status)
+					} else {
+						require.Equal(t, service.DoctorWarn, row.Status)
+					}
+				}
+			}
+			require.True(t, found)
+		})
+	}
+}
+
+func TestHostDispatcher_ConflictingBoardID_DoctorRoutingWarns(t *testing.T) {
+	initRegistrationApp(t)
+	require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, "board-id"), []byte(uuid.NewString()+"\n"+uuid.NewString()+"\n"), 0600))
+	svc := service.NewDoctorService(service.DoctorOptions{})
+	require.NoError(t, registerHostDispatcherDoctor(svc))
+	rows, err := svc.Run(t.Context(), service.DoctorRunOptions{})
+	require.NoError(t, err)
+	found := false
+	for _, row := range rows {
+		if row.ID == "board.routing" {
+			found = true
+			require.Equal(t, service.DoctorWarn, row.Status)
+			require.Contains(t, row.Detail, "board identity conflict")
+		}
+	}
+	require.True(t, found)
 }

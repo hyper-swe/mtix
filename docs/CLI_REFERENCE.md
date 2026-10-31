@@ -715,8 +715,8 @@ enrolled checkouts may contact their own hub under sync.hub_contact or dispatch
 user hooks. There is no public enrollment command in this build. Existing
 per-project daemons and listeners keep their current behavior.
 
-run and install require --experimental. No process-wide MTIX_SYNC_DSN is used;
-the run command removes it before opening state. Live harness adapters ship with
+run and install require --experimental. All process-wide MTIX_SYNC_* overrides
+are removed before opening state and from each checkout pull child. Live harness adapters ship with
 their integrations; absent a route, messages remain available through mtix inbox.
 Task Scheduler and foreground runs do not exit to self-restart after upgrades.
 
@@ -758,8 +758,8 @@ enrolled checkouts may contact their own hub under sync.hub_contact or dispatch
 user hooks. There is no public enrollment command in this build. Existing
 per-project daemons and listeners keep their current behavior.
 
-run and install require --experimental. No process-wide MTIX_SYNC_DSN is used;
-the run command removes it before opening state. Live harness adapters ship with
+run and install require --experimental. All process-wide MTIX_SYNC_* overrides
+are removed before opening state and from each checkout pull child. Live harness adapters ship with
 their integrations; absent a route, messages remain available through mtix inbox.
 Task Scheduler and foreground runs do not exit to self-restart after upgrades.
 

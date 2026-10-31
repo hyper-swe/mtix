@@ -19,8 +19,8 @@ enrolled checkouts may contact their own hub under sync.hub_contact or dispatch
 user hooks. There is no public enrollment command in this build. Existing
 per-project daemons and listeners keep their current behavior.
 
-run and install require --experimental. No process-wide MTIX_SYNC_DSN is used;
-the run command removes it before opening state. Live harness adapters ship with
+run and install require --experimental. All process-wide MTIX_SYNC_* overrides
+are removed before opening state and from each checkout pull child. Live harness adapters ship with
 their integrations; absent a route, messages remain available through mtix inbox.
 Task Scheduler and foreground runs do not exit to self-restart after upgrades.`
 
@@ -66,15 +66,7 @@ func runHostServiceAction(cmd *cobra.Command, verb string, experimental bool, in
 	if err != nil {
 		return err
 	}
-	if verb == "install" {
-		if err := prepareHostInstall(cmd, spec); err != nil {
-			return err
-		}
-	}
-	if err := runServiceCmds(cmd.Context(), cmd.OutOrStdout(), hostServiceArguments(spec, verb), verb == "install" || verb == "uninstall"); err != nil {
-		return fmt.Errorf("dispatcher %s: %w", verb, err)
-	}
-	return finishHostServiceAction(verb, spec)
+	return applyHostServiceAction(cmd, spec, verb, runHostServiceCommand)
 }
 
 func prepareHostInstall(cmd *cobra.Command, spec *serviceSpec) error {
@@ -104,9 +96,10 @@ func hostServiceArguments(spec *serviceSpec, verb string) [][]string {
 }
 
 func finishHostServiceAction(verb string, spec *serviceSpec) error {
+	var cleanupErr error
 	if verb == "uninstall" && spec.Path != "" {
 		if err := os.Remove(spec.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
+			cleanupErr = err
 		}
 	}
 	if verb != "install" && verb != "uninstall" {
@@ -114,9 +107,9 @@ func finishHostServiceAction(verb string, spec *serviceSpec) error {
 	}
 	state, err := operatorState()
 	if err != nil {
-		return err
+		return errors.Join(cleanupErr, err)
 	}
-	return state.WriteJSON("dispatcher-service", hostServiceRecord{Installed: verb == "install"})
+	return errors.Join(cleanupErr, state.WriteJSON("dispatcher-service", hostServiceRecord{Installed: verb == "install"}))
 }
 
 func currentHostServiceSpec(interval int) (*serviceSpec, error) {

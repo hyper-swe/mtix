@@ -142,16 +142,14 @@ func newRegistrationServiceWithRouting(includeRouting bool) (*service.Registrati
 	if err != nil {
 		return nil, err
 	}
-	var routing *service.AttachRouting
+	var resolve func() (*service.AttachRouting, error)
 	if includeRouting {
-		routing, err = currentRegistrationRouting()
-		if err != nil {
-			return nil, err
-		}
+		resolve = currentRegistrationRouting
 	}
+
 	return service.NewRegistrationService(service.RegistrationDeps{
-		Routing: routing,
-		Store:   app.store, Liveness: service.NewProcessLiveness(procinfo.StartTime), TakeOvers: takeOvers,
+		ResolveRouting: resolve,
+		Store:          app.store, Liveness: service.NewProcessLiveness(procinfo.StartTime), TakeOvers: takeOvers,
 		Notices: inboxNoticeSender{}, Logger: app.logger, Clock: func() time.Time { return time.Now().UTC() },
 		Host: service.RegistrationHost{HostID: host, UID: uid, Version: version, Protocol: attach.Protocol},
 	}), nil

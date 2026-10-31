@@ -165,6 +165,12 @@ func (b *HostBoard) pass(ctx context.Context, listed oplocal.ListedBoard) (retEr
 	if err != nil {
 		return err
 	}
+	if row != listed && listed.Path == row.Path && listed.Key == listed.StoreInstanceID && listed.StoreInstanceID == row.StoreInstanceID {
+		if err := b.opts.State.ListBoardInstance(ctx, row); err != nil {
+			return err
+		}
+		listed = row
+	}
 	if row != listed {
 		return fmt.Errorf("listed checkout identity or instance changed: %w", model.ErrConflict)
 	}

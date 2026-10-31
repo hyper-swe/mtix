@@ -22,7 +22,7 @@ import (
 )
 
 func runHostDispatcher(cmd *cobra.Command, interval int, supervisor string) (retErr error) {
-	if err := os.Unsetenv("MTIX_SYNC_DSN"); err != nil {
+	if err := clearHostSyncEnvironment(); err != nil {
 		return err
 	}
 	if interval <= 0 {
@@ -141,7 +141,8 @@ func pullHostCheckout(ctx context.Context, exe, root, dsn string) error {
 	child := exec.CommandContext(ctx, exe, "sync", "pull") // #nosec G204 -- fixed argv and the running executable, never repository commands
 	child.Dir = root
 	for _, entry := range os.Environ() {
-		if !strings.HasPrefix(entry, "MTIX_SYNC_DSN=") && !strings.HasPrefix(entry, "MTIX_AUTHOR_ID=") {
+		name, _, _ := strings.Cut(entry, "=")
+		if !hostSyncOverride(name) && !strings.HasPrefix(entry, "MTIX_AUTHOR_ID=") {
 			child.Env = append(child.Env, entry)
 		}
 	}
@@ -178,4 +179,22 @@ func currentHostTarget(st *oplocal.State) (hostTargetSnapshot, error) {
 	}
 	out.initial, err = os.Stat(out.physical)
 	return out, err
+}
+
+// clearHostSyncEnvironment removes every exported sync override before any checkout is opened.
+func clearHostSyncEnvironment() error {
+	for _, entry := range os.Environ() {
+		name, _, _ := strings.Cut(entry, "=")
+		if hostSyncOverride(name) {
+			if err := os.Unsetenv(name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// hostSyncOverride also matches Windows environment names, which are case-insensitive.
+func hostSyncOverride(name string) bool {
+	return strings.HasPrefix(strings.ToUpper(name), "MTIX_SYNC_")
 }

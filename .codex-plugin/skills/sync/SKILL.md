@@ -104,12 +104,16 @@ The host dispatcher is experimental and disabled by default. An operator can
 opt in with `mtix dispatcher run --experimental`, or explicitly install its
 per-user service with `mtix dispatcher install --experimental`. Use
 `mtix dispatcher status`, `mtix dispatcher stop`, `mtix dispatcher start` and
-`mtix dispatcher uninstall` to inspect and manage that service. These commands
+`mtix dispatcher uninstall` to inspect and manage that service. On macOS stop
+unloads the launchd job and start reloads its installed plist, so KeepAlive does
+not restart a stopped service. These commands
 work outside a project. Agents should retain their normal inbox routine and
 must not install or migrate services on their own.
 
-Registration automatically records a checkout as listed-only routing, bound to
-its local store instance. A listed-only board receives the local wake scanner;
+Registration records a checkout as listed-only routing, bound to its local
+store instance. Routing metadata errors produce a warning after the session
+commits; registration, listing and unregistering remain available. Resolve the
+checkout error shown by doctor, then register again to retry routing. A listed-only board receives the local wake scanner;
 it makes no hub connection and runs no user-hook pass. Enrollment is an
 explicit, checkout-scoped service API for later setup integration: there is
 no public enrollment command in this build. Listing, a board identity copied
@@ -118,9 +122,13 @@ checkout. Existing per-project daemons and listeners retain their duty until
 explicit migration; do not remove them as part of trying the experiment.
 
 Only enrolled checkouts contact the hub under `sync.hub_contact`: activity,
-interval or manual. The scanner itself adds no hub contact. Each enrolled
+interval or manual. Activity lets an idle scale-to-zero database sleep; interval
+keeps it awake, and manual makes no automatic hub contact. Contact costs apply
+per enrolled checkout; see the `sync.hub_contact` policy for activity windows
+and interval settings. The scanner itself adds no hub contact. Each enrolled
 checkout uses that checkout's own real 0600 `.mtix/secrets` file; inherited
-`MTIX_SYNC_DSN` is removed at host startup and is never a credential source.
+`MTIX_SYNC_*` variables are removed at host startup and from pull children;
+only the checkout DSN is supplied to that checkout's pull.
 Never print, copy between checkouts, or commit that file. An unenrolled hub
 worktree is not pulled, and a manual pull into it does not enable a live wake.
 Without an installed harness route, events remain in the durable inbox.

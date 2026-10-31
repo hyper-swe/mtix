@@ -45,7 +45,7 @@ func hostLaunchdSpec(exe, home string, interval int) *serviceSpec {
 `, label, escape(exe), interval, escape(filepath.Join(logdir, "dispatcher.out.log")), escape(filepath.Join(logdir, "dispatcher.err.log")))
 	domain := fmt.Sprintf("gui/%d", os.Getuid())
 	target := domain + "/" + label
-	return &serviceSpec{Label: label, Path: path, Content: content, Register: [][]string{{"launchctl", "bootout", target}, {"launchctl", "bootstrap", domain, path}}, Unregister: [][]string{{"launchctl", "bootout", target}}, Start: [][]string{{"launchctl", "kickstart", "-k", target}}, Stop: [][]string{{"launchctl", "kill", "SIGTERM", target}}, Status: [][]string{{"launchctl", "print", target}}}
+	return &serviceSpec{Label: label, Path: path, Content: content, Register: [][]string{{"launchctl", "bootout", target}, {"launchctl", "bootstrap", domain, path}}, Unregister: [][]string{{"launchctl", "bootout", target}}, Start: [][]string{{"launchctl", "bootout", target}, {"launchctl", "bootstrap", domain, path}}, Stop: [][]string{{"launchctl", "bootout", target}}, Status: [][]string{{"launchctl", "print", target}}}
 }
 
 func hostSystemdSpec(exe, home string, interval int) *serviceSpec {

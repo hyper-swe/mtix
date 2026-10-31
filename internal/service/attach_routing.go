@@ -100,3 +100,23 @@ func (s *RegistrationService) applyAttach(ctx context.Context, kind string, payl
 	loc := oplocal.LaneLocation{Harness: payload.Harness, BoardKey: s.Routing.Board.Key, Root: s.Routing.Board.Path, Path: payload.LanePath}
 	return s.Routing.State.LearnLane(ctx, loc, payload.AgentID)
 }
+
+// recordOptionalAttach keeps experimental routing failures separate from the committed session.
+func (s *RegistrationService) recordOptionalAttach(ctx context.Context, req RegisterSessionRequest) string {
+	if s.Routing != nil || s.ResolveRouting == nil {
+		return ""
+	}
+	routing, err := s.ResolveRouting()
+	if err == nil {
+		copyService := *s
+		copyService.Routing = routing
+		err = copyService.prepareAttach(req)
+		if err == nil {
+			err = copyService.recordAttach(ctx, req)
+		}
+	}
+	if err != nil {
+		return err.Error()
+	}
+	return ""
+}

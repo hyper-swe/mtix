@@ -38,14 +38,18 @@ func TestBuildHostServiceSpec_PerOS(t *testing.T) {
 }
 func TestHostDispatcher_ExportedDSN_Ignored(t *testing.T) {
 	initRegistrationApp(t)
-	t.Setenv("MTIX_SYNC_DSN", "host-secret-must-not-be-used")
+	for _, name := range []string{"MTIX_SYNC_DSN", "MTIX_SYNC_PASSWORD", "MTIX_SYNC_SSLROOTCERT", "MTIX_SYNC_FUTURE_CREDENTIAL"} {
+		t.Setenv(name, "host-secret-must-not-be-used")
+	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	root := newRootCmd()
 	root.SetArgs([]string{"dispatcher", "run", "--experimental"})
 	err := root.ExecuteContext(ctx)
 	require.ErrorIs(t, err, context.Canceled)
-	require.Empty(t, os.Getenv("MTIX_SYNC_DSN"))
+	for _, name := range []string{"MTIX_SYNC_DSN", "MTIX_SYNC_PASSWORD", "MTIX_SYNC_SSLROOTCERT", "MTIX_SYNC_FUTURE_CREDENTIAL"} {
+		require.Empty(t, os.Getenv(name), name)
+	}
 }
 func TestHostDispatcher_DefaultOff_RefusesBeforeOpeningState(t *testing.T) {
 	root := newRootCmd()
@@ -64,4 +68,27 @@ func TestBuildHostServiceSpec_WindowsPath_PreservesBackslashes(t *testing.T) {
 	require.NoError(t, err)
 	argv := spec.Register[0]
 	require.Contains(t, argv[len(argv)-1], `"`+exe+`" dispatcher run`)
+}
+
+func TestHostLaunchd_StopUnloads_StartReloads(t *testing.T) {
+	spec, err := buildHostServiceSpec("darwin", "/opt/bin/mtix", "/home/operator", 5)
+	require.NoError(t, err)
+	require.Equal(t, "bootout", spec.Stop[0][1])
+	require.Equal(t, "bootstrap", spec.Start[len(spec.Start)-1][1])
+	require.Equal(t, spec.Path, spec.Start[len(spec.Start)-1][3])
+}
+
+func TestHostDispatcher_SyncEnvironmentCaseAliases_Ignored(t *testing.T) {
+	for _, name := range []string{"mtix_sync_password", "mTiX_sYnC_SSLRootCert"} {
+		t.Run(name, func(t *testing.T) {
+			initRegistrationApp(t)
+			t.Setenv(name, "host-case-alias-secret")
+			ctx, cancel := context.WithCancel(t.Context())
+			cancel()
+			root := newRootCmd()
+			root.SetArgs([]string{"dispatcher", "run", "--experimental"})
+			require.ErrorIs(t, root.ExecuteContext(ctx), context.Canceled)
+			require.Empty(t, os.Getenv(name), name)
+		})
+	}
 }

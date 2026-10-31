@@ -190,7 +190,9 @@ review of that hook; other hook approvals remain independent.
 
 <!-- AUTO-GENERATED: HEALTH_DIAGNOSTICS -->
 The experimental host dispatcher is disabled by default. Registration lists
-this checkout for local scanning only; hub contact and user hooks require
+this checkout for local scanning only. A routing warning leaves the session
+registered; fix the checkout metadata reported by `board.routing`, then register
+again. Hub contact and user hooks require
 explicit checkout enrollment. No public enrollment command ships yet. Keep
 existing project daemons and the normal inbox routine; do not install or migrate
 services yourself. The sync skill documents the operator-only experiment,

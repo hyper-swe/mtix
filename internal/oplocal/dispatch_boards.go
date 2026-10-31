@@ -55,7 +55,7 @@ func (s *State) dispatchBoardsLocked() (DispatchBoards, error) {
 		found := false
 		for _, current := range out.Listed {
 			if current.Path == row.Path {
-				if current.Key != row.Key {
+				if current.Key != row.Key && row.Key != current.StoreInstanceID {
 					return DispatchBoards{}, invalid("conflicting listed board identity")
 				}
 				found = true
@@ -131,11 +131,8 @@ func (s *State) ListBoardInstance(ctx context.Context, row ListedBoard) error {
 		}
 		for i, old := range b.Listed {
 			if old.Path == row.Path {
-				if old.Key != row.Key || (old.StoreInstanceID != "" && row.StoreInstanceID != "" && old.StoreInstanceID != row.StoreInstanceID) {
-					return fmt.Errorf("listed board identity changed: %w", model.ErrConflict)
-				}
-				if row.StoreInstanceID != "" {
-					b.Listed[i] = row
+				if err := updateListedBoard(&b, i, row); err != nil {
+					return err
 				}
 				return s.WriteJSON("boards", b)
 			}
@@ -144,6 +141,32 @@ func (s *State) ListBoardInstance(ctx context.Context, row ListedBoard) error {
 		sort.Slice(b.Listed, func(i, j int) bool { return b.Listed[i].Path < b.Listed[j].Path })
 		return s.WriteJSON("boards", b)
 	})
+}
+
+// updateListedBoard permits the initial fallback identity to acquire its committed board id.
+func updateListedBoard(b *DispatchBoards, i int, row ListedBoard) error {
+	old := b.Listed[i]
+	if old.StoreInstanceID != "" && row.StoreInstanceID != "" && old.StoreInstanceID != row.StoreInstanceID {
+		return fmt.Errorf("listed board identity changed: %w", model.ErrConflict)
+	}
+	rekey := old.Key == old.StoreInstanceID && old.StoreInstanceID != "" && old.StoreInstanceID == row.StoreInstanceID
+	if old.Key != row.Key && !rekey {
+		return fmt.Errorf("listed board identity changed: %w", model.ErrConflict)
+	}
+	if row.StoreInstanceID == "" {
+		return nil
+	}
+	b.Listed[i] = row
+	rekeyEnrolledBoard(b, old, row)
+	return nil
+}
+
+func rekeyEnrolledBoard(b *DispatchBoards, old, row ListedBoard) {
+	for j, entry := range b.Enrolled {
+		if entry.Path == old.Path && entry.StoreInstanceID == row.StoreInstanceID && entry.BoardID == old.Key {
+			b.Enrolled[j].BoardID = row.Key
+		}
+	}
 }
 
 // SetEnrollment changes one checkout grant with its audit in the same durable record.

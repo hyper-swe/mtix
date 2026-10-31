@@ -30,9 +30,25 @@ func registerHostDispatcherDoctor(svc *service.DoctorService) error {
 			return service.DoctorResult{Status: status, Detail: "host board registry cannot be read: " + err.Error(), Fix: operatorStateFix, Data: map[string]any{"installed": installed, "experimental": true}}
 		}})
 	}
+	if err := registerHostRoutingDoctor(svc, installed); err != nil {
+		return err
+	}
 	if len(registry.Listed) == 0 && !installed {
 		return nil
 	}
+	if err := registerHostDoctorSummary(svc, registry, installed); err != nil {
+		return err
+	}
+	if app.store == nil || app.mtixDir == "" {
+		return nil
+	}
+	if err := registerHostEnrollmentDoctor(svc, registry); err != nil {
+		return registerHostMetadataError(svc, "board.dispatcher-metadata", installed, err)
+	}
+	return nil
+}
+
+func registerHostDoctorSummary(svc *service.DoctorService, registry oplocal.DispatchBoards, installed bool) error {
 	host := service.DoctorCheck{ID: "dispatcher.host", Run: func(context.Context) service.DoctorResult {
 		detail := "experimental host dispatcher is disabled by default; no host service is installed"
 		fix := ""
@@ -42,13 +58,7 @@ func registerHostDispatcherDoctor(svc *service.DoctorService) error {
 		}
 		return service.DoctorResult{Status: service.DoctorInfo, Detail: detail, Fix: fix, Data: map[string]any{"installed": installed, "experimental": true, "listed": len(registry.Listed)}}
 	}}
-	if err := svc.Register(host); err != nil {
-		return err
-	}
-	if app.store == nil || app.mtixDir == "" {
-		return nil
-	}
-	return registerHostEnrollmentDoctor(svc, registry)
+	return svc.Register(host)
 }
 
 func registerHostEnrollmentDoctor(svc *service.DoctorService, registry oplocal.DispatchBoards) error {
@@ -115,4 +125,25 @@ func hostDispatcherInstalled(state *oplocal.State) bool {
 	var record hostServiceRecord
 	reports, err := state.ReadJSON("dispatcher-service", &record)
 	return err == nil && len(reports) == 0 && record.Installed
+}
+
+func registerHostMetadataError(svc *service.DoctorService, id string, installed bool, problem error) error {
+	status := service.DoctorWarn
+	if installed {
+		status = service.DoctorFail
+	}
+	return svc.Register(service.DoctorCheck{ID: id, Run: func(context.Context) service.DoctorResult {
+		return service.DoctorResult{Status: status, Detail: "cannot inspect checkout dispatcher metadata: " + problem.Error(), Fix: "Resolve the reported checkout metadata error, then rerun mtix agent register <agent-id> and mtix doctor", Data: map[string]any{"experimental": true}}
+	}})
+}
+
+func registerHostRoutingDoctor(svc *service.DoctorService, installed bool) error {
+	routing, err := currentRegistrationRouting()
+	if err == nil && routing != nil {
+		err = oplocal.ValidateLaneLocation(oplocal.LaneLocation{Harness: "dispatcher", Root: routing.Board.Path, Path: routing.Board.Path, BoardKey: routing.Board.Key})
+	}
+	if err != nil {
+		return registerHostMetadataError(svc, "board.routing", installed, err)
+	}
+	return nil
 }

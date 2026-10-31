@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"runtime"
 
 	"github.com/hyper-swe/mtix/internal/attach"
@@ -26,15 +27,18 @@ func (hostServiceManager) Restart(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	return restartHostService(ctx, runtime.GOOS, spec, func(ctx context.Context, argv [][]string) error { return runServiceCmds(ctx, io.Discard, argv, true) })
+	return restartHostService(ctx, runtime.GOOS, spec, func(ctx context.Context, argv [][]string) error {
+		return runHostServiceCommands(ctx, io.Discard, argv, runHostServiceCommand)
+	})
 }
 
 func restartHostService(ctx context.Context, goos string, spec *serviceSpec, run func(context.Context, [][]string) error) error {
-	argv := spec.Start
+	var argv [][]string
 	switch goos {
 	case "linux":
 		argv = [][]string{{"systemctl", "--user", "restart", spec.Label}}
 	case "darwin":
+		argv = [][]string{{"launchctl", "kickstart", "-k", fmt.Sprintf("gui/%d/%s", os.Getuid(), spec.Label)}}
 	case "windows":
 		argv = append(append([][]string{}, spec.Stop...), spec.Start...)
 	default:

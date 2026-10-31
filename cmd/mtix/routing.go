@@ -35,6 +35,8 @@ var exemptCommands = map[string]bool{
 	// search runs locally: the REST search has no text query or the full
 	// filter set, so routing would silently drop the user's words (MTIX-146).
 	"search": true,
+	// url prints a link from the PID lock; routed through REST it would have no handler (MTIX-230).
+	"url": true,
 }
 
 // adminRoutes maps CLI admin commands to REST admin endpoints per FR-14.1b.

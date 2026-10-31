@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Web UI per-ticket links: `/ticket/<id>` opens that ticket's detail on first load, `?node=<id>` is rewritten to it, selection updates the address and back/forward follow it, and the id is validated before use. New `mtix url <id>` prints the link for the running serve (`--json` prints `{"id","url"}`; no serve means a non-zero exit naming `mtix serve`) (MTIX-230).
 - Collision resolution errors identify whether local renumbering or recording completion on the hub failed, while preserving the retry command (MTIX-107.46.2).
 - `mtix doctor` reports oversized daemon capture logs with read-only text/JSON diagnostics and manual retention remedies; daemon guidance documents native macOS rotation and Linux journal limits (MTIX-228).
 

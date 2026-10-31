@@ -415,6 +415,42 @@ review, docs-coverage sweep) around the automated gates
 
 ---
 
+## Generated command guidance
+
+Write executable documentation examples in code spans or fenced shell blocks.
+Plain prose outside those markers is explanatory text, even when it mentions a
+quoted variable. A code span containing only a variable or variable-based path
+is a reference. Put the complete command, including wrappers, pipelines and
+redirects, inside the same span or fence. Use double backticks around a command
+that contains shell backticks, with a space inside each delimiter.
+
+The wake-guidance checks inspect code spans, unlabelled fences, and fences marked
+`sh`, `bash`, `shell` or `console` (case-insensitive, with optional info text).
+Other fence labels, indented code blocks and HTML pre blocks are not scanned;
+use the supported fences or code spans for executable guidance. Raw shell examples and their commented command
+variants are checked too. Keep generated guidance templates and both plugin
+mirrors consistent. Inbox-derived values follow the documented constant-format
+standard-input routine regardless of variable or command name; unrelated shell
+variables do not need exact-line exemptions.
+A logical executable line with an inbox token after another token is
+conservatively treated as a reader source, regardless of groups, wrappers,
+reserved words or operators. Word runs use ASCII letters, digits and underscores;
+dollar and star markers also retain command position. A word with no ordinary
+word run retains an unknown position, including punctuation and non-ASCII heads.
+In executable contexts,
+words containing shell-special characters are additionally checked after literal
+escape decoding: the letters i, n, b, o, x appearing in order classify the line
+as a reader, even with other letters between them. Unquoted whitespace and
+operators separate words. Within a word, literal non-letter characters separate
+segments; quotes, escapes and expansion syntax do not. The letter check applies
+per segment, retaining substitution bodies, brace groups and glob patterns
+together without evaluating their output.
+Backslash-newline continuations are joined before scanning. Only complete
+approved capture, reference, lease and documented status forms are allowed.
+This conservative rule intentionally refuses some unrelated variable names,
+paths and literal data in executable markup. It does not evaluate commands or
+variable values. Ordinary prose is not scanned.
+
 ## Testing sync changes (MTIX-15 / FR-18)
 
 If your change touches the sync hub path (`internal/sync/...`,

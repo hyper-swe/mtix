@@ -10,7 +10,7 @@ allowed-tools:
 
 ## Host wake settings
 
-This build stores and reports `wake.live` and `wake.max_hop_depth`.
+This build stores and reports `wake.live` and `wake.max_hop_depth`, and applies `wake.confirm_window` now in `mtix inbox status`.
 Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
 when the wake scanner ships. They do not control live delivery in this build.
 
@@ -45,6 +45,7 @@ Existing flat envelope and strict-identity settings remain readable.
 | `wake.envelope_max_total_bytes` | unset, unlimited | Total envelope bytes |
 | `wake.max_hop_depth` | `32` | Scanner hop guard; depth 32 will be allowed, 33 held |
 | `wake.backoff_after_unacked` | `5` | Enforced by the callable dispatcher: durable unacknowledged-wake backoff |
+| `wake.confirm_window` | `30` | Seconds a sent nudge may stay unseen before `mtix inbox status` and `mtix comment --to` show it as `unconfirmed` (read-time only, no timer, no inbox event). An ordinary setting, not a guard: whole seconds 1 to 86400, and setting it never needs a terminal |
 | `inbox.strict_board_identity` | `false` | Also require matching hub identity |
 
 Read a value with `mtix config get wake.max_hop_depth`, or append `--agent worker`.
@@ -345,7 +346,7 @@ Key configuration options:
 - `session_timeout` — maximum session duration (default: 8h)
 - `data.soft_delete_retention` — how long to keep deleted data (default: 720h/30 days)
 - `sync.keep_roles` — comma-separated hub roles that `mtix sync harden` leaves with their access (default: none; see Hub Privileges). Setting it turns on strict mode for the doctor's `hub-privileges` check, which then fails whenever `mtix sync harden` would report a finding, or when the check cannot run
-- `history.export` — EXPERIMENTAL, default `false`. When `true`, `.mtix/tasks.json` is written in export format 2.1.0 with each task's change history; mtix 0.5.4 and earlier cannot read such a file (their import fails its checksum, and their automatic import loads nothing). Turn it on only when the user asks and every machine and daemon that touches the board runs this version or later; no doctor check verifies that yet, so ask the user. A running process follows `mtix config set history.export` without a restart
+- `history.export` — EXPERIMENTAL, default `false`. When `true`, `.mtix/tasks.json` is written in export format 2.1.0 with each task's change history; mtix 0.5.4 and earlier cannot read such a file (their import fails its checksum, and their automatic import loads nothing). Turn it on only when the user asks and every machine and daemon that touches the board runs this version or later; `mtix config set history.export true` is refused, with the fix, while a session registration or daemon heartbeat seen in the last 30 days lacks the task-history marker that every build from 0.6.0 writes, which means an older mtix (nothing is written; version strings are not judged). `mtix doctor` (text and `--json`) adds a `history.export.guard` row once the switch is on or an older build is detected: warn with the fix while the switch is off, fail while it is on, with the blockers and `min_version` in its `data` object; run doctor until it passes. The guard cannot see other machines, CI jobs or clones that read `.mtix/tasks.json` through git (mtix 0.5.4 records no registration and the file names no writer while the switch is off), so ask the user to confirm `mtix --version` on each of them before enabling. The switch lives in the tracked `.mtix/config.yaml`, so a clone that pulls `history: export: true` writes 2.1.0 without having run this guard: run `mtix doctor` in every clone after pulling the line; the `history.export.guard` row fails there when an older build is seen, and the fix is `mtix config set history.export false` until that machine is upgraded. A running process follows `mtix config set history.export` without a restart
 
 ## Hub Privileges (Sync Hub Owners)
 
@@ -354,6 +355,25 @@ Only for projects that sync through a Postgres hub (`mtix sync init`). Everyday 
 The append-only tables (`audit_log`, `sync_conflicts`, `sync_events`) refuse TRUNCATE. `mtix sync init` adds these guards automatically; `mtix sync harden` checks them.
 
 **Restore collisions:** the hub stamps every event with its own restore epoch (a trigger on `sync_events` sets it from `sync_hub_state` on every insert). A syncing role records restore collisions only through the hub function `record_restore_collision`, which runs as the table owner and records a collision only when the hub's own data shows an earlier-epoch create holding the number, so the role needs EXECUTE on that function and no INSERT on `sync_node_collisions`. When `mtix sync init` adds this function to an existing hub (migration 017), the table owner then grants EXECUTE on it to each syncing role (`GRANT EXECUTE ON FUNCTION record_restore_collision TO <role>;`) and revokes the privileges the least-privilege list no longer names (`REVOKE INSERT ON sync_node_collisions FROM <role>;` and `REVOKE USAGE ON SEQUENCE sync_node_collisions_collision_id_seq FROM <role>;`). Upgrade every syncing client first, then run the REVOKE statements; if the REVOKE comes first, an older client's push that meets a restore collision fails until that client upgrades. `mtix sync doctor`'s `schema current` check, run with a syncing role's DSN, reports each of these as a WARN by default and a FAIL in strict mode, with the fix the table owner runs: a hub without migration 017 (pushes keep working; the fix is `mtix sync init`), a role that cannot execute the function (a push that meets a restore collision fails until the table owner runs the printed GRANT), create events stamped with a restore epoch below 0 or above the hub's current epoch (restore-collision checks treat each as not earlier than the current epoch; the fix is the printed UPDATE, which sets each to the current epoch), and a role that can write collision rows: it holds INSERT on `sync_node_collisions` or USAGE on its sequence (a grant, or a predefined role such as `pg_write_all_data`), owns the schema that holds the sync tables, can reach, through a chain of SET ROLE and ADMIN OPTION, a role that holds either or owns that schema, or a superuser it can then SET ROLE to, has CREATEROLE before PostgreSQL 16, or is a member of `pg_execute_server_program` or `pg_write_server_files`. The check skips the table owner, roles that inherit it, and superusers. The fix is the exact REVOKE the table owner runs for a plain grant the owner made, and, for every other path, the path by name, with the chain that reaches it, which a role administrator removes (see "Hub health checks" in the user manual). `mtix sync harden --apply` revokes EXECUTE on the function from every role that is not kept, so keep each syncing role with `--keep-role`.
+
+**Resolving restore collisions:** The hub must accept the winner before mtix renumbers locally. If the hub refuses
+(for example, `permission denied for table sync_node_collisions`), the local
+store stays unchanged. Resolve with a role allowed to UPDATE that table.
+If acceptance succeeds but local renumbering fails, mtix reports
+`hub accepted collision <id> but local renumber failed`. If the local move
+succeeds but recording its completion on the hub fails, mtix reports
+`hub accepted collision <id> but recording completion on the hub failed`.
+Both failures print the exact recovery command: `mtix sync collisions resolve <id> --winner held|incoming`
+(with the original winner filled in). Fix the reported cause, then run that
+command on the client that owns the losing node, with the same hub configured.
+The decision is already recorded on the hub, so the collision no longer shows
+as open; `collisions list` shows it as accepted with the local move pending
+(text, and `--json` with `pending_local_move` and `winner`) together with the
+same command, so it can be found again after a crash. A client that does not
+hold the losing task is refused before the hub is touched, and the collision
+stays open. Retry resumes the move; if the move already committed, it
+records its new number without moving it again. A completed resolve is a no-op
+when repeated. A different winner is refused without changing the local store.
 
 **Init locking and deadlines.** `mtix sync init` allows 30 seconds to connect,
 then a separate `--migrate-timeout` (default `5m`, positive Go duration)
@@ -679,6 +699,10 @@ An event can reach the hub without this replica recording it: push marks an even
 - Never run `mtix sync reconcile --discard-local` to clear a pending queue that does not drain: it deletes every unpushed change and local task, and it needs the ticket count typed at an interactive terminal (no flag supplies it), so it cannot run unattended.
 - Never delete the hold of an event under the same id with other content, or edit the event to match the hub's copy.
 
+## Serving on the network
+
+`mtix serve` binds to loopback by default and needs no credential there. Binding anywhere else needs `--insecure-bind` and a bearer token. **Recognize:** `mtix serve --addr <address>` refuses with a message naming `--insecure-bind`, or, with `api.bind` set to a network address, `mtix doctor` shows a `serve.exposure` warning or failure. **Routine:** run the exact command the message prints, `mtix serve --addr <address> --insecure-bind`; the first run creates the token in the operator-local state directory and prints only its path. Clients send `Authorization: Bearer <token>` on every request. **Verify:** a request without the token gets `401` and a request with it succeeds. `mtix doctor` shows a `serve.exposure` row only when `api.bind` is set to a network address (it warns or fails there until the token exists and is usable); with `--addr` alone the row does not appear. **Rotate:** delete the token file and restart. **Never:** print, paste, log, commit or put the token in a URL; use `--insecure-bind` on an untrusted network; keep the token file inside a project.
+
 ## Operator-local state
 
 `mtix hooks status` and `mtix hooks status --json` validate the operator-local state directory and show corrective guidance. This check creates no state and grants no hook approval. The directory is `$XDG_CONFIG_HOME/mtix` (default `~/.config/mtix`) on macOS and Linux, or `%APPDATA%\mtix` on Windows. Use an operator-owned directory with mode 0700 and files with mode 0600; Windows requires a protected user-only ACL. Keep it outside projects, git work trees, temporary directories, `~/.codex`, `CODEX_HOME` and harness writable roots, with no symlink components. Never commit or dotfile-sync it.
@@ -703,6 +727,14 @@ operator to review the named hook, then run `mtix hooks trust <hook>` from an
 interactive operator terminal outside agent sessions. Agents never run this
 approval command themselves. Changing one hook or its project script requires
 review of that hook; other hook approvals remain independent.
+
+Webhook hooks need the same operator consent for each origin. `mtix hooks status`
+lists every webhook origin that is not consented, with the exact fix. An agent
+asks the operator to run `mtix hooks allow-origin <url>` from an interactive
+operator terminal outside agent sessions; agents never run it themselves.
+Loopback, link-local and private destinations stay refused unless the operator
+lists that origin with `--allow-private`. A webhook without consent is skipped
+and recorded; redirects to an origin that is not consented are not followed.
 
 The approval records are stored outside the project, bound to the local host
 and canonical project identity. Each record pins the selected hook stanza and
@@ -929,3 +961,32 @@ delivery would refuse, with the reason and the exact fix: text output prints
 same-file checks apply and a multiply linked file is refused at delivery (as is a file whose
 link count cannot be read), but
 `mtix hooks status` does not list it and permission bits are not reported.
+
+
+### Webhook origin consent
+
+A webhook hook delivers only to an origin (scheme, host and port) that the
+operator consented to on this host. The consent list is stored outside the
+project, so a cloned repository cannot grant it. To configure and verify:
+
+```sh
+mtix hooks status --json        # origins[] names each refused hook and the exact fix
+mtix hooks allow-origin 'https://hooks.example.com'
+mtix hooks allow-origin --allow-private 'http://127.0.0.1:9000'
+mtix hooks log                  # skipped-untrusted rows show the reason and the fix
+```
+
+`mtix doctor --json` carries the same check as the `hooks.origins` row (shown only
+when `.mtix/hooks.yaml` exists): PASS means every configured webhook origin is
+consented, WARN lists each hook that would be skipped with the exact fix command.
+Run doctor again after the operator consents, until the row is PASS. Doctor only
+reads; it never writes consent state.
+
+The consent command needs an interactive terminal outside agent sessions. List
+a loopback, link-local or private destination only with `--allow-private`, and
+only when it is intended. The check applies to the address actually connected,
+so a name that later resolves to a private address is refused, and the skipped row names the origin and the exact `--allow-private` command. Status and doctor resolve each consented name once (no request is sent to the webhook) and warn for a name that resolves to a private address without the opt-in. A name that cannot be resolved (offline, resolver error or a 2 second timeout) is also a warning, "could not verify", never a pass: re-run the check when online or check the host resolver. Redirects are
+followed only to other consented origins. If the consent state cannot be read,
+every webhook is skipped; run `mtix hooks status --json` and correct the
+reported path or access rules. An agent never edits the consent record and
+never works around a skip: it reports the fix to the operator.

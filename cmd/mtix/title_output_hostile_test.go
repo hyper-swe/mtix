@@ -133,7 +133,7 @@ func humanCommands() []humanCommand {
 		{"progress", func(t *testing.T, b hostileBoard) { must(t, runProgress(b.parent.ID)) }},
 		{"context", func(t *testing.T, b hostileBoard) {
 			for _, c := range b.children {
-				must(t, runContext(c.ID, 0))
+				must(t, runContext(c.ID, 0, false))
 			}
 		}},
 		{"decompose-dry-run", func(t *testing.T, b hostileBoard) {

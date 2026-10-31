@@ -19,8 +19,8 @@ below; each one maps to one mtix setting.
   it once (run any trivial query) before `mtix sync init`, or keep it active
   during setup. mtix does not poll the hub on a timer from the CLI, and the daemon
   contacts it only after activity by default (`sync.hub_contact`), so an idle
-  database stays idle unless you set an interval (a listener-based hold,
-  `sync.listen`, is configured but inert until a later release).
+  database stays idle unless you set an interval (a waiting session's
+  listener, `sync.listen`, keeps the hub contacted while it waits; `sync.listen off` stops that).
 - **Tables exposed over an HTTP API.** If your platform can expose tables
   through an HTTP API, keep the mtix tables unexposed. `mtix sync doctor`
   confirms reachability and schema; it does not check exposure, so verify that

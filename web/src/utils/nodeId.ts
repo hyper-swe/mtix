@@ -40,3 +40,23 @@ export function shortId(id: string): string {
 export function isValidPrefix(prefix: string): boolean {
   return PREFIX_RE.test(prefix);
 }
+
+const ROOT_SEG_RE = /^(0|[1-9][0-9]*)$/;
+const CHILD_SEG_RE = /^((0|[1-9][0-9]*)|u[0-9a-f]+)$/;
+
+/**
+ * Validate a full node id before one taken from the URL is selected,
+ * fetched or rendered (MTIX-230). It accepts a strict subset of the Go grammar
+ * (model.ValidateNodeID): PREFIX '-' root ('.' child)*, a numeric root,
+ * and numeric or uid (`u` + lowercase hex) child segments, and in addition
+ * rejects numeric segments with leading zeros and ids over 200 characters.
+ */
+export function isValidNodeId(id: string): boolean {
+  if (typeof id !== "string" || id.length === 0 || id.length > 200) return false;
+  const [head = "", ...children] = id.split(".");
+  const dash = head.lastIndexOf("-");
+  if (dash <= 0) return false;
+  if (!isValidPrefix(head.slice(0, dash))) return false;
+  if (!ROOT_SEG_RE.test(head.slice(dash + 1))) return false;
+  return children.every((seg) => CHILD_SEG_RE.test(seg));
+}

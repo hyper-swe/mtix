@@ -46,7 +46,7 @@ func busyReadCases() []busyReadCase {
 		{"tree", func() error { return runTree("TEST-1", 10) }, true},
 		{"ready", func() error { return runReady("", false) }, true},
 		{"search", func() error { return runSearch([]string{"Reviewed"}, "", "", "", "", "", "", "", 50, "", false) }, true},
-		{"context", func() error { return runContext("TEST-1", 0) }, true},
+		{"context", func() error { return runContext("TEST-1", 0, false) }, true},
 		{"progress", func() error { return runProgress("TEST-1") }, true},
 		{"stats", runStats, false},
 		{"blocked", func() error { return runBlocked("", false) }, false},

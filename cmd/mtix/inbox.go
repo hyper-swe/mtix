@@ -67,7 +67,7 @@ func newInboxCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "",
 		"Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection)")
 	_ = cmd.MarkFlagRequired("agent")
-	cmd.AddCommand(newInboxAckCmd(), newInboxLeaseCmd())
+	cmd.AddCommand(newInboxAckCmd(), newInboxLeaseCmd(), newInboxStatusCmd())
 	return cmd
 }
 
@@ -140,6 +140,7 @@ func runInbox(agent string, wait bool, timeout int, format string) error {
 func waitInbox(ctx context.Context, agent string, timeout time.Duration) ([]sqlite.InboxEvent, error) {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	defer joinListener(agent, os.Stderr)() // MTIX-112.20.4: arm a lease, start the board listener if absent
 	events, err := app.store.InboxWait(ctx, agent, timeout)
 	if errors.Is(err, context.Canceled) && ctx.Err() == context.Canceled {
 		return nil, errInboxWaitInterrupted

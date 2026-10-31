@@ -57,6 +57,7 @@ func registerRootCommands(rootCmd *cobra.Command) {
 		newCreateCmd(),
 		newMicroCmd(),
 		newShowCmd(),
+		newURLCmd(),
 		newListCmd(),
 		newTreeCmd(),
 		newUpdateCmd(),

@@ -75,6 +75,10 @@ func invocationProblem(root *cobra.Command, args []string) string {
 	if i < len(args) && cmd.HasSubCommands() && plainWordRE.MatchString(args[i]) {
 		return "unknown command " + cmd.CommandPath() + " " + args[i]
 	}
+	// cobra adds --help (every command) and --version (a root with a Version)
+	// when it executes; add them here so the tree is read as it runs.
+	cmd.InitDefaultHelpFlag()
+	cmd.InitDefaultVersionFlag()
 	for _, tok := range args[i:] {
 		if !strings.HasPrefix(tok, "--") {
 			continue
@@ -151,4 +155,17 @@ func TestSyncDocs_EveryMtixInvocation_ExistsInThisBuild(t *testing.T) {
 	require.Empty(t, invocationProblems(root, string(skill)), "the mtix-sync skill")
 	scanned += len(mtixInvocations(string(skill)))
 	require.Greater(t, scanned, 40, "the scan reaches the invocations of the new text")
+}
+
+// TestSyncDocsInvocations_CheckerAcceptsTheRootCommandsOwnFlags: flags cobra
+// adds to the root itself, such as --version, are read from the real command
+// tree (the checker initialises them), while a made-up root flag is rejected.
+func TestSyncDocsInvocations_CheckerAcceptsTheRootCommandsOwnFlags(t *testing.T) {
+	root := newRootCmd()
+	require.Empty(t, invocationProblems(root, "Run `mtix --version` on each machine, or `mtix --help`."))
+	require.Len(t, mtixInvocations("`mtix --version`"), 1)
+	problems := invocationProblems(root, "`mtix --nosuchflag`")
+	require.Len(t, problems, 1)
+	require.Contains(t, problems[0], "no flag --nosuchflag")
+	require.NotEmpty(t, invocationProblems(root, "`mtix sync status --version`"), "a subcommand does not inherit the root version flag")
 }

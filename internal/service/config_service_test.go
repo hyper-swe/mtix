@@ -271,7 +271,7 @@ func TestConfig_SessionTimeout_WithCustomValue(t *testing.T) {
 func TestConfig_ValidConfigKeys_ReturnsWorkspaceAndHostKeys(t *testing.T) {
 	keys := service.ValidConfigKeys()
 
-	assert.Len(t, keys, 56, "should return exactly 45 workspace and 11 host-local config keys")
+	assert.Len(t, keys, 57, "should return exactly 45 workspace and 12 host-local config keys (wake.confirm_window, MTIX-112.40.6)")
 
 	// Verify sorted order.
 	for i := 1; i < len(keys); i++ {

@@ -121,7 +121,7 @@ func CORSMiddleware(bind, port string) gin.HandlerFunc {
 			c.Header("Vary", "Origin")
 		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, X-Requested-With, X-Agent-ID, X-Request-ID")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Agent-ID, X-Request-ID")
 		c.Header("Access-Control-Expose-Headers", "X-Request-ID")
 
 		if c.Request.Method == http.MethodOptions {

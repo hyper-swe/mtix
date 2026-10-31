@@ -74,7 +74,7 @@ Call `mcp__mtix__mtix_session_start` with your agent ID and the MTIX project. Th
 Call `mcp__mtix__mtix_ready` to list nodes available for pickup. These are unassigned, unblocked nodes in `open` status.
 
 ### 3. Read Context (MANDATORY)
-Call `mcp__mtix__mtix_context` with the node ID. Read the ENTIRE assembled prompt. This is your briefing — business goal, technical constraints, exact instructions, acceptance criteria, and test specifications.
+Call `mcp__mtix__mtix_context` with the node ID. Read the ENTIRE `assembled_prompt` field (ancestor prompts and unresolved annotations appear there once; the structured `chain` carries id, tier, title, status and description but no prompt, creator or annotations unless you pass `chain: true`). This is your briefing — business goal, technical constraints, exact instructions, acceptance criteria, and test specifications.
 
 ### 4. Claim
 Call `mcp__mtix__mtix_claim` with the node ID and your agent ID. This prevents other agents from picking up the same work.
@@ -133,6 +133,12 @@ Every completed task must have an auditable trail:
 3. Verification evidence (tests passing, acceptance criteria met)
 
 This is not optional — it is the baseline for all MTIX work, aligned with DO-178C, IEC 62304, NASA-STD-8739.8, and MIL-STD-498 standards.
+
+## Sharing a ticket link
+
+To point a person at a ticket, run `mtix url <id>` (for example `mtix url MTIX-12.3`; add `--json` for `{"id", "url"}`). It prints the link that opens that ticket's full detail (prompt, annotations, acceptance) in the web UI, and the link survives reload and back/forward in the browser. It needs a running `mtix serve` for this project: with none running it prints nothing on stdout and exits non-zero naming `mtix serve`, so start the server (or ask the user to) and run it again; an unknown id fails with not found. The command contacts no remote service and never needs a credential. Never put a token in a URL.
+
+Verify: `mtix url <id>` prints one `http://127.0.0.1:<port>/ticket/<id>` line; opening it shows the ticket detail on first load, and `?node=<id>` on any web UI address is rewritten to the same path. Troubleshoot: a non-zero exit naming `mtix serve` means no live serve for this project (a stale lock from a dead process counts as none); an invalid id is rejected before anything is looked up.
 
 ## Watching Task Events
 

@@ -413,7 +413,7 @@ func TestNewRootCmd_LogLevelFlag_DefaultEmpty(t *testing.T) {
 
 // TestExemptCommands_Map_ContainsAllExpected verifies exempt map completeness.
 func TestExemptCommands_Map_ContainsAllExpected(t *testing.T) {
-	expected := []string{"config", "init", "migrate", "docs", "version", "help", "search", "doctor"}
+	expected := []string{"config", "init", "migrate", "docs", "version", "help", "search", "doctor", "url"}
 	for _, name := range expected {
 		assert.True(t, exemptCommands[name], "%s should be in exemptCommands map", name)
 	}
@@ -828,7 +828,7 @@ func TestPrintNodeList_JSONMode_Succeeds(t *testing.T) {
 // TestRunContext_NonExistent_ReturnsError verifies context for missing node.
 func TestRunContext_NonExistent_ReturnsError(t *testing.T) {
 	initTestApp(t)
-	err := runContext("NONEXIST-1", 0)
+	err := runContext("NONEXIST-1", 0, false)
 	assert.Error(t, err)
 }
 

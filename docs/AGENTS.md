@@ -29,6 +29,10 @@ mtix create "Cleanup after the migration" --description "..." --prompt "..." --a
 
 Use `--under <id>` to place the item under related work. Omit it for a new root ticket.
 
+## Sharing a ticket link
+
+To point a person at a ticket, run `mtix url <id>` (for example `mtix url MTIX-12.3`; add `--json` for `{"id", "url"}`). It prints the link that opens that ticket's full detail (prompt, annotations, acceptance) in the web UI, and the link survives reload and back/forward in the browser. It needs a running `mtix serve` for this project: with none running it prints nothing on stdout and exits non-zero naming `mtix serve`, so start the server (or ask the user to) and run it again; an unknown id fails with not found. The command contacts no remote service and never needs a credential. Never put a token in a URL.
+
 ## Overview
 
 This document is the primary operating guide for AI agents working on the **PROJ** project managed by mtix. Safety-critical operating procedures are the baseline standard — not optional, not domain-specific, always enforced.
@@ -152,7 +156,7 @@ Multiple values within one flag combine with OR; multiple flags combine with AND
 **Via MCP:** Call `mtix_briefing` instead of `mtix_list` to get briefing-formatted text directly. Accepts the same filter parameters (`under`, `status`, `type`, `assignee`, `priority`, `fields`, `limit`).
 
 ### 3. Read Context (MANDATORY)
-Call `mtix context <id>` or `mtix_context` — **this step is NON-NEGOTIABLE**. The assembled prompt is your complete briefing. Read it fully before proceeding.
+Call `mtix context <id>` or `mtix_context` — **this step is NON-NEGOTIABLE**. The assembled prompt is your complete briefing. Read it fully before proceeding. In `--json` and MCP output it is the `assembled_prompt` field; the `chain` array omits prompt, creator and annotations (they are in `assembled_prompt`) unless you pass `--chain` / `chain: true`.
 
 ### 4. Claim
 Call `mtix claim <id> --agent <agent_id>` or `mtix_claim`. This prevents other agents from working on the same node.

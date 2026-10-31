@@ -58,6 +58,12 @@ in ISO-8601 UTC. It adds nothing when no wake time is set or the task is
 not deferred, even if a stale `defer_until` remains. `--json` returns the
 stored record unchanged.
 
+## Sharing a ticket link
+
+To point a person at a ticket, run `mtix url <id>` (for example `mtix url MTIX-12.3`; add `--json` for `{"id", "url"}`). It prints the link that opens that ticket's full detail (prompt, annotations, acceptance) in the web UI, and the link survives reload and back/forward in the browser. It needs a running `mtix serve` for this project: with none running it prints nothing on stdout and exits non-zero naming `mtix serve`, so start the server (or ask the user to) and run it again; an unknown id fails with not found. The command contacts no remote service and never needs a credential. Never put a token in a URL.
+
+Verify: `mtix url <id>` prints one `http://127.0.0.1:<port>/ticket/<id>` line; opening it shows the ticket detail on first load, and `?node=<id>` on any web UI address is rewritten to the same path. Troubleshoot: a non-zero exit naming `mtix serve` means no live serve for this project (a stale lock from a dead process counts as none); an invalid id is rejected before anything is looked up.
+
 ## Watching Task Events
 
 WebSocket subscriptions at `/ws/events` match `under` to the named node and its

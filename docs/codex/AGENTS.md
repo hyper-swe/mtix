@@ -72,6 +72,10 @@ mtix create "Subtask title" --under PROJ-1 \
 mtix export  # Export task state to .mtix/tasks.json
 ```
 
+## Sharing a ticket link
+
+To point a person at a ticket, run `mtix url <id>` (for example `mtix url MTIX-12.3`; add `--json` for `{"id", "url"}`). It prints the link that opens that ticket's full detail (prompt, annotations, acceptance) in the web UI, and the link survives reload and back/forward in the browser. It needs a running `mtix serve` for this project: with none running it prints nothing on stdout and exits non-zero naming `mtix serve`, so start the server (or ask the user to) and run it again; an unknown id fails with not found. The command contacts no remote service and never needs a credential. Never put a token in a URL.
+
 ## Rules
 
 1. **Always read the context chain** before starting work (`mtix context <id>`)

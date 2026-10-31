@@ -69,6 +69,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `unclaim <id>` — Release a node assignment
 - `undelete <id>` — Restore a soft-deleted node
 - `update <id>` — Update a node's fields
+- `url <id>` — Print the web UI link for a ticket (needs a running mtix serve)
 - `verify [id]` — Verify content hash integrity
 ---
 
@@ -458,6 +459,7 @@ Show assembled context chain for a node
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--chain` |  | With --json, add prompt, creator and annotations to each structured chain entry (default: they appear once, in assembled_prompt) | false |
 | `--max-tokens` |  | Maximum token budget for assembled prompt (0 = unlimited) | 0 |
 ---
 
@@ -2799,6 +2801,26 @@ Update a node's fields
 | `--prompt` |  | New prompt |  |
 | `--title` |  | New title |  |
 | `--type` |  | New work classification (bug, feature, task, chore, refactor, test, doc); empty clears, omission preserves; list --type filters hierarchy |  |
+---
+
+## url
+
+**Usage:** `url <id>`
+
+Print the web UI link for a ticket (needs a running mtix serve)
+
+Print the web UI link for a ticket.
+
+The link opens the ticket's full detail (prompt, annotations, acceptance) in
+the running web UI. It needs a running 'mtix serve' for this project; with no
+serve running the command prints nothing on stdout and exits non-zero.
+
+The id must be a display id such as MTIX-12.3. An unknown id fails with not
+found. With --json the output is {"id": ..., "url": ...}.
+
+The link always uses the loopback address 127.0.0.1 and the serve's port. A serve
+bound to another address with --insecure-bind is not reachable at that link:
+replace the host by hand.
 ---
 
 ## verify

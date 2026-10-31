@@ -377,7 +377,7 @@ func TestRunContext_NoCtxSvc_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runContext("PROJ-1", 0)
+	err := runContext("PROJ-1", 0, false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }

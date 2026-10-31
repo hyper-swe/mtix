@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **`context --json` and MCP `mtix_context` send the ancestor chain once (MTIX-225).** Behaviour change: the default JSON payload keeps each ancestor's prompt and unresolved annotations only in `assembled_prompt`; the structured `chain` entries still carry `id`, `depth`, `tier`, `title`, `status` and `description`, but the `prompt`, `creator` and `annotations` fields are no longer present by default. The field names are unchanged, `siblings`, `blocking_deps` and `assembled_prompt` are as before, and the plain-text `mtix context` output is unchanged. Opt in to the full structured chain with `mtix context <id> --json --chain` or the MCP argument `chain: true`. The duplicated prompt text is what goes: about 3,750 tokens per call on a deep chain (ESTIMATED from the MTIX-224 measurement).
 - Collision resolution errors identify whether local renumbering or recording completion on the hub failed, while preserving the retry command (MTIX-107.46.2).
 - `mtix doctor` reports oversized daemon capture logs with read-only text/JSON diagnostics and manual retention remedies; daemon guidance documents native macOS rotation and Linux journal limits (MTIX-228).
 

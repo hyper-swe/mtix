@@ -176,12 +176,30 @@ func TestToolQuery_ProgressChildren_ReturnExactFields(t *testing.T) {
 	require.Zero(t, got.Children[0].Progress)
 }
 
-func TestToolQuery_Context_ReturnsAncestorAndTargetFields(t *testing.T) {
+func TestToolQuery_Context_DefaultChainIsSlimAndPromptsInAssembled(t *testing.T) {
 	env := newBehaviorTools(t)
 	root := behaviorNode(t, env, "Context root", "")
 	child := behaviorNode(t, env, "Context target", root.ID)
 	var got service.ContextResponse
 	require.NoError(t, json.Unmarshal([]byte(behaviorCall(t, env.reg, "mtix_context", fmt.Sprintf(`{"id":%q}`, child.ID))), &got))
+	require.Len(t, got.Chain, 2)
+	for i, n := range []*model.Node{root, child} {
+		require.Equal(t, n.ID, got.Chain[i].ID)
+		require.Equal(t, n.Title, got.Chain[i].Title)
+		require.Equal(t, n.Status, got.Chain[i].Status)
+		require.Empty(t, got.Chain[i].Prompt, "MTIX-225: prompt lives in assembled_prompt only")
+		require.Equal(t, n.Description, got.Chain[i].Description, "description is not in assembled_prompt, so slim keeps it")
+	}
+	require.Contains(t, got.AssembledPrompt, root.Prompt)
+	require.Contains(t, got.AssembledPrompt, child.Prompt)
+}
+
+func TestToolQuery_Context_ChainTrue_ReturnsAncestorAndTargetFields(t *testing.T) {
+	env := newBehaviorTools(t)
+	root := behaviorNode(t, env, "Context root", "")
+	child := behaviorNode(t, env, "Context target", root.ID)
+	var got service.ContextResponse
+	require.NoError(t, json.Unmarshal([]byte(behaviorCall(t, env.reg, "mtix_context", fmt.Sprintf(`{"id":%q,"chain":true}`, child.ID))), &got))
 	require.Len(t, got.Chain, 2)
 	for i, n := range []*model.Node{root, child} {
 		require.Equal(t, n.ID, got.Chain[i].ID)

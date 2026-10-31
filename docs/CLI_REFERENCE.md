@@ -33,6 +33,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `defer <id>` — Defer a node until a specified time
 - `delete <id>` — Soft-delete a node
 - `dep` — Manage node dependencies
+- `dispatcher` — Experimental per-user host dispatcher
 - `docs` — Manage agent-facing documentation
 - `doctor` — Run registered checkout and host health checks
 - `done <id>` — Mark a node as done
@@ -698,6 +699,105 @@ Remove a dependency between two nodes
 **Usage:** `show <id>`
 
 Show blockers for a node
+---
+
+## dispatcher
+
+**Usage:** `dispatcher`
+
+Experimental per-user host dispatcher
+
+Experimental host dispatcher, disabled by default until setup integration ships.
+
+One process per OS user scans locally listed checkout stores. Registration lists
+a checkout without granting hub contact or user-hook execution. Only explicitly
+enrolled checkouts may contact their own hub under sync.hub_contact or dispatch
+user hooks. There is no public enrollment command in this build. Existing
+per-project daemons and listeners keep their current behavior.
+
+run and install require --experimental. All process-wide MTIX_SYNC_* overrides
+are removed before opening state and from each checkout pull child. Live harness adapters ship with
+their integrations; absent a route, messages remain available through mtix inbox.
+Task Scheduler and foreground runs do not exit to self-restart after upgrades.
+
+### Subcommands
+
+- `install` — install the per-user experimental dispatcher service
+- `run` — Run the experimental host dispatcher in the foreground
+- `start` — start the per-user experimental dispatcher service
+- `status` — status the per-user experimental dispatcher service
+- `stop` — stop the per-user experimental dispatcher service
+- `uninstall` — uninstall the per-user experimental dispatcher service
+---
+
+## install
+
+**Usage:** `install`
+
+install the per-user experimental dispatcher service
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--experimental` |  | Explicitly opt in to experimental host service installation | false |
+| `--interval` |  | Local scanner interval in seconds | 5 |
+---
+
+## run
+
+**Usage:** `run`
+
+Run the experimental host dispatcher in the foreground
+
+Experimental host dispatcher, disabled by default until setup integration ships.
+
+One process per OS user scans locally listed checkout stores. Registration lists
+a checkout without granting hub contact or user-hook execution. Only explicitly
+enrolled checkouts may contact their own hub under sync.hub_contact or dispatch
+user hooks. There is no public enrollment command in this build. Existing
+per-project daemons and listeners keep their current behavior.
+
+run and install require --experimental. All process-wide MTIX_SYNC_* overrides
+are removed before opening state and from each checkout pull child. Live harness adapters ship with
+their integrations; absent a route, messages remain available through mtix inbox.
+Task Scheduler and foreground runs do not exit to self-restart after upgrades.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--experimental` |  | Explicitly opt in to the unfinished host dispatcher integration | false |
+| `--interval` |  | Local scanner interval in seconds; hub contact follows sync.hub_contact | 5 |
+| `--supervisor` |  | Process supervision: foreground, launchd, systemd or task-scheduler | foreground |
+---
+
+## start
+
+**Usage:** `start`
+
+start the per-user experimental dispatcher service
+---
+
+## status
+
+**Usage:** `status`
+
+status the per-user experimental dispatcher service
+---
+
+## stop
+
+**Usage:** `stop`
+
+stop the per-user experimental dispatcher service
+---
+
+## uninstall
+
+**Usage:** `uninstall`
+
+uninstall the per-user experimental dispatcher service
 ---
 
 ## docs

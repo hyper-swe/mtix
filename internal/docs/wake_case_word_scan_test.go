@@ -30,7 +30,7 @@ func (scan *wakeCaseScan) caseWord(word string) bool {
 	case 'P':
 		if word == "esac" {
 			scan.phases = scan.phases[:len(scan.phases)-1]
-			scan.command = false
+			scan.command = true
 		} else {
 			scan.phases[len(scan.phases)-1] = 'p'
 		}
@@ -50,10 +50,11 @@ func (scan *wakeCaseScan) word(word string) {
 	case "case":
 		scan.phases = append(scan.phases, 's')
 	case "esac":
+		scan.command = true
 		if len(scan.phases) > 0 {
 			scan.phases = scan.phases[:len(scan.phases)-1]
 		}
-	case "if", "then", "elif", "else", "do", "while", "until", "!", "time":
+	case "if", "then", "elif", "else", "fi", "do", "done", "while", "until", "for", "select", "time", "function", "!":
 		scan.command = true
 	}
 }

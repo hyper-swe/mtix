@@ -435,7 +435,9 @@ variables do not need exact-line exemptions.
 A logical executable line with an inbox token after another token is
 conservatively treated as a reader source, regardless of groups, wrappers,
 reserved words or operators. Word runs use ASCII letters, digits and underscores;
-dollar and star markers also retain command position. In executable contexts,
+dollar and star markers also retain command position. A word with no ordinary
+word run retains an unknown position, including punctuation and non-ASCII heads.
+In executable contexts,
 words containing shell-special characters are additionally checked after literal
 escape decoding: the letters i, n, b, o, x appearing in order classify the line
 as a reader, even with other letters between them. Unquoted whitespace and

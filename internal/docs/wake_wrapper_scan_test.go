@@ -9,7 +9,7 @@ import (
 )
 
 // Word runs are ordinary tokens, without interpretation. Dollar and glob markers
-// retain a preceding command position even when no literal word names it.
+// retain command position; words without a word run receive an unknown marker.
 var wakeLogicalTokenRE = regexp.MustCompile(`\$|[A-Za-z0-9_]+|\*`)
 var wakeKnownReaderHeadRE = regexp.MustCompile(`^(?:(?:[A-Za-z_0-9./-]*/)?mtix|\$\{?MTIX_BIN\}?)$`)
 var wakeMetadataRedirectRE = regexp.MustCompile(`(?:[ \t]+[012]?>{1,2}(?:/dev/null|"\$WAKE_AGENT_LOG"))+$`)
@@ -22,8 +22,16 @@ var wakeLeaseOccurrenceRE = regexp.MustCompile(`(?:^|[^$A-Za-z_0-9./-])(?:mtix|"
 var wakeStatusFormRE = regexp.MustCompile(`^(?:[A-Za-z_0-9./-]*/)?mtix inbox status --agent (?:<agent>|[A-Za-z_0-9.-]+)(?: (?:--json|\[--json\]))?(?: (?:--limit [0-9]+|\[--limit N\]))?$`)
 
 func wakeLogicalTokens(text string) []string {
-	plain := strings.NewReplacer("\\", "", "\"", "", "'", "", "`", "$").Replace(text)
-	tokens := wakeLogicalTokenRE.FindAllString(plain, -1)
+	var tokens []string
+	unquote := strings.NewReplacer("\\", "", "\"", "", "'", "", "`", "$")
+	for _, word := range wakeSpecialWords(text) {
+		wordTokens := wakeLogicalTokenRE.FindAllString(unquote.Replace(word), -1)
+		if len(wordTokens) == 0 {
+			// An unclassified word still occupies a position before the reader.
+			wordTokens = []string{"$"}
+		}
+		tokens = append(tokens, wordTokens...)
+	}
 	if wakeSpecialReaderWord(text) {
 		// Retain a command position for special words, including command heads.
 		tokens = append(tokens, "$", "inbox")

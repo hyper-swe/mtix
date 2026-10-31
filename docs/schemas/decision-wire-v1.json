@@ -1,0 +1,602 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "decision-wire-v1.json",
+  "title": "mtix decision wire object, version 1",
+  "description": "The decision object that rides in an ordinary comment payload. Unknown fields are ignored and still count in payload_sha256. Hashing, duplicate member names, cross-field rules (an answer against its request, the ticket shape lengths) and byte-versus-character limits are checked by the Go validators; this schema describes the shape. An unknown authority enum value or a version above 1 does not reject the comment; readers classify the object as unsupported.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/request"
+    },
+    {
+      "$ref": "#/$defs/answer"
+    },
+    {
+      "$ref": "#/$defs/outcome"
+    },
+    {
+      "$ref": "#/$defs/withdraw"
+    }
+  ],
+  "$defs": {
+    "eventId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+    "requestKey": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[A-Za-z0-9_-]+$",
+      "description": "Unique per author."
+    },
+    "actor": {
+      "type": "object",
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "human",
+            "agent"
+          ],
+          "description": "Authority enum: an unknown value makes a request unsupported and excludes an answer, outcome or withdraw from state."
+        },
+        "model": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Declared, not verified. Counted in characters."
+        }
+      }
+    },
+    "receipt": {
+      "type": "object",
+      "properties": {
+        "ledger": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "run": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "hash": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[0-9a-fA-F]+$"
+        },
+        "kind": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "at": {
+          "type": "string",
+          "maxLength": 40,
+          "format": "date-time",
+          "description": "RFC 3339 time."
+        }
+      }
+    },
+    "option": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 32,
+          "pattern": "^[a-z0-9_-]+$"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "consequence": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "One line."
+        },
+        "note_required": {
+          "type": "boolean",
+          "default": false
+        },
+        "input": {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "text",
+                "finding_id",
+                "story_ref",
+                "url"
+              ]
+            },
+            "required": {
+              "type": "boolean",
+              "default": false
+            }
+          }
+        }
+      }
+    },
+    "link": {
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[a-z0-9_-]+$",
+          "description": "Display value: review, pr, ci, doc, ticket or other. Unknown values are kept."
+        },
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "pattern": "^(?i:https://|http://(127\\.0\\.0\\.1|\\[::1\\]|localhost)([:/?#]|$))",
+          "description": "https, or http to a loopback host only. No user info."
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "required": {
+          "type": "boolean",
+          "default": false
+        },
+        "open_before_answer": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "ticket": {
+      "type": "object",
+      "required": [
+        "uid",
+        "paths",
+        "path_match"
+      ],
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "ancestors": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "default": []
+        },
+        "paths": {
+          "type": "array",
+          "maxItems": 65,
+          "items": {
+            "type": "string",
+            "maxLength": 256
+          },
+          "description": "Parallel to [uid] + ancestors."
+        },
+        "path_match": {
+          "type": "array",
+          "maxItems": 65,
+          "items": {
+            "type": "boolean"
+          },
+          "description": "Parallel to paths."
+        },
+        "truncated": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "request_key",
+        "question",
+        "ticket"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "request"
+        },
+        "request_key": {
+          "$ref": "#/$defs/requestKey"
+        },
+        "question": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300,
+          "description": "One line, plain text."
+        },
+        "context": {
+          "type": "string",
+          "description": "Markdown, at most 32 KiB (bytes).",
+          "default": ""
+        },
+        "options": {
+          "type": "array",
+          "maxItems": 9,
+          "items": {
+            "$ref": "#/$defs/option"
+          },
+          "default": []
+        },
+        "recommend": {
+          "type": "object",
+          "required": [
+            "option"
+          ],
+          "properties": {
+            "option": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 32,
+              "pattern": "^[a-z0-9_-]+$",
+              "description": "An id from options."
+            },
+            "reason": {
+              "type": "string",
+              "maxLength": 300
+            }
+          }
+        },
+        "links": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "$ref": "#/$defs/link"
+          },
+          "default": []
+        },
+        "deadline": {
+          "type": "string",
+          "maxLength": 40,
+          "format": "date-time",
+          "pattern": "Z$",
+          "description": "RFC 3339 UTC time."
+        },
+        "answerable_by": {
+          "enum": [
+            "human",
+            "any"
+          ],
+          "default": "human"
+        },
+        "answerers": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "pattern": "^[a-z0-9_-]+$"
+          },
+          "default": []
+        },
+        "requires_outcome": {
+          "type": "boolean",
+          "default": true
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9:._/-]+$"
+        },
+        "supersedes": {
+          "type": "array",
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/eventId"
+          },
+          "default": []
+        },
+        "category": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[a-z0-9-]+$"
+        },
+        "source": {
+          "type": "object",
+          "maxProperties": 8,
+          "propertyNames": {
+            "pattern": "^[a-z_]{1,24}$"
+          },
+          "additionalProperties": {
+            "type": "string",
+            "maxLength": 120
+          },
+          "default": {}
+        },
+        "asker": {
+          "$ref": "#/$defs/actor"
+        },
+        "ticket": {
+          "$ref": "#/$defs/ticket"
+        }
+      }
+    },
+    "answer": {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "request_key",
+        "target",
+        "decider",
+        "channel"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "answer"
+        },
+        "request_key": {
+          "$ref": "#/$defs/requestKey"
+        },
+        "target": {
+          "$ref": "#/$defs/eventId"
+        },
+        "option": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[a-z0-9_-]+$"
+        },
+        "input_value": {
+          "type": "string",
+          "description": "At most 16 KiB (bytes)."
+        },
+        "note": {
+          "type": "string",
+          "description": "Markdown, at most 16 KiB (bytes).",
+          "default": ""
+        },
+        "decider": {
+          "$ref": "#/$defs/actor"
+        },
+        "channel": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^[a-z0-9][a-z0-9:_.-]*$",
+          "description": "cli-tty, web, frontend:<name>, mcp, api or cli. Unknown values are kept."
+        },
+        "evidence": {
+          "type": "object",
+          "properties": {
+            "ancestors": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            },
+            "tty_session": {
+              "type": "string",
+              "maxLength": 128
+            },
+            "markers_unset": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64
+              }
+            }
+          }
+        },
+        "attestation": {
+          "type": "object",
+          "required": [
+            "frontend",
+            "user",
+            "clicked_at"
+          ],
+          "properties": {
+            "frontend": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "user": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "clicked_at": {
+              "type": "string",
+              "maxLength": 40,
+              "format": "date-time",
+              "description": "RFC 3339 time."
+            }
+          }
+        },
+        "opened_links": {
+          "type": "array",
+          "maxItems": 10,
+          "uniqueItems": true,
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9
+          },
+          "default": []
+        }
+      },
+      "if": {
+        "properties": {
+          "channel": {
+            "pattern": "^frontend:."
+          }
+        },
+        "required": [
+          "channel"
+        ]
+      },
+      "then": {
+        "required": [
+          "attestation"
+        ]
+      }
+    },
+    "outcome": {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "request_key",
+        "target",
+        "answer",
+        "result"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "outcome"
+        },
+        "request_key": {
+          "$ref": "#/$defs/requestKey"
+        },
+        "target": {
+          "$ref": "#/$defs/eventId"
+        },
+        "answer": {
+          "$ref": "#/$defs/eventId"
+        },
+        "seen_answers": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/eventId"
+          },
+          "description": "Defaults to [answer]."
+        },
+        "result": {
+          "enum": [
+            "applied",
+            "refused"
+          ]
+        },
+        "receipt": {
+          "$ref": "#/$defs/receipt"
+        },
+        "refusal": {
+          "type": "object",
+          "required": [
+            "text"
+          ],
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Verbatim, at most 16 KiB (bytes)."
+            },
+            "code": {
+              "type": "string",
+              "maxLength": 64
+            }
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "result": {
+            "const": "refused"
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "then": {
+        "required": [
+          "refusal"
+        ]
+      }
+    },
+    "withdraw": {
+      "type": "object",
+      "required": [
+        "v",
+        "kind",
+        "request_key",
+        "target"
+      ],
+      "properties": {
+        "v": {
+          "const": 1
+        },
+        "kind": {
+          "const": "withdraw"
+        },
+        "request_key": {
+          "$ref": "#/$defs/requestKey"
+        },
+        "target": {
+          "$ref": "#/$defs/eventId"
+        },
+        "reason_code": {
+          "type": "string",
+          "maxLength": 32,
+          "pattern": "^[a-z0-9_-]+$",
+          "default": "other",
+          "description": "answered_elsewhere, moot, replaced or other. Unknown values are kept."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Plain text, at most 2 KiB (bytes).",
+          "default": ""
+        },
+        "elsewhere": {
+          "type": "object",
+          "properties": {
+            "channel": {
+              "type": "string",
+              "maxLength": 64
+            },
+            "decider": {
+              "$ref": "#/$defs/actor"
+            },
+            "receipt": {
+              "$ref": "#/$defs/receipt"
+            }
+          }
+        }
+      }
+    }
+  }
+}

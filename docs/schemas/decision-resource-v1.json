@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "decision-resource-v1.json",
+  "title": "mtix decision resource, version 1",
+  "description": "The read resource of one decision, folded from its request, answer, outcome and withdraw events.",
+  "type": "object",
+  "required": [
+    "schema",
+    "id",
+    "short_id",
+    "state",
+    "flags",
+    "timeline"
+  ],
+  "properties": {
+    "schema": {
+      "const": "mtix.decision/1"
+    },
+    "id": {
+      "$ref": "#/$defs/eid"
+    },
+    "short_id": {
+      "type": "string",
+      "pattern": "^d-[0-9a-f]{8}$"
+    },
+    "state": {
+      "enum": [
+        "open",
+        "conflicted",
+        "answered",
+        "applied",
+        "withdrawn",
+        "superseded",
+        "invalid"
+      ]
+    },
+    "flags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "reopened_after_refusal",
+          "ticket_deleted",
+          "ticket_matched_by_path",
+          "key_conflict",
+          "duplicate_key_conflict",
+          "outcome_conflict",
+          "redacted",
+          "unsupported_events"
+        ]
+      }
+    },
+    "view_flags": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Per-viewer presentation flags, computed outside the fold."
+    },
+    "node_id": {
+      "type": "string"
+    },
+    "asker": {
+      "type": "object",
+      "required": [
+        "id",
+        "kind"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        }
+      }
+    },
+    "to": {
+      "type": "string"
+    },
+    "answerers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "answerable_by": {
+      "enum": [
+        "human",
+        "any"
+      ]
+    },
+    "question": {
+      "type": "string"
+    },
+    "context": {
+      "type": "string"
+    },
+    "options": {
+      "type": "array",
+      "items": {
+        "$ref": "decision-wire-v1.json#/$defs/option"
+      }
+    },
+    "recommend": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "links": {
+      "type": "array",
+      "items": {
+        "$ref": "decision-wire-v1.json#/$defs/link"
+      }
+    },
+    "missing_required_links": {
+      "type": "array",
+      "items": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "deadline": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "key": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "category": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "requires_outcome": {
+      "type": "boolean"
+    },
+    "raised_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "effective_answer": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/eid"
+        },
+        "option": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "input_value": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "note": {
+          "type": "string"
+        },
+        "decider": {
+          "type": "object",
+          "required": [
+            "id",
+            "kind"
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "kind": {
+              "type": "string"
+            },
+            "model": {
+              "type": "string"
+            }
+          }
+        },
+        "channel": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "agreeing_answers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/eid"
+      }
+    },
+    "conflicting_answers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/eid"
+      }
+    },
+    "refused_answers": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/eid"
+      }
+    },
+    "outcome": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "withdrawn": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "superseded_by": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/eid"
+      }
+    },
+    "invalid_reason": {
+      "enum": [
+        "malformed",
+        "unsupported",
+        "redacted",
+        "ticket_deleted",
+        null
+      ]
+    },
+    "now": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "event_id",
+          "kind",
+          "author",
+          "at"
+        ],
+        "properties": {
+          "event_id": {
+            "$ref": "#/$defs/eid"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "eid": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

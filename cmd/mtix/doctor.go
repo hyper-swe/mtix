@@ -161,6 +161,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	if err := registerWakeDoctorChecks(svc); err != nil {
 		return nil, fmt.Errorf("register wake doctor checks: %w", err)
 	}
+	if err := registerHostDispatcherDoctor(svc); err != nil {
+		return nil, fmt.Errorf("register host dispatcher checks: %w", err)
+	}
 	return svc, nil
 }
 

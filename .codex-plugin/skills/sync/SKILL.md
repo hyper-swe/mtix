@@ -98,6 +98,47 @@ evidence and sets the mark. `mtix sync doctor` shows it as `board.hub-mark` with
 its source in text and `--json`. A command to clear it, at an interactive
 terminal only, is planned and does not exist in this release.
 
+### Experimental host dispatcher
+
+The host dispatcher is experimental and disabled by default. An operator can
+opt in with `mtix dispatcher run --experimental`, or explicitly install its
+per-user service with `mtix dispatcher install --experimental`. Use
+`mtix dispatcher status`, `mtix dispatcher stop`, `mtix dispatcher start` and
+`mtix dispatcher uninstall` to inspect and manage that service. These commands
+work outside a project. Agents should retain their normal inbox routine and
+must not install or migrate services on their own.
+
+Registration automatically records a checkout as listed-only routing, bound to
+its local store instance. A listed-only board receives the local wake scanner;
+it makes no hub connection and runs no user-hook pass. Enrollment is an
+explicit, checkout-scoped service API for later setup integration: there is
+no public enrollment command in this build. Listing, a board identity copied
+into a worktree, an agent confirmation and a manual pull never enroll a
+checkout. Existing per-project daemons and listeners retain their duty until
+explicit migration; do not remove them as part of trying the experiment.
+
+Only enrolled checkouts contact the hub under `sync.hub_contact`: activity,
+interval or manual. The scanner itself adds no hub contact. Each enrolled
+checkout uses that checkout's own real 0600 `.mtix/secrets` file; inherited
+`MTIX_SYNC_DSN` is removed at host startup and is never a credential source.
+Never print, copy between checkouts, or commit that file. An unenrolled hub
+worktree is not pulled, and a manual pull into it does not enable a live wake.
+Without an installed harness route, events remain in the durable inbox.
+
+Each pass revalidates store identity and worktree metadata. Pull and user hooks
+share `dispatch.lock`; contention leaves them for the next pass while local
+scanning continues. Keep the lock files intact. One protected operator-local
+lock keeps a single host process per OS user. Enrollment changes retain source
+and time operator-locally and publish only a neutral board activity line.
+
+`mtix doctor --json` exposes `dispatcher.host`, `board.enrolled` and, for a hub
+worktree, `board.worktree-unenrolled`, including enrollment history. These checks
+never enroll a checkout, including with `--fix`; setup remedies await setup
+integration. `skew.dispatchers` reports incompatible dispatcher heartbeats.
+launchd KeepAlive and systemd Restart=always can restart an idle dispatcher
+after a validated executable change. Foreground and Task Scheduler runs keep
+running and record a skew alert; stop and start the service explicitly.
+
 ## Daemon ownership
 
 `mtix daemon` and `mtix sync daemon` share a lifetime OS lock at `.mtix/data/sync.daemon.lock` (flock on Unix, LockFileEx on Windows). A concurrent start exits cleanly while the owner keeps running. `.mtix/sync.daemon.pid` is diagnostic: stale or missing PID content cannot grant ownership. The PID is published only after acquiring the lock and removed only by its matching owner while the lock is held. Normal exit and process crash release the OS lock; the lock file stays in place so existing descriptors keep using the same inode. Other filesystem or OS errors are reported. Do not delete daemon lock files to force a second instance.

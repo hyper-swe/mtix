@@ -189,7 +189,7 @@ func skipsStoreInit(cmd *cobra.Command) bool {
 	case "version", "help", "recover":
 		return true
 	}
-	return isAttachCommand(cmd)
+	return isAttachCommand(cmd) || isDispatcherCommand(cmd)
 }
 
 // initApp initializes the application context: logger, store, services.

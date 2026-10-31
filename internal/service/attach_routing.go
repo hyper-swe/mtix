@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -24,9 +25,10 @@ type AttachBoard struct{ Key, Path string }
 // can invoke the drain explicitly; command, glue and dispatcher wiring is
 // deferred. These APIs never create a grant.
 type AttachRouting struct {
-	State    *oplocal.State
-	Board    AttachBoard
-	LanePath string
+	State           *oplocal.State
+	Board           AttachBoard
+	LanePath        string
+	StoreInstanceID string
 }
 
 // AttachPendingStore is the service's narrow persistence contract.
@@ -90,6 +92,9 @@ func (s *RegistrationService) recordAttach(ctx context.Context, req RegisterSess
 
 func (s *RegistrationService) applyAttach(ctx context.Context, kind string, payload pendingLane) error {
 	if kind == "list" {
+		if s.Routing.StoreInstanceID != "" {
+			return s.Routing.State.ListBoardInstance(ctx, oplocal.ListedBoard{Key: s.Routing.Board.Key, Path: s.Routing.Board.Path, StoreInstanceID: s.Routing.StoreInstanceID})
+		}
 		return s.Routing.State.ListBoard(ctx, s.Routing.Board.Key, s.Routing.Board.Path)
 	}
 	loc := oplocal.LaneLocation{Harness: payload.Harness, BoardKey: s.Routing.Board.Key, Root: s.Routing.Board.Path, Path: payload.LanePath}

@@ -189,6 +189,15 @@ review of that hook; other hook approvals remain independent.
 ## Health diagnostics
 
 <!-- AUTO-GENERATED: HEALTH_DIAGNOSTICS -->
+The experimental host dispatcher is disabled by default. Registration lists
+this checkout for local scanning only; hub contact and user hooks require
+explicit checkout enrollment. No public enrollment command ships yet. Keep
+existing project daemons and the normal inbox routine; do not install or migrate
+services yourself. The sync skill documents the operator-only experiment,
+checkout secrets, worktree isolation and `sync.hub_contact` costs. Inspect
+`dispatcher.host`, `board.enrolled` and `board.worktree-unenrolled` in the
+JSON health report described below; doctor never grants enrollment.
+
 
 This build stores and reports `wake.live` and `wake.max_hop_depth`.
 Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect

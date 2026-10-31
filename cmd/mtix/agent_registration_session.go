@@ -129,6 +129,11 @@ func registrationHostIdentity() (host, uid string, err error) {
 // register at this binary's attach protocol, the version a newer CLI compares
 // dispatcher heartbeats against (ADR-007 §6.4).
 func newRegistrationService() (*service.RegistrationService, error) {
+	return newRegistrationServiceWithRouting(true)
+}
+
+// Registration diagnostics do not need attach routing or its store identity lookup.
+func newRegistrationServiceWithRouting(includeRouting bool) (*service.RegistrationService, error) {
 	host, uid, err := registrationHostIdentity()
 	if err != nil {
 		return nil, err
@@ -137,8 +142,16 @@ func newRegistrationService() (*service.RegistrationService, error) {
 	if err != nil {
 		return nil, err
 	}
+	var routing *service.AttachRouting
+	if includeRouting {
+		routing, err = currentRegistrationRouting()
+		if err != nil {
+			return nil, err
+		}
+	}
 	return service.NewRegistrationService(service.RegistrationDeps{
-		Store: app.store, Liveness: service.NewProcessLiveness(procinfo.StartTime), TakeOvers: takeOvers,
+		Routing: routing,
+		Store:   app.store, Liveness: service.NewProcessLiveness(procinfo.StartTime), TakeOvers: takeOvers,
 		Notices: inboxNoticeSender{}, Logger: app.logger, Clock: func() time.Time { return time.Now().UTC() },
 		Host: service.RegistrationHost{HostID: host, UID: uid, Version: version, Protocol: attach.Protocol},
 	}), nil

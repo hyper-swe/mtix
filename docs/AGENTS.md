@@ -152,7 +152,7 @@ Multiple values within one flag combine with OR; multiple flags combine with AND
 **Via MCP:** Call `mtix_briefing` instead of `mtix_list` to get briefing-formatted text directly. Accepts the same filter parameters (`under`, `status`, `type`, `assignee`, `priority`, `fields`, `limit`).
 
 ### 3. Read Context (MANDATORY)
-Call `mtix context <id>` or `mtix_context` — **this step is NON-NEGOTIABLE**. The assembled prompt is your complete briefing. Read it fully before proceeding.
+Call `mtix context <id>` or `mtix_context` — **this step is NON-NEGOTIABLE**. The assembled prompt is your complete briefing. Read it fully before proceeding. In `--json` and MCP output it is the `assembled_prompt` field; the `chain` array omits prompt, creator and annotations (they are in `assembled_prompt`) unless you pass `--chain` / `chain: true`.
 
 ### 4. Claim
 Call `mtix claim <id> --agent <agent_id>` or `mtix_claim`. This prevents other agents from working on the same node.

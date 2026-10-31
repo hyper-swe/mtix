@@ -23,12 +23,13 @@ func RegisterContextTools(reg *ToolRegistry, ctxSvc *service.ContextService, pro
 func registerContextTool(reg *ToolRegistry, svc *service.ContextService) {
 	reg.Register(ToolDef{
 		Name:        "mtix_context",
-		Description: "Assemble context chain for a node (ancestors, siblings, blocking deps, prompt)",
+		Description: "Assemble context chain for a node (ancestors, siblings, blocking deps, prompt). Ancestor prompts and unresolved annotations appear once, in assembled_prompt; the structured chain lists id, depth, tier, title, status and description (no prompt, creator or annotations). Set chain:true to also get each ancestor's prompt, creator and annotations in the structured chain (the prompts then appear twice).",
 		InputSchema: SchemaObj{
 			Type: "object",
 			Properties: map[string]SchemaProp{
 				"id":         {Type: "string", Description: "Node ID"},
 				"max_tokens": {Type: "number", Description: "Maximum token budget for assembled prompt (0=unlimited)"},
+				"chain":      {Type: "boolean", Description: "Include the full structured ancestor chain (adds prompt, creator and annotations per entry). Default false: those appear once in assembled_prompt"},
 			},
 			Required: []string{"id"},
 		},
@@ -36,6 +37,7 @@ func registerContextTool(reg *ToolRegistry, svc *service.ContextService) {
 		var p struct {
 			ID        string `json:"id"`
 			MaxTokens int    `json:"max_tokens"`
+			Chain     bool   `json:"chain"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse context args: %w", err)
@@ -47,6 +49,11 @@ func registerContextTool(reg *ToolRegistry, svc *service.ContextService) {
 			return nil, err
 		}
 
+		// MTIX-225: ancestor content appears once (assembled_prompt); the full
+		// structured chain is opt-in via chain:true.
+		if !p.Chain {
+			resp = resp.Slim()
+		}
 		data, _ := json.MarshalIndent(resp, "", "  ")
 		return SuccessResult(string(data)), nil
 	})

@@ -39,6 +39,8 @@ type serveRequest struct {
 	AddrChanged  bool
 	Port         int
 	InsecureBind bool
+	// AllowedOrigins are extra browser origins from --allow-origin.
+	AllowedOrigins []string
 }
 
 // effectiveServeBind returns the address serve binds and doctor reports
@@ -144,6 +146,10 @@ func runServeCommand(req serveRequest) error {
 func prepareServe(req serveRequest) (mtixhttp.ServerConfig, error) {
 	bind := effectiveServeBind(req.Addr, req.AddrChanged, configuredServeBind())
 	cfg := serveConfig(bind, req.Port)
+	if err := mtixhttp.ValidateAllowedOrigins(req.AllowedOrigins); err != nil {
+		return cfg, fmt.Errorf("--allow-origin: %w", err)
+	}
+	cfg.AllowedOrigins = req.AllowedOrigins
 	if mtixhttp.IsLoopbackHost(bind) {
 		return cfg, nil
 	}

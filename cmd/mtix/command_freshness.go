@@ -71,7 +71,7 @@ func fixedCommandFreshness(path string) freshnessScope {
 		"hooks status", "inbox", "inbox status", "list", "orphans", "progress", "projects",
 		"ready", "search", "session summary", "show", "stale", "stats",
 		"sync collisions list", "sync conflicts list", "sync doctor",
-		"sync quarantine list", "sync relay status", "sync status", "tree", "verify":
+		"sync quarantine list", "sync relay status", "sync status", "tree", "url", "verify":
 		return freshnessRead
 	case "attach", "attach prompt-submit", "attach session-end", "attach session-start",
 		"attach wait", "serve", "mcp":

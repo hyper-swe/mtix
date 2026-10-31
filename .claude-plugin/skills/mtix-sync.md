@@ -594,6 +594,38 @@ in one transaction. Repeating an import after the values agree adds no new
 resolution receipt. Ordinary field changes are still recorded separately;
 resolution records are exempt from ordinary change-entry retention. Imports reject valued or malformed resolution records before any write; the refusal names the task and entry, never the values. Ask the source writer to regenerate a valid board; do not hand-edit history or bypass its checksum.
 
+## File relay (experimental)
+
+The relay is a second sync transport that carries the same events through a shared directory instead of a Postgres hub. It is **experimental and opt-in**: supported for trial use, its behavior and on-disk format may change in 0.6.0, and it is not yet covered by the release gate. Nothing changes for a project unless `sync.relay.dir` is set. Each machine keeps its own local `.mtix`; the directory carries events, never the database.
+
+**Hub contact and cost.** No `mtix sync relay` command connects to a hub, and a relay-only checkout never wakes a database that pauses when idle. A peer that has both a relay and a hub configured bridges the two, and its hub contact is still governed only by `sync.hub_contact`; the relay pass itself runs on the local store and the shared directory.
+
+**Configure** (only when the user asks for a relay; use a directory every peer can see):
+
+1. First peer: `mtix sync relay init <dir>`, then `mtix config set sync.relay.dir <dir>`. The store needs at least one task first. `init` creates an authenticated relay and a key under `.mtix/relay/keys/<epoch>` (mode 0600). `--no-auth` creates an unauthenticated relay and is a security trade-off: only on the user's say-so. Every peer must then attach with `sync.relay.require_auth=false`, and `relay privacy` keeps failing in doctor.
+2. Each other peer: ask the user to move the key file to that peer out of band (never through the relay directory, and never by printing it), then `mtix config set sync.relay.dir <dir>` and `mtix sync relay attach <dir>`. A peer that has no store yet then runs `mtix sync relay clone` to import the bootstrap snapshot.
+3. Optional settings: `sync.relay.peer_id` (an identity that survives a rebuilt workspace), `sync.relay.poll_interval` (seconds, default 5, `0` for a tick-only peer), `sync.relay.retention_days` (default 7), `sync.relay.silent_peer_days` (default 14), `sync.relay.require_auth`, `sync.relay.max_segment_bytes`.
+
+**Use.** `mtix daemon` carries the relay on every pass. A peer with no resident daemon (a turn-driven agent, a scheduled job) runs `mtix sync relay tick` at session start, whenever it wants to exchange work, and once at session end; it converges on its next tick and is not degraded. `mtix sync relay clone --export` writes a bootstrap snapshot for a late joiner. When a rejoining peer's `clone` lists conflicts it writes nothing; rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, after the user decides.
+
+**Verify.** Run `mtix sync doctor` (`--json` for machine-readable rows). With `sync.relay.dir` unset it passes `relay configured`; when set, it adds `relay reachable`, `relay record`, `relay key`, `relay publishing`, `relay peers`, `relay poll cadence`, `relay snapshots` and `relay privacy`. Most failing rows print the fix on a `fix:` line; `relay key` on `RELAY_META_CORRUPT`, `relay publishing` with no local store and an error without a registry code print the error alone, so report that to the user and do not guess; run doctor again after each fix. `mtix sync relay status --json` lists peers, positions and outstanding problems.
+
+**Troubleshoot.**
+
+| Symptom (code) | Meaning | Fix |
+|---|---|---|
+| `relay reachable` fails | The directory is unmounted, missing or a symlink (`RELAY_SYMLINK`) | Mount it, point `sync.relay.dir` at the real directory, or clear the key if this peer no longer uses the relay. mtix never follows or deletes a symlink |
+| `RELAY_SEGMENT_CORRUPT`, `RELAY_GAP` | A peer's records are damaged or missing; the reader stops rather than skipping | Ask that peer to run `mtix sync relay republish --from <rs>`, or re-bootstrap with `mtix sync relay clone` |
+| `RELAY_KEY_ABSENT` | This peer lacks a key epoch | Ask the user to install the missing key epoch under `.mtix/relay/keys/` (mode 0600) |
+| `RELAY_FOREIGN_ENTRY` | A file that is not a relay file sits in the directory | Ask the user to remove it; mtix never deletes it |
+| `RELAY_PUBLISHER_DIVERGED` | The store was restored from a backup and publishing refused | Ask the user, then `mtix sync relay reset-peer` |
+| `relay snapshots` fails | A bootstrap snapshot is a full plaintext copy of a store left in the directory | Ask the user to remove it once every joiner has imported it |
+| `relay poll cadence` fails | `sync.relay.poll_interval` exceeds the silence threshold | Lower `sync.relay.poll_interval` or raise `sync.relay.silent_peer_days` |
+
+**Recover.** These are operator actions: surface the situation, then run one only when the user asks. `mtix sync relay reset-peer` (after a restore; `--base-rs` and `--floor` are optional), `mtix sync relay retire-peer <peer-id>` (drops a vanished peer from the prune quorum; check `mtix sync doctor` first, because retiring a peer that returns prunes history it still needs), `mtix sync relay rotate-key` (installs the next key epoch) and `mtix sync relay republish --from <rs>` (re-emits into fresh segments and is safe to repeat).
+
+**Never.** Read, print, paste or commit a relay key. Copy a key through the relay directory. Edit or delete files in the relay directory by hand. Put one `.mtix` on a shared mount. Treat the relay as encrypted: records are authenticated but not encrypted, and the key authenticates the fleet rather than one peer (see `docs/SECURITY-MODEL.md`).
+
 ## When to ask the user
 
 Stop and ask the user, with the exact command, when: setup needs a database role, a grant, a revoke or a password; a DSN or CA bundle must be set; doctor names a fix that only the table owner or a role administrator can run; a repair, a harden `--apply` or a `mtix sync reconcile` is the next step; events stay unacknowledged or held after the fixes above; or the same failure comes back after you fixed it. Give the user the check name, the error line without any credential, and what you already tried.

@@ -28,10 +28,28 @@ var unprofessionalWordingRE = regexp.MustCompile(`(?i)human|go-ahead`)
 // other use of the terms still fails.
 const storedPromptMarker = "[HUMAN-AUTHORED]"
 
+// wireFormatExempt reports whether path holds the decision wire format. The
+// wire protocol fixes the enum value "human" (answerable_by, decider.kind), so
+// the files that define, document and test that format are not scanned. Only
+// these paths are exempt; everything else still fails.
+func wireFormatExempt(path string) bool {
+	p := filepath.ToSlash(path)
+	return strings.Contains(p, "internal/model/decision_") || strings.Contains(p, "docs/schemas/")
+}
+
 // offendingTerm returns the first forbidden term in text outside the exempt
 // stored prompt marker, or "".
 func offendingTerm(text string) string {
 	return unprofessionalWordingRE.FindString(strings.ReplaceAll(text, storedPromptMarker, ""))
+}
+
+// TestProfessionalWording_WireFormatExemption_CoversOnlyDecisionFiles pins the
+// wire-format exemption to the decision files.
+func TestProfessionalWording_WireFormatExemption_CoversOnlyDecisionFiles(t *testing.T) {
+	require.True(t, wireFormatExempt("../../internal/model/decision_types.go"))
+	require.True(t, wireFormatExempt("../../docs/schemas/fixtures/x.json"))
+	require.False(t, wireFormatExempt("../../internal/model/types.go"))
+	require.False(t, wireFormatExempt("../../docs/AGENTS.md"))
 }
 
 // TestProfessionalWording_ExemptsOnlyTheStoredPromptMarker pins the exemption.
@@ -55,7 +73,7 @@ func TestProfessionalWording_NoGoStringLiteralNamesHumanOrGoAhead(t *testing.T) 
 			if err != nil {
 				return err
 			}
-			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") || wireFormatExempt(path) {
 				return nil
 			}
 			scanned++
@@ -95,6 +113,9 @@ func TestProfessionalWording_NoShippedDocNamesHumanOrGoAhead(t *testing.T) {
 	var hits []string
 	scanned := 0
 	scan := func(path string) {
+		if wireFormatExempt(path) {
+			return
+		}
 		b, err := os.ReadFile(path) //nolint:gosec // test reads repo files under fixed roots
 		require.NoError(t, err)
 		scanned++

@@ -278,3 +278,26 @@ func TestRunShow_JSONOutput_KeepsRawNodeRecord(t *testing.T) {
 	assert.Equal(t, "rev\x07", got.Annotations[0].Author)
 	assert.True(t, got.Annotations[0].CreatedAt.IsZero())
 }
+
+// TestTruncateChars_Limits_CutsOnRunesWithEllipsis pins truncateChars: runes
+// are counted, the cut keeps limit-3 of them plus "...", and a limit of 3
+// or less leaves the text as is.
+func TestTruncateChars_Limits_CutsOnRunesWithEllipsis(t *testing.T) {
+	tests := []struct {
+		name  string
+		in    string
+		limit int
+		want  string
+	}{
+		{"shorter than limit unchanged", "abc", 5, "abc"},
+		{"exactly limit unchanged", "ᛛᛛᛛᛛᛛ", 5, "ᛛᛛᛛᛛᛛ"},
+		{"longer cut with ellipsis", "abcdefgh", 5, "ab..."},
+		{"multi-byte runes counted as one", "ᛛᛛᛛᛛᛛᛛ", 5, "ᛛᛛ..."},
+		{"limit of 3 or less unchanged", "abcdefgh", 3, "abcdefgh"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, truncateChars(tt.in, tt.limit))
+		})
+	}
+}

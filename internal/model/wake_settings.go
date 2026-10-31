@@ -22,7 +22,7 @@ func WakeSettingDefaults() map[string]string {
 		"wake.live": "true", "wake.wakes_per_hour": "", "wake.per_sender_per_hour": "",
 		"wake.remote_awake_daily_cap": "", "wake.reply_extensions_per_hour": "",
 		"wake.envelope_max_events": "", "wake.envelope_max_body_bytes": "", "wake.envelope_max_total_bytes": "",
-		"wake.max_hop_depth": "32", "wake.backoff_after_unacked": "5", WakeConfirmWindowKey: "30", "inbox.strict_board_identity": "false",
+		"wake.max_hop_depth": "32", "wake.backoff_after_unacked": "5", "inbox.strict_board_identity": "false",
 	}
 }
 
@@ -44,10 +44,7 @@ func NormalizeWakeSetting(key, value string) (string, error) {
 		}
 		return "", fmt.Errorf("%s requires on/off or true/false: %w", key, ErrInvalidInput)
 	}
-	if key == WakeConfirmWindowKey {
-		return normalizeConfirmWindow(value)
-	}
-	guard := isWakeGuardSetting(key)
+	guard := key == "wake.max_hop_depth" || key == "wake.backoff_after_unacked"
 	if !guard && (value == "" || value == "off" || value == "unset" || value == "0") {
 		return "", nil
 	}
@@ -63,7 +60,7 @@ func NormalizeWakeSetting(key, value string) (string, error) {
 
 // WakeSettingLoosens classifies already normalized values for TTY policy.
 func WakeSettingLoosens(key, before, after string) bool {
-	if before == after || key == WakeConfirmWindowKey {
+	if before == after {
 		return false
 	}
 	if key == "wake.live" {
@@ -87,26 +84,4 @@ func WakeSettingLoosens(key, before, after string) bool {
 		return true
 	}
 	return b > a
-}
-
-// isWakeGuardSetting reports the always-on settings, which refuse zero, off and empty values.
-func isWakeGuardSetting(key string) bool {
-	return key == "wake.max_hop_depth" || key == "wake.backoff_after_unacked"
-}
-
-// WakeConfirmWindowKey is the setting that decides when a sent nudge reads as unconfirmed.
-// It is an ordinary setting, not a guard: it changes only how an unanswered nudge is
-// reported (MTIX-112.40.6), has no safety effect, and never needs an operator terminal.
-const WakeConfirmWindowKey = "wake.confirm_window"
-
-// WakeConfirmWindowMaxSeconds caps the window at one day, so the seconds value cannot
-// overflow a time.Duration and flip every nudge to unconfirmed.
-const WakeConfirmWindowMaxSeconds = 86400
-
-func normalizeConfirmWindow(value string) (string, error) {
-	number, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || number <= 0 || number > WakeConfirmWindowMaxSeconds {
-		return "", fmt.Errorf("%s requires a whole number of seconds from 1 to %d: %w", WakeConfirmWindowKey, WakeConfirmWindowMaxSeconds, ErrInvalidInput)
-	}
-	return strconv.FormatInt(number, 10), nil
 }

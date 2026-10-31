@@ -335,13 +335,10 @@ func TestLedgerDispatch_FreshClaimNotStolen(t *testing.T) {
 // TestLedgerDispatch_ErrorOutcome_NeverAutoRetried: a fire that RAN and failed
 // is terminal (§14.3) — the next pass must not re-fire it.
 func TestLedgerDispatch_ErrorOutcome_NeverAutoRetried(t *testing.T) {
-	state := testutil.OperatorState(t)
 	svc, store, _ := newTestNodeService(t)
 	ctx := context.Background()
 	dir := t.TempDir()
-	// Consented webhook to a port that refuses connections → adapter error → outcome=error.
-	_, err := hooks.AllowOrigin(state, "http://127.0.0.1:1", true, true, false)
-	require.NoError(t, err)
+	// Webhook to a port that refuses connections → adapter error → outcome=error.
 	writeHooks(t, dir, `
 hooks:
   - name: wake-worker

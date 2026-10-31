@@ -11,6 +11,7 @@ import (
 
 var wakeCommandWordRE = regexp.MustCompile(`^\s*("[^"\n]*"|'[^'\n]*'|[^\s;&|()]+)`)
 var wakeCaptureAssignmentRE = regexp.MustCompile("([A-Za-z_][A-Za-z_0-9]*)=[\"']?(\\$\\(|`)")
+var wakePromptOperandsRE = regexp.MustCompile(`^[ \t]+inbox\b[^\n;&|)]*--format[ \t]+prompt(?:[ \t;|&)]|$)`)
 
 func wakeActualCommandHead(text string) (string, string, bool) {
 	match := wakeCommandWordRE.FindStringSubmatchIndex(text)
@@ -70,7 +71,15 @@ func wakeCaptureBody(text string) (string, bool) {
 	return "", false
 }
 
-func wakeBodyReadsInput(body string) bool { return wakeReaderSource(body) }
+func wakeBodyReadsInput(body string) bool {
+	for _, start := range wakeMetadataStartRE.FindAllStringSubmatchIndex(body, -1) {
+		word, tail, ok := wakeActualCommandHead(body[start[2]:])
+		if ok && (word == "$MTIX_BIN" || word == "mtix") && wakePromptOperandsRE.MatchString(tail) {
+			return true
+		}
+	}
+	return false
+}
 
 var wakeLookupRemainderRE = regexp.MustCompile(`^\s*(?:[0-9]*[<>]+(?:/dev/null|&[0-9]+)\s*)*(?:[);&|]|$)`)
 

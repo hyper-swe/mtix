@@ -64,6 +64,18 @@ func indentContinuation(s, indent string) string {
 	return strings.Join(lines, "\n")
 }
 
+// truncateChars cuts s to limit characters, the last three being "...", per
+// FR-6.3 (MTIX-100.1). It counts runes, not bytes, so a cut never splits a
+// multi-byte character: a split one would leave a stray byte, such as 0x9B,
+// which a terminal can read as a control. A limit of 3 or less leaves s as is.
+func truncateChars(s string, limit int) string {
+	r := []rune(s)
+	if limit <= 3 || len(r) <= limit {
+		return s
+	}
+	return string(r[:limit-3]) + "..."
+}
+
 // annotationText is displayText for an annotation body per FR-3.4
 // (MTIX-100.1), with a body that normalizes to nothing stated as "(empty)"
 // rather than left blank.

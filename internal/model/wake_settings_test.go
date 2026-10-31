@@ -11,7 +11,7 @@ import (
 
 func TestWakeSettingPolicy_DefaultsAndValueValidation(t *testing.T) {
 	defaults := model.WakeSettingDefaults()
-	require.Len(t, defaults, 12)
+	require.Len(t, defaults, 11)
 	require.Equal(t, "32", defaults["wake.max_hop_depth"])
 	require.Equal(t, "5", defaults["wake.backoff_after_unacked"])
 	defaults["wake.live"] = "false"

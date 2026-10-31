@@ -118,7 +118,7 @@ func TestLoad_ValidConfiguration_RoutesOrderedDeliveries(t *testing.T) {
 	dir := t.TempDir()
 	server, requests := deliveryServer(t)
 	cfg := loadedDeliveryConfig(t, dir, server.URL)
-	appendAdapter, webhookAdapter := NewAppendFileAdapter(dir), newTestAdapter(listSource(originOf(t, server.URL, true)))
+	appendAdapter, webhookAdapter := NewAppendFileAdapter(dir), NewWebhookAdapter(server.Client())
 	registry := NewRegistry(nil, appendAdapter, webhookAdapter)
 	for key, want := range map[string]Adapter{AdapterAppendFile: appendAdapter, AdapterWebhook: webhookAdapter} {
 		got, ok := registry.Lookup(key)

@@ -68,7 +68,7 @@ func fixedCommandFreshness(path string) freshnessScope {
 	switch path {
 	case "agent list", "agent work", "blocked", "config get", "context",
 		"daemon status", "dep show", "hooks fire", "hooks list", "hooks log",
-		"hooks status", "inbox", "inbox status", "list", "orphans", "progress", "projects",
+		"hooks status", "inbox", "list", "orphans", "progress", "projects",
 		"ready", "search", "session summary", "show", "stale", "stats",
 		"sync collisions list", "sync conflicts list", "sync doctor",
 		"sync quarantine list", "sync relay status", "sync status", "tree", "verify":
@@ -79,7 +79,7 @@ func fixedCommandFreshness(path string) freshnessScope {
 	case "agent allow", "agent deny", "agent heartbeat", "agent register", "agent unregister", "annotate",
 		"backup", "cancel", "claim", "comment", "config delete", "config set",
 		"create", "daemon install", "daemon start", "daemon stop", "daemon uninstall",
-		"decompose", "defer", "delete", "dep add", "dep remove", "docs generate", "hooks allow-origin",
+		"decompose", "defer", "delete", "dep add", "dep remove", "docs generate",
 		"done", "export", "gc", "import", "inbox ack", "inbox lease acquire",
 		"inbox lease release", "init", "micro", "migrate", "plugin install",
 		"prompt", "recover", "reopen", "rerun", "resolve-annotation", "restore",

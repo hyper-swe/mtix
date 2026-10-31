@@ -66,20 +66,19 @@ func TestWebhook_CanceledCaller_RefusesWithoutRequest(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
 	cancel()
-	err := newTestAdapter(listSource(originOf(t, server.URL, true))).Deliver(ctx, webhookDelivery(server.URL, []byte(`{"event":"status.changed"}`)))
+	err := NewWebhookAdapter(server.Client()).Deliver(ctx, webhookDelivery(server.URL, []byte(`{"event":"status.changed"}`)))
 	require.ErrorIs(t, err, context.Canceled)
 	require.ErrorContains(t, err, `webhook: "notify" canceled after 1 attempt(s)`)
 	require.Empty(t, requests.snapshot())
 }
 
-func TestWebhook_MalformedURL_RefusedBeforeAnyAttempt(t *testing.T) {
+func TestWebhook_MalformedURL_ReportsBoundedAttempts(t *testing.T) {
 	server, requests := deliveryServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	t.Cleanup(cancel)
 	require.NoError(t, ctx.Err())
-	err := newTestAdapter(listSource(originOf(t, server.URL, true))).Deliver(ctx, webhookDelivery(server.URL+"/invalid\npath", []byte(`{}`)))
-	require.Error(t, err)
-	require.NotContains(t, err.Error(), "attempts", "an invalid URL is rejected before any attempt")
+	err := NewWebhookAdapter(server.Client()).Deliver(ctx, webhookDelivery(server.URL+"/invalid\npath", []byte(`{}`)))
+	require.ErrorContains(t, err, `webhook: "notify" failed after 3 attempts`)
 	var urlError *url.Error
 	require.ErrorAs(t, err, &urlError)
 	require.Equal(t, "parse", urlError.Op)

@@ -458,6 +458,7 @@ Show assembled context chain for a node
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--chain` |  | With --json, add prompt, creator and annotations to each structured chain entry (default: they appear once, in assembled_prompt) | false |
 | `--max-tokens` |  | Maximum token budget for assembled prompt (0 = unlimited) | 0 |
 ---
 
@@ -495,7 +496,8 @@ Run the origin-independent dispatch loop. Local work (pending-export
 recovery, relay, hook dispatch) runs every interval (default 5s); the hub is
 contacted only when sync.hub_contact says so: activity (default: only for
 30 minutes after real activity), interval:<duration>, or manual (never). While
-sync.listen is live and a waiter (mtix inbox --wait) holds a lease, the hub is also contacted every
+sync.listen is live and a listener holds a lease (a later release; no listener
+exists in this build, so the hold is inert), the hub is also contacted every
 sync.listen_interval until sync.listen_max_idle after the last activity. Each
 contact pulls new events from the BYO Postgres hub (when one is configured) and
 fires this host's hooks for every journaled event not yet dispatched
@@ -521,7 +523,6 @@ Push and dispatch lock files and their data directory must be real and user-owne
 | `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--install` |  | Print a systemd unit / launchd plist stub (deprecated: use 'mtix daemon install') | false |
 | `--interval` |  | Pull-then-dispatch interval in seconds | 5 |
-| `--listen` |  | Listener mode: pull once, serve while a waiter lease is live, exit when the last lease ends (started by mtix inbox --wait) | false |
 
 ### Subcommands
 
@@ -828,7 +829,6 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 
 ### Subcommands
 
-- `allow-origin <url>` — Consent to webhook deliveries to one origin on this host
 - `exec-dispatch [any|daemon|off]` — Get or set this host's local exec dispatch policy
 - `fire` — Test hooks.yaml against a sample event (dry-run only, for now)
 - `list` — List configured hooks with their events and delivery adapters
@@ -836,21 +836,6 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `status` — Show operator-local state and per-hook approvals
 - `strict <on|off|status>` — Show or change strict program mode for exec hooks on this host
 - `trust <hook>` — Review and approve one exec hook on this host
----
-
-## allow-origin
-
-**Usage:** `allow-origin <url>`
-
-Consent to webhook deliveries to one origin on this host
-
-Save operator consent, outside the project, for webhook deliveries to the origin (scheme, host, port) of the URL. Without consent a webhook hook is skipped and reported by hooks status. Loopback, link-local and private destinations are refused unless the origin is listed with --allow-private. Requires terminal stdin outside an agent session.
-
-### Flags
-
-| Flag | Short | Description | Default |
-|------|-------|-------------|---------|
-| `--allow-private` |  | Also allow loopback, link-local and private destinations for this origin | false |
 ---
 
 ## exec-dispatch
@@ -1029,7 +1014,6 @@ the body.
 
 - `ack <seq>...` — Acknowledge specific inbox events (selective); --through acks everything up to a seq
 - `lease` — Acquire or release board-local wake ownership
-- `status` — Show the wake delivery state for an agent and its recent wake outcomes
 ---
 
 ## ack
@@ -1110,26 +1094,6 @@ mtix inbox lease release --agent developer --holder "$HOLDER"
 | `--holder` |  | Owner token (required for release; renews acquire) |  |
 | `--json` |  | Print JSON | false |
 | `--ttl` |  | Lease duration, inclusive 1m..24h | 15m |
----
-
-## status
-
-**Usage:** `status`
-
-Show the wake delivery state for an agent and its recent wake outcomes
-
-Show the wake delivery state for an agent and its last wake outcomes with age
-(MTIX-112.40.6). States: queued, nudged, unconfirmed, confirmed, held, undeliverable,
-off, no-live-session, no-dispatcher, unknown. unconfirmed is derived at read time from
-wake.confirm_window (default 30 seconds) and is never written as an inbox event.
-This reads local state only and never contacts a hub.
-
-### Flags
-
-| Flag | Short | Description | Default |
-|------|-------|-------------|---------|
-| `--agent` |  | Agent id whose wake status to show (required) |  |
-| `--limit` |  | Number of recent wake rows to show (1-1000) | 10 |
 ---
 
 ## init
@@ -1404,15 +1368,6 @@ Rerun invalidates descendants with configurable strategies:
 **Usage:** `resolve-annotation <node-id> <annotation-id>`
 
 Resolve an annotation on a node
-
-Resolve an annotation on a node.
-
-The annotation id is the full id (as in mtix show --json) or the short id that
-mtix show prints, which is the first 12 characters. A prefix works when it is at
-least 12 characters and matches one annotation; an exact full id always wins.
-Several matches are refused with the full ids listed, and no match is a not
-found error. An id with unusual characters prints escaped in mtix show, so copy
-it from mtix show --json instead.
 ---
 
 ## restore
@@ -1512,26 +1467,21 @@ Show a node's details and annotations as labeled lines, in this order:
                time, or for other statuses even with a stale wake time
   Priority     priority (1 = critical ... 5 = backlog)
   Type         node type
-  Issue type   issue type (only when set)
   Assignee     current assignee (only when set)
   Desc         full description (only when set; omitted when it holds only
                whitespace, control characters or invisible formatting
                characters), further lines indented
   Annotations  every annotation, oldest first (equal times by id): its ISO-8601 UTC timestamp
-               ("unknown time" when none was recorded), its short id in
-               the form (id "01ARZ3NDEKTS") when it has one (the first 12
-               characters; mtix resolve-annotation accepts it, and --json
-               has the full id), author, addressee
+               ("unknown time" when none was recorded), author, addressee
                and resolved marker when present, then the text, with
                further lines indented and "(empty)" for an empty text;
                "Annotations: none" when the node has none
-  Prompt       up to 100 characters (Unicode code points) of the normalized prompt;
-               longer prompts are cut to 97 characters followed by ...
-               (only when set; omitted when it holds only
+  Prompt       the prompt, cut to 100 characters ending in "..." when
+               longer (only when set; omitted when it holds only
                whitespace, control characters or invisible formatting
                characters), further lines indented
   Progress     progress bar
-  Created      creation time: 2006-01-02 15:04 (UTC, no zone)
+  Created      creation time
   History      with --history: the change history, newest first, at most
                --history-limit entries (default 50), one line each with the
                UTC time, field, actor, origin and, for a structured field,
@@ -1555,8 +1505,8 @@ kept, so a lone mark can still change how digits are ordered. The
 --history list follows the same rule and prints each entry on one line,
 with line breaks shown as spaces. Quote exact text from --json.
 
-Other fields, for example acceptance criteria, labels, dependencies, activity
-and the full prompt, are not printed. Use --json for the complete node record, including every
+Acceptance criteria, labels, dependencies, activity and the full prompt are
+not printed. Use --json for the complete node record, including every
 annotation.
 
 ### Flags
@@ -1856,16 +1806,10 @@ unresolved ones: lww conflicts with no later manual resolution for the
 same node and field ('mtix sync conflicts resolve' records one). A later
 lww conflict on the same node and field is unresolved again.
 
-Self-replay rows are never listed by default and never unresolved: lww
-rows written before 0.5.4, when a pull replayed this store's own pushed
-events, whose winner and loser events were both emitted by this store.
-They are not conflicts, they neither hide nor reopen a genuine conflict,
-and nothing is written to the store to classify them.
-
 --all lists every row, manual resolutions and tombstone rows included,
-each marked unresolved=true or unresolved=false and self_replay=true or
-self_replay=false. Default output is a plain-text table; --json for agent
-and CI consumption (each row carries "unresolved" and "self_replay").
+each marked unresolved=true or unresolved=false. Default output is a
+plain-text table; --json for agent and CI consumption (each row
+carries "unresolved").
 
 When unresolved conflicts exceed 50, a banner is printed pointing
 at --batch <node_id> for batch resolution. --batch <node_id> filters
@@ -1982,11 +1926,6 @@ Run health checks against the local store and the BYO Postgres hub:
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
-  Self-replay conflict rows - informational, always PASS: counts conflict rows
-                           written before 0.5.4 by the replay of this store's
-                           own events; they are not conflicts and are not
-                           counted; fix: none required; inspect with
-                           'mtix sync conflicts list --all'
   board.id               - one committed board identity; a hub board also
                            needs a known local hub observation
   board.hub-identity-changed - warns when the observed hub differs from

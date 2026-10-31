@@ -467,7 +467,7 @@ func TestRunContext_HappyPath_HumanOutput(t *testing.T) {
 	err := runCreate("Context Node", "", "", 3, "desc", "prompt text", "", "", "")
 	require.NoError(t, err)
 
-	err = runContext("TEST-1", 0)
+	err = runContext("TEST-1", 0, false)
 	assert.NoError(t, err)
 }
 
@@ -479,7 +479,7 @@ func TestRunContext_HappyPath_JSONOutput(t *testing.T) {
 	err := runCreate("Context JSON", "", "", 3, "desc", "prompt", "", "", "")
 	require.NoError(t, err)
 
-	err = runContext("TEST-1", 0)
+	err = runContext("TEST-1", 0, false)
 	assert.NoError(t, err)
 }
 
@@ -490,7 +490,7 @@ func TestRunContext_WithMaxTokens_HumanOutput(t *testing.T) {
 	err := runCreate("Context Tokens", "", "", 3, "desc", "prompt", "", "", "")
 	require.NoError(t, err)
 
-	err = runContext("TEST-1", 1000)
+	err = runContext("TEST-1", 1000, false)
 	assert.NoError(t, err)
 }
 

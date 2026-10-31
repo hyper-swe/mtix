@@ -31,7 +31,6 @@ func newDaemonCmd() *cobra.Command {
 		insecureTLS bool
 		intervalSec int
 		install     bool
-		listen      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -40,7 +39,8 @@ func newDaemonCmd() *cobra.Command {
 recovery, relay, hook dispatch) runs every interval (default 5s); the hub is
 contacted only when sync.hub_contact says so: activity (default: only for
 30 minutes after real activity), interval:<duration>, or manual (never). While
-sync.listen is live and a waiter (mtix inbox --wait) holds a lease, the hub is also contacted every
+sync.listen is live and a listener holds a lease (a later release; no listener
+exists in this build, so the hold is inert), the hub is also contacted every
 sync.listen_interval until sync.listen_max_idle after the last activity. Each
 contact pulls new events from the BYO Postgres hub (when one is configured) and
 fires this host's hooks for every journaled event not yet dispatched
@@ -64,15 +64,13 @@ Push and dispatch lock files and their data directory must be real and user-owne
 				return printDaemonInstallStub(cmd.OutOrStdout())
 			}
 			return runDaemon(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
-				args, transport.Options{InsecureTLS: insecureTLS}, intervalSec, daemonPassControl{listen: listen})
+				args, transport.Options{InsecureTLS: insecureTLS}, intervalSec)
 		},
 	}
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
 		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	cmd.Flags().IntVar(&intervalSec, "interval", daemonDispatchDefaultIntervalSec,
 		"Pull-then-dispatch interval in seconds")
-	cmd.Flags().BoolVar(&listen, "listen", false,
-		"Listener mode: pull once, serve while a waiter lease is live, exit when the last lease ends (started by mtix inbox --wait)")
 	cmd.Flags().BoolVar(&install, "install", false,
 		"Print a systemd unit / launchd plist stub (deprecated: use 'mtix daemon install')")
 	_ = cmd.Flags().MarkDeprecated("install", "use 'mtix daemon install' (registers the OS service)")
@@ -92,8 +90,7 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 		intervalSec = daemonDispatchDefaultIntervalSec
 	}
 
-	listen := len(control) > 0 && control[0].listen
-	owner, err := daemonOwnershipFor(stderr, app.mtixDir)
+	owner, err := startDaemonOwnership(stderr, "mtix daemon", app.mtixDir)
 	if err != nil || owner == nil {
 		return err
 	}
@@ -135,15 +132,7 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 		},
 	})
 
-	plan := daemonLoopPlan{label: "mtix daemon", interval: intervalSec, pass: pass, controls: control, sched: sched, onContact: onContact}
-	if listen {
-		l, err := newDaemonListener(hub, intervalSec)
-		if err != nil {
-			return err
-		}
-		plan.done = l.Done
-	}
-	return runDaemonPassLoop(ctx, stdout, stderr, plan)
+	return runDaemonPassLoop(ctx, stdout, stderr, daemonLoopPlan{label: "mtix daemon", interval: intervalSec, pass: pass, controls: control, sched: sched, onContact: onContact})
 }
 
 // daemonPassSteps are the four phases of one daemon pass. They are fields so
@@ -188,7 +177,6 @@ func daemonPreflight(args []string) (bool, error) {
 type daemonPassControl struct {
 	ticks    <-chan time.Time
 	observed func(bool)
-	listen   bool // mtix daemon --listen: serve waiters, exit with the last lease (MTIX-112.20.4)
 }
 
 type daemonLoopPlan struct {
@@ -202,8 +190,6 @@ type daemonLoopPlan struct {
 	sched     *service.ContactScheduler
 	onContact func()        // called after a pass that contacted the hub
 	localTick time.Duration // local-work tick under sched; default interval seconds
-	// done, when set, is checked after every pass and ends the loop (listen mode).
-	done func() (bool, string)
 }
 
 func (p daemonLoopPlan) localTickOrDefault() time.Duration {
@@ -231,19 +217,13 @@ func runDaemonPassLoop(ctx context.Context, stdout, stderr io.Writer, plan daemo
 			control.ticks = ticker.C
 		}
 	}
-	run := func() bool {
+	run := func() {
 		runScheduledPass(ctx, stderr, plan, control)
-		if listenerDone(stdout, plan) {
-			return true
-		}
 		if timer != nil {
 			timer.Reset(plan.sched.Delay(plan.localTickOrDefault()))
 		}
-		return false
 	}
-	if run() {
-		return nil
-	}
+	run()
 	for {
 		select {
 		case <-ctx.Done():
@@ -253,24 +233,9 @@ func runDaemonPassLoop(ctx context.Context, stdout, stderr io.Writer, plan daemo
 			if !open {
 				return fmt.Errorf("%s: cadence closed", plan.label)
 			}
-			if run() {
-				return nil
-			}
+			run()
 		}
 	}
-}
-
-// listenerDone asks a listen-mode plan whether the loop must end, and says why
-// on stdout (MTIX-112.20.4). A plan without a done check never ends this way.
-func listenerDone(stdout io.Writer, plan daemonLoopPlan) bool {
-	if plan.done == nil {
-		return false
-	}
-	done, why := plan.done()
-	if done {
-		fmt.Fprintf(stdout, "%s: %s; exiting\n", plan.label, why)
-	}
-	return done
 }
 
 // runScheduledPass runs one locked pass. The scheduler (when present) says

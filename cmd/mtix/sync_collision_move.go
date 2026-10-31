@@ -21,20 +21,16 @@ type collisionMove struct {
 
 // resolveCollisionMove records the hub decision before moving any local task.
 // A durable decision plus an idempotent local move makes interrupted runs resumable.
-// After acceptance, errors name the failed stage (local renumber or hub completion),
-// wrap the cause, and print the retry command (MTIX-107.46.2).
 func resolveCollisionMove(ctx context.Context, c transport.OpenCollision, choice, loser string, move collisionMove) (string, error) {
 	if err := move.accept(ctx); err != nil {
 		return "", fmt.Errorf("resolve collision: %w", err)
 	}
 	path, err := move.renumber(ctx, loser)
-	step := "local renumber"
 	if err == nil {
-		step = "recording completion on the hub"
 		err = move.finish(ctx, path)
 	}
 	if err != nil {
-		return "", fmt.Errorf("hub accepted collision %d but %s failed: %w; fix the cause, then run on the client that owns the losing node: mtix sync collisions resolve %d --winner %s", c.CollisionID, step, err, c.CollisionID, choice)
+		return "", fmt.Errorf("hub accepted collision %d but local completion failed: %w; fix the cause, then run on the client that owns the losing node: mtix sync collisions resolve %d --winner %s", c.CollisionID, err, c.CollisionID, choice)
 	}
 	return path, nil
 }

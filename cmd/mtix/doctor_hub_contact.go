@@ -59,7 +59,6 @@ func appendHubContactChecks(report DoctorReport) DoctorReport {
 	for _, c := range hubContactDoctorChecks(src, hubConfigured(app.mtixDir), src.now()) {
 		report = appendDoctorCheck(report, c)
 	}
-	report = appendDoctorCheck(report, listenerDoctorRow(src, hubConfigured(app.mtixDir), relayDir() != "", daemonLockHeld)) // MTIX-112.20.4
 	return report
 }
 
@@ -158,7 +157,7 @@ func listenRow(src *hubContactSource, now time.Time) DoctorCheck {
 	case mode.Kind == service.HubContactManual:
 		row.Detail += "inactive: sync.hub_contact is manual, so the hold never contacts the hub"
 	case !live:
-		row.Detail += "no live waiter lease, no hold (a waiter, mtix inbox --wait, arms a lease and starts the listener)"
+		row.Detail += "no live listener lease, no hold (listeners arrive in a later release; the hold is inert in this build)"
 	default:
 		row.Detail += holdText(src, listen, now)
 	}

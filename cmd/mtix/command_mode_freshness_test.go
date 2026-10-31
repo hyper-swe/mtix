@@ -47,7 +47,6 @@ func freshnessModeCases() []freshnessModeCase {
 		{"uid-repair-preview-still-backfills-local", "sync repair-uids", []string{"--dry-run"}, false},
 		{"uid-repair-write", "sync repair-uids", nil, false},
 		{"inbox-ack", "inbox ack", []string{"1", "--agent=writer"}, false},
-		{"inbox-status", "inbox status", []string{"--agent=writer"}, true},
 		{"lease-acquire", "inbox lease acquire", []string{"--agent=writer"}, false},
 		{"lease-release", "inbox lease release", []string{"--agent=writer", "--holder=fixture-holder"}, false},
 		{"configuration-set", "config set", []string{"sync.auto_sync", "true"}, false},

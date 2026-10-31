@@ -152,7 +152,7 @@ Multiple values within one flag combine with OR; multiple flags combine with AND
 **Via MCP:** Call `mtix_briefing` instead of `mtix_list` to get briefing-formatted text directly. Accepts the same filter parameters (`under`, `status`, `type`, `assignee`, `priority`, `fields`, `limit`).
 
 ### 3. Read Context (MANDATORY)
-Call `mtix context <id>` or `mtix_context` — **this step is NON-NEGOTIABLE**. The assembled prompt is your complete briefing. Read it fully before proceeding.
+Call `mtix context <id>` or `mtix_context` — **this step is NON-NEGOTIABLE**. The assembled prompt is your complete briefing. Read it fully before proceeding. In `--json` and MCP output it is the `assembled_prompt` field; the `chain` array omits prompt, creator and annotations (they are in `assembled_prompt`) unless you pass `--chain` / `chain: true`.
 
 ### 4. Claim
 Call `mtix claim <id> --agent <agent_id>` or `mtix_claim`. This prevents other agents from working on the same node.
@@ -349,14 +349,6 @@ operator to review the named hook, then run `mtix hooks trust <hook>` from an
 interactive operator terminal outside agent sessions. Agents never run this
 approval command themselves. Changing one hook or its project script requires
 review of that hook; other hook approvals remain independent.
-
-Webhook hooks need the same operator consent for each origin. `mtix hooks status`
-lists every webhook origin that is not consented, with the exact fix. An agent
-asks the operator to run `mtix hooks allow-origin <url>` from an interactive
-operator terminal outside agent sessions; agents never run it themselves.
-Loopback, link-local and private destinations stay refused unless the operator
-lists that origin with `--allow-private`. A webhook without consent is skipped
-and recorded; redirects to an origin that is not consented are not followed.
 <!-- END AUTO-GENERATED -->
 
 ## Health diagnostics

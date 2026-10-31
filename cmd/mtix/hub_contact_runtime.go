@@ -95,32 +95,19 @@ func (s *hubContactSource) snapshot() (service.ContactInputs, error) {
 	return in, nil
 }
 
-// liveLeases reports whether any lease is live (see liveLeaseList).
+// liveLeases reports whether any lease names a still-running process: the
+// same pid and the same start time, so a reused pid is not live.
 func (s *hubContactSource) liveLeases() (bool, error) {
-	live, err := s.liveLeaseList()
-	return len(live) > 0, err
-}
-
-// liveLeaseList returns the leases that are live now: the named process runs
-// with the same pid and start time (a reused pid is not live) AND the lease
-// was refreshed within oplocal.ListenLeaseTTL (a hung or crashed waiter's
-// lease expires on the injected clock).
-func (s *hubContactSource) liveLeaseList() ([]oplocal.ListenLease, error) {
 	leases, err := s.state.ListListenLeases(s.key())
 	if err != nil {
-		return nil, fmt.Errorf("list leases: %w", err)
+		return false, fmt.Errorf("list leases: %w", err)
 	}
-	now := s.now()
-	var live []oplocal.ListenLease
 	for _, l := range leases {
-		if l.Expired(now) {
-			continue
-		}
 		if got, startErr := s.startTime(l.PID); startErr == nil && got == l.StartTime {
-			live = append(live, l)
+			return true, nil
 		}
 	}
-	return live, nil
+	return false, nil
 }
 
 // recordContact stores the outcome of one scheduled contact for doctor.

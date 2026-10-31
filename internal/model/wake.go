@@ -50,14 +50,3 @@ type WakeRegistrationMark struct {
 	HighWater int64
 	Held      bool
 }
-
-// WakeStatusRow is one retained wake ledger row as shown to a sender (MTIX-112.40.6).
-// Times are RFC3339Nano; OutcomeAt is empty for rows written by earlier releases.
-type WakeStatusRow struct {
-	EventSeq  int64
-	Outcome   WakeOutcome
-	Route     string
-	Reason    string
-	ClaimedAt string
-	OutcomeAt string
-}

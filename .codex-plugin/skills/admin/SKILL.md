@@ -10,7 +10,7 @@ allowed-tools:
 
 ## Host wake settings
 
-This build stores and reports `wake.live` and `wake.max_hop_depth`, and applies `wake.confirm_window` now in `mtix inbox status`.
+This build stores and reports `wake.live` and `wake.max_hop_depth`.
 Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
 when the wake scanner ships. They do not control live delivery in this build.
 
@@ -45,7 +45,6 @@ Existing flat envelope and strict-identity settings remain readable.
 | `wake.envelope_max_total_bytes` | unset, unlimited | Total envelope bytes |
 | `wake.max_hop_depth` | `32` | Scanner hop guard; depth 32 will be allowed, 33 held |
 | `wake.backoff_after_unacked` | `5` | Enforced by the callable dispatcher: durable unacknowledged-wake backoff |
-| `wake.confirm_window` | `30` | Seconds a sent nudge may stay unseen before `mtix inbox status` and `mtix comment --to` show it as `unconfirmed` (read-time only, no timer, no inbox event). An ordinary setting, not a guard: whole seconds 1 to 86400, and setting it never needs a terminal |
 | `inbox.strict_board_identity` | `false` | Also require matching hub identity |
 
 Read a value with `mtix config get wake.max_hop_depth`, or append `--agent worker`.
@@ -359,11 +358,9 @@ The append-only tables (`audit_log`, `sync_conflicts`, `sync_events`) refuse TRU
 **Resolving restore collisions:** The hub must accept the winner before mtix renumbers locally. If the hub refuses
 (for example, `permission denied for table sync_node_collisions`), the local
 store stays unchanged. Resolve with a role allowed to UPDATE that table.
-If acceptance succeeds but local renumbering fails, mtix reports
-`hub accepted collision <id> but local renumber failed`. If the local move
-succeeds but recording its completion on the hub fails, mtix reports
-`hub accepted collision <id> but recording completion on the hub failed`.
-Both failures print the exact recovery command: `mtix sync collisions resolve <id> --winner held|incoming`
+If acceptance succeeds but local completion fails, mtix reports
+`hub accepted collision <id> but local completion failed` and prints the exact
+recovery command: `mtix sync collisions resolve <id> --winner held|incoming`
 (with the original winner filled in). Fix the reported cause, then run that
 command on the client that owns the losing node, with the same hub configured.
 The decision is already recorded on the hub, so the collision no longer shows
@@ -728,14 +725,6 @@ interactive operator terminal outside agent sessions. Agents never run this
 approval command themselves. Changing one hook or its project script requires
 review of that hook; other hook approvals remain independent.
 
-Webhook hooks need the same operator consent for each origin. `mtix hooks status`
-lists every webhook origin that is not consented, with the exact fix. An agent
-asks the operator to run `mtix hooks allow-origin <url>` from an interactive
-operator terminal outside agent sessions; agents never run it themselves.
-Loopback, link-local and private destinations stay refused unless the operator
-lists that origin with `--allow-private`. A webhook without consent is skipped
-and recorded; redirects to an origin that is not consented are not followed.
-
 The approval records are stored outside the project, bound to the local host
 and canonical project identity. Each record pins the selected hook stanza and
 its project script contents. For example, after reviewing the `wake` hook:
@@ -961,32 +950,3 @@ delivery would refuse, with the reason and the exact fix: text output prints
 same-file checks apply and a multiply linked file is refused at delivery (as is a file whose
 link count cannot be read), but
 `mtix hooks status` does not list it and permission bits are not reported.
-
-
-### Webhook origin consent
-
-A webhook hook delivers only to an origin (scheme, host and port) that the
-operator consented to on this host. The consent list is stored outside the
-project, so a cloned repository cannot grant it. To configure and verify:
-
-```sh
-mtix hooks status --json        # origins[] names each refused hook and the exact fix
-mtix hooks allow-origin 'https://hooks.example.com'
-mtix hooks allow-origin --allow-private 'http://127.0.0.1:9000'
-mtix hooks log                  # skipped-untrusted rows show the reason and the fix
-```
-
-`mtix doctor --json` carries the same check as the `hooks.origins` row (shown only
-when `.mtix/hooks.yaml` exists): PASS means every configured webhook origin is
-consented, WARN lists each hook that would be skipped with the exact fix command.
-Run doctor again after the operator consents, until the row is PASS. Doctor only
-reads; it never writes consent state.
-
-The consent command needs an interactive terminal outside agent sessions. List
-a loopback, link-local or private destination only with `--allow-private`, and
-only when it is intended. The check applies to the address actually connected,
-so a name that later resolves to a private address is refused, and the skipped row names the origin and the exact `--allow-private` command. Status and doctor resolve each consented name once (no request is sent to the webhook) and warn for a name that resolves to a private address without the opt-in. A name that cannot be resolved (offline, resolver error or a 2 second timeout) is also a warning, "could not verify", never a pass: re-run the check when online or check the host resolver. Redirects are
-followed only to other consented origins. If the consent state cannot be read,
-every webhook is skipped; run `mtix hooks status --json` and correct the
-reported path or access rules. An agent never edits the consent record and
-never works around a skip: it reports the fix to the operator.

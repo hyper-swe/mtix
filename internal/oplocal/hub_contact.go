@@ -45,36 +45,6 @@ type ListenLease struct {
 	StartTime string    `json:"start_time"`
 	Agent     string    `json:"agent,omitempty"`
 	ArmedAt   time.Time `json:"armed_at"`
-	// RefreshedAt is the waiter's latest keep-alive; zero on a lease that was
-	// never refreshed (the arm time then stands in).
-	RefreshedAt time.Time `json:"refreshed_at,omitempty"`
-}
-
-// ListenLeaseTTL is how long a lease stays live without a refresh. A waiter
-// refreshes well inside it, so a lease that stops being refreshed (a hung or
-// crashed waiter, or a clock stepped back) expires and can never keep a
-// listener, and with it the hub contact, alive forever (MTIX-112.20.4).
-const ListenLeaseTTL = 15 * time.Minute
-
-// ListenLeaseRefreshEvery is how often a live waiter refreshes its lease.
-const ListenLeaseRefreshEvery = ListenLeaseTTL / 3
-
-// LastSeen is the later of the arm time and the latest refresh.
-func (l ListenLease) LastSeen() time.Time {
-	if l.RefreshedAt.After(l.ArmedAt) {
-		return l.RefreshedAt
-	}
-	return l.ArmedAt
-}
-
-// Expired reports whether the lease has gone unrefreshed for ListenLeaseTTL, or
-// is dated further ahead of now than the activity clock skew allows (stale).
-func (l ListenLease) Expired(now time.Time) bool {
-	seen := l.LastSeen()
-	if seen.After(now.Add(5 * time.Minute)) {
-		return true
-	}
-	return now.Sub(seen) >= ListenLeaseTTL
 }
 
 // HubContact is the outcome of the most recent scheduled hub contact.

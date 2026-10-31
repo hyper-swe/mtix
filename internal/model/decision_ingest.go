@@ -29,6 +29,13 @@ type DecisionIngest struct {
 	// HadDuplicates reports that a member name was repeated; the later
 	// member won.
 	HadDuplicates bool
+	// Target is the target event id as received, when the object is a JSON
+	// object whose target is a well-formed event id. It is set whatever the
+	// class, so a reader can show an object that does not validate under the
+	// request it points at.
+	Target string
+	// RequestKey is the request_key as received, when well formed.
+	RequestKey string
 	// Value is the decoded object. It is set only when Class is valid.
 	Value *Decision
 }
@@ -61,6 +68,7 @@ func IngestDecision(raw []byte) DecisionIngest {
 		res.Class, res.Reason = DecisionMalformed, "decision: "+err.Error()
 		return res
 	}
+	res.Target, res.RequestKey = readHints(again)
 	c := &decisionCheck{}
 	res.Kind, res.Value = decodeDecision(c, again)
 	res.Class, res.Reason = c.class()
@@ -68,6 +76,22 @@ func IngestDecision(raw []byte) DecisionIngest {
 		res.Value = nil
 	}
 	return res
+}
+
+// readHints reads target and request_key from a parsed object when they are
+// well-formed strings.
+func readHints(v any) (target, requestKey string) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return "", ""
+	}
+	if s, isStr := m["target"].(string); isStr && decisionEventID.MatchString(s) {
+		target = s
+	}
+	if s, isStr := m["request_key"].(string); isStr && len(s) <= maxRequestKeyChars && decisionTokenPattern.MatchString(s) {
+		requestKey = s
+	}
+	return target, requestKey
 }
 
 func malformedIngest(reason string) DecisionIngest {

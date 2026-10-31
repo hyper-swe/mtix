@@ -520,13 +520,23 @@ computed from that value alone, never from this machine's clock, so a
 skewed client clock changes nothing. Because `created_at` is the
 transaction's start time, a push that started before a sweep can
 commit after it with an earlier `created_at`. The 15-minute overlap
-covers push transactions of normal length, which take seconds. It is
-not a bound: the 10-second `statement_timeout` limits each statement,
-not the push transaction, so a stalled push transaction can stay open
-longer than 15 minutes, and an event it then commits is missed by later
-windowed sweeps. Bounding the push transaction is a separate follow-up;
-the complete fix is a hub-assigned event order in a later protocol
-version.
+covers push transactions of normal length, which take seconds. Each push
+attempt sets two bounds with parameterized `set_config(..., true)` before
+its first hub read: `idle_in_transaction_session_timeout` to one minute
+and, where `pg_settings` exposes it (Postgres 17+), `transaction_timeout`
+to ten minutes. Both are transaction-local and provider-independent;
+commit or rollback restores the session settings. A suspended client
+therefore loses its idle transaction and all its uncommitted events after
+one minute. The ten-minute transaction bound also stops a push that stays
+active, and is sized by reasoning, not measurement, for a full 100-event batch
+(a few hub round trips per event, plus registry lock waits of up to 10
+seconds each) over a slow link, while staying under the 15-minute overlap. The hub reports either
+abort as SQLSTATE 25P03 or 25P04; the client treats both as retryable and
+retries the push automatically, idempotently; if the retries are
+exhausted the events stay pending and the next sync pushes them again. Older servers bound idle periods only: repeated shorter
+pauses and statements can still exceed the overlap in total, since the
+10-second `statement_timeout` limits each statement. A hub-assigned event
+order in a later protocol version remains the complete fix.
 
 **Cost.** In the common case, where nothing is missing and the window
 holds at most `--limit` ids, the sweep adds one hub query to each pull:

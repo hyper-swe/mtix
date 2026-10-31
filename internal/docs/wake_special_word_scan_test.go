@@ -11,19 +11,6 @@ import (
 
 var wakeLiteralEscapeRE = regexp.MustCompile(`\\(?:u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|x[0-9A-Fa-f]{1,2}|[0-7]{1,3}|c[ -~]|[abeEfnrtv\\'"?])`)
 
-var wakeWordEscapeRE = regexp.MustCompile(`\$'(?:\\.|[^'\\])*'|\\(?:u[0-9A-Fa-f]{1,4}|U[0-9A-Fa-f]{1,8}|x[0-9A-Fa-f]{1,2}|[0-7]{1,3})`)
-
-func wakeDecodeLiteralWord(word string) string {
-	return wakeWordEscapeRE.ReplaceAllStringFunc(word, func(escaped string) string {
-		if strings.HasPrefix(escaped, "$'") {
-			literal := wakeLiteralEscapeRE.ReplaceAllStringFunc(escaped[2:len(escaped)-1], wakeLiteralEscape)
-			literal, _, _ = strings.Cut(literal, "\x00")
-			return literal
-		}
-		return wakeLiteralEscape(escaped)
-	})
-}
-
 // This is a conservative lexical class, not expansion or command evaluation.
 func wakeSpecialReaderWord(text string) bool {
 	for _, word := range wakeSpecialWords(text) {
@@ -104,6 +91,9 @@ func wakeLiteralEscape(text string) string {
 	value, err := strconv.ParseUint(digits, base, 32)
 	if err != nil {
 		return text
+	}
+	if base == 8 {
+		return string([]byte{byte(value & 0xff)})
 	}
 	return string(rune(value))
 }

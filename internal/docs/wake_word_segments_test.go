@@ -60,7 +60,10 @@ func wakeWordGroupEnd(text string, start int) int {
 }
 
 func wakeBalancedWordEnd(text string, start int) int {
-	depth := 1
+	if text[start] == '(' && (start == 0 || !strings.ContainsRune("?*+@!", rune(text[start-1]))) {
+		return wakeParenthesizedWordEnd(text, start)
+	}
+	closer := ")}]"[strings.IndexByte("({[", text[start])]
 	for i := start + 1; i < len(text); i++ {
 		c := text[i]
 		if c == '\\' {
@@ -68,12 +71,9 @@ func wakeBalancedWordEnd(text string, start int) int {
 		} else if strings.ContainsRune("'\"`", rune(c)) {
 			i = wakeQuotedWordEnd(text, i) - 1
 		} else if strings.ContainsRune("({[", rune(c)) {
-			depth++
-		} else if strings.ContainsRune(")}]", rune(c)) {
-			depth--
-			if depth == 0 {
-				return i + 1
-			}
+			i = wakeBalancedWordEnd(text, i) - 1
+		} else if c == closer {
+			return i + 1
 		}
 	}
 	return len(text)

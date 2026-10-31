@@ -6,8 +6,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,13 +21,21 @@ import (
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
-// startFakeServe records a live serve (this test process) on the given port.
-func startFakeServe(t *testing.T, port int) {
+// startFakeServe records a live serve (this test process) answering /health
+// on a throwaway listener. The returned port is the listener's, not the
+// argument; the argument is kept for call-site readability.
+func startFakeServe(t *testing.T, _ int) int {
 	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	t.Cleanup(srv.Close)
+	port := srv.Listener.Addr().(*net.TCPAddr).Port
 	mtixDir, err := findMtixDir()
 	require.NoError(t, err)
-	require.NoError(t, writePIDLock(mtixDir, port))
-	t.Cleanup(func() { removePIDLock(mtixDir) })
+	require.NoError(t, publishServeRecord(mtixDir, os.Getpid(), "127.0.0.1", port, time.Unix(0, 0)))
+	t.Cleanup(func() { removeServeRecord(mtixDir, os.Getpid()) })
+	return port
 }
 
 func newURLTestNode(t *testing.T) string {
@@ -37,23 +50,23 @@ func newURLTestNode(t *testing.T) string {
 func TestURL_ServeRunning_PrintsAbsoluteTicketURL(t *testing.T) {
 	initTestApp(t)
 	id := newURLTestNode(t)
-	startFakeServe(t, 6849)
+	port := startFakeServe(t, 6849)
 
 	out := captureStdout(t, func() { require.NoError(t, runURL(id)) })
-	assert.Equal(t, "http://127.0.0.1:6849/ticket/"+id+"\n", out)
+	assert.Equal(t, "http://127.0.0.1:"+strconv.Itoa(port)+"/ticket/"+id+"\n", out)
 }
 
 func TestURL_ServeRunningJSON_EmitsIDAndURL(t *testing.T) {
 	initTestApp(t)
 	id := newURLTestNode(t)
-	startFakeServe(t, 6849)
+	port := startFakeServe(t, 6849)
 	app.jsonOutput = true
 
 	out := captureStdout(t, func() { require.NoError(t, runURL(id)) })
 	var got map[string]any
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
 	assert.Equal(t, id, got["id"])
-	assert.Equal(t, "http://127.0.0.1:6849/ticket/"+id, got["url"])
+	assert.Equal(t, "http://127.0.0.1:"+strconv.Itoa(port)+"/ticket/"+id, got["url"])
 }
 
 func TestURL_NoServe_FailsNamingServeWithEmptyStdout(t *testing.T) {
@@ -67,12 +80,13 @@ func TestURL_NoServe_FailsNamingServeWithEmptyStdout(t *testing.T) {
 	assert.Empty(t, out)
 }
 
-func TestURL_StaleLock_FailsNamingServe(t *testing.T) {
+// A live PID lock no longer counts: url reads the serve record (MTIX-232).
+func TestURL_PIDLockOnly_FailsNamingServe(t *testing.T) {
 	initTestApp(t)
 	id := newURLTestNode(t)
 	mtixDir, err := findMtixDir()
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(mtixDir+"/"+pidLockFile, []byte("999999999\n6849\n"), 0o600))
+	require.NoError(t, os.WriteFile(mtixDir+"/"+pidLockFile, []byte(strconv.Itoa(os.Getpid())+"\n6849\n"), 0o600))
 
 	var runErr error
 	out := captureStdout(t, func() { runErr = runURL(id) })
@@ -143,8 +157,9 @@ func TestURL_MtixDirMissing_ReportsErrorWithEmptyStdout(t *testing.T) {
 	assert.Empty(t, out)
 }
 
-func TestURL_Help_DocumentsLoopbackOnlyLimit(t *testing.T) {
+func TestURL_Help_DocumentsServeRecordAndProjectDir(t *testing.T) {
 	help := newURLCmd().Long
-	assert.Contains(t, help, "loopback")
-	assert.Contains(t, help, "--insecure-bind")
+	assert.Contains(t, help, ".mtix/serve.json")
+	assert.Contains(t, help, "wildcard")
+	assert.Contains(t, help, "mtix -C <dir> url")
 }

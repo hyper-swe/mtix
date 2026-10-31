@@ -80,11 +80,15 @@ recipient and per-sender budgets and durable backoff; held wakes re-arm in the s
 a separate feature. A configured limit of 12 holds the 13th attempt in a rolling
 hour, before claim or send, across boards for the same agent, host and user.
 Duplicate claims and held events spend no allowance; transport failures do.
-Sender limits use the addressed comment's claimed author and the recipient's
-effective setting, across boards for the same host and user. The sender is not
+Sender limits use the wake event's claimed author and the recipient's
+effective setting, across boards for the same host and user. Addressed comments
+and hook deliveries use the payload author when it decodes and is nonempty,
+otherwise the event envelope author, matching inbox reads. The sender is not
 a verified principal; a recipient budget remains the bound across sender names.
 Legacy or unexplained credits without sender attribution count against every
-sender until those credits leave the rolling hour. Held wakes stay pending;
+sender until those credits leave the rolling hour. New events without an attributable sender
+are checked against the combined credits of all senders; if admitted, their
+unattributed credits count against every sender until expiry. Held wakes stay pending;
 the alert names the exact `mtix config set wake.per_sender_per_hour <n> --agent <id>`
 command to raise that recipient's limit. Acknowledgements do not refund sender credits.
 

@@ -10,6 +10,7 @@ import (
 	"math"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -84,6 +85,10 @@ func validateWakeBudgetSource(source string, row WakeBudgetSource) error {
 func validateWakeBudgetCredits(credits []WakeBudgetCredit) error {
 	var total int64
 	for _, credit := range credits {
+		// Empty attribution remains valid for legacy and unexplained credits.
+		if credit.Sender != "" && (!wakeBudgetIdentity(credit.Sender) || strings.IndexFunc(credit.Sender, unicode.IsControl) >= 0) {
+			return invalid("wake budget credit sender is invalid")
+		}
 		if credit.Count <= 0 || !wakeBudgetTime(credit.At) || credit.Count > math.MaxInt64-total {
 			return invalid("wake budget rolling credits are invalid")
 		}

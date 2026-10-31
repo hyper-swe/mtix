@@ -20,13 +20,17 @@ func TestWakeBudgetSender_Attribution(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	for _, tc := range []struct {
-		name, payload, want string
-		invalid             bool
+		name          string
+		op            model.OpType
+		payload, want string
 	}{
-		{"payload author", `{"to":"worker","author_id":"payload-author"}`, "payload-author", false},
-		{"envelope fallback", `{"to":"worker"}`, "envelope-author", false},
-		{"other addressee", `{"to":"other","author_id":"payload-author"}`, "", false},
-		{"malformed", `{`, "", true},
+		{"payload author", model.OpComment, `{"to":"worker","author_id":"payload-author"}`, "payload-author"},
+		{"envelope fallback", model.OpComment, `{"to":"worker"}`, "envelope-author"},
+		{"other addressee", model.OpComment, `{"to":"other","author_id":"payload-author"}`, "payload-author"},
+		{"malformed", model.OpComment, `{`, "envelope-author"},
+		{"non-comment", model.OpCreateNode, `{}`, "envelope-author"},
+		{"non-comment payload author", model.OpCreateNode, `{"author_id":"payload-author"}`, "payload-author"},
+		{"missing addressee", model.OpComment, `{}`, "envelope-author"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tx, err := s.WriteDB().BeginTx(t.Context(), nil)
@@ -34,13 +38,13 @@ func TestWakeBudgetSender_Attribution(t *testing.T) {
 			defer func() { require.NoError(t, tx.Rollback()) }()
 			_, err = tx.ExecContext(t.Context(), `INSERT INTO sync_events
     (event_id,project_prefix,node_id,op_type,payload,wall_clock_ts,lamport_clock,vector_clock,author_id,author_machine_hash,created_at)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?)`, "sender-event", "TEST", "TEST-1", model.OpComment, tc.payload, 1, 1, "{}", "envelope-author", "0123456789abcdef", "2026-10-28T00:00:00Z")
+    VALUES(?,?,?,?,?,?,?,?,?,?,?)`, "sender-event", "TEST", "TEST-1", tc.op, tc.payload, 1, 1, "{}", "envelope-author", "0123456789abcdef", "2026-10-28T00:00:00Z")
 			require.NoError(t, err)
 			var seq int64
 			require.NoError(t, tx.QueryRowContext(t.Context(), "SELECT rowid FROM sync_events WHERE event_id=?", "sender-event").Scan(&seq))
 			got, err := wakeBudgetSender(t.Context(), tx, model.WakeKey{AgentID: "worker", EventSeq: seq})
 			require.Equal(t, tc.want, got)
-			require.Equal(t, tc.invalid, err != nil)
+			require.NoError(t, err)
 		})
 	}
 	tx, err := s.WriteDB().BeginTx(t.Context(), nil)

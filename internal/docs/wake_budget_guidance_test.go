@@ -22,7 +22,7 @@ func TestWakeBudgetGuidance_SettingRowsDescribeCurrentEnforcement(t *testing.T) 
 				require.Contains(t, wakeBudgetSettingLine(t, body, key), "stored, not yet enforced")
 			}
 			require.Contains(t, body, "budget.rewind")
-			for _, phrase := range []string{"claimed author", "Legacy or unexplained credits", "Acknowledgements do not refund sender credits", "mtix config set wake.per_sender_per_hour <n> --agent <id>"} {
+			for _, phrase := range []string{"claimed author", "Legacy or unexplained credits", "New events without an attributable sender", "combined credits of all senders", "payload author when it decodes", "otherwise the event envelope author", "Acknowledgements do not refund sender credits", "mtix config set wake.per_sender_per_hour <n> --agent <id>"} {
 				require.Contains(t, body, phrase)
 			}
 			require.NotContains(t, body, "Scanner discovery, budget and\nback-off enforcement")

@@ -39,22 +39,24 @@ func isRouted(ctx context.Context) bool {
 // appContext holds shared state for all commands.
 // Initialized in PersistentPreRunE, available to all subcommands.
 type appContext struct {
-	store       *sqlite.Store
-	nodeSvc     *service.NodeService
-	ctxSvc      *service.ContextService
-	promptSvc   *service.PromptService
-	agentSvc    *service.AgentService
-	sessionSvc  *service.SessionService
-	bgSvc       *service.BackgroundService
-	configSvc   *service.ConfigService
-	syncSvc     *service.SyncService
-	syncOptions syncServiceOptions // constructor dependencies for focused CLI tests
-	hooksDisp   *service.HooksDispatcher
-	logger      *slog.Logger
-	jsonOutput  bool
-	staleReason string         // command-local unverified auto-import freshness, reset on each pre-run
-	outputScope freshnessScope // explicit command mode; unknown commands receive no read metadata
-	mtixDir     string         // Path to .mtix directory, set during initApp.
+	store *sqlite.Store
+	// historyGuard evaluates the history.export rollout guard (MTIX-95.31.19.6).
+	historyGuard historyExportGuard
+	nodeSvc      *service.NodeService
+	ctxSvc       *service.ContextService
+	promptSvc    *service.PromptService
+	agentSvc     *service.AgentService
+	sessionSvc   *service.SessionService
+	bgSvc        *service.BackgroundService
+	configSvc    *service.ConfigService
+	syncSvc      *service.SyncService
+	syncOptions  syncServiceOptions // constructor dependencies for focused CLI tests
+	hooksDisp    *service.HooksDispatcher
+	logger       *slog.Logger
+	jsonOutput   bool
+	staleReason  string         // command-local unverified auto-import freshness, reset on each pre-run
+	outputScope  freshnessScope // explicit command mode; unknown commands receive no read metadata
+	mtixDir      string         // Path to .mtix directory, set during initApp.
 	// firstRunErr holds a refused host first-run record until a command that
 	// needs operator state reports it, once per process.
 	firstRunErr error
@@ -234,6 +236,11 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 	app.store.SetHistoryExportSource(app.configSvc.HistoryExport)
 	app.store.SetHistoryLimitSource(app.configSvc.HistoryMaxEntries) // MTIX-95.31.19.4: unset by default
 	app.store.SetWriterVersion(version)
+	// MTIX-95.31.19.6: turning history.export on is refused while an older mtix is detected.
+	app.historyGuard = service.NewHistoryExportGuardService(app.store, guardClock)
+	app.configSvc.SetHistoryExportGuard(func() (service.HistoryGuardReport, error) {
+		return app.historyGuard.Evaluate(context.Background())
+	})
 
 	if authErr := initializeProcessAuthor(); authErr != nil {
 		return authErr
@@ -395,3 +402,12 @@ func isMutationCommand(cmdName string) bool {
 	}
 	return false
 }
+
+// historyExportGuard is the service the doctor row and config set call to
+// evaluate the history.export rollout guard.
+type historyExportGuard interface {
+	Evaluate(ctx context.Context) (service.HistoryGuardReport, error)
+}
+
+// guardClock is the clock the guard uses: the wall clock, UTC.
+func guardClock() time.Time { return time.Now().UTC() }

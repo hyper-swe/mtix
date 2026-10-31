@@ -150,6 +150,23 @@ Each daemon pass takes `dispatch.lock` before pending-mirror recovery, hub pull,
 
 `mtix sync doctor` reports the local `data filesystem` check in text and JSON. Known network or FUSE mounts produce a passing WARN with local-disk recovery guidance; a failed or unavailable classifier also warns without claiming reliable locking. Only recognized local disk filesystem names (apfs on macOS; ext, xfs, btrfs and similar on Linux) pass; any other name also warns, because an unrecognized filesystem is not a locking guarantee. On Windows the filesystem cannot be classified, so this row always shows a WARN (classification unavailable); it cannot be cleared, it does not fail the doctor, and it does not mean the store is unsafe. The check performs no network contact of its own; the doctor's existing hub checks still contact the hub and can fail independently. Existing unsafe-filesystem write refusal remains in force. Give each machine its own local `.mtix` and use the hub to share changes.
 
+## history.export refused, or an older mtix reports checksum verification failed
+`mtix config set history.export true` is refused while an older mtix (below 0.6.0)
+is detected by a session registration or a daemon heartbeat, seen in the last 30
+days, that lacks the task-history marker every build from 0.6.0 writes; the
+message names it and the fix. `mtix doctor` shows the `history.export.guard` row (`--json`: `data.blockers`,
+`data.min_version`): upgrade each listed machine to 0.6.0 or later, restart its
+daemon, let it write the board once and rerun doctor. An older mtix reading a
+2.1.0 file reports `checksum verification failed`; that is the refusal, not
+corruption. Machines and CI jobs that read the file through git are invisible to
+the guard: check `mtix --version` on each.
+
+The switch lives in the tracked `.mtix/config.yaml`, so a clone that pulls
+`history: export: true` writes 2.1.0 without having run the guard. Run
+`mtix doctor` in every clone after pulling that line: the `history.export.guard`
+row fails there when an older build is seen, and the fix is
+`mtix config set history.export false` until that machine is upgraded.
+
 ## Common Errors
 
 ### Pull sync lock is busy
@@ -244,6 +261,8 @@ Each of them resolves the refusal. `mtix sync` shows the last refusal, its kind,
 - `data.dir`
 - `data.soft_delete_retention`
 - `history.export`
+- `history.max_entries_per_task`
+- `inbox.strict_board_identity`
 - `logging.file`
 - `logging.level`
 - `mcp.enabled`
@@ -268,4 +287,14 @@ Each of them resolves the refusal. `mtix sync` shows the last refusal, its kind,
 - `ui.collapse_done`
 - `ui.default_depth`
 - `ui.theme`
+- `wake.backoff_after_unacked`
+- `wake.envelope_max_body_bytes`
+- `wake.envelope_max_events`
+- `wake.envelope_max_total_bytes`
+- `wake.live`
+- `wake.max_hop_depth`
+- `wake.per_sender_per_hour`
+- `wake.remote_awake_daily_cap`
+- `wake.reply_extensions_per_hour`
+- `wake.wakes_per_hour`
 <!-- END AUTO-GENERATED -->

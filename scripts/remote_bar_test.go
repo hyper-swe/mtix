@@ -936,3 +936,118 @@ func TestRemoteBar_Snapshot_LoopRoundWorktreeLayout_SnapshotsCleanly(t *testing.
 		require.NotContains(t, files, drop)
 	}
 }
+
+// oldBaseRepo builds a work repo whose HEAD is the merge-base of itself and
+// origin/main, where main has since changed .github/workflows/ci.yml.
+func oldBaseRepo(t *testing.T) (work string) {
+	t.Helper()
+	work, _ = repoWithRemote(t)
+	wf := filepath.Join(work, ".github", "workflows")
+	require.NoError(t, os.MkdirAll(wf, 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(wf, "ci.yml"), []byte("on: push\n"), 0o600))
+	git(t, work, "add", "-A")
+	git(t, work, "commit", "-m", "add ci")
+	git(t, work, "push", "origin", "main")
+	require.NoError(t, os.WriteFile(filepath.Join(wf, "ci.yml"), []byte("on: push\n# later\n"), 0o600))
+	git(t, work, "commit", "-am", "change ci")
+	git(t, work, "push", "origin", "main")
+	git(t, work, "reset", "--hard", "HEAD~1")
+	git(t, work, "fetch", "origin")
+	return work
+}
+
+func writeOldSnapshot(t *testing.T, ci string) string {
+	t.Helper()
+	snap := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(snap, "a.txt"), []byte("a\n"), 0o600))
+	require.NoError(t, os.MkdirAll(filepath.Join(snap, ".github", "workflows"), 0o750))
+	require.NoError(t, os.WriteFile(filepath.Join(snap, ".github", "workflows", "ci.yml"), []byte(ci), 0o600))
+	return snap
+}
+
+func TestRemoteBar_Run_OldBaseWithUnchangedGithub_IsNotRefused(t *testing.T) {
+	work := oldBaseRepo(t)
+	snap := writeOldSnapshot(t, "on: push\n")
+
+	out, code := bash(t, work, `bash "$RB_SCRIPT" --dry-run "$S"`, "S="+snap)
+	require.Equal(t, 0, code, out)
+	require.Contains(t, out, "older base")
+}
+
+func TestRemoteBar_Run_OldBaseWithOwnGithubEdit_IsStillRefused(t *testing.T) {
+	work := oldBaseRepo(t)
+	snap := writeOldSnapshot(t, "on: push\n# mine\n")
+
+	out, code := bash(t, work, `bash "$RB_SCRIPT" --dry-run "$S"`, "S="+snap)
+	require.Equal(t, 2, code, out)
+	require.Contains(t, out, "--allow-workflow-diff")
+
+	out, code = bash(t, work, `bash "$RB_SCRIPT" --dry-run --allow-workflow-diff "$S"`, "S="+snap)
+	require.Equal(t, 0, code, out)
+	require.Contains(t, out, "WARNING")
+}
+
+func TestRemoteBar_Run_BaseFlag_ComparesAgainstTheGivenRevision(t *testing.T) {
+	work := oldBaseRepo(t)
+	snap := writeOldSnapshot(t, "on: push\n")
+	base := git(t, work, "rev-parse", "HEAD")
+	git(t, work, "commit", "--allow-empty", "-m", "move head")
+
+	out, code := bash(t, work, `bash "$RB_SCRIPT" --dry-run --base "$B" "$S"`, "S="+snap, "B="+base)
+	require.Equal(t, 0, code, out)
+	_, code = bash(t, work, `bash "$RB_SCRIPT" --dry-run --base nonexistent "$S"`, "S="+snap)
+	require.Equal(t, 2, code)
+}
+
+func TestRemoteBar_Run_BaseFlag_NonAncestorOfMain_IsRefused(t *testing.T) {
+	work := oldBaseRepo(t)
+	// A commit outside origin/main that carries the same .github edit as the
+	// snapshot: it must not pass as an older base.
+	wf := filepath.Join(work, ".github", "workflows", "ci.yml")
+	require.NoError(t, os.WriteFile(wf, []byte("on: push\n# mine\n"), 0o600))
+	git(t, work, "commit", "-am", "unreviewed ci edit")
+	bad := git(t, work, "rev-parse", "HEAD")
+	snap := writeOldSnapshot(t, "on: push\n# mine\n")
+
+	out, code := bash(t, work, `bash "$RB_SCRIPT" --dry-run "$S"`, "S="+snap)
+	require.Equal(t, 2, code, out)
+	out, code = bash(t, work, `bash "$RB_SCRIPT" --dry-run --base "$B" "$S"`, "S="+snap, "B="+bad)
+	require.Equal(t, 2, code, out)
+	require.Contains(t, out, "not an ancestor")
+}
+
+func TestRemoteBar_Run_BaseFlag_AncestorOfMain_IsAccepted(t *testing.T) {
+	work := oldBaseRepo(t)
+	snap := writeOldSnapshot(t, "on: push\n")
+	out, code := bash(t, work, `bash "$RB_SCRIPT" --dry-run --base HEAD~1 "$S"`, "S="+snap)
+	require.NotEqual(t, 0, code, "HEAD~1 predates ci.yml, so it differs from the snapshot: %s", out)
+	out, code = bash(t, work, `bash "$RB_SCRIPT" --dry-run --base HEAD "$S"`, "S="+snap)
+	require.Equal(t, 0, code, out)
+}
+
+func TestRemoteBar_Run_BaseFlag_MissingValueOrUnknownRev_Exits2(t *testing.T) {
+	work := oldBaseRepo(t)
+	snap := writeOldSnapshot(t, "on: push\n")
+	out, code := bash(t, work, `bash "$RB_SCRIPT" --dry-run "$S" --base`, "S="+snap)
+	require.Equal(t, 2, code, out)
+	require.Contains(t, out, "--base needs a value")
+	// An unknown revision fails even when the snapshot's .github equals
+	// origin/main, so the older-base comparison is never reached.
+	same := writeOldSnapshot(t, "on: push\n# later\n")
+	out, code = bash(t, work, `bash "$RB_SCRIPT" --dry-run --base nonexistent "$S"`, "S="+same)
+	require.Equal(t, 2, code, out)
+	require.Contains(t, out, "is not a commit")
+}
+
+func TestRemoteBar_Run_NoMergeBase_FailsClosedAndComparesWithMain(t *testing.T) {
+	work := oldBaseRepo(t)
+	// Unrelated history: HEAD shares no commit with origin/main.
+	git(t, work, "checkout", "--orphan", "unrelated")
+	git(t, work, "commit", "-m", "unrelated root")
+	snap := writeOldSnapshot(t, "on: push\n")
+
+	out, code := bash(t, work, `bash "$RB_SCRIPT" --dry-run "$S"`, "S="+snap)
+	require.Equal(t, 2, code, out)
+	require.Contains(t, out, "--allow-workflow-diff")
+	require.NotContains(t, out, "older base")
+}

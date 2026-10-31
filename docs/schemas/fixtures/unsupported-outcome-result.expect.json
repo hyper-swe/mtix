@@ -1,0 +1,8 @@
+{
+  "class": "unsupported",
+  "kind": "outcome",
+  "had_duplicates": false,
+  "canonical": "{\"answer\":\"evt-2\",\"kind\":\"outcome\",\"request_key\":\"o1\",\"result\":\"deferred\",\"target\":\"evt-1\",\"v\":1}",
+  "payload_sha256": "b983b4968d35907d896106f85c4beda1a0d7acacd450f823922fdf3f7aa19eb8",
+  "content_sha256": "409eb04ae7712950a6f2b0f6a3d7994f2bbbe10244b81aefb1b98d1326e6d2e4"
+}

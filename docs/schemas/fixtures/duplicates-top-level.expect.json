@@ -1,0 +1,9 @@
+{
+  "class": "valid",
+  "kind": "request",
+  "had_duplicates": true,
+  "canonical": "{\"kind\":\"request\",\"question\":\"Replaced?\",\"request_key\":\"6f1c\",\"ticket\":{\"ancestors\":[\"3f2b8c1e-0000-4000-8000-000000000002\"],\"path_match\":[true,true],\"paths\":[\"PROJ-187.4\",\"PROJ-187\"],\"truncated\":false,\"uid\":\"3f2b8c1e-0000-4000-8000-000000000001\"},\"v\":1}",
+  "payload_sha256": "0fb6108b2e1f9f9b42a16ca7467670788980cc8f6ceda6d018998942ed7570c4",
+  "content_sha256": "03d47b1479b29d320d28f7bd5bec4af4fb185544339d760ca4c1feebe186715e",
+  "same_hash_as": "duplicates-top-level.clean"
+}

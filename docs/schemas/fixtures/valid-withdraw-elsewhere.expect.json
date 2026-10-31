@@ -1,0 +1,8 @@
+{
+  "class": "valid",
+  "kind": "withdraw",
+  "had_duplicates": false,
+  "canonical": "{\"elsewhere\":{\"channel\":\"cli-tty\",\"decider\":{\"kind\":\"human\"},\"receipt\":{\"run\":\"r-5521\"}},\"kind\":\"withdraw\",\"reason\":\"Answered in the terminal.\",\"reason_code\":\"answered_elsewhere\",\"request_key\":\"w1\",\"target\":\"evt-1\",\"v\":1}",
+  "payload_sha256": "561bd232d87c06612cb194f6e62a28a6d49158a18954eec1ef92dc4b356340e7",
+  "content_sha256": "08737d0226f01de3c2d981cde9892bbcf962cda88c0f0887f5f1c2ff6cdf8055"
+}

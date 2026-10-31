@@ -1,0 +1,8 @@
+{
+  "class": "malformed",
+  "kind": "answer",
+  "had_duplicates": false,
+  "canonical": "{\"channel\":\"web\",\"kind\":\"answer\",\"request_key\":\"a1\",\"target\":\"evt-1\",\"v\":1}",
+  "payload_sha256": "938f3a4a2369285d2c3860e34ad90c2ebf5d25ffcf1bbf57d7e790d40c154575",
+  "content_sha256": "a051d592a6b1582c8e2f97e004269d6d2b90c78ac1594115189c14b0beac10f2"
+}

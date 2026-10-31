@@ -1,0 +1,8 @@
+{
+  "class": "valid",
+  "kind": "outcome",
+  "had_duplicates": false,
+  "canonical": "{\"answer\":\"evt-2\",\"kind\":\"outcome\",\"receipt\":{\"at\":\"2026-10-30T12:05:00Z\",\"hash\":\"ab12cd\",\"kind\":\"merge\",\"ledger\":\"main\",\"run\":\"r-5521\",\"seq\":4},\"request_key\":\"o1\",\"result\":\"applied\",\"target\":\"evt-1\",\"v\":1}",
+  "payload_sha256": "8b24273f5c9e3edffb008148b0c58e2ac607f13424555675026be11b04024de8",
+  "content_sha256": "6d6e6cce0bc3d457754a63a7661164c7544c1204f6c176bec46eac48b31b5acf"
+}

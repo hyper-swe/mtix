@@ -1,0 +1,12 @@
+{"v":1,"kind":"request","request_key":"6f1c0a","question":"Merge the run for PROJ-187.4 into main?",
+ "context":"Round 3 green.\n\nSee the review page.",
+ "options":[{"id":"approve","label":"approve","consequence":"Merge into local main."},
+  {"id":"directive","label":"directive","consequence":"Sends your note; another round runs.","input":{"type":"text","required":true}},
+  {"id":"accept-finding","label":"accept a finding","input":{"type":"finding_id","required":true}},
+  {"id":"decline","label":"decline","consequence":"Cancels the run.","note_required":true}],
+ "recommend":{"option":"approve","reason":"all criteria met"},
+ "links":[{"kind":"review","url":"http://127.0.0.1:7300/#review","label":"Review page","required":true,"open_before_answer":true}],
+ "deadline":"2026-10-30T12:00:00Z","answerable_by":"human","answerers":["alice"],"requires_outcome":true,
+ "key":"app1:1a2b3c4d5e6f:r-5521:gate2:r3","supersedes":["evt-0"],"category":"gate-2",
+ "source":{"app":"example","run":"r-5521","step":"r3"},"asker":{"kind":"agent","model":"declared-model"},
+ "ticket":{"uid":"3f2b8c1e-0000-4000-8000-000000000001","ancestors":["3f2b8c1e-0000-4000-8000-000000000002"],"paths":["PROJ-187.4","PROJ-187"],"path_match":[true,true],"truncated":false},"future_field":{"x":[1,2,3]}}

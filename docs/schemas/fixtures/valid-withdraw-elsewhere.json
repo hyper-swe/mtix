@@ -1,0 +1,1 @@
+{"v":1,"kind":"withdraw","request_key":"w1","target":"evt-1","reason_code":"answered_elsewhere","reason":"Answered in the terminal.","elsewhere":{"channel":"cli-tty","decider":{"kind":"human"},"receipt":{"run":"r-5521"}}}

@@ -1,0 +1,8 @@
+{
+  "class": "valid",
+  "kind": "request",
+  "had_duplicates": false,
+  "canonical": "{\"answerable_by\":\"human\",\"answerers\":[\"alice\"],\"asker\":{\"kind\":\"agent\",\"model\":\"declared-model\"},\"category\":\"gate-2\",\"context\":\"Round 3 green.\\n\\nSee the review page.\",\"deadline\":\"2026-10-30T12:00:00Z\",\"future_field\":{\"x\":[1,2,3]},\"key\":\"app1:1a2b3c4d5e6f:r-5521:gate2:r3\",\"kind\":\"request\",\"links\":[{\"kind\":\"review\",\"label\":\"Review page\",\"open_before_answer\":true,\"required\":true,\"url\":\"http://127.0.0.1:7300/#review\"}],\"options\":[{\"consequence\":\"Merge into local main.\",\"id\":\"approve\",\"label\":\"approve\"},{\"consequence\":\"Sends your note; another round runs.\",\"id\":\"directive\",\"input\":{\"required\":true,\"type\":\"text\"},\"label\":\"directive\"},{\"id\":\"accept-finding\",\"input\":{\"required\":true,\"type\":\"finding_id\"},\"label\":\"accept a finding\"},{\"consequence\":\"Cancels the run.\",\"id\":\"decline\",\"label\":\"decline\",\"note_required\":true}],\"question\":\"Merge the run for PROJ-187.4 into main?\",\"recommend\":{\"option\":\"approve\",\"reason\":\"all criteria met\"},\"request_key\":\"6f1c0a\",\"requires_outcome\":true,\"source\":{\"app\":\"example\",\"run\":\"r-5521\",\"step\":\"r3\"},\"supersedes\":[\"evt-0\"],\"ticket\":{\"ancestors\":[\"3f2b8c1e-0000-4000-8000-000000000002\"],\"path_match\":[true,true],\"paths\":[\"PROJ-187.4\",\"PROJ-187\"],\"truncated\":false,\"uid\":\"3f2b8c1e-0000-4000-8000-000000000001\"},\"v\":1}",
+  "payload_sha256": "b58aa384553b603f9c430a8d02116f52e532ab5cba776ccf8f89a5f429e9793d",
+  "content_sha256": "f1308342381b12bd049ac271ea946b259c2e399e155bf127f880c58f16c213bd"
+}

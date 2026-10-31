@@ -1,0 +1,8 @@
+{
+  "class": "malformed",
+  "kind": "withdraw",
+  "had_duplicates": false,
+  "canonical": "{\"kind\":\"withdraw\",\"request_key\":\"w1\",\"v\":1}",
+  "payload_sha256": "5b7e3b59e2692d59869b5230b98dfe78fa6919ca3e773ecea54f703ba86b31ab",
+  "content_sha256": "65048856c23b94ea7e168b8b82329115fe8ffe82f6b151a4ba49bf84680559d1"
+}

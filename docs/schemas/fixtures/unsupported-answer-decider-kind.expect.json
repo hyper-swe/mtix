@@ -1,0 +1,8 @@
+{
+  "class": "unsupported",
+  "kind": "answer",
+  "had_duplicates": false,
+  "canonical": "{\"channel\":\"web\",\"decider\":{\"kind\":\"daemon\"},\"kind\":\"answer\",\"option\":\"a\",\"request_key\":\"a1\",\"target\":\"evt-1\",\"v\":1}",
+  "payload_sha256": "57b56e4057f53af943e3b7f9e38c3e0ad564bfb6a6ce5aac3e3e3e24754e7094",
+  "content_sha256": "94d5f0a1d369d1fcd0fa015ec3fd48e815388b2a6699d3df5d5409e8493de5bd"
+}

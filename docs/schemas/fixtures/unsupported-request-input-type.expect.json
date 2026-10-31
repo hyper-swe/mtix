@@ -1,0 +1,8 @@
+{
+  "class": "unsupported",
+  "kind": "request",
+  "had_duplicates": false,
+  "canonical": "{\"kind\":\"request\",\"options\":[{\"id\":\"a\",\"input\":{\"type\":\"file\"}}],\"question\":\"Merge the run for PROJ-187.4 into main?\",\"request_key\":\"6f1c\",\"ticket\":{\"ancestors\":[\"3f2b8c1e-0000-4000-8000-000000000002\"],\"path_match\":[true,true],\"paths\":[\"PROJ-187.4\",\"PROJ-187\"],\"truncated\":false,\"uid\":\"3f2b8c1e-0000-4000-8000-000000000001\"},\"v\":1}",
+  "payload_sha256": "e037101e8c819232a6f0fc9eefd67369f97b4602b41e530cf749db5107773f99",
+  "content_sha256": "de05c0fdd3420eb31458df1112756e898fa6c09d231c9cf07ad4705cf2c73e2a"
+}

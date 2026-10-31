@@ -1,0 +1,8 @@
+{
+  "class": "valid",
+  "kind": "answer",
+  "had_duplicates": false,
+  "canonical": "{\"channel\":\"web\",\"decider\":{\"kind\":\"human\"},\"kind\":\"answer\",\"note\":\"ok\",\"opened_links\":[0],\"option\":\"approve\",\"request_key\":\"a1\",\"target\":\"evt-1\",\"v\":1}",
+  "payload_sha256": "53b985087039c583bf5c7dd55e8e134ba5c9c2f4aad920c372c4f2e3e4ee9927",
+  "content_sha256": "4f1ec83e78a3f2cf3bbbf0531ee58476e03321105b67927b560610dd61232786"
+}

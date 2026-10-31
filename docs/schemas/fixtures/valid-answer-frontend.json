@@ -1,0 +1,1 @@
+{"v":1,"kind":"answer","request_key":"a2","target":"evt-1","option":"approve","decider":{"kind":"human","model":""},"channel":"frontend:chatbridge","attestation":{"frontend":"chatbridge","user":"alice","clicked_at":"2026-10-30T12:00:00Z"}}

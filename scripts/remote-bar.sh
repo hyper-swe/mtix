@@ -5,6 +5,7 @@
 #
 # Usage:
 #   scripts/remote-bar.sh [--ticket MTIX-N] [--dry-run] [--allow-workflow-diff] \
+#                         [--base <rev>] \
 #                         [--no-reuse] \
 #                         [--os ubuntu-22.04|macos-latest] [--web] \
 #                         <worktree-or-checkout>
@@ -18,9 +19,12 @@
 #   2. Pushes ONLY refs/heads/ci-scratch/* to hyper-swe/mtix. Any other push
 #      target, or any other remote URL (fetch or push), is refused. Tags are
 #      never pushed, whatever the caller's push config says.
-#      A snapshot whose .github subtree differs from origin/main is refused,
+#      A snapshot whose .github subtree differs from its base is refused,
 #      because GitHub runs push-event workflows from the pushed commit; pass
 #      --allow-workflow-diff to accept that knowingly (a warning is printed).
+#      The base is --base <rev>, or else the merge-base of HEAD and
+#      origin/main. A snapshot that only lacks later .github changes from
+#      main is not a workflow change; the output says so.
 #   A changed remote-bar.yml is always refused, even with the opt-in flag.
 #   Every verdict names its actual workflow_ref and workflow_sha.
 #   3. Dispatches .github/workflows/remote-bar.yml from main (a workflow can
@@ -387,7 +391,7 @@ rb_usage() {
 }
 
 rb_run() {
-	local ticket="adhoc" dry=0 allow_wf=0 reuse=1 dir="" a os="$RB_OS_DEFAULT" web=false
+	local ticket="adhoc" dry=0 allow_wf=0 reuse=1 dir="" a base_rev="" os="$RB_OS_DEFAULT" web=false
 	while [ $# -gt 0 ]; do
 		a="$1"
 		case "$a" in
@@ -396,6 +400,7 @@ rb_run() {
 		--dry-run) dry=1 ;;
 		--allow-workflow-diff) allow_wf=1 ;;
 		--no-reuse) reuse=0 ;;
+		--base) [ $# -ge 2 ] || rb_die 2 "--base needs a value"; base_rev="$2"; shift ;;
 		--os) [ $# -ge 2 ] || rb_die 2 "--os needs a value"; os="$2"; shift
 			rb_os_ok "$os" || rb_die 2 "--os must be one of: $RB_OS_ALLOWED (got: $os)" ;;
 		--web) web=true ;;
@@ -415,10 +420,13 @@ rb_run() {
 		git fetch --quiet "$RB_REMOTE" "refs/heads/main:refs/remotes/$RB_REMOTE/main" || rb_die 2 "fetch failed"
 	fi
 	parent="$(git rev-parse --verify "refs/remotes/$RB_REMOTE/main^{commit}" 2>/dev/null)" || rb_die 2 "no $RB_REMOTE/main"
+	[ -z "$base_rev" ] || rb_validate_base "$parent" "$base_rev"
 	tree="$(rb_snapshot_tree "$dir" "$parent")" || rb_die 2 "snapshot failed for $dir"
 	rb_bar_workflow_unchanged "$parent" "$tree" ||
 		rb_die 2 "cannot judge a changed remote-bar.yml; no workflow ran (--allow-workflow-diff does not override this refusal)"
-	if ! rb_workflows_unchanged "$parent" "$tree"; then
+	if ! rb_workflows_unchanged "$parent" "$tree" && rb_workflows_older_base "$parent" "$tree" "$base_rev"; then
+		echo "remote-bar: snapshot .github equals its older base, not a workflow change; $RB_REMOTE/main has later .github changes the snapshot lacks" >&2
+	elif ! rb_workflows_unchanged "$parent" "$tree"; then
 		[ "$allow_wf" = 1 ] || rb_die 2 "snapshot changes .github relative to $RB_REMOTE/main; pushing it would run unreviewed workflow code. Use --allow-workflow-diff only if that is intended"
 		echo "remote-bar: WARNING snapshot changes .github relative to $RB_REMOTE/main (--allow-workflow-diff); main remote-bar.yml runs the tree, but changed workflows are not exercised" >&2
 	fi

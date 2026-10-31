@@ -1443,7 +1443,7 @@ these guards; an empty list is the normal state.
 | `sync.keep_roles` | (none) | Comma-separated hub roles that `mtix sync harden` leaves with their access (see "Hub privileges"); PUBLIC, data-API and `pg_` roles are refused. Setting it turns on strict mode: the doctor's `hub-privileges` check then fails, instead of warning, whenever `mtix sync harden` would report a finding, or when the check cannot run |
 | `sync.hub_contact` | `activity` | When `mtix daemon` contacts the hub: `activity`, `interval:<duration>` (at least 1s) or `manual`. A board created before this key keeps contacting the hub at the daemon's own `--interval` until you set it; `mtix config get sync.hub_contact` shows that. |
 | `sync.push_on_addressed_send` | `true` | Reserved: it has no effect in this build (the auto-push of an addressed send arrives with a later change). |
-| `sync.listen` | `live` (shipped default: `live`) | `live`: once a listener runs (a later release; none exists in this build, so the setting is inert today), a live listener lease keeps the daemon contacting the hub every `sync.listen_interval`; `off`: strict activity-only contact. |
+| `sync.listen` | `live` (shipped default: `live`) | `live`: while a waiter (`mtix inbox --wait`) holds a lease and its board listener runs, the lease keeps the daemon contacting the hub every `sync.listen_interval`; `off`: strict activity-only contact. |
 | `sync.listen_interval` | `10s` | Hub contact period while the listen hold is armed (at least 1s). |
 | `sync.listen_max_idle` | `8h` | The hold ends this long after the last real activity (at most 72h). |
 | `history.export` | `false` | EXPERIMENTAL. `true` writes `.mtix/tasks.json` in export format 2.1.0 with each task's change history (see "Task history in tasks.json"); mtix 0.5.4 and earlier cannot read such a file, so turn it on only when every machine and daemon that touches the board runs 0.6.0 or later; `mtix config set` refuses to turn it on while the guard detects an older build (see "Task history in tasks.json"). A running process follows a change without a restart. `mtix config set` accepts only true or false. |
@@ -1886,13 +1886,13 @@ A normal `mtix sync push` that drains its eligible queue releases the push lock,
 
 `mtix daemon` does the local work every pass (pending-export recovery, relay, hook dispatch) and contacts the hub only when `sync.hub_contact` says so:
 
-- `activity` (default for new boards): every 5 seconds for 10 minutes after real activity, every 60 seconds until 30 minutes, then not at all. A database that pauses when idle can pause. The first message to a host idle past the window waits for that host's next activity, or, in a later release, for the listen hold below (inert in this build).
+- `activity` (default for new boards): every 5 seconds for 10 minutes after real activity, every 60 seconds until 30 minutes, then not at all. A database that pauses when idle can pause. The first message to a host idle past the window waits for that host's next activity, or for the listen hold below while a session waits.
 - `interval:<duration>`: on that period all day, which keeps a pausing database awake around the clock; the daemon prints a one-time cost warning at start.
 - `manual`: never.
 
 Real activity is recorded operator-locally (outside the board, never synced) by exactly these: a local mutation command, an addressed `mtix comment --to`, a commit made through the MCP server, `mtix agent heartbeat`, the attach glue's session-start and prompt-submit. Reads, `mtix inbox`, every wait, and any waiter arming, re-arming or refreshing a lease are not activity: a second waiter process that re-arms after the first exits never moves the activity window or the clamp.
 
-Listen hold: in this build the hold is inert. No listener arms a lease yet (that arrives in a later release), so `sync.listen` is accepted and stored but changes nothing, and `mtix doctor` shows no live listener lease. What follows describes the hold once a listener runs. With `sync.listen live` (shipped default: `live`; `off` is strict activity-only contact) a live listener lease keeps the daemon contacting the hub every `sync.listen_interval` (default 10s, about 360 contacts an hour). There is one clamp: the hold ends `sync.listen_max_idle` (default 8h, at most 72h) after the last real activity, or when the lease's process is gone; re-arming or refreshing a lease never extends it. This keeps a pausing database awake while a session listens; run `mtix config set sync.listen off` for strict activity-only contact. `manual` overrides the hold.
+Listen hold: `mtix inbox --wait` on a board that syncs through a hub or relay arms a waiter lease and, when no daemon runs for the board, starts one detached `mtix daemon --listen` (the same binary; no credential on its command line) and prints one line saying so, or why it did not (`sync.listen off`, `sync.hub_contact manual`). Two waiters share one listener. Its hub contacts happen only while the hold is armed (real activity within `sync.listen_max_idle`); a waiter restarts a listener that exited early, but not while the board is idle-clamped; started past the clamp, or on a board with no recorded activity, it makes no hub contact and exits at once, so a waiter that re-parks every few minutes costs the hub nothing until real activity (an addressed message or a local write) re-arms the hold. It exits within one local pass (about 5 seconds) after the last lease ends, and a lease its waiter stopped refreshing expires after 15 minutes, so a crashed session cannot keep the hub awake; after it exits nothing contacts the hub. A relay board has no database to wake: its listener ingests the relay folder while a waiter lives. `mtix doctor` row `wake.listener.no-hub-listener` fails when waiters are parked with no listener on an armed hold and prints the fix `mtix daemon --listen` (`--json` carries it); past the clamp it passes as idle-clamped. With `sync.listen live` (shipped default: `live`; `off` is strict activity-only contact) a live waiter lease keeps the daemon contacting the hub every `sync.listen_interval` (default 10s, about 360 contacts an hour). There is one clamp: the hold ends `sync.listen_max_idle` (default 8h, at most 72h) after the last real activity, or when the lease's process is gone; re-arming or refreshing a lease never extends it. This keeps a pausing database awake while a session listens; run `mtix config set sync.listen off` for strict activity-only contact. `manual` overrides the hold.
 
 A board created before `sync.hub_contact` existed keeps contacting the hub at the daemon's own `--interval` until you set the key. `mtix doctor` rows `sync.hub-contact` and `sync.listen` show the mode, last activity, last contact, whether any contact will happen, the hold deadline and the route, and print the exact `mtix config set` command for a bad value or a grandfathered board. Both rows read local state only.
 
@@ -2183,8 +2183,8 @@ below; each one maps to one mtix setting.
   it once (run any trivial query) before `mtix sync init`, or keep it active
   during setup. mtix does not poll the hub on a timer from the CLI, and the daemon
   contacts it only after activity by default (`sync.hub_contact`), so an idle
-  database stays idle unless you set an interval (a listener-based hold,
-  `sync.listen`, is configured but inert until a later release).
+  database stays idle unless you set an interval (a waiting session's
+  listener, `sync.listen`, keeps the hub contacted while it waits; `sync.listen off` stops that).
 - **Tables exposed over an HTTP API.** If your platform can expose tables
   through an HTTP API, keep the mtix tables unexposed. `mtix sync doctor`
   confirms reachability and schema; it does not check exposure, so verify that
@@ -2820,8 +2820,8 @@ mtix daemon stop / start
 mtix daemon uninstall
 ```
 
-One service per project (re-running `install` refreshes it). Logs land
-under `.mtix/logs/`.
+One service per project (re-running `install` refreshes it). See the platform
+log capture and retention policies below.
 
 **Upgrading the binary.** Replace it with unlink-then-copy — `install -m
 0755 new-mtix <path>`, `rm` + `cp`, or `mv` — **never `cp` over the
@@ -2836,6 +2836,102 @@ directory and re-points the `bin/mtix` symlink), and `mtix daemon
 install` registers the upgrade-stable symlink path rather than a
 version-scoped Cellar path — so after `brew upgrade mtix`, just run
 `mtix daemon start` to restart the service onto the new version.
+
+### Daemon log retention
+
+Idle daemon ticks leave an unchanged mirror's bytes, `exported_at`, mtime and
+inode intact, including after restart. Debug-only `sync_export_completed`
+messages describe actual automatic publications; routine idle ticks produce no
+export-success lines at the default log level. Direct explicit exports retain
+their timestamp contract.
+
+On macOS, launchd captures stdout and stderr in `.mtix/logs/daemon.out.log` and
+`.mtix/logs/daemon.err.log`. This capture is unbounded unless an administrator
+configures retention; mtix does not rotate it. Linux's generated systemd user
+service uses the journal instead. Windows Task Scheduler has no mtix-managed
+log-retention guarantee.
+
+`mtix doctor` adds `daemon.logs` when either project log exists: it warns above
+10 MiB (10485760 bytes) per file, passes at or below that boundary, and omits the
+row when both are absent. Text and `--json` include filenames, byte counts and
+operator remedies. Inspection errors and nonregular files warn for manual
+inspection. Symlinked logs report `symlink, not inspected`: doctor does not
+follow the link or claim a size. It reads file metadata only; `--fix` does not create, truncate,
+rotate or delete these logs. This check does not measure the system journal.
+Preserve any needed records before enabling retention.
+
+**macOS native policy (administrator required).** Install a root-controlled
+`/etc/newsyslog.d/mtix-daemon.conf` using actual absolute project paths and the
+service user's `USER:GROUP`. The example paths must contain no whitespace;
+verify the installed `newsyslog.conf(5)` syntax for your paths before use.
+The columns below are path, owner, mode, archive count, size in KiB, time,
+flags, PID file and signal:
+
+```text
+/absolute/project/.mtix/logs/daemon.out.log USER:GROUP 600 3 10240 * - /absolute/project/.mtix/sync.daemon.pid 15
+/absolute/project/.mtix/logs/daemon.err.log USER:GROUP 600 3 10240 * - /absolute/project/.mtix/sync.daemon.pid 15
+```
+
+This retains three archives per file and sets a rotation threshold of 10240 KiB.
+Newsyslog checks whether that threshold is reached; doctor warns strictly above
+10 MiB. See `newsyslog.conf(5)` for the columns and `newsyslog(8)` for invocation
+options; `-` is the supported no-special-processing flags placeholder.
+Signal 15 is SIGTERM: the daemon exits and launchd's KeepAlive restarts it,
+briefly interrupting service and reopening the capture files. The two entries
+use the same PID-file path and signal: newsyslog defers signaling until all
+selected rotations finish and sends one SIGTERM per invocation for that pair.
+When both files rotate in that invocation, one restart reopens both; separate
+invocations can each restart the service. A rename alone,
+or rotation with signaling disabled, leaves inherited descriptors writing to
+the old file. mtix publishes its own `.mtix/sync.daemon.pid` after acquiring the
+ownership lock, but a crash can leave a stale PID; PID reuse could signal an
+unrelated process. An administrator must trust the board directory and PID
+file, verify the live service identity before enabling this policy, and resolve
+stale PID files before invoking rotation. This is not a stale-PID-proof policy.
+Do not use an unsupported newsyslog `R` configuration flag.
+
+After installing and checking the configuration, run
+`sudo /usr/sbin/newsyslog -f /etc/newsyslog.d/mtix-daemon.conf`.
+Confirm the system's periodic newsyslog job includes `/etc/newsyslog.d/`.
+A periodic size policy is not a hard byte cap: files may exceed the threshold
+between runs, and retained archives add to disk usage.
+
+**Optional file policy where logrotate is installed.** Configure the following
+in administrator-controlled `/etc/logrotate.d/mtix-daemon`, substituting the
+real paths and service user/group:
+
+```text
+"/absolute/project/.mtix/logs/daemon.out.log" "/absolute/project/.mtix/logs/daemon.err.log" {
+    su USER GROUP
+    size 10M
+    rotate 3
+    copytruncate
+    missingok
+    notifempty
+}
+```
+
+Then run `sudo logrotate /etc/logrotate.d/mtix-daemon` and arrange its periodic
+scheduler. `copytruncate` preserves open descriptors but can lose records
+written between copying and truncating. This also is a periodic threshold,
+not a strict byte cap. Choose one file-rotation policy, not both.
+
+**Linux journal policy (host administrator).** In a journald drop-in such as
+`/etc/systemd/journald.conf.d/mtix-retention.conf`, set:
+
+```ini
+[Journal]
+SystemMaxUse=100M
+RuntimeMaxUse=100M
+SystemMaxFileSize=10M
+RuntimeMaxFileSize=10M
+```
+
+Apply it with `sudo systemctl restart systemd-journald`. These limits affect
+the host's journal, not just mtix; coordinate with the host administrator.
+Persistent and runtime storage have separate budgets. Only archived journal
+files are removed to reclaim space; active files can keep usage above a target,
+and vacuuming the journal does not rotate the project's `.mtix/logs` files.
 
 ### Topology: one local `.mtix` per machine + the hub
 
@@ -4230,7 +4326,7 @@ change the node's status with the normal commands instead.
 | `mtix sync init`, or a `mtix sync harden --apply` that would restore or replace a TRUNCATE guard, fails with `the sync tables are in schema …, but the first schema on the search_path is …` (and `mtix sync doctor`'s `hub-triggers` says so) | The session's search_path puts another schema before the one holding the sync tables, so new objects would land away from them; nothing was changed. The usual cause is a schema named after the connecting role, which the default search_path (`"$user", public`) puts first | Set the search_path so the sync tables' schema comes first: `ALTER ROLE <owner> SET search_path = public` when the tables are in `public`, else `ALTER ROLE <owner> SET search_path = <schema>, public` (or `options=-c search_path=...` in the DSN); then run the command again. To keep a separate hub in the first schema instead (one hub per search_path), put that schema alone on the search_path (`ALTER ROLE <owner> SET search_path = <first schema>`). A `mtix sync harden --apply` that only changes privileges is not affected |
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
 | `mtix sync backup` fails with `a hub table was not found` (`pg_dump` names the table above it) | `pg_dump` found no table of that name through the search_path of the role the DSN names; no file was left. The hub has not been initialized since an upgrade added the table; or the hub's schema is named only in the DSN, which `pg_dump` does not receive; or the DSN's role lacks USAGE on the hub's schema, which leaves that schema off its search_path | Run `mtix sync init` with the DSN naming the table owner, then back up again; for a hub whose schema only the DSN names, first run the printed `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`, which takes precedence over a role-wide `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`; for a DSN role without USAGE, run the GRANT statements the backup prints: the schema's owner grants USAGE on the schema (find it with `SELECT nspowner::regrole FROM pg_catalog.pg_namespace WHERE nspname = '<schema>';`; for `public` in a database created on PostgreSQL 15 or later it is `pg_database_owner`, that is, the database's owner), and the table owner grants SELECT on each sync table and sync-table sequence by name (`GRANT SELECT ON TABLE <schema>.applied_events, <schema>.audit_log, ... TO <the DSN's role>;`), so the role gets nothing else in the schema; then keep that role with `--keep-role` so `mtix sync harden --apply` leaves its access |
-| An id in mtix text looks like `"evt\u00e9"` or `"a\nb"`, with quotes and backslash escapes | mtix prints a sync event id, and the ids that come from sync (a task uid, an annotation id), in plain text output as double-quoted, printable-ASCII text, so a control character, bidirectional mark or non-ASCII letter in a stored id cannot alter a terminal or log. The stored id is unchanged; `mtix sync collisions list` shows both held and incoming task uids in full with the same quoting and escaping, without truncation; its `--json` output preserves the exact uids. REST, MCP and gRPC do the same in their text and error messages; their JSON and protobuf fields carry the exact id. Validator refusals, local store and apply-path errors, and hub push and collision errors name the event id the same way; only rows recorded by older versions, in validator refusal reasons or local store error text, can still hold the raw id. An id or text a caller sends that a server repeats in an error or result message is escaped in the message (control, invisible and invalid bytes appear as `\n`, `\r`, `\t`, `\xNN`, `\uNNNN` or `\UNNNNNNNN`; printable text stays readable; a literal backslash is not escaped, so read the escapes as a hint); the JSON fields still carry what was sent. The exact id is in the quarantine `event_id` column and in `--json` output, not in a log field or error text | Read the escapes as the id (`\n` is a newline, `\u00e9` is é). Use the JSON output for the exact value, and give the quoted form to whoever runs the hub; never edit or rename the stored id |
+| An id in mtix text looks like `"evt\u00e9"` or `"a\nb"`, with quotes and backslash escapes | mtix prints a sync event id, and the ids that come from sync (a task uid, an annotation id), in plain text output as double-quoted, printable-ASCII text, so a control character, bidirectional mark or non-ASCII letter in a stored id cannot alter a terminal or log. The stored id is unchanged; `mtix sync collisions list` shows both held and incoming task uids in full with the same quoting and escaping, without truncation; its `--json` output preserves the exact uids. The task uids that `mtix sync doctor` names in its invalid-node-id detail and that `mtix sync repair-uids` prints for a hub/local mismatch are quoted and escaped the same way in text; their `--json` output carries the exact uids. REST, MCP and gRPC do the same in their text and error messages; their JSON and protobuf fields carry the exact id. Validator refusals, local store and apply-path errors, and hub push and collision errors name the event id the same way; only rows recorded by older versions, in validator refusal reasons or local store error text, can still hold the raw id. An id or text a caller sends that a server repeats in an error or result message is escaped in the message (control, invisible and invalid bytes appear as `\n`, `\r`, `\t`, `\xNN`, `\uNNNN` or `\UNNNNNNNN`; printable text stays readable; a literal backslash is not escaped, so read the escapes as a hint); the JSON fields still carry what was sent. The exact id is in the quarantine `event_id` column and in `--json` output, not in a log field or error text | Read the escapes as the id (`\n` is a newline, `\u00e9` is é). Use the JSON output for the exact value, and give the quoted form to whoever runs the hub; never edit or rename the stored id |
 | `mtix sync status` counts conflicts after an upgrade from 0.5.3 or earlier although one machine wrote | Rows from the pre-0.5.4 replay of own events | None needed: they are not counted. `mtix sync conflicts list --all` shows them as `self_replay=true` |
 | `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
 | `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |

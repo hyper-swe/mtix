@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
@@ -176,7 +177,7 @@ func printUIDRepairReports(stdout, stderr io.Writer, reports []transport.UIDRepa
 		}
 		for _, m := range r.Mismatched {
 			fmt.Fprintf(stderr, "%s: %s carries uid %s on the hub but %s locally; left untouched\n",
-				r.Project, m.NodeID, m.HubUID, m.LocalUID)
+				r.Project, m.NodeID, format.EventID(m.HubUID), format.EventID(m.LocalUID))
 		}
 	}
 	if len(reports) > 0 && reports[0].DryRun {

@@ -105,7 +105,7 @@ func mutateUnsafeWakeFixture(t *testing.T, name string, change *unsafeWakeFixtur
 
 func TestWakeBudget_InvalidPolicyStopsBeforeAccounting(t *testing.T) {
 	cause := errors.New("settings unavailable")
-	for _, name := range []string{"read error", "foreign host", "zero backoff", "invalid backoff", "zero limit", "invalid limit"} {
+	for _, name := range []string{"read error", "foreign host", "zero backoff", "invalid backoff", "zero limit", "invalid limit", "invalid sender limit", "zero sender limit"} {
 		t.Run(name, func(t *testing.T) {
 			state, recipient, _ := wakePublisherFixture(t)
 			r := wakeBudgetPolicyReader{values: map[string]model.WakeSetting{"wake.backoff_after_unacked": {Value: "5"}}}
@@ -121,10 +121,16 @@ func TestWakeBudget_InvalidPolicyStopsBeforeAccounting(t *testing.T) {
 				r.values["wake.backoff_after_unacked"] = model.WakeSetting{Value: "invalid"}
 			case "zero limit":
 				r.values["wake.wakes_per_hour"] = model.WakeSetting{Value: "0"}
+			case "invalid sender limit":
+				r.values["wake.per_sender_per_hour"] = model.WakeSetting{Value: "invalid"}
+			case "zero sender limit":
+				r.values["wake.per_sender_per_hour"] = model.WakeSetting{Value: "0"}
 			case "invalid limit":
 				r.values["wake.wakes_per_hour"] = model.WakeSetting{Value: "invalid"}
 			}
 			b := &wakeBudgets{state: state, settings: r} // No store: policy refusal must precede all accounting I/O.
+			_, policyErr := b.policy(recipient.AgentID)
+			require.ErrorIs(t, policyErr, want)
 			_, won, err := b.claim(t.Context(), model.WakeKey{AgentID: recipient.AgentID})
 			require.ErrorIs(t, err, want)
 			require.False(t, won)

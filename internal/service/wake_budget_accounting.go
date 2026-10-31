@@ -71,10 +71,8 @@ func (a *wakeAdmission) prepareWakeAdmission(p model.WakeBudgetProposal) (model.
 	if p.Attempt.Token == "" || p.Attempt.Key != a.key {
 		return d, fmt.Errorf("proposed wake fence is mismatched: %w", model.ErrConflict)
 	}
-	if a.policy.limit > 0 && wakeBudgetUsed(m) >= a.policy.limit {
-		a.class = "wake.budget"
-		a.fix = wakeBudgetFix(a.key.AgentID, a.policy.limit)
-		a.held = fmt.Sprintf("held wake: recipient rolling-hour budget %d is spent; %s", a.policy.limit, a.fix)
+	p.Sender = oplocal.NormalizeWakeBudgetSender(p.Sender)
+	if a.holdWakeFrequency(p.Sender) {
 		return d, nil
 	}
 	if holdWakeBackoff(a.key.AgentID, a.policy, a.now, m, a) {
@@ -86,6 +84,7 @@ func (a *wakeAdmission) prepareWakeAdmission(p model.WakeBudgetProposal) (model.
 	if err := chargeWakeBudget(m, a.now, 1); err != nil {
 		return d, fmt.Errorf("charge proposed wake attempt: %w", err)
 	}
+	m.Credits[len(m.Credits)-1].Sender = p.Sender
 	row.Total++
 	row.Pending = p.Attempt.Token
 	m.Sources[p.Snapshot.Source] = row

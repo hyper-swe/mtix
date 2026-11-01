@@ -114,6 +114,7 @@ func registerRemainingRootCommands(rootCmd *cobra.Command) {
 		newSyncCmd(),
 		newDaemonCmd(),
 		newHooksCmd(),
+		newHookCmd(),
 		newDoctorCmd(),
 	)
 }

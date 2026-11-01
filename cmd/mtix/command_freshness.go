@@ -74,7 +74,8 @@ func fixedCommandFreshness(path string) freshnessScope {
 		"sync quarantine list", "sync relay status", "sync status", "tree", "url", "verify":
 		return freshnessRead
 	case "attach", "attach prompt-submit", "attach session-end", "attach session-start",
-		"attach wait", "serve", "mcp", "dispatcher run":
+		"attach wait", "serve", "mcp", "dispatcher run",
+		"hook claude-session":
 		return freshnessProtocol
 	case "agent allow", "agent deny", "agent heartbeat", "agent register", "agent unregister", "annotate",
 		"backup", "cancel", "claim", "comment", "config delete", "config set",

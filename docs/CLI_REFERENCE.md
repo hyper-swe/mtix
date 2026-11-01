@@ -39,6 +39,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `done <id>` — Mark a node as done
 - `export` — Export nodes to JSON
 - `gc` — Run garbage collection (clean expired soft-deletes)
+- `hook` — Harness hook programs (run by a Claude Code hook, not by hand)
 - `hooks` — Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `import <file>` — Import nodes from JSON export
 - `inbox` — Show events addressed to an agent
@@ -924,6 +925,36 @@ Export nodes to JSON
 **Usage:** `gc`
 
 Run garbage collection (clean expired soft-deletes)
+---
+
+## hook
+
+**Usage:** `hook`
+
+Harness hook programs (run by a Claude Code hook, not by hand)
+
+### Subcommands
+
+- `claude-session <session-start|stop>` — Claude Code session hook: register, arm one inbox waiter, wake the session with exit 2
+---
+
+## claude-session
+
+**Usage:** `claude-session <session-start|stop>`
+
+Claude Code session hook: register, arm one inbox waiter, wake the session with exit 2
+
+Run by a Claude Code hook with asyncRewake. session-start registers --agent and arms its waiter; stop arms it again.
+One waiter runs per registration. When addressed mail arrives the wake policy and the wake ledger are applied once per event,
+the quoted envelope goes to stderr and the exit code is 2, which wakes an idle session. Any internal error exits 0 and is recorded:
+mtix doctor shows it as wake.listener.hook-errors with the command that re-runs the hook.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` |  | Agent id (required) |  |
+| `--timeout` |  | Seconds the waiter stays armed before it exits 0 (0 = until woken) | 3600 |
 ---
 
 ## hooks

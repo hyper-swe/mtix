@@ -327,7 +327,7 @@ func TestDoctorWakeListener_EveryFixParsesAgainstTheCommandTree(t *testing.T) {
 				seen++
 			}
 		}
-		require.Equal(t, 7, seen)
+		require.Equal(t, 8, seen, "seven listener rows plus wake.listener.hook-errors (MTIX-112.40.4)")
 	}
 }
 

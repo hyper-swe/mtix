@@ -324,16 +324,27 @@ func TestDaemonPIDFile_OtherMtixProcessOnReusedPID_NotLive(t *testing.T) {
 	root := t.TempDir()
 	mtixDir := filepath.Join(root, ".mtix")
 	require.NoError(t, os.MkdirAll(mtixDir, 0o700))
-	for name, args := range map[string][]string{
-		"another-project-daemon": {"-C", t.TempDir(), "daemon"},
-		"mtix-mcp-server":        {"-C", root, "mcp"},
-		"mtix-without-daemon":    {},
+	// On linux the daemon's working directory is readable, so a daemon whose nearest .mtix is
+	// another project's reads not live. Darwin cannot read another process's working directory,
+	// so the same daemon reads live through the documented fail-safe (an undetermined project
+	// counts as live: skipping duty is recoverable, a double pull or hook firing is not).
+	// The cases decided by argv alone read not live on every platform.
+	otherProjectLive := runtime.GOOS == "darwin"
+	for _, tt := range []struct {
+		name     string
+		args     []string
+		wantLive bool
+		why      string
+	}{
+		{"another-project-daemon", []string{"-C", t.TempDir(), "daemon"}, otherProjectLive, "another project's daemon is stale where the cwd is readable and live through the unreadable-cwd fail-safe on darwin"},
+		{"mtix-mcp-server", []string{"-C", root, "mcp"}, false, "argv alone: not a daemon"},
+		{"mtix-without-daemon", []string{}, false, "argv alone: not a daemon"},
 	} {
-		t.Run(name, func(t *testing.T) {
-			require.NoError(t, writeDaemonPID(mtixDir, startLegacyDaemonHelper(t, "", args...)))
+		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, writeDaemonPID(mtixDir, startLegacyDaemonHelper(t, "", tt.args...)))
 			live, _, err := daemonPIDFileLive(mtixDir)
 			require.NoError(t, err)
-			require.False(t, live, "a reused pid held by another mtix process is stale")
+			require.Equal(t, tt.wantLive, live, tt.why)
 		})
 	}
 }

@@ -36,7 +36,7 @@ func main() {
 		// An empty `inbox --wait` timeout is an expected non-zero outcome, not a
 		// failure — surface it via the exit code only, no scary "error:" line.
 		// Interruption and already-printed harden/doctor reports also exit quietly.
-		if !errors.Is(err, errInboxWaitEmpty) && !errors.Is(err, errInboxWaitInterrupted) && !errors.Is(err, errHardenPending) && !errors.Is(err, service.ErrDoctorChecksFailed) {
+		if !errors.Is(err, errInboxWaitEmpty) && !errors.Is(err, errInboxWaitInterrupted) && !errors.Is(err, errClaudeHookWake) && !errors.Is(err, errHardenPending) && !errors.Is(err, service.ErrDoctorChecksFailed) {
 			printFinalError(os.Stderr, err)
 		}
 		// Structured exit codes per MTIX-26.8: 0 success, 1 generic, 2 harden/doctor,

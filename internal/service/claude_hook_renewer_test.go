@@ -217,19 +217,78 @@ func TestClaudeHook_PanicInTheRenewer_ExitsZeroRecordsAndFreesTheLease(t *testin
 	assert.False(t, r.leases.held, "the lease is still freed")
 }
 
-func TestClaudeHook_DefaultRenewCadence_IsAThirdOfTheLeaseTTL(t *testing.T) {
-	r := newHookRig(t)
-	r.deps.LeaseTTL = 300 * time.Millisecond // RenewEvery unset: every 100 ms
+// cadenceProbe is a fake ticker: it records the requested interval and lets the
+// test deliver ticks by hand, so the cadence is pinned with no wall clock.
+type cadenceProbe struct {
+	mu       sync.Mutex
+	interval time.Duration
+	built    int
+	stopped  int
+	ch       chan time.Time
+}
+
+func (p *cadenceProbe) newTicker(d time.Duration) (<-chan time.Time, func()) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.interval, p.built = d, p.built+1
+	p.ch = make(chan time.Time)
+	return p.ch, func() { p.mu.Lock(); p.stopped++; p.mu.Unlock() }
+}
+
+func (p *cadenceProbe) snapshot() (time.Duration, int, int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.interval, p.built, p.stopped
+}
+
+// runCadence runs the hook with a probe ticker and delivers n ticks, waiting for each renew.
+func runCadence(t *testing.T, r *hookRig, n int) *cadenceProbe {
+	t.Helper()
+	p := &cadenceProbe{}
+	r.deps.NewTicker = p.newTicker
 	r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) {
-		time.Sleep(1050 * time.Millisecond)
+		// The renewer goroutine builds its ticker asynchronously: wait for it.
+		require.Eventually(t, func() bool { _, built, _ := p.snapshot(); return built == 1 }, 10*time.Second, time.Millisecond)
+		for i := 1; i <= n; i++ {
+			p.mu.Lock()
+			ch := p.ch
+			p.mu.Unlock()
+			select {
+			case ch <- time.Time{}:
+			case <-time.After(10 * time.Second):
+				t.Error("the renewer never took the tick")
+				return nil, nil
+			}
+			require.Eventually(t, func() bool { return r.leases.renewCount() >= i }, 10*time.Second, time.Millisecond)
+		}
 		return nil, nil
 	}
-
 	NewClaudeHook(r.deps).Run(t.Context(), ClaudeHookStop)
+	return p
+}
 
-	got := r.leases.renewCount()
-	assert.GreaterOrEqual(t, got, 9, "TTL/3 renews about ten times in 1.05 s; TTL/2 would give about seven")
-	assert.LessOrEqual(t, got, 12, "and TTL/4 would give about fourteen")
+func TestClaudeHook_DefaultRenewCadence_IsAThirdOfTheLeaseTTL(t *testing.T) {
+	r := newHookRig(t)
+	r.deps.LeaseTTL = 300 * time.Millisecond // RenewEvery unset: the ticker interval is LeaseTTL/3
+
+	p := runCadence(t, r, 5)
+
+	interval, built, stopped := p.snapshot()
+	assert.Equal(t, 100*time.Millisecond, interval, "TTL/2 or TTL/4 would not be exactly a third")
+	assert.Equal(t, 1, built, "one ticker serves the whole wait")
+	assert.Equal(t, 1, stopped, "the ticker is stopped when the wait ends")
+	assert.Equal(t, 5, r.leases.renewCount(), "the renewer renews once per tick")
+}
+
+func TestClaudeHook_ExplicitRenewEvery_OverridesTheThirdOfTheTTL(t *testing.T) {
+	r := newHookRig(t)
+	r.deps.LeaseTTL = 300 * time.Millisecond
+	r.deps.RenewEvery = 40 * time.Millisecond
+
+	p := runCadence(t, r, 2)
+
+	interval, _, _ := p.snapshot()
+	assert.Equal(t, 40*time.Millisecond, interval)
 }
 
 func TestClaudeHook_SuccessfulRenewal_RefreshesTheRetryWindow(t *testing.T) {

@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -144,15 +143,10 @@ func removePIDLock(mtixDir string) {
 }
 
 // isProcessAlive checks if a process with the given PID exists.
-// Uses kill(pid, 0) which checks existence without sending a signal.
+// Unix uses kill(pid, 0); Windows opens the process and reads its exit code,
+// because signal 0 is unsupported there (MTIX-233).
 func isProcessAlive(pid int) bool {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	// Signal 0 checks if process exists without sending a real signal.
-	err = process.Signal(syscall.Signal(0))
-	return err == nil
+	return platformProcessAlive(pid)
 }
 
 // routeToServer sends a CLI command through the running server's REST API

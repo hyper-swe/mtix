@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/hyper-swe/mtix/internal/service"
 )
@@ -45,9 +46,9 @@ func legacyServiceProbe(goos string, homeDir func() (string, error)) func(contex
 // error and the unit file. run executes service commands and is injected so tests never touch
 // a real launchd or systemd unit.
 func uninstallLegacyService(ctx context.Context, out io.Writer, spec *serviceSpec, run func(context.Context, io.Writer, [][]string, bool) error) error {
-	if err := run(ctx, out, spec.Unregister, true); err != nil {
+	if err := run(ctx, out, spec.Unregister, false); err != nil {
 		// A label proven not loaded (an earlier run got this far) has nothing left to
-		// unregister, so the re-run converges; a loaded or unknown state keeps the error.
+		// unregister, so the re-run converges (a strict run, so a failed disable reaches this proof); a loaded or unknown state keeps the error.
 		if !provenNotLoaded(spec, run(ctx, io.Discard, spec.Status, false)) {
 			return fmt.Errorf("unregister legacy service: %w", err)
 		}
@@ -68,12 +69,22 @@ func provenNotLoaded(spec *serviceSpec, statusErr error) bool {
 	return spec.NotLoadedExit != 0 && errors.As(statusErr, &coded) && coded.ExitCode() == spec.NotLoadedExit
 }
 
+// unreadableUnitFix is the exact inspection command for the skipped entries; removing them is
+// the operator's decision, never an agent's.
+func unreadableUnitFix(skipped []string) string {
+	quoted := make([]string, len(skipped))
+	for i, p := range skipped {
+		quoted[i] = "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
+	}
+	return "ls -l " + strings.Join(quoted, " ") + "; repairing or removing an entry is the operator's decision, then run mtix doctor again"
+}
+
 // registerUnreadableUnitDoctor reports sibling unit files the scan had to skip, so a stray
 // entry is visible and fixable without stopping any board (Commandment 15).
 func registerUnreadableUnitDoctor(svc *service.DoctorService, skipped []string) error {
 	return svc.Register(service.DoctorCheck{ID: "dispatcher.legacy-unit-scan", Run: func(context.Context) service.DoctorResult {
 		return service.DoctorResult{Status: service.DoctorWarn,
-			Fix:    "repair or remove each listed unit entry, then run mtix doctor again",
+			Fix:    unreadableUnitFix(skipped),
 			Detail: "the scan for a 0.5.x per-project unit skipped entries it cannot read; no board is stopped by them",
 			Data:   map[string]any{"unreadable_units": skipped}}
 	}})

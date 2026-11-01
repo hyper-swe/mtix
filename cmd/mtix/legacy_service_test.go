@@ -96,7 +96,7 @@ func TestUninstallLegacyService_UnregistersThenRemovesUnit(t *testing.T) {
 	require.NoError(t, os.WriteFile(spec.Path, []byte("unit"), 0o600))
 	var ran [][]string
 	run := func(_ context.Context, _ io.Writer, cmds [][]string, lenient bool) error {
-		require.True(t, lenient)
+		require.False(t, lenient, "a failed disable must reach the status proof")
 		ran = append(ran, cmds...)
 		return nil
 	}
@@ -149,6 +149,30 @@ func TestUninstallLegacyService_StatusDoesNotProveNotLoaded_KeepsErrorAndUnit(t 
 		}
 		require.NotZero(t, probe.NotLoadedExit, goos+" can prove a label is not loaded")
 	}
+}
+
+// TestUninstallLegacyService_OnlyDisableFails_KeepsErrorAndUnit models a service manager whose
+// disable command fails while the later commands succeed: a lenient runner would skip that
+// failure and the unit would be removed while the service may still run.
+func TestUninstallLegacyService_OnlyDisableFails_KeepsErrorAndUnit(t *testing.T) {
+	home, root := t.TempDir(), t.TempDir()
+	installUnit(t, "linux", root, home)
+	spec, err := buildServiceSpec("linux", "mtix", root, home, daemonDispatchDefaultIntervalSec)
+	require.NoError(t, err)
+	var statusRuns int
+	run := func(_ context.Context, _ io.Writer, cmds [][]string, lenient bool) error {
+		if fmt.Sprint(cmds) == fmt.Sprint(spec.Status) {
+			statusRuns++
+			return nil // still loaded
+		}
+		if lenient {
+			return nil // the disable failure is skipped, the rest succeeds
+		}
+		return errors.New("disable failed")
+	}
+	require.Error(t, uninstallLegacyService(t.Context(), io.Discard, spec, run))
+	require.Equal(t, 1, statusRuns)
+	require.FileExists(t, spec.Path)
 }
 
 func TestUninstallLegacyService_AlreadyUnloaded_RerunConverges(t *testing.T) {

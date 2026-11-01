@@ -2791,7 +2791,8 @@ counts as live, the safe side. An installed per-project unit also keeps duty whi
 daemon is briefly down, so the host never fires in a supervisor restart gap. A unit
 entry that cannot be read (a dangling link, a directory, a file without read
 permission) is skipped and never stops any board; `mtix doctor` reports it as the
-`dispatcher.legacy-unit-scan` row (warn, `--json` data `unreadable_units`). Both start orders are
+`dispatcher.legacy-unit-scan` row (warn, `--json` data `unreadable_units`; its fix is an `ls -l`
+of the listed paths, and repairing or removing an entry is the operator's decision). Both start orders are
 safe: a daemon that starts after the dispatcher is seen on the next pass.
 `mtix doctor --json` reports `dispatcher.legacy-service` (warn) with
 `daemon_live`, `daemon_pid` and `unit_installed`; its fix is `mtix daemon uninstall`, run by the

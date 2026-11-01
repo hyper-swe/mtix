@@ -7,6 +7,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -139,7 +140,8 @@ func TestRegisterLegacyServiceDoctor_UnreadableSibling_ReportsRowWithoutFailing(
 		ids = append(ids, row.ID)
 		if row.ID == "dispatcher.legacy-unit-scan" {
 			require.Equal(t, service.DoctorWarn, row.Status)
-			require.NotEmpty(t, row.Fix)
+			require.Equal(t, "ls -l '"+dangling+"'", strings.SplitN(row.Fix, ";", 2)[0], "the fix is an exact inspection command")
+			require.Contains(t, row.Fix, "operator", "removal is the operator's decision")
 			require.Equal(t, []string{dangling}, row.Data["unreadable_units"])
 		}
 	}

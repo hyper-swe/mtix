@@ -104,11 +104,23 @@ func runsDaemon(args []string) bool {
 		case strings.HasPrefix(tok, "-"):
 			afterFlag = !strings.Contains(tok, "=") && len(tok) > 1 && (tok[1] == '-' || len(tok) == 2)
 		case tok == "daemon":
-			return i+1 >= len(args) || !daemonServiceVerbs[args[i+1]]
+			return !followedByServiceVerb(args[i+1:])
 		case afterFlag || tok == "sync":
 			afterFlag = false // a flag's value, or the sync group in front of daemon
 		default:
 			return false
+		}
+	}
+	return false
+}
+
+// followedByServiceVerb reports whether a service verb follows the daemon token. Cobra skips
+// the flags (and their values) between daemon and its subcommand, and the daemon takes no
+// positional argument, so any later token that is a service verb is the subcommand.
+func followedByServiceVerb(rest []string) bool {
+	for _, tok := range rest {
+		if daemonServiceVerbs[tok] {
+			return true
 		}
 	}
 	return false

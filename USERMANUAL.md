@@ -1453,6 +1453,28 @@ and back-off), newest first, with agent, chain, time and the exact fix command; 
 are under `data.trips`. It is read-only, even with `--fix`. You should not need to tune
 these guards; an empty list is the normal state.
 
+### Claude session hook programs
+
+`mtix hook claude-session <session-start|stop> --agent <id> [--timeout <seconds>]` is the program a Claude Code
+hook runs so an idle session wakes on addressed mail with no agent action. It is built to run as an `asyncRewake`
+hook command; it is not meant to be typed by hand, except to re-run a failed hook.
+
+- `session-start` registers the agent for this session, then arms the waiter. `stop` arms it again at the end of a turn.
+- One waiter runs per registration. A second start while one is armed exits 0 and reports `already-armed`.
+- The wake policy for the agent (denied, quarantined, unconfirmed and unregistered ids are held) is applied before the
+  waiter arms. A held agent exits 0 with the reason; the message stays in the inbox.
+- Each event is claimed once in the wake ledger. When the waiter wins the claim it writes the quoted envelope to stderr
+  and exits 2, which is the exit code that wakes an idle Claude session. An event another route already claimed
+  never wakes the session twice.
+- The waiter is a local wait on the board's inbox. It runs no timer and contacts no hub by itself.
+- A hook never breaks a session: an internal error exits 0 and is recorded. `mtix doctor` shows it as the row
+  `wake.listener.hook-errors`, whose `fix` is the exact command that re-runs the failed hook. A successful re-run clears the
+  row. `mtix doctor --json` carries the same row with `id`, `status`, `detail`, `fix` and the `failures` data.
+
+Installing these hooks, by plugin or by a consented user-level block, comes with MTIX-112.40.5; until it ships nothing
+runs this program for you. Whether a Stop hook re-arms the waiter after a wake-driven turn is still being measured
+(MTIX-112.40.1), so keep the foreground wait from "Waiting for inbox events" as the baseline.
+
 ### Configuration Reference
 
 | Key | Default | Description |

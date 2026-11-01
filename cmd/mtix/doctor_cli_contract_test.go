@@ -166,15 +166,15 @@ func TestDoctorCLI_Unconfigured_DocumentAndRetainedWakeInfoExitZero(t *testing.T
 			out := doctorCLIExecute(t, root, "", append([]string{"doctor"}, flags...)...)
 			assert.Equal(t, 0, out.exit, out.stderr)
 			rows := doctorCLIRows(t, out.stdout)
-			wantRows := 13 // docs, 5 wake rows and the 7 wake.listener rows
+			wantRows := 14 // docs, 5 wake rows and the 8 wake.listener rows (7 plus hook-errors, MTIX-112.40.4)
 			if runtime.GOOS == "windows" {
 				wantRows++
 				assert.Equal(t, "platform.windows", rows[0]["id"])
 				assert.Equal(t, "info", rows[0]["status"])
 			}
 			require.Len(t, rows, wantRows)
-			assert.Equal(t, "docs.stale", rows[len(rows)-13]["id"])
-			assert.Equal(t, "warn", rows[len(rows)-13]["status"])
+			assert.Equal(t, "docs.stale", rows[len(rows)-14]["id"])
+			assert.Equal(t, "warn", rows[len(rows)-14]["status"])
 
 			wakeRows := 0
 			for _, row := range rows {
@@ -183,14 +183,14 @@ func TestDoctorCLI_Unconfigured_DocumentAndRetainedWakeInfoExitZero(t *testing.T
 				}
 			}
 			assert.Equal(t, 3, wakeRows)
-			assert.Equal(t, "wake.ledger", rows[len(rows)-8]["id"])
+			assert.Equal(t, "wake.ledger", rows[len(rows)-9]["id"])
 			listenerRows := 0
 			for _, row := range rows {
 				if assertWakeListenerDoctorInfo(t, row["id"], row["status"], row["fix"]) {
 					listenerRows++
 				}
 			}
-			assert.Equal(t, 7, listenerRows, "every documented wake.listener row is present with a fix")
+			assert.Equal(t, 8, listenerRows, "every documented wake.listener row is present with a fix")
 			assert.Empty(t, out.stderr)
 		})
 	}

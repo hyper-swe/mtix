@@ -22,6 +22,8 @@ func registerWakeListenerDoctor(svc *service.DoctorService) error {
 		Status:     newCLIWakeStatusService(),
 		Clock:      time.Now,
 	})
+	// MTIX-112.40.4: hook failures never break a session, so doctor is where they show.
+	checks = append(checks, service.ClaudeHookDoctorCheck(claudeHookLog()))
 	for _, check := range checks {
 		if err := svc.Register(check); err != nil {
 			return fmt.Errorf("register %s: %w", check.ID, err)

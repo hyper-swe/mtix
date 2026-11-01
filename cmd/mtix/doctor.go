@@ -143,6 +143,9 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	if err := registerHookDoctorChecks(svc); err != nil {
 		return nil, err
 	}
+	if err := registerServeRecordIgnoreCheck(svc); err != nil { // MTIX-232
+		return nil, fmt.Errorf("register serve record ignore check: %w", err)
+	}
 	// Attach rows (setup.shim, glue.<h>, attach.failures, skew.dispatchers)
 	// appear only when something is installed, marked, alerted or beating.
 	deps, err := productionAttachDoctorDeps(context.Background())

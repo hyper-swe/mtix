@@ -113,8 +113,20 @@ func TestServeRecord_ProjectDirFlag_URLWorksFromUnrelatedCwd(t *testing.T) {
 	projectDir := filepath.Dir(mtixDir)
 	port, _ := startRealServe(t, mtixDir)
 
+	// The cwd is a different directory with its own, empty .mtix: only -C can
+	// reach the project. The app is cold, so the node lookup cannot reuse the
+	// store opened by initTestApp.
 	elsewhere := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(elsewhere, ".mtix"), 0o755))
 	require.NoError(t, os.Chdir(elsewhere))
+	app = appContext{}
+	resetCloseOnce()
+	t.Cleanup(func() {
+		if app.store != nil {
+			_ = app.store.Close()
+		}
+	})
+
 	root := newRootCmd()
 	root.SetArgs([]string{"-C", projectDir, "url", id})
 	var execErr error
@@ -240,24 +252,50 @@ func TestURL_StaleServeRecord_FailsNamingServeWithEmptyStdout(t *testing.T) {
 	assert.Empty(t, out)
 }
 
-func TestServeRecord_ExcludedFromExportAndIgnoredByGit(t *testing.T) {
-	repoIgnorePath, err := filepath.Abs(filepath.Join("..", "..", ".gitignore"))
-	require.NoError(t, err)
+// serveRecordMarker is a value found only inside the serve record.
+const serveRecordMarker = "2031-04-05T06:07:08Z"
+
+func TestServeRecord_NeverLeaksIntoExportOrBackup(t *testing.T) {
 	initTestApp(t)
 	newURLTestNode(t)
 	mtixDir, err := findMtixDir()
 	require.NoError(t, err)
-	require.NoError(t, publishServeRecord(mtixDir, os.Getpid(), "127.0.0.1", 6849, time.Unix(0, 0)))
+	marker, err := time.Parse(time.RFC3339, serveRecordMarker)
+	require.NoError(t, err)
+	require.NoError(t, publishServeRecord(mtixDir, os.Getpid(), "127.0.0.1", 6849, marker))
 
 	require.NotNil(t, app.syncSvc)
 	require.NoError(t, app.syncSvc.AutoExport(context.Background(), mtixDir))
-	tasks, err := os.ReadFile(filepath.Join(mtixDir, "tasks.json"))
+	backup := filepath.Join(t.TempDir(), "backup.db")
+	_, err = app.store.Backup(context.Background(), backup)
 	require.NoError(t, err)
-	assert.NotContains(t, string(tasks), serveRecordFile)
 
-	repoIgnore, err := os.ReadFile(repoIgnorePath)
+	// Every file under .mtix except the record itself, plus the backup copy.
+	var checked int
+	check := func(path string) {
+		raw, readErr := os.ReadFile(path)
+		require.NoError(t, readErr)
+		assert.NotContains(t, string(raw), serveRecordMarker, path)
+		checked++
+	}
+	walkErr := filepath.WalkDir(mtixDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type().IsRegular() && d.Name() != serveRecordFile {
+			check(path)
+		}
+		return nil
+	})
+	require.NoError(t, walkErr)
+	check(backup)
+	assert.Greater(t, checked, 2, "tasks.json and the database must have been scanned")
+}
+
+func TestServeRecord_RepoGitignoreListsRecord(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", ".gitignore"))
 	require.NoError(t, err)
-	assert.Contains(t, string(repoIgnore), "\n.mtix/serve.json\n")
+	assert.Contains(t, string(raw), "\n.mtix/serve.json\n")
 }
 
 func TestRunInit_IgnoresServeRecord(t *testing.T) {

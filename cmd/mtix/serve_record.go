@@ -94,6 +94,18 @@ func removeServeRecord(mtixDir string, pid int) {
 	}
 }
 
+// removeServeRecordIfUnchanged removes the record only if it still holds the
+// pid and start time that were read, so a stale-record cleanup never deletes
+// the record a new serve published in the meantime. The re-read narrows the
+// window to one stat-and-unlink; it cannot close it entirely.
+func removeServeRecordIfUnchanged(mtixDir string, seen serveRecord) {
+	now, ok := loadServeRecord(mtixDir)
+	if !ok || now.PID != seen.PID || now.StartedAt != seen.StartedAt {
+		return
+	}
+	_ = os.Remove(filepath.Join(mtixDir, serveRecordFile))
+}
+
 // readServeRecord returns the record of a running serve. A record whose
 // process is dead is stale: it is removed and reported as not running. A
 // corrupt record, or a live PID whose port does not answer like an mtix serve
@@ -104,7 +116,7 @@ func readServeRecord(mtixDir string) (serveRecord, bool) {
 		return serveRecord{}, false
 	}
 	if !isProcessAlive(rec.PID) {
-		_ = os.Remove(filepath.Join(mtixDir, serveRecordFile))
+		removeServeRecordIfUnchanged(mtixDir, rec)
 		return serveRecord{}, false
 	}
 	if !probeServeHealth(rec) {
@@ -140,9 +152,14 @@ func serveLinkHost(host string) string {
 	return h
 }
 
+// authRequiredCode is the error code mtix serve puts in its 401 body when a
+// bearer token is required (AuthMiddleware, MTIX-220).
+const authRequiredCode = "AUTH_REQUIRED"
+
 // probeServeHealth asks the recorded address for /health. An mtix serve
-// answers 200 with status ok; a serve guarded by a bearer token answers 401 or
-// 403. Anything else (closed port, foreign service) is not our serve.
+// answers 200 with status ok, or, when a bearer token guards it, 401 with the
+// mtix AUTH_REQUIRED error code. A foreign service that merely answers 401 or
+// 403, a closed port or any other status is not our serve.
 func probeServeHealth(rec serveRecord) bool {
 	target := "http://" + net.JoinHostPort(probeHost(rec.Host), strconv.Itoa(rec.Port)) + "/health"
 	client := &http.Client{Timeout: serveHealthTimeout}
@@ -151,19 +168,22 @@ func probeServeHealth(rec serveRecord) bool {
 		return false
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return true
-	}
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
 	var body struct {
 		Status string `json:"status"`
+		Error  struct {
+			Code string `json:"code"`
+		} `json:"error"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body) != nil {
 		return false
 	}
-	return body.Status == "ok"
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return body.Status == "ok"
+	case http.StatusUnauthorized:
+		return body.Error.Code == authRequiredCode
+	}
+	return false
 }
 
 // announceServe publishes the serve-address record for this process and

@@ -23,11 +23,12 @@ serve running the command prints nothing on stdout and exits non-zero.
 The id must be a display id such as MTIX-12.3. An unknown id fails with not
 found. With --json the output is {"id": ..., "url": ...}.
 
-The serve publishes .mtix/serve.json (pid, port, bound host; git-ignored) while
+The serve publishes .mtix/serve.json (pid, port, bound host) while
 it runs and removes it when it stops. The link uses the host the serve is bound
 to, or 127.0.0.1 when it is bound to a wildcard address. A stale record (dead
 process, or a port that does not answer as an mtix serve) counts as no running
-serve. Use 'mtix -C <dir> url <id>' to target another project.`
+serve. 'mtix doctor' warns when a git project does not ignore the file and
+prints the fix. Use 'mtix -C <dir> url <id>' to target another project.`
 
 // newURLCmd creates the mtix url command (MTIX-230).
 func newURLCmd() *cobra.Command {

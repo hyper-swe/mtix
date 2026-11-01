@@ -68,11 +68,12 @@ func TestProbeServeHealth_UnresponsiveServer_TimesOutQuickly(t *testing.T) {
 	done := make(chan bool, 1)
 	start := time.Now()
 	go func() { _, ok := readServeRecord(dir); done <- ok }()
+	assert.LessOrEqual(t, serveHealthTimeout, time.Second, "the health probe timeout must stay short")
 	select {
 	case ok := <-done:
 		assert.False(t, ok)
-		assert.Less(t, time.Since(start), 3*serveHealthTimeout)
-	case <-time.After(5 * time.Second):
+		assert.Less(t, time.Since(start), serveHealthTimeout+time.Second)
+	case <-time.After(serveHealthTimeout + 3*time.Second):
 		t.Fatal("health probe has no short timeout")
 	}
 }
@@ -86,12 +87,12 @@ func TestRemoveServeRecordIfUnchanged_ReplacedRecord_IsKept(t *testing.T) {
 
 	// A new serve publishes its record between the stale read and the removal.
 	require.NoError(t, publishServeRecord(dir, 222, "127.0.0.1", 6850, at.Add(time.Hour)))
-	removeServeRecordIfUnchanged(dir, stale)
+	require.NoError(t, removeServeRecordIfUnchanged(dir, stale))
 	fresh, ok := loadServeRecord(dir)
 	require.True(t, ok, "a record replaced after the read must survive")
 	assert.Equal(t, 222, fresh.PID)
 
-	removeServeRecordIfUnchanged(dir, fresh)
+	require.NoError(t, removeServeRecordIfUnchanged(dir, fresh))
 	_, statErr := os.Stat(filepath.Join(dir, serveRecordFile))
 	assert.True(t, os.IsNotExist(statErr), "an unchanged record is removed")
 }
@@ -102,7 +103,7 @@ func TestRemoveServeRecordIfUnchanged_SamePIDNewStartTime_IsKept(t *testing.T) {
 	require.NoError(t, publishServeRecord(dir, 111, "127.0.0.1", 6849, at))
 	stale, _ := loadServeRecord(dir)
 	require.NoError(t, publishServeRecord(dir, 111, "127.0.0.1", 6849, at.Add(time.Minute)))
-	removeServeRecordIfUnchanged(dir, stale)
+	require.NoError(t, removeServeRecordIfUnchanged(dir, stale))
 	_, ok := loadServeRecord(dir)
 	assert.True(t, ok)
 }
@@ -162,21 +163,51 @@ func TestAnnounceServe_OtherLiveServeRecorded_LeavesItAndWarns(t *testing.T) {
 	_ = strconv.Itoa(port)
 }
 
-func TestAnnounceServe_PublishFails_WarnsAndDoesNotStopServe(t *testing.T) {
+func TestAnnounceServe_PublishFails_WarnsAndRemoverIsNoOp(t *testing.T) {
 	initTestApp(t)
 	mtixDir, err := findMtixDir()
 	require.NoError(t, err)
-	// A non-empty directory squats on the record path, so the rename fails.
+	// A directory squats on the record path, so the rename fails.
 	blocker := filepath.Join(mtixDir, serveRecordFile)
-	require.NoError(t, os.MkdirAll(filepath.Join(blocker, "x"), 0o755))
+	require.NoError(t, os.Mkdir(blocker, 0o755))
 
 	var log bytes.Buffer
 	remove := announceServe(newAnnounceTestCfg(t, time.Unix(0, 0), &log))
 	require.NotNil(t, remove)
 	assert.Contains(t, log.String(), "serve record not published")
+
+	// Later a valid record for this very pid exists. A real remover would
+	// delete it; the no-op returned after a failed publish must not.
+	require.NoError(t, os.Remove(blocker))
+	require.NoError(t, publishServeRecord(mtixDir, os.Getpid(), "127.0.0.1", 6849, time.Unix(0, 0)))
 	remove()
-	_, statErr := os.Stat(blocker)
-	assert.NoError(t, statErr, "nothing was published, so nothing is removed")
+	_, ok := loadServeRecord(mtixDir)
+	assert.True(t, ok, "the remover returned after a failed publish must do nothing")
+}
+
+func TestRemoveServeRecord_FailureIsReturnedAndLoggedByRemover(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("a read-only directory does not stop root")
+	}
+	initTestApp(t)
+	mtixDir, err := findMtixDir()
+	require.NoError(t, err)
+	var log bytes.Buffer
+	remove := announceServe(newAnnounceTestCfg(t, time.Unix(0, 0), &log))
+	require.NoError(t, os.Chmod(mtixDir, 0o500))
+	t.Cleanup(func() { _ = os.Chmod(mtixDir, 0o755) })
+
+	require.Error(t, removeServeRecord(mtixDir, os.Getpid()))
+	remove()
+	assert.Contains(t, log.String(), "serve record not removed")
+}
+
+func TestRemoveServeRecord_AlreadyGone_IsNotAnError(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, publishServeRecord(dir, 4242, "127.0.0.1", 6849, time.Unix(0, 0)))
+	require.NoError(t, os.Remove(filepath.Join(dir, serveRecordFile)))
+	require.NoError(t, removeServeRecord(dir, 4242))
+	require.NoError(t, removeRecordFile(dir))
 }
 
 func TestAnnounceServe_BadPort_WarnsAndPublishesNothing(t *testing.T) {

@@ -10,15 +10,17 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
 const (
 	serveRecordIgnoreCheckID = "serve.record.ignore"
 	serveRecordIgnoreEntry   = ".mtix/serve.json"
-	serveRecordIgnoreFix     = "echo '" + serveRecordIgnoreEntry + "' >> .gitignore"
+	serveRecordIgnoreFix     = "printf '\\n" + serveRecordIgnoreEntry + "\\n' >> .gitignore"
 	gitCheckIgnoreTimeout    = 5 * time.Second
 )
 
@@ -59,7 +61,7 @@ func serveRecordIgnoreCheck(root string) service.DoctorCheck {
 		defer cancel()
 		// Constant arguments only; exit 0 = ignored, 1 = not ignored, 128 = not a repository.
 		cmd := exec.CommandContext(ctx, "git", "-C", root, "check-ignore", "-q", "--", serveRecordIgnoreEntry) //nolint:gosec // fixed argument list, root is the project directory
-		err := cmd.Run()
+		out, err := cmd.CombinedOutput()
 		var exitErr *exec.ExitError
 		switch {
 		case err == nil:
@@ -71,9 +73,23 @@ func serveRecordIgnoreCheck(root string) service.DoctorCheck {
 				Fix:    serveRecordIgnoreFix,
 			}
 		case errors.As(err, &exitErr):
-			return service.DoctorResult{Status: service.DoctorPass, Detail: "project is not a git repository; nothing to ignore"}
+			// A .git entry exists yet git could not decide (for example it
+			// refuses the repository): say so instead of reporting a pass.
+			return service.DoctorResult{Status: service.DoctorInfo, Detail: fmt.Sprintf(
+				"git could not check whether %s is ignored (exit %d): %s",
+				serveRecordIgnoreEntry, exitErr.ExitCode(), format.SafeLine(firstLine(string(out))))}
 		default:
 			return service.DoctorResult{Status: service.DoctorInfo, Detail: "git is not available; cannot check whether " + serveRecordIgnoreEntry + " is ignored"}
 		}
 	}}
+}
+
+// firstLine returns the first non-empty line of s, or a placeholder.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(line); t != "" {
+			return t
+		}
+	}
+	return "no message from git"
 }

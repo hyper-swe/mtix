@@ -34,7 +34,7 @@ func startFakeServe(t *testing.T, _ int) int {
 	mtixDir, err := findMtixDir()
 	require.NoError(t, err)
 	require.NoError(t, publishServeRecord(mtixDir, os.Getpid(), "127.0.0.1", port, time.Unix(0, 0)))
-	t.Cleanup(func() { removeServeRecord(mtixDir, os.Getpid()) })
+	t.Cleanup(func() { _ = removeServeRecord(mtixDir, os.Getpid()) })
 	return port
 }
 

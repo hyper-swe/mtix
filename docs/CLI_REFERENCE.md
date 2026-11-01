@@ -782,6 +782,10 @@ The read-only export.schema check compares the schema_version .mtix/tasks.json
 declares with the one this binary writes. Every write re-exports the file in
 this binary's schema; sync.auto_sync does not stop that. WARN prints the fix.
 
+The read-only serve.record.ignore check appears only inside a git working tree.
+It WARNs when .mtix/serve.json (the record mtix serve publishes for mtix url) is
+not git-ignored and prints the fix; outside a git tree no row appears.
+
 wake.settings reports effective host/agent wake values and sources.
 settings.ignored-workspace-key reports authority keys ignored in config.yaml
 and prints exact host-local config commands. These checks never change settings.

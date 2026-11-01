@@ -66,7 +66,7 @@ func startRealServe(t *testing.T, mtixDir string) (port int, stop func()) {
 				require.NoError(t, err)
 				return
 			case <-tick.C:
-				require.NoError(t, syscall.Kill(os.Getpid(), syscall.SIGTERM))
+				signalSelfTerminate(t)
 			case <-timeout:
 				t.Fatal("serve did not stop on SIGTERM")
 			}
@@ -171,10 +171,10 @@ func TestPublishServeRecord_WritesAtomicOwnerOnlyRecordWithClockTime(t *testing.
 func TestRemoveServeRecord_OtherPID_LeavesRecord(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, publishServeRecord(dir, 4242, "127.0.0.1", 6849, time.Unix(0, 0)))
-	removeServeRecord(dir, 1111)
+	require.NoError(t, removeServeRecord(dir, 1111))
 	_, err := os.Stat(filepath.Join(dir, serveRecordFile))
 	require.NoError(t, err, "another serve's record must survive")
-	removeServeRecord(dir, 4242)
+	require.NoError(t, removeServeRecord(dir, 4242))
 	_, err = os.Stat(filepath.Join(dir, serveRecordFile))
 	assert.True(t, os.IsNotExist(err))
 }

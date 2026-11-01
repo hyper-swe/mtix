@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
@@ -88,22 +89,32 @@ func loadServeRecord(mtixDir string) (serveRecord, bool) {
 
 // removeServeRecord removes the record only when it still belongs to pid, so
 // a stopping serve never deletes the record of another live serve.
-func removeServeRecord(mtixDir string, pid int) {
+func removeServeRecord(mtixDir string, pid int) error {
 	if rec, ok := loadServeRecord(mtixDir); ok && rec.PID == pid {
-		_ = os.Remove(filepath.Join(mtixDir, serveRecordFile))
+		return removeRecordFile(mtixDir)
 	}
+	return nil
+}
+
+// removeRecordFile deletes the record file. A file that is already gone is not
+// an error; any other failure is returned with context.
+func removeRecordFile(mtixDir string) error {
+	if err := os.Remove(filepath.Join(mtixDir, serveRecordFile)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("remove serve record: %w", err)
+	}
+	return nil
 }
 
 // removeServeRecordIfUnchanged removes the record only if it still holds the
 // pid and start time that were read, so a stale-record cleanup never deletes
 // the record a new serve published in the meantime. The re-read narrows the
 // window to one stat-and-unlink; it cannot close it entirely.
-func removeServeRecordIfUnchanged(mtixDir string, seen serveRecord) {
+func removeServeRecordIfUnchanged(mtixDir string, seen serveRecord) error {
 	now, ok := loadServeRecord(mtixDir)
 	if !ok || now.PID != seen.PID || now.StartedAt != seen.StartedAt {
-		return
+		return nil
 	}
-	_ = os.Remove(filepath.Join(mtixDir, serveRecordFile))
+	return removeRecordFile(mtixDir)
 }
 
 // readServeRecord returns the record of a running serve. A record whose
@@ -116,7 +127,11 @@ func readServeRecord(mtixDir string) (serveRecord, bool) {
 		return serveRecord{}, false
 	}
 	if !isProcessAlive(rec.PID) {
-		removeServeRecordIfUnchanged(mtixDir, rec)
+		// Best-effort cleanup of a stale file: the answer (not running) holds
+		// either way, so a failure is logged, not returned.
+		if err := removeServeRecordIfUnchanged(mtixDir, rec); err != nil {
+			slog.Default().Debug("stale serve record not removed", "error", err)
+		}
 		return serveRecord{}, false
 	}
 	if !probeServeHealth(rec) {
@@ -210,7 +225,11 @@ func announceServe(cfg serveAnnounceConfig) func() {
 		cfg.logger.Warn("serve record not published", "error", err)
 		return noop
 	}
-	return func() { removeServeRecord(mtixDir, pid) }
+	return func() {
+		if err := removeServeRecord(mtixDir, pid); err != nil {
+			cfg.logger.Warn("serve record not removed", "error", err)
+		}
+	}
 }
 
 // serveAnnounceConfig carries what announceServe needs from the serve setup.

@@ -1455,6 +1455,38 @@ and back-off), newest first, with agent, chain, time and the exact fix command; 
 are under `data.trips`. It is read-only, even with `--fix`. You should not need to tune
 these guards; an empty list is the normal state.
 
+### Claude session hook programs
+
+`mtix hook claude-session <session-start|stop> --agent <id> [--timeout <seconds>]` is the program a Claude Code
+hook runs so an idle session wakes on addressed mail with no agent action. It is built to run as an `asyncRewake`
+hook command; it is not meant to be typed by hand, except to re-run a failed hook.
+
+- `session-start` registers the agent for this session, then arms the waiter. `stop` arms it again at the end of a turn.
+- One waiter runs per registration. A second start while one is armed exits 0 and reports `already-armed`.
+- The wake policy for the agent (denied, quarantined, unconfirmed and unregistered ids are held) is applied before the
+  waiter arms. A held agent exits 0 with the reason; the message stays in the inbox.
+- Each event is claimed once in the wake ledger. When the waiter wins the claim it writes the quoted envelope to stderr
+  and exits 2, which is the exit code that wakes an idle Claude session. An event another route already claimed
+  never wakes the session twice. A re-arm after a wake waits only for new mail: events already delivered to this
+  registration, or claimed by another route, do not end the wait.
+- If the wake is won but a later step fails (a further claim, or recording the delivered outcome), the envelope is still
+  delivered and the failure is recorded for doctor, so a claimed event is never silently lost.
+- The waiter is a local wait on the board's inbox. It polls the local inbox every 250 ms and, like `mtix inbox --wait`,
+  joins the board listener for the length of the wait: it starts the listener if none runs, and on a board that syncs
+  through a relay the listener (and so its hub connection) stays up while the waiter lives. The waiter renews its own
+  lease every 5 minutes, and it exits 0 after `--timeout` seconds in total (default 3600, `0` = until woken); the next
+  Stop or session-start arms a new one. A run that exits, woken or not, frees its lease, so the next Stop arms a new
+  waiter. If the waiter loses its lease (it stalled past the lease time and another waiter took it, or a renewal found a
+  different holder), it frees any lease it re-took by mistake, ends the wait with no wake and records the loss for
+  `mtix doctor`; a transient renewal error is retried on the next renewal until the lease would have expired.
+- A hook never breaks a session: an internal error exits 0 and is recorded. `mtix doctor` shows it as the row
+  `wake.listener.hook-errors`, whose `fix` is the exact command that re-runs the failed hook with a short `--timeout 5`, so the re-run returns quickly. A successful re-run clears the
+  row. `mtix doctor --json` carries the same row with `id`, `status`, `detail`, `fix` and the `failures` data.
+
+Installing these hooks, by plugin or by a consented user-level block, comes with MTIX-112.40.5; until it ships nothing
+runs this program for you. Whether a Stop hook re-arms the waiter after a wake-driven turn is still being measured
+(MTIX-112.40.1), so keep the foreground wait from "Waiting for inbox events" as the baseline.
+
 ### Configuration Reference
 
 | Key | Default | Description |

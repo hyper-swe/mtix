@@ -371,3 +371,20 @@ func TestWakeScan_GateAsCandidateFilter_ReevaluateHonoursGates(t *testing.T) {
 	require.NoError(t, f.d.Reevaluate(t.Context(), f.key.AgentID))
 	require.Equal(t, []int64{first}, f.adapter.seqs())
 }
+
+// MTIX-112.19.7: the pi wait child owns its registration's claims; a scan, however many
+// times it runs and however many events wait, claims nothing for a pi row.
+func TestHostScanner_PiRows_Skipped(t *testing.T) {
+	f := newScanFixture(t)
+	_, err := f.store.WriteDB().ExecContext(t.Context(), "UPDATE agent_registrations SET harness='pi'")
+	require.NoError(t, err)
+	f.addEvent("sender")
+	f.addEvent("sender")
+	require.NoError(t, f.scanner(always).Scan(t.Context()))
+	require.NoError(t, f.scanner(always).Scan(t.Context()))
+	require.Empty(t, f.adapter.seqs(), "no route delivery for a pi row")
+	require.Zero(t, f.ledgerRows(), "no ledger claim for a pi row")
+	hw, hold := f.mark()
+	require.Zero(t, hw)
+	require.False(t, hold)
+}

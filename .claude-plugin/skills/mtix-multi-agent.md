@@ -413,6 +413,25 @@ When multiple agents work simultaneously:
 - Declare cross-task dependencies via `mtix_dep_add` to prevent conflicts
 - After completing work that others depend on, verify the dependent tasks are unblocked
 
+## pi sessions (experimental)
+
+pi sessions are woken by a different path from Claude Code: the pi extension runs a
+wait child (the hidden `mtix attach wait` verb with `--harness pi` and `--session`),
+and the host scanner skips pi registrations. The wait child claims each addressed
+event once through the same wake ledger, records it as sent, prints one wake line and
+exits 0 only after that claim. An event that was claimed but not acknowledged never
+wakes the session again; read it with `mtix inbox`, then acknowledge it. A lost claim
+race, a claim error or an unknown or invalid session prints no wake line.
+
+Status: experimental, not installed by default. This build embeds the extension
+(`internal/attach/assets/pi/mtix-attach.ts`) but no setup, refresh, doctor or docs
+command writes it, so a pi host has no live wake unless an operator installs the file
+by hand and sets `MTIX_BIN` to the absolute path of mtix. The live pi leg is unproven:
+the interactive extension trust prompt and a real end-to-end pi wake have not been
+verified. The wait child polls the local board only and never contacts a hub, so it
+does not keep a scale-to-zero database awake. Without the extension, a pi session
+reads its messages with `mtix inbox`.
+
 ## Reference Wake Routine
 
 The mtix reference `examples/hooks/wake-agent.sh` reads the unhandled inbox

@@ -13,6 +13,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // agentTransitions defines valid agent state transitions per FR-10.2.
@@ -31,6 +32,8 @@ type AgentService struct {
 	config      ConfigProvider
 	logger      *slog.Logger
 	clock       func() time.Time
+
+	rollbackWriter sqlite.RollbackWriterFunc // nil in production; a test seam (MTIX-198)
 }
 
 // NewAgentService creates an AgentService with required dependencies.
@@ -66,10 +69,12 @@ func (svc *AgentService) RegisterAgentWithStatus(ctx context.Context, agentID, p
 	if agentID == "" || project == "" {
 		return false, fmt.Errorf("agent ID and project are required: %w", model.ErrInvalidInput)
 	}
-	tx, err := svc.store.WriteDB().BeginTx(ctx, nil)
+	wtx, err := sqlite.BeginWriterTx(ctx, svc.store.WriteDB(), svc.logger, svc.rollbackWriter) // pinned until Release: MTIX-198
 	if err != nil {
 		return false, fmt.Errorf("begin registration for %s: %w", agentID, err)
 	}
+	defer wtx.Release(ctx)
+	tx := wtx.Tx
 	defer func() {
 		if rollbackErr := tx.Rollback(); rollbackErr != nil && rollbackErr != sql.ErrTxDone {
 			svc.logger.Error("rollback agent registration", "agent_id", agentID, "error", rollbackErr)
@@ -93,8 +98,9 @@ func (svc *AgentService) RegisterAgentWithStatus(ctx context.Context, agentID, p
 			return false, fmt.Errorf("refresh registered agent %s heartbeat: %w", agentID, err)
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit registration for %s: %w", agentID, err)
+	if err := wtx.Commit(); err != nil {
+		return false, wtx.RecoverAfterCommit(ctx, // MTIX-198
+			fmt.Errorf("commit registration for %s: %w", agentID, err))
 	}
 	return rows != 0, nil
 }

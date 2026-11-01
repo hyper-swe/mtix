@@ -44,7 +44,7 @@ func collisionOps() []collisionOp {
 		{"claim", func(t *testing.T) { require.NoError(t, runClaim("TEST-1", "agent-a")) }},
 		{"unclaim", func(t *testing.T) {
 			require.NoError(t, runClaim("TEST-1", "agent-a"))
-			require.NoError(t, runUnclaim("TEST-1", "done with it"))
+			require.NoError(t, runUnclaim("TEST-1", "done with it", "agent-a", false))
 		}},
 		{"status", func(t *testing.T) {
 			require.NoError(t, runCancel("TEST-1", "not needed", false))

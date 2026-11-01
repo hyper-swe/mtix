@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -38,10 +39,10 @@ func refusePendingNumber(ctx context.Context, tx *sql.Tx, eventID, ref string) e
 	}
 	pending, err := pendingCreationIDs(ctx, tx, line)
 	if err != nil {
-		return fmt.Errorf("event %s: check %s: %w", eventID, ref, err)
+		return fmt.Errorf("event %s: check %s: %w", format.EventID(eventID), ref, err)
 	}
 	if len(pending) > 0 {
-		return fmt.Errorf("event %s: %s: %w", eventID, ref, ErrNumberHeldByPendingCreate)
+		return fmt.Errorf("event %s: %s: %w", format.EventID(eventID), ref, ErrNumberHeldByPendingCreate)
 	}
 	return nil
 }
@@ -57,7 +58,7 @@ func refuseHeldNumber(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, uid s
 	var holder string
 	err := tx.QueryRowContext(ctx, `SELECT COALESCE(uid, '') FROM nodes WHERE id = ?`, e.NodeID).Scan(&holder)
 	if err != nil {
-		return fmt.Errorf("apply create_node %s: read holder of %s: %w", e.EventID, e.NodeID, err)
+		return fmt.Errorf("apply create_node %s: read holder of %s: %w", format.EventID(e.EventID), e.NodeID, err)
 	}
 	if holder == uid {
 		return nil // inserted just now, or the same task again

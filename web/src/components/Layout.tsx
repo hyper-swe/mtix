@@ -220,7 +220,7 @@ export function Layout() {
           !collapsed && (
             <>
               <div
-                className="flex-shrink-0"
+                className="shrink-0"
                 style={{
                   width: sidebarWidth,
                   borderRight: "1px solid var(--color-border)",
@@ -230,7 +230,7 @@ export function Layout() {
               </div>
               {/* Drag handle for resizing */}
               <div
-                className="w-1 cursor-col-resize flex-shrink-0"
+                className="w-1 cursor-col-resize shrink-0"
                 style={{ backgroundColor: "transparent" }}
                 onMouseDown={startResize}
                 onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "var(--color-accent-muted)")}

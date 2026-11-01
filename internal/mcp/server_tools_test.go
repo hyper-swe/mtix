@@ -828,7 +828,7 @@ func TestUnclaimTool_WithValidArgs_Succeeds(t *testing.T) {
 	reg := NewToolRegistry()
 	RegisterWorkflowTools(reg, newTestNodeService(), newTestBackgroundService())
 
-	args := json.RawMessage(`{"id":"TEST-1","reason":"done working"}`)
+	args := json.RawMessage(`{"id":"TEST-1","reason":"done working","agent_id":"agent-1"}`)
 	result, err := reg.Call(context.Background(), "mtix_unclaim", args)
 	require.NoError(t, err)
 	assert.False(t, result.IsError)
@@ -1656,4 +1656,9 @@ func (b *briefingMockStore) ListNodes(_ context.Context, _ store.NodeFilter, opt
 		n = n[:opts.Limit]
 	}
 	return n, len(b.nodes), nil
+}
+
+// DeleteNodeWithRoot satisfies the grouped recovery store contract.
+func (m *mcpMockStore) DeleteNodeWithRoot(ctx context.Context, id, _ string, author string) error {
+	return m.DeleteNode(ctx, id, false, author)
 }

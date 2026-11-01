@@ -38,7 +38,7 @@ export function NodeID({ id, short = false, className, style, testId }: NodeIDPr
     >
       {showBadge && prefix && (
         <span
-          className="text-[9px] font-semibold uppercase tracking-wide px-1 py-px rounded leading-none"
+          className="text-[9px] font-semibold uppercase tracking-wide px-1 py-px rounded-sm leading-none"
           style={{
             backgroundColor: "var(--color-accent-muted)",
             color: "var(--color-accent)",

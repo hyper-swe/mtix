@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -70,14 +71,16 @@ func payloadNodeRef(e *model.SyncEvent) (field, id string, err error) {
 		}
 	}
 	return "", "", fmt.Errorf("event %s %s: payload does not decode: %w: %w",
-		e.EventID, e.OpType, model.ErrInvalidInput, err)
+		format.EventID(e.EventID), e.OpType, model.ErrInvalidInput, err)
 }
 
 // checkNodeID returns the ingest error for id, the value of field in e, when
 // it is outside the node id grammar, and nil otherwise.
 func checkNodeID(e *model.SyncEvent, field, id string) error {
 	if err := model.ValidateSyncNodeID(id); err != nil {
-		return fmt.Errorf("%w: event %s %s %q: %w", ErrInvalidNodeID, e.EventID, field, id, err)
+		// The model diagnostic also repeats the hostile id; escape it as well.
+		return fmt.Errorf("%w: event %s %s %s: %s: %w", ErrInvalidNodeID,
+			format.EventID(e.EventID), field, format.EventID(id), format.EventID(err.Error()), model.ErrInvalidInput)
 	}
 	return nil
 }

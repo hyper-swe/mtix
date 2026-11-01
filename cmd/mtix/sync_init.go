@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -62,12 +63,18 @@ func clientMachineHash() string {
 // validation, divergent history) still fail-closed.
 func newSyncInitCmd() *cobra.Command {
 	var insecureTLS bool
+	var migrateTimeout time.Duration
 
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize the sync hub for this project (FR-18)",
 		Long: `Initialize the BYO Postgres sync hub for this project. Runs the schema
 migration under a PG advisory lock so concurrent first-connects are safe.
+Connect has a 30s budget. Migration has its own --migrate-timeout (default 5m),
+including advisory-lock wait. Index statements block writes until commit even
+when every index already exists; adding missing columns blocks reads too.
+Existing columns skip ALTER. After a migration timeout, retry as the owner with
+the larger --migrate-timeout printed in the error, then run sync doctor.
 
 DSN sources (FR-18.16):
   1. Environment:        MTIX_SYNC_DSN
@@ -90,19 +97,29 @@ and init refuses and names the fix: as the table owner, run mtix sync
 migrate --yes while the version gate is open, then mtix sync init again.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSyncInit(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
-				args, transport.Options{InsecureTLS: insecureTLS})
+			if migrateTimeout <= 0 {
+				return fmt.Errorf("--migrate-timeout must be positive")
+			}
+			return runSyncInitWithOptions(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+				args, syncInitOptions{transport: transport.Options{InsecureTLS: insecureTLS}, migrateTimeout: migrateTimeout})
 		},
 	}
 
 	cmd.Flags().BoolVar(&insecureTLS, "insecure-tls", false,
 		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
+	cmd.Flags().DurationVar(&migrateTimeout, "migrate-timeout", defaultSyncMigrateTimeout,
+		"Deadline for hub migration, including advisory-lock wait (separate from the 30s connect budget)")
 	return cmd
 }
 
 // runSyncInit executes the init flow. Extracted from the cobra
 // closure so unit tests can call it directly with mock writers.
 func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, opts transport.Options) error {
+	return runSyncInitWithOptions(ctx, stdout, stderr, args, syncInitOptions{transport: opts, migrateTimeout: defaultSyncMigrateTimeout})
+}
+
+// runSyncInitWithOptions separates migration and connection budgets (FR-18.14).
+func runSyncInitWithOptions(ctx context.Context, stdout, stderr io.Writer, args []string, opts syncInitOptions) error {
 	if app.mtixDir == "" {
 		return fmt.Errorf("mtix sync init: not in an mtix project (run 'mtix init' first)")
 	}
@@ -113,9 +130,8 @@ func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, o
 	}
 
 	connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
-	defer cancel()
-
-	pool, err := transport.New(connectCtx, dsn, opts)
+	pool, err := transport.New(connectCtx, dsn, opts.transport)
+	cancel()
 	if err != nil {
 		return wrapSyncErr(stderr, "connect", err)
 	}
@@ -128,10 +144,12 @@ func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, o
 	// fix. After the migrations, an index of the registry's name that is
 	// not valid or not ready, which 009's IF NOT EXISTS skips, is reported
 	// with its fix (MTIX-95.44).
-	if migrateErr := pool.Migrate(connectCtx); migrateErr != nil {
+	if migrateErr := migrateSyncInit(ctx, opts.migrateTimeout, pool.Migrate); migrateErr != nil {
 		return wrapSyncErr(stderr, "migrate", withRegistryIndexFix(migrateErr))
 	}
-	warnRegistryIndex(connectCtx, stderr, pool)
+	registerCtx, stop := context.WithTimeout(ctx, syncConnectBudget)
+	defer stop()
+	warnRegistryIndex(registerCtx, stderr, pool)
 
 	if app.store == nil {
 		// Mtix project not initialized — migration succeeded on the
@@ -152,7 +170,7 @@ func runSyncInit(ctx context.Context, stdout, stderr io.Writer, args []string, o
 		return nil
 	}
 
-	return claimProjectOnHub(connectCtx, stdout, stderr, pool, localFirstEvent{prefix: prefix, hash: hash})
+	return claimProjectOnHub(registerCtx, stdout, stderr, pool, localFirstEvent{prefix: prefix, hash: hash})
 }
 
 // localFirstEvent is the local project's prefix and first_event_hash.

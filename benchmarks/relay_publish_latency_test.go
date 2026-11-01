@@ -30,7 +30,7 @@ func TestRelayPublishLatency_OutliersAndRegressions(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
-			got, err := checkRelayPublishLatency(func() (int, time.Duration, error) {
+			got, err := checkRelayReferenceLatency(func() (int, time.Duration, error) {
 				require.Less(t, calls, len(tc.samples))
 				elapsed := tc.samples[calls] * 200
 				calls++
@@ -58,7 +58,7 @@ func TestRelayPublishLatency_InvalidBatchFails(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0
-			_, err := checkRelayPublishLatency(func() (int, time.Duration, error) {
+			_, err := checkRelayReferenceLatency(func() (int, time.Duration, error) {
 				calls++
 				if calls == 4 {
 					return tc.n, time.Millisecond, tc.err
@@ -72,4 +72,32 @@ func TestRelayPublishLatency_InvalidBatchFails(t *testing.T) {
 			require.Equal(t, 4, calls, "invalid later batches cannot hide behind a fast first batch")
 		})
 	}
+}
+
+func TestRelayPublishLatency_NonpositiveMeasurementFails(t *testing.T) {
+	cases := []struct {
+		name    string
+		elapsed time.Duration
+	}{
+		{"zero", 0},
+		{"negative", -time.Nanosecond},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			_, err := checkRelayReferenceLatency(func() (int, time.Duration, error) {
+				calls++
+				return 200, tc.elapsed, nil
+			})
+			require.Error(t, err, "invalid elapsed time must not count as a fast batch")
+			require.Equal(t, 1, calls, "reject the invalid measurement before collecting more")
+		})
+	}
+}
+
+func TestRelayPublishLatency_FractionalPerEventBudgetExceeded(t *testing.T) {
+	_, err := checkRelayReferenceLatency(func() (int, time.Duration, error) {
+		return 200, relayPublishBudget*200 + time.Nanosecond, nil
+	})
+	require.Error(t, err, "division must not round an over-budget batch into a pass")
 }

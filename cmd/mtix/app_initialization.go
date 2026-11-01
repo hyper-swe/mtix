@@ -58,6 +58,9 @@ func initializeProjectServices(cmd *cobra.Command, mtixDir string) {
 	app.syncSvc = newSyncService(clock, app.syncOptions)
 	app.hooksDisp = service.NewHooksDispatcher(app.store, mtixDir, app.logger)
 	if !isTopLevelDoctor(cmd) {
+		wireWakeScanner(mtixDir)
+	}
+	if !isTopLevelDoctor(cmd) {
 		initializeHookApprovals(cmd, mtixDir)
 	}
 	setProjectDir(mtixDir) // app.mtixDir and, with a hub, app.payloadWarnings (MTIX-95.12)

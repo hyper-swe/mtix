@@ -17,6 +17,7 @@ import (
 	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 )
@@ -138,31 +139,31 @@ func mapError(err error) error {
 
 	switch {
 	case isError(err, model.ErrNotFound):
-		return status.Error(codes.NotFound, err.Error())
+		return status.Error(codes.NotFound, format.SafeText(err.Error()))
 	case isError(err, model.ErrInvalidInput):
-		return status.Error(codes.InvalidArgument, err.Error())
+		return status.Error(codes.InvalidArgument, format.SafeText(err.Error()))
 	case isError(err, model.ErrAlreadyExists):
-		return status.Error(codes.AlreadyExists, err.Error())
+		return status.Error(codes.AlreadyExists, format.SafeText(err.Error()))
 	case isError(err, model.ErrInvalidTransition):
-		return status.Error(codes.FailedPrecondition, err.Error())
+		return status.Error(codes.FailedPrecondition, format.SafeText(err.Error()))
 	case isError(err, model.ErrCycleDetected):
-		return status.Error(codes.FailedPrecondition, err.Error())
+		return status.Error(codes.FailedPrecondition, format.SafeText(err.Error()))
 	case isError(err, model.ErrConflict):
-		return status.Error(codes.Aborted, err.Error())
+		return status.Error(codes.Aborted, format.SafeText(err.Error()))
 	case isError(err, model.ErrAlreadyClaimed):
-		return status.Error(codes.FailedPrecondition, err.Error())
+		return status.Error(codes.FailedPrecondition, format.SafeText(err.Error()))
 	case isError(err, model.ErrNodeBlocked):
-		return status.Error(codes.FailedPrecondition, err.Error())
+		return status.Error(codes.FailedPrecondition, format.SafeText(err.Error()))
 	case isError(err, model.ErrStillDeferred):
-		return status.Error(codes.FailedPrecondition, err.Error())
+		return status.Error(codes.FailedPrecondition, format.SafeText(err.Error()))
 	case isError(err, model.ErrAgentStillActive):
-		return status.Error(codes.FailedPrecondition, err.Error())
+		return status.Error(codes.FailedPrecondition, format.SafeText(err.Error()))
 	case isError(err, model.ErrNoActiveSession):
-		return status.Error(codes.FailedPrecondition, err.Error())
+		return status.Error(codes.FailedPrecondition, format.SafeText(err.Error()))
 	case isError(err, model.ErrInvalidConfigKey):
-		return status.Error(codes.InvalidArgument, err.Error())
+		return status.Error(codes.InvalidArgument, format.SafeText(err.Error()))
 	default:
-		return status.Error(codes.Internal, err.Error())
+		return status.Error(codes.Internal, format.SafeText(err.Error()))
 	}
 }
 

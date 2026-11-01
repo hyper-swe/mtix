@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -42,19 +43,19 @@ import (
 func (a syncApplier) acknowledgeHeldEvent(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) (bool, error) {
 	local, err := readHeldEvent(ctx, tx, event.EventID)
 	if err != nil {
-		return false, fmt.Errorf("apply %s: own-event check: %w", event.EventID, err)
+		return false, fmt.Errorf("apply %s: own-event check: %w", format.EventID(event.EventID), err)
 	}
 	if local == nil {
 		return false, nil
 	}
 	if err := advanceLamport(ctx, tx, local.LamportClock); err != nil {
-		return true, fmt.Errorf("apply %s: held event: advance lamport: %w", event.EventID, err)
+		return true, fmt.Errorf("apply %s: held event: advance lamport: %w", format.EventID(event.EventID), err)
 	}
 	if err := mergeVectorClock(ctx, tx, local.AuthorID, local.VectorClock); err != nil {
-		return true, fmt.Errorf("apply %s: held event: merge VC: %w", event.EventID, err)
+		return true, fmt.Errorf("apply %s: held event: merge VC: %w", format.EventID(event.EventID), err)
 	}
 	if err := a.recordApplied(ctx, tx, local); err != nil {
-		return true, fmt.Errorf("apply %s: held event: record applied: %w", event.EventID, err)
+		return true, fmt.Errorf("apply %s: held event: record applied: %w", format.EventID(event.EventID), err)
 	}
 	return true, nil
 }

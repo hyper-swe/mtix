@@ -50,7 +50,9 @@ func (svc *NodeService) Rerun(
 	}
 
 	for _, child := range children {
-		if err := svc.rerunDescendant(ctx, child, strategy, reason, author); err != nil {
+		if err := svc.rerunDescendant(ctx, child, rerunOptions{
+			strategy: strategy, reason: reason, author: author, rootID: child.ID,
+		}); err != nil {
 			return fmt.Errorf("rerun descendant %s: %w", child.ID, err)
 		}
 	}
@@ -62,32 +64,38 @@ func (svc *NodeService) Rerun(
 	return nil
 }
 
+// rerunOptions keeps a direct child as the recovery root throughout its subtree.
+type rerunOptions struct {
+	strategy               RerunStrategy
+	reason, author, rootID string
+}
+
 // rerunDescendant processes a single descendant and its children (depth-first).
 func (svc *NodeService) rerunDescendant(
-	ctx context.Context, node *model.Node, strategy RerunStrategy,
-	reason, author string,
+	ctx context.Context, node *model.Node, opts rerunOptions,
 ) error {
 	children, err := svc.store.GetDirectChildren(ctx, node.ID)
 	if err != nil {
 		return fmt.Errorf("get children of %s: %w", node.ID, err)
 	}
 	for _, child := range children {
-		if err := svc.rerunDescendant(ctx, child, strategy, reason, author); err != nil {
+		if err := svc.rerunDescendant(ctx, child, opts); err != nil {
 			return err
 		}
 	}
 
-	switch strategy {
+	reason, author := opts.reason, opts.author
+	switch opts.strategy {
 	case RerunAll:
 		return svc.rerunAllNode(ctx, node, reason, author)
 	case RerunOpenOnly:
 		return svc.rerunOpenOnlyNode(ctx, node, reason, author)
 	case RerunDelete:
-		return svc.rerunDeleteNode(ctx, node, reason, author)
+		return svc.rerunDeleteNode(ctx, node, opts)
 	case RerunReview:
 		return svc.rerunReviewNode(ctx, node, reason, author)
 	default:
-		return fmt.Errorf("unknown rerun strategy %q: %w", strategy, model.ErrInvalidInput)
+		return fmt.Errorf("unknown rerun strategy %q: %w", opts.strategy, model.ErrInvalidInput)
 	}
 }
 
@@ -122,15 +130,15 @@ func (svc *NodeService) rerunOpenOnlyNode(
 
 // rerunDeleteNode invalidates each descendant first (FR-3.5b), then soft-deletes.
 func (svc *NodeService) rerunDeleteNode(
-	ctx context.Context, node *model.Node, reason, author string,
+	ctx context.Context, node *model.Node, opts rerunOptions,
 ) error {
 	// FR-3.5b: Invalidate BEFORE soft-delete.
 	if err := svc.store.TransitionStatus(
-		ctx, node.ID, model.StatusInvalidated, reason, author,
+		ctx, node.ID, model.StatusInvalidated, opts.reason, opts.author,
 	); err != nil {
 		return err
 	}
-	return svc.store.DeleteNode(ctx, node.ID, false, author)
+	return svc.store.DeleteNodeWithRoot(ctx, node.ID, opts.rootID, opts.author)
 }
 
 // rerunReviewNode sets descendant to invalidated for manual review.

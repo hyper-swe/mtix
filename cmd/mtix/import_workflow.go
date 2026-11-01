@@ -76,7 +76,11 @@ func refuseSyncedReplace(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("import failed: %w", err)
 	}
-	if !synced && !hubConfigured(app.mtixDir) && !hubMarkConnected() {
+	counts, err := hubGuardCounts(ctx)
+	if err != nil {
+		return fmt.Errorf("import failed: %w: %w", err, sqlite.ErrReplaceOnSyncedStore)
+	}
+	if !synced && !counts {
 		return nil
 	}
 	return fmt.Errorf("import failed: this store syncs with a hub, and a replace import would delete tasks and "+

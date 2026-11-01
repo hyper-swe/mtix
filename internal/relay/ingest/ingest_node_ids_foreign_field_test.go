@@ -36,5 +36,6 @@ func TestRelayIngest_MistypedForeignField_CannotHideInvalidNodeID(t *testing.T) 
 	require.Equal(t, 1, stats.Quarantined)
 	require.Len(t, stats.Quarantines, 1)
 	require.Contains(t, stats.Quarantines[0].Reason, "invalid node id")
-	require.Contains(t, stats.Quarantines[0].Reason, "PROJ-9é")
+	require.Contains(t, stats.Quarantines[0].Reason, `PROJ-9\u00e9`)
+	require.NotContains(t, stats.Quarantines[0].Reason, "é", "printable non-ASCII is escaped, never raw")
 }

@@ -77,7 +77,7 @@ func TestInboxWaitServe_ReadAndCloseErrorsBothPropagateAfterJoin(t *testing.T) {
 		h.joined = true
 		require.ErrorIs(t, err, readFailure)
 		require.ErrorIs(t, err, closeFailure)
-	case <-time.After(time.Second):
+	case <-time.After(inboxWaitCompletionHangBound):
 		t.Fatal("read/close failure did not join the session")
 	}
 	requireServeInboxExited(t, call)
@@ -115,7 +115,7 @@ func TestInboxWaitServe_ShutdownUnblocksOwnedWriterAndJoinsQueuedResponses(t *te
 			close(first.event)
 			select {
 			case <-out.entered:
-			case <-time.After(time.Second):
+			case <-time.After(inboxWaitCompletionHangBound):
 				t.Fatal("completed wait did not reach owned stdout")
 			}
 			second := h.wait(t, 2, map[string]any{"agent": "second", "timeout_seconds": 0})

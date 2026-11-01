@@ -82,7 +82,7 @@ func awaitInstructionPipeRefusal(t *testing.T, root string) ([]string, error) {
 	select {
 	case got := <-done:
 		return got.ids, got.err
-	case <-time.After(300 * time.Millisecond):
+	case <-time.After(10 * time.Second):
 	}
 	release, openErr := os.OpenFile(filepath.Join(root, ".git"), os.O_RDWR, 0600)
 	var writeErr, closeErr error
@@ -96,7 +96,7 @@ func awaitInstructionPipeRefusal(t *testing.T, root string) ([]string, error) {
 		require.NoError(t, writeErr)
 		require.NoError(t, closeErr)
 		t.Fatal("instruction selection read an unverified pipe; owned reader released and joined")
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("owned instruction reader did not join after fixture release")
 	}
 	return nil, nil

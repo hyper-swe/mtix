@@ -18,6 +18,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/web"
 )
 
 // testServer creates a Server with real store and services for testing.
@@ -265,4 +266,30 @@ func TestServer_ErrorResponse_Schema(t *testing.T) {
 func TestServer_DefaultConfig(t *testing.T) {
 	s := testServer(t)
 	assert.Equal(t, "127.0.0.1", s.config.Bind)
+}
+
+// TestServer_SPAFallback checks deep links and API isolation through the real middleware.
+func TestServer_SPAFallback(t *testing.T) {
+	if !web.HasEmbeddedUI() {
+		t.Skip("UI not embedded in noui build")
+	}
+	s := testServer(t)
+	for _, path := range []string{"/ticket/TEST-1", "/api/unknown", "/api/v1/unknown", "/api"} {
+		t.Run(path, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			s.Router().ServeHTTP(w, newLocalRequest(http.MethodGet, path, nil))
+			assert.Empty(t, w.Header().Get("Location"))
+			assert.Equal(t, "DENY", w.Header().Get("X-Frame-Options"))
+			assert.Equal(t, "nosniff", w.Header().Get("X-Content-Type-Options"))
+			assert.Equal(t, "same-origin", w.Header().Get("Referrer-Policy"))
+			if strings.HasPrefix(path, "/api") {
+				assert.Equal(t, http.StatusNotFound, w.Code)
+				assert.NotContains(t, w.Body.String(), `<div id="root">`)
+				return
+			}
+			assert.Equal(t, http.StatusOK, w.Code)
+			assert.Contains(t, w.Body.String(), `<div id="root">`)
+			assert.Contains(t, w.Header().Get("Cache-Control"), "no-cache")
+		})
+	}
 }

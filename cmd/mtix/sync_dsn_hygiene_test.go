@@ -49,18 +49,24 @@ func cmdLine(path []string, pos []string, flags ...string) []string {
 // wrapper exits the process on failed checks, so the sweep runs it
 // through sweepDoctor instead.
 func sweepCommands(backupOut string) []sweepCommand {
+	out := append(sweepHubCommands(backupOut), sweepLocalCommands()...)
+	return append(out, sweepServiceCommands()...)
+}
+
+func sweepPath(path ...string) func([]string) []string {
+	return func(pos []string) []string { return cmdLine(path, pos) }
+}
+
+func sweepHubCommands(backupOut string) []sweepCommand {
 	const daemonTimeout = 500 * time.Millisecond
 	const connect = "mtix sync connect:"
 	const pullErr = "pull error (will retry)"
-	at := func(path ...string) func(pos []string) []string {
-		return func(pos []string) []string { return cmdLine(path, pos) }
-	}
 	return []sweepCommand{
-		{name: "sync init", argv: at("sync", "init"), reached: connect},
-		{name: "sync clone", argv: at("sync", "clone"), reached: connect},
-		{name: "sync push", argv: at("sync", "push"), reached: connect},
-		{name: "sync pull", argv: at("sync", "pull"), reached: connect},
-		{name: "sync mark-restored", argv: at("sync", "mark-restored"), reached: connect},
+		{name: "sync init", argv: sweepPath("sync", "init"), reached: connect},
+		{name: "sync clone", argv: sweepPath("sync", "clone"), reached: connect},
+		{name: "sync push", argv: sweepPath("sync", "push"), reached: connect},
+		{name: "sync pull", argv: sweepPath("sync", "pull"), reached: connect},
+		{name: "sync mark-restored", argv: sweepPath("sync", "mark-restored"), reached: connect},
 		{name: "sync harden", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "harden"}, pos, "--apply", "--keep-role", "mtix_team")
 		}, reached: "mtix sync harden connect:"},
@@ -82,43 +88,55 @@ func sweepCommands(backupOut string) []sweepCommand {
 		{name: "daemon", argv: func(pos []string) []string {
 			return cmdLine([]string{"daemon"}, pos, "--interval", "3600")
 		}, reached: pullErr, timeout: daemonTimeout},
-		{name: "sync status", argv: at("sync", "status")},
-		{name: "sync conflicts list", argv: at("sync", "conflicts", "list")},
+	}
+}
+
+func sweepLocalCommands() []sweepCommand {
+	return []sweepCommand{
+		{name: "sync status", argv: sweepPath("sync", "status")},
+		{name: "sync conflicts list", argv: sweepPath("sync", "conflicts", "list")},
 		{name: "sync conflicts resolve", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "conflicts", "resolve", "1"}, pos, "--action", "acknowledge")
 		}},
 		{name: "sync reconcile", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "reconcile"}, pos, "--discard-local")
 		}},
-		{name: "sync quarantine list", argv: at("sync", "quarantine", "list")},
+		{name: "sync quarantine acknowledge", argv: func(pos []string) []string {
+			return cmdLine([]string{"sync", "quarantine", "acknowledge", ackCLIEventID}, pos, "--reason", "DSN output sweep")
+		}},
+		{name: "sync quarantine list", argv: sweepPath("sync", "quarantine", "list")},
 		{name: "sync repair", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "repair"}, pos, "--status")
 		}},
 		{name: "sync repair-uids", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "repair-uids"}, pos, "--dry-run")
 		}},
-		{name: "sync relay tick", argv: at("sync", "relay", "tick"), argsOnly: true},
-		{name: "sync relay status", argv: at("sync", "relay", "status"), argsOnly: true},
-		{name: "sync relay rotate-key", argv: at("sync", "relay", "rotate-key"), argsOnly: true},
-		{name: "sync relay reset-peer", argv: at("sync", "relay", "reset-peer"), argsOnly: true},
-		{name: "sync relay clone", argv: at("sync", "relay", "clone"), argsOnly: true},
-		{name: "sync relay republish", argv: at("sync", "relay", "republish"), argsOnly: true},
+		{name: "sync relay tick", argv: sweepPath("sync", "relay", "tick"), argsOnly: true},
+		{name: "sync relay status", argv: sweepPath("sync", "relay", "status"), argsOnly: true},
+		{name: "sync relay rotate-key", argv: sweepPath("sync", "relay", "rotate-key"), argsOnly: true},
+		{name: "sync relay reset-peer", argv: sweepPath("sync", "relay", "reset-peer"), argsOnly: true},
+		{name: "sync relay clone", argv: sweepPath("sync", "relay", "clone"), argsOnly: true},
+		{name: "sync relay republish", argv: sweepPath("sync", "relay", "republish"), argsOnly: true},
 		{name: "sync backfill", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "backfill"}, pos, "--dry-run")
 		}},
-		{name: "sync", argv: at("sync"), argsOnly: true},
+	}
+}
+
+func sweepServiceCommands() []sweepCommand {
+	return []sweepCommand{
+		{name: "sync", argv: sweepPath("sync"), argsOnly: true},
 		{name: "sync daemon --install", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "daemon"}, pos, "--install")
 		}},
 		{name: "daemon --install", argv: func(pos []string) []string {
 			return cmdLine([]string{"daemon"}, pos, "--install")
 		}},
-		{name: "daemon install", argv: at("daemon", "install"), argsOnly: true},
-		{name: "daemon uninstall", argv: at("daemon", "uninstall"), argsOnly: true},
-		{name: "daemon start", argv: at("daemon", "start"), argsOnly: true},
-		{name: "daemon stop", argv: at("daemon", "stop"), argsOnly: true},
-		{name: "daemon status", argv: at("daemon", "status"), argsOnly: true},
-	}
+		{name: "daemon install", argv: sweepPath("daemon", "install"), argsOnly: true},
+		{name: "daemon uninstall", argv: sweepPath("daemon", "uninstall"), argsOnly: true},
+		{name: "daemon start", argv: sweepPath("daemon", "start"), argsOnly: true},
+		{name: "daemon stop", argv: sweepPath("daemon", "stop"), argsOnly: true},
+		{name: "daemon status", argv: sweepPath("daemon", "status"), argsOnly: true}}
 }
 
 // sweepDoctor runs mtix sync doctor for the sweep and returns everything

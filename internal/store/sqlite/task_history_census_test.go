@@ -35,7 +35,7 @@ var historyCensus = map[string]struct {
 	"transition.go:applyTransitionUpdate": {1, censusWired}, "transition.go:appendActivityEntry": {1, censusExcluded},
 	"defer.go:Store.executeDeferTx": {1, censusWired}, "defer.go:redeferTx": {1, censusWired},
 	"cancel.go:applyCancelUpdate": {1, censusWired}, "cancel.go:cancelDescendants": {1, censusWired},
-	"node_delete.go:Store.DeleteNode": {1, censusWired}, "node_delete.go:cascadeDelete": {1, censusWired},
+	"node_delete.go:Store.deleteNode": {1, censusWired}, "node_delete.go:cascadeDelete": {1, censusWired},
 	"node_delete.go:restoreNodes": {1, censusWired},
 	// MTIX-95.31.19.3 (A2): the remaining write paths. Excluded entries write only
 	// identity or derived columns (ids and parent_id of a renumber or rename, uid,
@@ -43,6 +43,7 @@ var historyCensus = map[string]struct {
 	// rekeyed where it is keyed by the id they rewrite.
 	"context.go:Store.SetAnnotations": {1, censusWired}, "context.go:Store.mutateAnnotations": {1, censusWired},
 	"progress.go:recomputeNodeProgress":                     {1, censusExcluded},
+	"dependency_removal.go:Store.recordDependencyRemoval":   {1, censusWired},
 	"dependency.go:autoBlockNode":                           {1, censusWired},
 	"dependency.go:restoreUnblockedNode":                    {1, censusWired},
 	"import_merge_keep.go:mergeUnchangedContent":            {1, censusWired},

@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -210,9 +211,9 @@ func printStatusRepairDiffs(w io.Writer, diffs []service.StatusRepairDiff) {
 			origin = "this machine"
 		}
 		fmt.Fprintf(w, "%s  %s%s\n", d.NodeID, marker, d.Reason)
-		fmt.Fprintf(w, "  winner: %s %s at %s (%s)\n", d.WinnerOp, d.WinnerEventID, d.WinnerWallClock, origin)
+		fmt.Fprintf(w, "  winner: %s %s at %s (%s)\n", d.WinnerOp, format.EventID(d.WinnerEventID), d.WinnerWallClock, origin)
 		if d.MatchedEventID != "" {
-			fmt.Fprintf(w, "  replayed event: %s\n", d.MatchedEventID)
+			fmt.Fprintf(w, "  replayed event: %s\n", format.EventID(d.MatchedEventID))
 		}
 		for _, c := range d.Columns {
 			fmt.Fprintf(w, "  %s: %s -> %s\n", c.Column, nullText(c.Current), nullText(c.Expected))

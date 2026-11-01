@@ -12,6 +12,11 @@ type Proc struct {
 	Argv0     string
 	Exe       string
 	StartTime string
+	// Args is the full argument vector (argv[0] first) when the kernel lets this
+	// user read it; empty means the arguments are unknown, never "no arguments".
+	Args []string
+	// Cwd is the working directory when readable (linux only); empty means unknown.
+	Cwd string
 }
 
 // maxWalkDepth bounds the ancestor walk.

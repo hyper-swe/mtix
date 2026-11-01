@@ -15,6 +15,8 @@ type Delivery struct {
 	EventJSON []byte
 	// Exec is the verified launch plan, required by the exec adapter.
 	Exec *ExecPlan
+	// Wake is present only for an explicit wake attempt, not ordinary hook delivery.
+	Wake *WakeExecContext
 }
 
 // Adapter performs one delivery side effect (FR-19.3). Adapters run

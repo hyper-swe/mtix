@@ -42,7 +42,10 @@ func wakeLeaseLineAllowed(line string, inputs map[string]bool, protocol bool) bo
 	if !protocol {
 		return false
 	}
-	return wakeProtocolMetadataLine(line)
+	if line == `if [ "$STATUS" -ne 0 ]; then report "inbox read failed ($STATUS)"; exit "$STATUS"; fi` {
+		return true
+	}
+	return wakeOnlyLeaseInbox(line) && wakeProtocolMetadataLine(line)
 
 }
 
@@ -55,13 +58,15 @@ func TestWakeLeaseProtocol_InputConsumers_KeepRefusals(t *testing.T) {
 		`OTHER="$PAYLOAD"; "$HARNESS_BIN" -p`,
 		`export PAYLOAD`,
 		`report "$PAYLOAD"`,
-		`trap 'gemini -p "$MESSAGE"' EXIT`,
-		`if true; then gemini -p "$MESSAGE"; fi`,
-		`OTHER="$(new-runtime "$MESSAGE")"`,
-		`printf '%s\n' "$MESSAGE" | new-runtime`,
+		`trap 'gemini -p "$FIXTURE_INPUT"' EXIT`,
+		`if true; then gemini -p "$FIXTURE_INPUT"; fi`,
+		`OTHER="$(new-runtime "$FIXTURE_INPUT")"`,
+		`printf '%s\n' "$FIXTURE_INPUT" | new-runtime`,
 		`printf '%s\n' "$PAYLOAD" | xargs "$HARNESS_BIN" -p`,
 		`"$MTIX_BIN" inbox lease acquire --agent "$PAYLOAD"`,
 	} {
-		t.Run(form, func(t *testing.T) { require.NotEmpty(t, wakeLaunchProblems(source+"\n"+form)) })
+		t.Run(form, func(t *testing.T) {
+			require.NotEmpty(t, wakeLaunchProblems(source+"\n"+`FIXTURE_INPUT="$(mtix inbox --agent worker --format prompt)"`+"\n"+form))
+		})
 	}
 }

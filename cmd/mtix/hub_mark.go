@@ -17,25 +17,103 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
-// collectHubEvidence gathers the local hub evidence the sticky mark accepts
-// besides stored state: sync or relay keys in config and a DSN in the
-// secrets file (ADR-007 §3.5). An exported MTIX_SYNC_DSN is not evidence
-// until a command connects with it, so EnvDSNConnected stays false here.
+// collectHubEvidence gathers the local hub evidence, the one helper every
+// replace guard shares (MTIX-107.31.8): the automatic import's evidence
+// source, the command-line replace guard and the doctor check. It reports:
+//   - ConfigKeys: a relay directory, or sync.enabled or sync.endpoint, in the
+//     project config;
+//   - SecretsDSN: a DSN in the secrets file, whatever its mode;
+//   - DSNRefused: a DSN that transport.Source refuses to use (a DSN key in a
+//     tracked config file, a secrets file with the wrong mode, even an empty
+//     one): counted by the guards, transient, never the mark;
+//   - EnvDSNExported: an exported MTIX_SYNC_DSN, which is only transient
+//     evidence: it refuses a replace while it is set and is never recorded as
+//     the sticky mark (ADR-007 §3.5). EnvDSNConnected stays false here: it is
+//     set only after a command connects with the DSN.
+//
+// It fails closed: evidence that cannot be read (a secrets file that is not a
+// regular file, a dangling link, a file that cannot be opened or is over the
+// size cap, a config key that cannot be read) is an error, not "no evidence";
+// a secrets file that does not exist is no evidence. The evidence read before
+// the failure is returned beside the error, for callers that only describe the
+// board and keep what they could read.
 // The secrets content is only tested for presence, never read out.
-func collectHubEvidence() service.HubEvidence {
-	ev := service.HubEvidence{ConfigKeys: relayDir() != ""}
+func collectHubEvidence() (service.HubEvidence, error) {
+	var ev service.HubEvidence
+	dir, err := relayDirChecked()
+	if err != nil {
+		return ev, err
+	}
+	ev.ConfigKeys = dir != ""
 	if app.configSvc != nil {
 		for _, key := range []string{"sync.enabled", "sync.endpoint"} {
-			if v, err := app.configSvc.Get(key); err == nil && v != "" && v != "false" {
+			v, getErr := app.configSvc.Get(key)
+			if getErr != nil {
+				return ev, fmt.Errorf("read %s: %w", key, getErr)
+			}
+			if v != "" && v != "false" {
 				ev.ConfigKeys = true
 			}
 		}
 	}
-	if app.mtixDir != "" {
-		body, _, err := transport.ReadSecretsFile(app.mtixDir)
-		ev.SecretsDSN = err == nil && strings.TrimSpace(body) != ""
+	if app.mtixDir == "" {
+		return ev, nil
 	}
+	// Read before the secrets file, so evidence returned beside an error has it.
+	ev.EnvDSNExported = os.Getenv(transport.EnvDSN) != ""
+	body, _, secretsErr := transport.ReadSecretsFile(app.mtixDir)
+	switch {
+	case secretsErr == nil:
+		ev.SecretsDSN = strings.TrimSpace(body) != ""
+	case errors.Is(secretsErr, os.ErrNotExist):
+		// ReadSecretsFile follows links: a dangling link reads as absent, but
+		// something is there that cannot be read, so it is not "no evidence".
+		path := filepath.Join(app.mtixDir, transport.SecretsFilename)
+		if _, lstatErr := os.Lstat(path); lstatErr == nil {
+			return ev, fmt.Errorf("the secrets file %s is a dangling link: %w", path, secretsErr)
+		}
+	default:
+		return ev, fmt.Errorf("read the secrets file: %w", secretsErr)
+	}
+	// A DSN that Source refuses (a DSN key in a tracked config file, a secrets
+	// file with the wrong mode, even an empty one) was always counted by the
+	// replace guards, and is only transient evidence: the mark follows a DSN in
+	// the secrets file by its content, as before.
+	if _, srcErr := transport.Source(app.mtixDir); srcErr != nil && !errors.Is(srcErr, transport.ErrDSNNotConfigured) {
+		ev.DSNRefused = true
+	}
+	return ev, nil
+}
+
+// lenientHubEvidence is collectHubEvidence for the permission diagnostics,
+// which only describe the board and guard nothing: they keep the evidence
+// read before a failure. The replace guards never use it.
+func lenientHubEvidence() service.HubEvidence {
+	ev, _ := collectHubEvidence() // the evidence read before a failure is kept
 	return ev
+}
+
+// hubGuardCounts reports whether the replace guards count the local project as
+// one that syncs beyond what the store records: the hub-connected mark, applied
+// events, config, secrets or refused-DSN evidence, or an exported DSN. It fails
+// closed: an error means the evidence could not be read, and the guard refuses
+// (MTIX-107.31.8). The command-line replace guard and the doctor check call it.
+func hubGuardCounts(ctx context.Context) (bool, error) {
+	ev, err := collectHubEvidence()
+	if err != nil {
+		return true, fmt.Errorf("read the hub evidence: %w", err)
+	}
+	if ev.EnvDSNExported || ev.DSNRefused {
+		return true, nil
+	}
+	if app.store == nil {
+		return false, nil
+	}
+	status, err := service.NewHubMarkService(app.store).Inspect(ctx, ev)
+	if err != nil {
+		return true, fmt.Errorf("read the hub-connected mark: %w", err)
+	}
+	return status.Connected, nil
 }
 
 // noteHubConnection records that a sync or relay command reached a hub for
@@ -47,7 +125,12 @@ func noteHubConnection(ctx context.Context, stderr io.Writer) {
 	}
 	// The connect succeeded, so the DSN that was used counts as evidence now:
 	// the environment one, or else the secrets file (transport.Source order).
-	ev := collectHubEvidence()
+	ev, evErr := collectHubEvidence()
+	if evErr != nil {
+		// The connect succeeded: unreadable evidence never lowers its record.
+		// What was read before the failure is kept (a config key stays the source).
+		fmt.Fprintf(stderr, "warning: could not read the hub evidence: %v\n", evErr)
+	}
 	ev.EnvDSNConnected = os.Getenv(transport.EnvDSN) != ""
 	ev.SecretsDSN = ev.SecretsDSN || !ev.EnvDSNConnected
 	_, err := service.NewHubMarkService(app.store).HubConnected(ctx, ev)
@@ -155,7 +238,14 @@ func appendHubMarkCheckMode(ctx context.Context, report DoctorReport, operatorWr
 		return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-mark", Pass: true, Warn: true,
 			Detail: "local store not initialized; the hub-connected mark was not read"})
 	}
-	status, err := service.NewHubMarkService(app.store).HubConnected(ctx, collectHubEvidence())
+	evidence, evidenceErr := collectHubEvidence()
+	// The durable evidence read so far is recorded even when the rest cannot be
+	// read, as before; the check then fails with the cause.
+	status, err := service.NewHubMarkService(app.store).HubConnected(ctx, evidence)
+	if evidenceErr != nil {
+		return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-mark",
+			Detail: fmt.Sprintf("cannot read the hub evidence: %v", evidenceErr), Fix: "mtix sync doctor"})
+	}
 	if err != nil {
 		return appendDoctorCheck(report, DoctorCheck{Name: "board.hub-mark",
 			Detail: fmt.Sprintf("cannot read or store the hub-connected mark: %v", err), Fix: "mtix sync doctor"})
@@ -179,6 +269,7 @@ func hubMarkConnected() bool {
 	if app.store == nil {
 		return false
 	}
-	status, err := service.NewHubMarkService(app.store).Inspect(context.Background(), collectHubEvidence())
+	evidence, _ := collectHubEvidence() // a stored mark, applied events and what was read still count
+	status, err := service.NewHubMarkService(app.store).Inspect(context.Background(), evidence)
 	return err == nil && status.Connected
 }

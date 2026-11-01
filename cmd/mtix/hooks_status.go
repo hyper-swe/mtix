@@ -31,6 +31,10 @@ type hookStatusReport struct {
 	Warnings []string         `json:"warnings"`
 	// AppendFile lists append-file paths delivery would refuse or that are too open.
 	AppendFile []hooks.AppendFileIssue `json:"append_file"`
+	// Strict reports strict program mode and the program approvals.
+	Strict hooks.StrictStatus `json:"strict"`
+	// Origins lists webhook hooks whose delivery origin consent would refuse (W15).
+	Origins []hooks.OriginIssue `json:"origins"`
 }
 
 func runHooksStatus(state *oplocal.State) error {
@@ -53,7 +57,8 @@ func inspectHookStatus(state *oplocal.State) (hookStatusReport, error) {
 		status.Detail = err.Error()
 		status.Fix = "Choose an operator-owned configuration directory outside projects, temporary directories and harness writable roots; remove symlink components and use directory mode 0700 and file mode 0600 (a user-only ACL on Windows), set XDG_CONFIG_HOME on Unix to a directory whose ancestors are owned by root or the operator and have no group or other write access (group-writable homes and unsupported network or directory-service-owned parents are refused), or choose APPDATA with supported ancestor access on Windows; then run mtix hooks status --json. Never commit or dotfile-sync this directory."
 	}
-	decisions, hookErr := hooks.NewApprovals(app.mtixDir, state, hooks.SessionMarked()).Check()
+	approvals := hooks.NewApprovals(app.mtixDir, state, hooks.SessionMarked())
+	decisions, hookErr := approvals.Check()
 	names := make([]string, 0, len(decisions))
 	for name := range decisions {
 		names = append(names, name)
@@ -66,10 +71,13 @@ func inspectHookStatus(state *oplocal.State) (hookStatusReport, error) {
 	}
 	cfg, warnings := hooks.Load(app.mtixDir)
 	appendIssues := appendFileIssues(cfg)
+	origins, originsErr := hooks.ReadOrigins(state)
+	originIssues := hooks.WebhookOriginIssues(origins, originsErr, cfg)
 	if warnings == nil {
 		warnings = []string{}
 	}
-	return hookStatusReport{Status: status, Hooks: entries, Legacy: hooks.LegacyStatus(app.mtixDir), Warnings: warnings, AppendFile: appendIssues}, errors.Join(err, hookErr)
+	strict := approvals.StrictStatus(cfg)
+	return hookStatusReport{Status: status, Hooks: entries, Legacy: hooks.LegacyStatus(app.mtixDir), Warnings: warnings, AppendFile: appendIssues, Strict: strict, Origins: originIssues}, errors.Join(err, hookErr)
 }
 
 func renderHookStatus(out OutputWriter, report hookStatusReport) {
@@ -86,6 +94,7 @@ func renderHookStatus(out OutputWriter, report hookStatusReport) {
 			out.WriteHuman("%s: program review needed (%s)\nFix: %s\n", decision.Name, review.Detail, review.Fix)
 		}
 	}
+	renderStrictStatus(out, report.Strict)
 	if report.Legacy != "" {
 		out.WriteHuman("%s\n", report.Legacy)
 	}
@@ -94,6 +103,9 @@ func renderHookStatus(out OutputWriter, report hookStatusReport) {
 	}
 	for _, issue := range report.AppendFile {
 		out.WriteHuman("hook %q append-file: %s\nFix: %s\n", issue.Hook, issue.Reason, issue.Fix)
+	}
+	for _, issue := range report.Origins {
+		out.WriteHuman("hook %q webhook: %s\nFix: %s\n", issue.Hook, issue.Reason, issue.Fix)
 	}
 	for _, warning := range report.Warnings {
 		out.WriteHuman("%s\nFix: edit .mtix/hooks.yaml, then run mtix hooks status --json\n", warning)

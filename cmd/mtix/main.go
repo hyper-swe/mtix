@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/sync/redact"
 )
@@ -35,7 +36,7 @@ func main() {
 		// An empty `inbox --wait` timeout is an expected non-zero outcome, not a
 		// failure — surface it via the exit code only, no scary "error:" line.
 		// Interruption and already-printed harden/doctor reports also exit quietly.
-		if !errors.Is(err, errInboxWaitEmpty) && !errors.Is(err, errInboxWaitInterrupted) && !errors.Is(err, errHardenPending) && !errors.Is(err, service.ErrDoctorChecksFailed) {
+		if !errors.Is(err, errInboxWaitEmpty) && !errors.Is(err, errInboxWaitInterrupted) && !errors.Is(err, errClaudeHookWake) && !errors.Is(err, errHardenPending) && !errors.Is(err, service.ErrDoctorChecksFailed) {
 			printFinalError(os.Stderr, err)
 		}
 		// Structured exit codes per MTIX-26.8: 0 success, 1 generic, 2 harden/doctor,
@@ -53,7 +54,10 @@ func printFinalError(w io.Writer, err error) {
 	if exitCodeForError(err) == exitCodeLeaseHeld {
 		prefix = ""
 	}
-	fmt.Fprintf(w, "%s%s\n", prefix, scrubSyncText(err.Error()))
+	// SafeBlock strips control, escape and bidi characters a stored id,
+	// assignee or title can carry into an error, and keeps its line breaks
+	// (MTIX-187.7.18).
+	fmt.Fprintf(w, "%s%s\n", prefix, format.SafeBlock(scrubSyncText(err.Error())))
 }
 
 func run() error { return runArgs(nil) }

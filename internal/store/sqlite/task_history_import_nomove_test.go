@@ -122,13 +122,25 @@ func assertImportMovedNothing(t *testing.T, db *sql.DB, before importSnapshot) {
 	t.Helper()
 	after := snapImport(t, db)
 	newEntries := map[string]map[string]sql.NullString{} // key -> field -> Old, for entries new in this import
-	eachRow(t, db, `SELECT entry_id, task_uid, field, old_value FROM task_history`, func(rows *sql.Rows) {
-		var entry, key, field string
-		var oldV sql.NullString
-		require.NoError(t, rows.Scan(&entry, &key, &field, &oldV))
+	eachRow(t, db, `SELECT entry_id, task_uid, field, kind, old_value, new_value FROM task_history`, func(rows *sql.Rows) {
+		var entry, key, field, kind string
+		var oldV, newV sql.NullString
+		require.NoError(t, rows.Scan(&entry, &key, &field, &kind, &oldV, &newV))
 		if was, ok := before.keyOf[entry]; ok {
 			assert.Equal(t, was, key, "an earlier entry (%s) moved from %s to %s", field, was, key)
 			delete(before.keyOf, entry)
+			return
+		}
+		if kind == "resolution" {
+			// An explicit choice is an administrative record, even when ours changes no value.
+			// Still enforce identity preservation and the value-free marker contract.
+			// UID adoption can give the resolved task a new key; no old values
+			// or earlier entries may be grafted onto it (checked separately).
+			_, live := after.held[key]
+			assert.True(t, live, "resolution key must name the post-merge task: %s", key)
+			assert.False(t, oldV.Valid, "a resolution must carry no old value")
+			assert.False(t, newV.Valid, "a resolution must carry no new value")
+			assert.Regexp(t, `^resolution:(ours|theirs):(status|assignee|agent_state|defer_until|deleted_at)(,(status|assignee|agent_state|defer_until|deleted_at))*$`, field)
 			return
 		}
 		if newEntries[key] == nil {

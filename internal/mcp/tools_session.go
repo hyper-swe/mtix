@@ -79,7 +79,7 @@ func registerSessionEndTool(reg *ToolRegistry, svc *service.SessionService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Session ended for agent %s", p.AgentID)), nil
+		return SuccessResult(textSessionEnded(p.AgentID)), nil
 	})
 }
 
@@ -135,7 +135,7 @@ func registerAgentHeartbeatTool(reg *ToolRegistry, svc *service.AgentService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Heartbeat recorded for %s", p.AgentID)), nil
+		return SuccessResult(textHeartbeat(p.AgentID)), nil
 	})
 }
 
@@ -180,7 +180,7 @@ func registerAgentStateTool(reg *ToolRegistry, svc *service.AgentService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Agent %s state → %s", p.AgentID, p.State)), nil
+		return SuccessResult(textAgentState(p.AgentID, p.State)), nil
 	})
 }
 
@@ -209,7 +209,7 @@ func registerAgentWorkTool(reg *ToolRegistry, svc *service.AgentService) {
 		}
 
 		if node == nil {
-			return SuccessResult(fmt.Sprintf("Agent %s has no current work", p.AgentID)), nil
+			return SuccessResult(textAgentNoWork(p.AgentID)), nil
 		}
 
 		data, _ := json.MarshalIndent(node, "", "  ")

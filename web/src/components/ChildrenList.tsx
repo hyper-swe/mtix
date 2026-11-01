@@ -105,7 +105,7 @@ export function ChildrenList({
 
   return (
     <div
-      className={`rounded border ${className}`}
+      className={`rounded-sm border ${className}`}
       style={{
         borderColor: "var(--color-border)",
         backgroundColor: "var(--color-surface)",
@@ -215,7 +215,7 @@ export function ChildrenList({
           </span>
           <input
             ref={inputRef}
-            className="flex-1 text-sm border-none outline-none bg-transparent"
+            className="flex-1 text-sm border-none outline-hidden bg-transparent"
             style={{ color: "var(--color-text-primary)" }}
             value={newTitle}
             onChange={(e) => setNewTitle(e.target.value)}
@@ -227,7 +227,7 @@ export function ChildrenList({
         </div>
         {showPromptField && (
           <textarea
-            className="w-full mt-1 rounded border p-1.5 text-xs font-mono resize-y"
+            className="w-full mt-1 rounded-sm border p-1.5 text-xs font-mono resize-y"
             style={{
               backgroundColor: "var(--color-bg)",
               borderColor: "var(--color-border)",

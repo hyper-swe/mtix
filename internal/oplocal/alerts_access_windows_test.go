@@ -6,6 +6,8 @@
 package oplocal
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,7 +30,7 @@ func TestAlertState_ProtectedACL_RefusesBeforePrepare(t *testing.T) {
 			}
 			dir, err := s.directory(false)
 			require.NoError(t, err)
-			if _, readErr := readData(dir, target); os.IsNotExist(readErr) {
+			if _, readErr := readData(dir, target); errors.Is(readErr, fs.ErrNotExist) {
 				require.NoError(t, writeData(dir, target, []byte{}, false, nil, nil))
 			}
 			require.NoError(t, closeFile(dir))

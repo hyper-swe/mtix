@@ -23,6 +23,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 // The released tags the upgrade tests run and the commits they must resolve to.
@@ -36,7 +38,7 @@ const (
 // cleanGitEnv returns the environment without variables that select a worktree.
 func cleanGitEnv() []string {
 	var env []string
-	for _, value := range os.Environ() {
+	for _, value := range hostguard.Environ() {
 		key, _, _ := strings.Cut(value, "=")
 		if key != "GIT_DIR" && key != "GIT_WORK_TREE" && key != "GIT_COMMON_DIR" && key != "GIT_INDEX_FILE" {
 			env = append(env, value)
@@ -49,7 +51,7 @@ func cleanGitEnv() []string {
 // commit must be commit.
 func releasedMtix(t *testing.T, tag, commit string) string {
 	t.Helper()
-	cache, err := os.UserCacheDir()
+	cache, err := hostguard.RealCacheDir()
 	require.NoError(t, err)
 	dir := filepath.Join(cache, "mtix-test", "mtix-"+tag, commit, runtime.GOOS+"-"+runtime.GOARCH)
 	name := "mtix"
@@ -81,7 +83,7 @@ func buildReleasedMtix(t *testing.T, tag, commit, cacheDir, path string) string 
 	out := filepath.Join(src, "released-mtix")
 	cmd := exec.CommandContext(t.Context(), "go", "build", "-o", out, "./cmd/mtix")
 	cmd.Dir = src
-	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=-mod=mod")
+	cmd.Env = append(hostguard.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=-mod=mod")
 	log, err := cmd.CombinedOutput()
 	require.NoError(t, err, "real %s tag build failed (report the failure; never skip): %s", tag, log)
 	raw, err := os.ReadFile(out)

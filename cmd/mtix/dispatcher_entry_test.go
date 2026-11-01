@@ -1,0 +1,133 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
+// Tests the experimental host entry point and registration routing without network access.
+package main
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/google/uuid"
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/oplocal"
+	"github.com/hyper-swe/mtix/internal/service"
+)
+
+func TestHostDispatcher_EntryPoint_ExperimentalAndNoEnrollmentCommand(t *testing.T) {
+	root := newRootCmd()
+	dispatcher, _, err := root.Find([]string{"dispatcher"})
+	require.NoError(t, err)
+	for _, child := range dispatcher.Commands() {
+		require.NotEqual(t, "enroll", child.Name())
+		require.NotEqual(t, "unenroll", child.Name())
+	}
+	for _, verb := range []string{"run", "install", "start", "stop", "status", "uninstall"} {
+		t.Run(verb, func(t *testing.T) {
+			cmd, rest, err := root.Find([]string{"dispatcher", verb})
+			require.NoError(t, err)
+			require.Empty(t, rest)
+			require.Equal(t, "mtix dispatcher "+verb, cmd.CommandPath())
+			require.True(t, skipsStoreInit(cmd))
+			if verb == "run" || verb == "install" {
+				f := cmd.Flags().Lookup("experimental")
+				require.NotNil(t, f)
+				require.Equal(t, "false", f.DefValue)
+			}
+		})
+	}
+}
+
+func TestHostDispatcher_RegistrationAutoListsCheckout_NoGrant(t *testing.T) {
+	initRegistrationApp(t)
+	id, err := service.CreateBoardID(app.mtixDir)
+	require.NoError(t, err)
+	require.NoError(t, runAgentRegister("test-worker", sessionOptions{}))
+	state, err := operatorState()
+	require.NoError(t, err)
+	boards, err := state.ListedBoards(t.Context())
+	require.NoError(t, err)
+	require.Len(t, boards, 1)
+	require.Equal(t, id, boards[0].Key)
+	instance, err := app.store.StoreInstanceID(t.Context())
+	require.NoError(t, err)
+	require.NotEmpty(t, instance)
+	require.Equal(t, instance, boards[0].StoreInstanceID)
+	root, err := filepath.EvalSymlinks(filepath.Dir(app.mtixDir))
+	require.NoError(t, err)
+	require.Equal(t, root, boards[0].Path)
+	grants, reports, err := state.BoardGrants()
+	require.NoError(t, err)
+	require.Empty(t, reports)
+	require.Empty(t, grants)
+}
+
+func TestHostDispatcher_RegisteredCheckout_NoDialNoHook(t *testing.T) {
+	initRegistrationApp(t)
+	_, err := service.CreateBoardID(app.mtixDir)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, "secrets"), []byte("crafted-checkout-secret"), 0600))
+	require.NoError(t, runAgentRegister("registered-worker", sessionOptions{}))
+	state, err := operatorState()
+	require.NoError(t, err)
+	host, uid, err := registrationHostIdentity()
+	require.NoError(t, err)
+	dials, hooks, opened := 0, 0, 0
+	dispatcher, err := service.NewHostDispatcher(service.HostDispatcherOptions{State: state, OpenBoard: func(_ context.Context, row oplocal.ListedBoard) (*service.HostBoard, error) {
+		opened++
+		return service.NewHostBoard(service.HostBoardOptions{Store: app.store, State: state, Path: row.Path, Host: service.RegistrationHost{HostID: host, UID: uid}, PID: int64(os.Getpid()), Clock: utcNow, Contact: service.NewContactScheduler(utcNow, func() (service.ContactInputs, error) {
+			return service.ContactInputs{Mode: service.HubContactMode{Kind: service.HubContactInterval, Interval: 1}}, nil
+		}), Pull: func(context.Context, string) error { dials++; return nil }, Hooks: func(context.Context) { hooks++ }})
+	}})
+	require.NoError(t, err)
+	require.NoError(t, dispatcher.Pass(t.Context()))
+	require.Equal(t, 1, opened)
+	beats, err := app.store.ListDispatcherHeartbeats(t.Context(), host, uid)
+	require.NoError(t, err)
+	require.Len(t, beats, 1)
+	require.Equal(t, int64(os.Getpid()), beats[0].PID)
+	require.Zero(t, dials)
+	require.Zero(t, hooks)
+	registry, err := state.DispatchBoards(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, registry.Enrolled)
+}
+
+func TestHostDispatcher_RoutingFailure_CoreRegistrationSurvives(t *testing.T) {
+	for _, kind := range []string{"git-file", "board-id-conflict", "unresolvable-root"} {
+		t.Run(kind, func(t *testing.T) {
+			initRegistrationApp(t)
+			root := filepath.Dir(app.mtixDir)
+			switch kind {
+			case "git-file":
+				admin := t.TempDir()
+				require.NoError(t, os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: "+admin+"\n"), 0600))
+			case "unresolvable-root":
+				app.mtixDir = filepath.Join(root, "absent", ".mtix")
+			case "board-id-conflict":
+				require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, "board-id"), []byte(uuid.NewString()+"\n"+uuid.NewString()+"\n"), 0600))
+			}
+			require.NoError(t, runAgentRegister("routing-worker", sessionOptions{}))
+			report, err := registerCurrentSession(t.Context(), "routing-worker", sessionOptions{})
+			require.NoError(t, err)
+			out := map[string]any{}
+			report.addTo(out)
+			require.NotEmpty(t, out["routing_warning"])
+			require.NotEmpty(t, out["session"])
+			svc, err := newRegistrationService()
+			require.NoError(t, err)
+			views, err := svc.ListRegistrations(t.Context())
+			require.NoError(t, err)
+			require.Len(t, views, 1)
+			require.Equal(t, "routing-worker", views[0].AgentID)
+			require.NoError(t, runAgentListRegistrations())
+			require.NoError(t, runAgentUnregister("routing-worker", true))
+			views, err = svc.ListRegistrations(t.Context())
+			require.NoError(t, err)
+			require.Empty(t, views)
+		})
+	}
+}

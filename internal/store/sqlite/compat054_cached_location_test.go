@@ -16,11 +16,13 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func TestCompat054Binary_NoRepositoryWithValidCache_UsesRealReader(t *testing.T) {
 	prepared := compat054Binary(t)
-	cache, err := os.UserCacheDir()
+	cache, err := hostguard.RealCacheDir()
 	require.NoError(t, err)
 	commit := "5e9b641b36f37e5deb5a99fbee196d0d8a8ba2b1"
 	name := "mtix"
@@ -51,7 +53,7 @@ func TestCompat054Binary_NoRepositoryWithValidCache_UsesRealReader(t *testing.T)
 	t.Logf("compiled source-bound fixture sha256=%x", sha256.Sum256(compiled))
 	cmd := exec.CommandContext(t.Context(), binary, "-test.run=^TestCompat054Binary_CachedLocation_ChildProcess$", "-test.v")
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "MTIX_COMPAT_LOCATION_CHILD=1")
+	cmd.Env = append(hostguard.Environ(), "MTIX_COMPAT_LOCATION_CHILD=1")
 	output, err := cmd.CombinedOutput()
 	t.Logf("owned compiled reader-fixture child pid=%d exit=%d", cmd.Process.Pid, cmd.ProcessState.ExitCode())
 	assert.NoError(t, err, "cached reader fixture: %s", output)

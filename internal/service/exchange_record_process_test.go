@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 	"github.com/stretchr/testify/require"
 )
 
@@ -65,7 +66,7 @@ func startExchangeChild(t *testing.T, dir string) *exchangeChild {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	t.Cleanup(cancel)
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestExchangeRecord_ProcessHelper$", "-test.count=1")
-	cmd.Env = append(os.Environ(), "MTIX_EXCHANGE_PROCESS=1", "MTIX_EXCHANGE_DIR="+dir)
+	cmd.Env = append(hostguard.Environ(), "MTIX_EXCHANGE_PROCESS=1", "MTIX_EXCHANGE_DIR="+dir)
 	input, err := cmd.StdinPipe()
 	require.NoError(t, err)
 	output, err := cmd.StdoutPipe()

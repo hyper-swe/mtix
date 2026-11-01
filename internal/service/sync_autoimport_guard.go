@@ -182,7 +182,7 @@ func (s *SyncService) refuseLossyImport(ctx context.Context, mtixDir, fileHash s
 	if err != nil {
 		return nil, err
 	}
-	c.synced = synced
+	c.synced = c.synced || synced                                              // c.synced: transient evidence (MTIX-107.31.8)
 	return nil, s.refuse(mtixDir, fileHash, c, diff, baseNote(base, res, why)) // LAST: the explained refusal
 }
 

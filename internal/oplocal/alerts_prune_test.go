@@ -197,6 +197,20 @@ func TestAlertPrune_RecordVanishesBeforeRemoval_IsTolerated(t *testing.T) {
 	require.Empty(t, warnings.String(), "an already-removed record is not a failure")
 }
 
+func TestAlertPrune_ExactWindowBoundary_RemovesClosedRecord(t *testing.T) {
+	s := alertFixture(t)
+	first, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	dir, err := s.directory(false)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, closeFile(dir)) })
+	path := filepath.Join(mustPath(t, s), alertRateName(first.Agent, first.Class))
+	require.FileExists(t, path)
+
+	require.NoError(t, s.pruneAlertRates(dir, first.HostID, first.FirstAt.Add(time.Hour)))
+	require.NoFileExists(t, path, "the rate window is closed at exactly one hour")
+}
+
 func TestAlertPrune_NonRateOrInvalidRecords_AreNeverRemoved(t *testing.T) {
 	s := alertFixture(t)
 	first, err := s.RecordAlert(t.Context(), alertInput(), alertTime())

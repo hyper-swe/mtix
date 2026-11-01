@@ -30,6 +30,7 @@ history (see [Task history in the export](#task-history-in-the-export-experiment
 | `history` | Only in a 2.1.0 file, and only when it has entries: the change history of tasks that no longer exist (see below). Covered by the checksum. |
 | `node_count` | Number of entries in `nodes`; an import refuses a file where they differ. |
 | `checksum` | SHA-256 of the canonical JSON of `nodes` and `dependencies` (see [Checksum](#checksum)). |
+| `ids_checksum` | Optional. Present only when the file holds an `uid_hex`, `task_uid_hex` or `event_id_hex` field (see [Ids that are not valid UTF-8](#ids-that-are-not-valid-utf-8)). It covers those fields. A file without such a field has neither the field nor this checksum. |
 
 ## Node fields
 
@@ -71,9 +72,14 @@ cascade-delete records) are not part of the export.
 
 ## Task history in the export (experimental)
 
-> **Experimental, off by default.** Until the doctor guard for this switch
-> ships (MTIX-95.31.19.6), do not turn it on for a board that any older
-> mtix binary or daemon reads or writes.
+> **Off by default.** `mtix config set history.export true` is refused while a
+> session registration or daemon heartbeat (seen in the last 30 days) lacks the
+> task-history marker that every build from 0.6.0 writes, and `mtix doctor`
+> shows the `history.export.guard` row (`--json`: blockers and `min_version`).
+> mtix 0.5.4 refuses a 2.1.0 file (`checksum verification failed`, nothing
+> stored). The guard cannot see other
+> machines, CI jobs or clones that read the file through git: confirm
+> `mtix --version` on each before enabling.
 
 The config key `history.export` (`true` or `false`, default `false`)
 decides whether the file carries the per-task change history that mtix
@@ -118,6 +124,16 @@ records locally.
   incomplete; it is silent otherwise. A file is refused
   when an entry has a kind, origin or time outside what mtix writes, or
   when a top-level entry names a task the file holds.
+- **Workflow resolutions.** An explicit merge workflow choice appends one
+  value-free `kind: resolution` record per resolved task in the same transaction.
+  Its `field` is `resolution:<side>:<fields>` (side and conflicting field names);
+  `old` and `new` are absent. Actor and injected-clock time identify the decision.
+  Both sides' original history entries remain in the union. Resolution records
+  are administrative entries, exempt from the ordinary change-entry retention cap. A peer receipt must omit
+  both values and use side `ours` or `theirs` with one or more distinct workflow
+  fields (`status`, `assignee`, `agent_state`, `defer_until`, `deleted_at`).
+  A malformed receipt refuses the entire import before any write; the error
+  names its task and entry without repeating values.
 - **Retention.** With `history.max_entries_per_task` set, a task's oldest
   change entries are trimmed and one `retention_drop` entry is written (field
   `retention`, `new` the count dropped as a decimal string, `old` the time of
@@ -142,6 +158,22 @@ records locally.
   import` fails with `checksum verification failed` and the automatic import
   loads no nodes. That is why the switch is off by default.
 
+### Removing sensitive text (0.6.0)
+
+With `history.export` set to `false` (the default), a fresh snapshot omits both
+per-task and top-level history. Current fields, comments and activity remain in
+the export; replace an affected editable field with clean text first. Follow the
+[manual cleanup routine](../USERMANUAL.md#removing-sensitive-text-060) to verify
+the switch and export to a private file before replacing the snapshot.
+
+This does not erase the local SQLite history or queued sync payloads. Importing
+a snapshot without history keeps local entries. mtix 0.6.0 cannot erase retained
+hub copies, past Git history, other clones or backups. Git history needs a
+team-coordinated rewrite and force-push, and every clone must re-clone; it does
+not clean hub copies. Task-history redaction is planned for the protocol-2
+release, not available in 0.6.0. Do not edit history entries or their checksum to
+try to erase retained copies.
+
 ## Checksum
 
 The checksum is the SHA-256, in lowercase hex, of the JSON document
@@ -163,6 +195,37 @@ text holding invalid UTF-8 never verified. Verification also accepts that
 checksum: the same decoded content with every U+FFFD spelled as `\ufffd`.
 A file that held both invalid UTF-8 and a genuine U+FFFD character still
 fails; check it, then import it with `mtix import --recompute-checksum`.
+
+## Ids that are not valid UTF-8
+
+A node `uid` or a history `task_uid` or `event_id` can hold bytes that are not
+valid UTF-8 (a sync event id is accepted as received). JSON cannot carry them,
+so the file adds an optional hex field, written only for such a value:
+
+| Where | Field | Plain field beside it |
+|---|---|---|
+| node | `uid_hex` | `uid` is left out |
+| history entry | `task_uid_hex`, `event_id_hex` | `task_uid` and `event_id` keep the U+FFFD spelling |
+
+mtix reads the hex field in preference to the plain one, so the bytes round
+trip exactly through export and import. A value that is not hex is refused
+(`invalid input`). A file with no such id has none of these fields, and is
+byte-for-byte what earlier versions wrote.
+
+The two checksums are split so that older readers keep working. `checksum`
+covers exactly what mtix 0.5.4 decodes (no hex field, an invalid-UTF-8 `uid`
+left out). mtix 0.5.4 imports a 2.0.0 snapshot (`history.export` off) holding
+a hex field and gives that one node a fresh uid; every other column and node is
+unchanged. A history file (2.1.0) needs a current reader: 0.5.4 refuses every
+2.1.0 file, with or without hex fields. `ids_checksum` covers the hex fields
+(each by kind, owner and bytes). mtix verifies both, so an edit to a hex field
+is detected, and so is removing one hex field or `ids_checksum` while others
+remain. The checksums guard against accidents, not deliberate edits: removing
+every hex field together with `ids_checksum` leaves the old-reader form, and
+that node then imports with a fresh uid.
+
+The 1.0.0 form (written for a conflict baseline) keeps JSON's U+FFFD spelling
+of such a `uid`, as 0.5.3 wrote it, and has no hex field.
 
 ## Compatibility
 

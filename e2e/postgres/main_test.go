@@ -11,6 +11,8 @@ import (
 	"io"
 	"os"
 	"testing"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 // providerFlag selects the active provider for the entire test binary.
@@ -49,6 +51,11 @@ func activeProvider(t *testing.T) PostgresProvider {
 // and runs the suite.
 func TestMain(m *testing.M) {
 	flag.Parse()
+	stop, isolateErr := hostguard.Start()
+	if isolateErr != nil {
+		fmt.Fprintln(os.Stderr, "host config isolation:", isolateErr)
+		os.Exit(1)
+	}
 
 	// Wrap stderr so test output never leaks a DSN. Stdout is left untouched
 	// (the testing package writes test reports there in a structured way
@@ -57,7 +64,9 @@ func TestMain(m *testing.M) {
 	os.Stderr = redactingFile(original)
 	defer func() { os.Stderr = original }()
 
-	os.Exit(m.Run())
+	code := m.Run()
+	stop()
+	os.Exit(code)
 }
 
 // redactingFile creates a *os.File that redacts DSNs on write. We need a

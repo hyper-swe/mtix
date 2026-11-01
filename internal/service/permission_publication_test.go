@@ -17,6 +17,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -106,7 +107,7 @@ func TestApplyBatch_ActualHookDispatcherAndAlertsReentry_BoundedAndJoined(t *tes
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, "-test.run=^TestApplyBatch_ActualHookDispatcherAndAlertsReentry_BoundedAndJoined$", "-test.v")
-	command.Env = append(os.Environ(), "MTIX_PERMISSION_REENTRY_CHILD=1")
+	command.Env = append(hostguard.Environ(), "MTIX_PERMISSION_REENTRY_CHILD=1")
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
 	command.WaitDelay = 2 * time.Second

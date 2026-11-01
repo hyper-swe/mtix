@@ -6,9 +6,9 @@ package oplocal
 import (
 	"crypto/sha256"
 	"encoding/base32"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -60,23 +60,17 @@ func (s *State) BoardObservation(checkout string) (BoardObservation, []Report, e
 
 // StrictBoardIdentity reads the host setting without creating or changing state.
 func (s *State) StrictBoardIdentity() (bool, []Report, error) {
-	var wake map[string]json.RawMessage
-	reports, err := s.ReadJSON("wake", &wake)
+	return s.StrictBoardIdentityForAgent("")
+}
+
+// StrictBoardIdentityForAgent applies the selected agent override (FR-20.5).
+func (s *State) StrictBoardIdentityForAgent(agent string) (bool, []Report, error) {
+	values, reports, err := s.WakeSettings(agent)
 	if err != nil {
 		return false, reports, err
 	}
-	raw, ok := wake["inbox.strict_board_identity"]
-	if !ok {
-		return false, reports, nil
-	}
-	var strict bool
-	if string(raw) == "null" {
-		return false, reports, invalid("strict board identity must be boolean")
-	}
-	if err = json.Unmarshal(raw, &strict); err != nil {
-		return false, reports, failure("strict board identity must be boolean", err)
-	}
-	return strict, reports, nil
+	strict, err := strconv.ParseBool(values["inbox.strict_board_identity"].Value)
+	return strict, reports, err
 }
 
 // BoardGrants reads operator confirmations without creating any.

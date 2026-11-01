@@ -102,7 +102,7 @@ func TestRunUnclaim_NoStore_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runUnclaim("PROJ-1", "done with it")
+	err := runUnclaim("PROJ-1", "done with it", "agent-1", false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }
@@ -377,7 +377,7 @@ func TestRunContext_NoCtxSvc_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runContext("PROJ-1", 0)
+	err := runContext("PROJ-1", 0, false)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }

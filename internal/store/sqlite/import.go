@@ -165,7 +165,7 @@ func (s *Store) Import(
 		}
 		var applyErr error
 		if mode == ImportModeReplace {
-			result, applyErr = replaceAllData(ctx, tx, data)
+			result, applyErr = replaceAllData(ctx, tx, data, cfg.asSynced)
 			if applyErr == nil {
 				applyErr = insertExportHistory(ctx, tx, data, &result, s.clock())
 			}

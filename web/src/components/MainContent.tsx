@@ -18,14 +18,20 @@ interface MainContentProps {
 }
 
 export function MainContent({ nodeStore }: MainContentProps) {
-  const { view, selectedNodeId, selectNode } = useNavigation();
+  const { view, selectedNodeId, selectNode, invalidTicketRef } = useNavigation();
 
   return (
     <main
       className="h-full"
       style={{ backgroundColor: "var(--color-bg)" }}
     >
-      {view === "node-detail" && selectedNodeId ? (
+      {view === "node-detail" && invalidTicketRef ? (
+        <div className="p-6" data-testid="ticket-not-found" role="alert">
+          <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>
+            Ticket not found
+          </p>
+        </div>
+      ) : view === "node-detail" && selectedNodeId ? (
         <NodeDetailView
           nodeId={selectedNodeId}
           nodeStore={nodeStore}
@@ -90,7 +96,7 @@ function StaleView(_props: { onNavigate: (nodeId: string) => void }) {
           {staleAgents.map((agentId) => (
             <div
               key={agentId}
-              className="flex items-center gap-3 px-3 py-2 rounded border"
+              className="flex items-center gap-3 px-3 py-2 rounded-sm border"
               style={{
                 borderColor: "var(--color-status-blocked)",
                 backgroundColor: "var(--color-surface)",
@@ -107,7 +113,7 @@ function StaleView(_props: { onNavigate: (nodeId: string) => void }) {
                 Agent: {agentId}
               </span>
               <span
-                className="text-xs px-1.5 py-0.5 rounded"
+                className="text-xs px-1.5 py-0.5 rounded-sm"
                 style={{
                   backgroundColor: "var(--color-status-blocked)",
                   color: "#FFFFFF",
@@ -187,7 +193,7 @@ function AgentsView({ onNavigate }: { onNavigate: (nodeId: string) => void }) {
           {agents.map((agent) => (
             <div
               key={agent.id}
-              className="rounded border p-4"
+              className="rounded-sm border p-4"
               style={{
                 borderColor: "var(--color-border)",
                 backgroundColor: "var(--color-surface)",
@@ -201,7 +207,7 @@ function AgentsView({ onNavigate }: { onNavigate: (nodeId: string) => void }) {
                   {agent.id}
                 </span>
                 <span
-                  className="text-xs px-1.5 py-0.5 rounded font-bold uppercase"
+                  className="text-xs px-1.5 py-0.5 rounded-sm font-bold uppercase"
                   style={{
                     backgroundColor: "var(--color-status-in-progress)",
                     color: "#FFFFFF",

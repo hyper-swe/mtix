@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 )
 
 // TestDocGen_ProducesAll11Files verifies all 11 top-level doc files plus
@@ -189,6 +190,7 @@ func minimalTemplateData() *TemplateData {
 	return &TemplateData{
 		ProjectPrefix: "TEST",
 		Version:       "0.1.0-test",
+		ListenDefault: service.DefaultListenValue(),
 		Commands: []CommandInfo{
 			{Name: "mtix", Use: "mtix", Short: "Micro issue manager"},
 		},

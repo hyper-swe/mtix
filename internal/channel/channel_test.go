@@ -119,14 +119,14 @@ func TestPump_PushesInOrderAndStopsOnCancel(t *testing.T) {
 	go func() { Pump(ctx, src, ad, slog.Default()); close(done) }()
 
 	require.Eventually(t, func() bool { return len(ad.events()) == 2 },
-		2*time.Second, 10*time.Millisecond)
+		channelCompletionHangBound, 10*time.Millisecond)
 	assert.Equal(t, int64(1), ad.events()[0].Seq)
 	assert.Equal(t, int64(2), ad.events()[1].Seq)
 
 	cancel()
 	select {
 	case <-done:
-	case <-time.After(2 * time.Second):
+	case <-time.After(channelCompletionHangBound):
 		t.Fatal("pump did not stop on ctx cancel")
 	}
 }

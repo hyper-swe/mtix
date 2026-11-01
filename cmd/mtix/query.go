@@ -431,7 +431,7 @@ func printNodeList(nodes []*model.Node, total int, fields []string) error {
 			fmt.Sprintf("%s %s", icon, n.Status),
 			fmt.Sprintf("%d", n.Priority),
 			fmt.Sprintf("%.0f%%", n.Progress*100),
-			Truncate(n.Title, 50),
+			Truncate(format.SafeLine(n.Title), 50),
 		})
 	}
 	out.WriteTable(headers, rows)

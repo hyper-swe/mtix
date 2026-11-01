@@ -16,22 +16,72 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS audit_log_no_update ON audit_log;
-CREATE TRIGGER audit_log_no_update
-    BEFORE UPDATE ON audit_log
-    FOR EACH ROW EXECUTE FUNCTION audit_log_immutable();
+-- MTIX-107.52: DROP TRIGGER takes ACCESS EXCLUSIVE even on a current hub.
+-- Skip only an enabled trigger with the exact released behavior. A missing,
+-- disabled, conditional, column-specific or otherwise changed trigger is
+-- replaced just as before; its function is still refreshed above.
+-- tgtype bitmasks: 19 = ROW | BEFORE | UPDATE; 11 = ROW | BEFORE | DELETE.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_trigger
+        WHERE tgrelid = 'audit_log'::regclass AND tgname = 'audit_log_no_update'
+          AND tgfoid = 'audit_log_immutable()'::regprocedure AND tgtype = 19
+          AND tgenabled = 'O' AND NOT tgisinternal AND tgconstraint = 0
+          AND NOT tgdeferrable AND NOT tginitdeferred AND tgnargs = 0
+          AND tgattr = ''::int2vector AND tgqual IS NULL
+          AND tgoldtable IS NULL AND tgnewtable IS NULL
+    ) THEN
+        DROP TRIGGER IF EXISTS audit_log_no_update ON audit_log;
+        CREATE TRIGGER audit_log_no_update
+            BEFORE UPDATE ON audit_log
+            FOR EACH ROW EXECUTE FUNCTION audit_log_immutable();
+    END IF;
 
-DROP TRIGGER IF EXISTS audit_log_no_delete ON audit_log;
-CREATE TRIGGER audit_log_no_delete
-    BEFORE DELETE ON audit_log
-    FOR EACH ROW EXECUTE FUNCTION audit_log_immutable();
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_trigger
+        WHERE tgrelid = 'audit_log'::regclass AND tgname = 'audit_log_no_delete'
+          AND tgfoid = 'audit_log_immutable()'::regprocedure AND tgtype = 11
+          AND tgenabled = 'O' AND NOT tgisinternal AND tgconstraint = 0
+          AND NOT tgdeferrable AND NOT tginitdeferred AND tgnargs = 0
+          AND tgattr = ''::int2vector AND tgqual IS NULL
+          AND tgoldtable IS NULL AND tgnewtable IS NULL
+    ) THEN
+        DROP TRIGGER IF EXISTS audit_log_no_delete ON audit_log;
+        CREATE TRIGGER audit_log_no_delete
+            BEFORE DELETE ON audit_log
+            FOR EACH ROW EXECUTE FUNCTION audit_log_immutable();
+    END IF;
 
-DROP TRIGGER IF EXISTS sync_conflicts_no_update ON sync_conflicts;
-CREATE TRIGGER sync_conflicts_no_update
-    BEFORE UPDATE ON sync_conflicts
-    FOR EACH ROW EXECUTE FUNCTION audit_log_immutable();
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_trigger
+        WHERE tgrelid = 'sync_conflicts'::regclass AND tgname = 'sync_conflicts_no_update'
+          AND tgfoid = 'audit_log_immutable()'::regprocedure AND tgtype = 19
+          AND tgenabled = 'O' AND NOT tgisinternal AND tgconstraint = 0
+          AND NOT tgdeferrable AND NOT tginitdeferred AND tgnargs = 0
+          AND tgattr = ''::int2vector AND tgqual IS NULL
+          AND tgoldtable IS NULL AND tgnewtable IS NULL
+    ) THEN
+        DROP TRIGGER IF EXISTS sync_conflicts_no_update ON sync_conflicts;
+        CREATE TRIGGER sync_conflicts_no_update
+            BEFORE UPDATE ON sync_conflicts
+            FOR EACH ROW EXECUTE FUNCTION audit_log_immutable();
+    END IF;
 
-DROP TRIGGER IF EXISTS sync_conflicts_no_delete ON sync_conflicts;
-CREATE TRIGGER sync_conflicts_no_delete
-    BEFORE DELETE ON sync_conflicts
-    FOR EACH ROW EXECUTE FUNCTION audit_log_immutable();
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_trigger
+        WHERE tgrelid = 'sync_conflicts'::regclass AND tgname = 'sync_conflicts_no_delete'
+          AND tgfoid = 'audit_log_immutable()'::regprocedure AND tgtype = 11
+          AND tgenabled = 'O' AND NOT tgisinternal AND tgconstraint = 0
+          AND NOT tgdeferrable AND NOT tginitdeferred AND tgnargs = 0
+          AND tgattr = ''::int2vector AND tgqual IS NULL
+          AND tgoldtable IS NULL AND tgnewtable IS NULL
+    ) THEN
+        DROP TRIGGER IF EXISTS sync_conflicts_no_delete ON sync_conflicts;
+        CREATE TRIGGER sync_conflicts_no_delete
+            BEFORE DELETE ON sync_conflicts
+            FOR EACH ROW EXECUTE FUNCTION audit_log_immutable();
+    END IF;
+
+END
+$$;

@@ -22,7 +22,8 @@ func appendRegistrationChecks(ctx context.Context, report DoctorReport) DoctorRe
 	if app.store == nil {
 		return report
 	}
-	svc, err := newRegistrationService()
+	// Report store failures from the diagnostic operation, without an eager routing lookup.
+	svc, err := newRegistrationServiceWithRouting(false)
 	if err != nil {
 		return appendDoctorCheck(report, DoctorCheck{Name: "agents.stale", Pass: true, Warn: true,
 			Detail: "registrations not checked: " + err.Error()})

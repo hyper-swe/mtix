@@ -115,7 +115,10 @@ func ResolveWithBase(local, file *ExportData, base *ImportBase) (*BaseResolution
 	if err := RecomputeExportChecksum(&resolved); err != nil {
 		return nil, err
 	}
-	diff, err := diffReplace(local, &resolved, true)
+	// A removal is proven against the file as read with the real descent check,
+	// not with the always-true field verdict: a base holds no dependencies.
+	removals := provenDependencyRemovals(local, r.idx, fileDescends(file))
+	diff, err := diffReplace(local, &resolved, func(*exportNode, *exportNode) bool { return true }, removals)
 	if err != nil {
 		return nil, err
 	}

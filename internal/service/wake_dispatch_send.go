@@ -12,26 +12,50 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
-func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey) error {
-	attempt, won, err := d.store.ClaimWake(ctx, key, time.Minute)
+// wakeOutcome says what became of one claim-and-send.
+type wakeOutcome int
+
+const (
+	wakeAttempted    wakeOutcome = iota // a send ran, or another claimant already owns the event
+	wakeBudgetHeld                      // the recipient budget or back-off refused the claim
+	wakeNotAttempted                    // a claim or fence error: nothing was sent, retry next pass
+	wakeInFlight                        // another claimant's unexpired claim: wait, the mark stays
+)
+
+// sendWake claims and sends one wake and reports its outcome (see wakeOutcome).
+func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop int64) (wakeOutcome, error) {
+	off, offErr := d.liveWakeOff(key.AgentID)
+	if offErr != nil {
+		return wakeNotAttempted, offErr
+	}
+	if off {
+		// Live wake off is not an attempt: no claim row, no adapter call, and the
+		// registration mark and hold do not move. The event stays eligible, so it is
+		// nudged (within budgets) once live wake is switched back on.
+		return wakeNotAttempted, nil
+	}
+	attempt, won, state, err := d.budgets.claimState(ctx, key)
 	if err != nil {
-		return fmt.Errorf("claim wake candidate: %w", err)
+		return wakeNotAttempted, fmt.Errorf("claim wake candidate: %w", err)
+	}
+	switch state {
+	case claimBudgetHeld:
+		return wakeBudgetHeld, nil
+	case claimInFlight:
+		return wakeInFlight, nil
 	}
 	if !won {
-		return nil
+		return wakeAttempted, nil
 	}
 	if attempt.Token == "" || attempt.Key != key {
-		return fmt.Errorf("wake attempt fence is missing or mismatched: %w", model.ErrConflict)
+		return wakeNotAttempted, fmt.Errorf("wake attempt fence is missing or mismatched: %w", model.ErrConflict)
 	}
-	sendErr := d.send(ctx, attempt)
-	outcome := model.WakeDelivered
-	if sendErr != nil {
-		outcome = model.WakeError
-	}
+	attempt.Hop = hop
+	result, sendErr := d.deliverWake(ctx, attempt)
 	// Once a send ran, caller cancellation must not turn its failure into a retry.
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
-	recordErr := d.store.RecordWakeOutcome(finishCtx, attempt, outcome)
+	recordErr := d.recordWake(finishCtx, attempt, result)
 	var failures error
 	if sendErr != nil {
 		failures = fmt.Errorf("send wake: %w", sendErr)
@@ -39,5 +63,19 @@ func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey) error 
 	if recordErr != nil {
 		failures = errors.Join(failures, fmt.Errorf("record wake completion: %w", recordErr))
 	}
-	return failures
+	return wakeAttempted, failures
+}
+
+// recordWake persists the terminal result. A bare legacy delivered/error result uses
+// RecordWakeOutcome exactly as earlier releases did; adapter results carry route and reason.
+func (d *WakeDispatcher) recordWake(ctx context.Context, attempt model.WakeAttempt, r model.WakeResult) error {
+	bare := r.Route == "" && r.Reason == "" && (r.Outcome == model.WakeDelivered || r.Outcome == model.WakeError)
+	if bare {
+		return d.store.RecordWakeOutcome(ctx, attempt, r.Outcome)
+	}
+	rs, ok := d.store.(WakeResultStore)
+	if !ok {
+		return fmt.Errorf("wake store cannot persist outcome %q: %w", r.Outcome, model.ErrInvalidInput)
+	}
+	return rs.RecordWakeResult(ctx, attempt, r)
 }

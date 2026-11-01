@@ -11,6 +11,9 @@ import (
 
 // rootPostRun preserves the command post-run lifecycle (FR-15.3).
 func rootPostRun(cmd *cobra.Command, _ []string) error {
+	if isDispatcherCommand(cmd) {
+		return nil
+	}
 	// Sync, relay and daemon commands apply foreign events, which set
 	// the hub mark inside the apply transaction: bring the operator-
 	// local mirror up to date (MTIX-112.17.3, ADR-007 A9).
@@ -18,6 +21,11 @@ func rootPostRun(cmd *cobra.Command, _ []string) error {
 		if err := reconcileHubMarkMirror(); err != nil {
 			fmt.Fprintf(cmd.ErrOrStderr(), "warning: could not mirror the hub-connected mark: %v\n", err)
 		}
+	}
+	// MTIX-112.20.1: real activity (a mutation, an addressed send, an agent
+	// heartbeat) restarts the hub-contact window. Waits and reads do not.
+	if kind, ok := commandActivity(cmd); ok && app.mtixDir != "" {
+		recordHubActivity(kind)
 	}
 	// Auto-export after mutation commands per FR-15.3, with the
 	// interval-gated rolling backup riding the same trigger
@@ -49,6 +57,7 @@ func registerRootCommands(rootCmd *cobra.Command) {
 		newCreateCmd(),
 		newMicroCmd(),
 		newShowCmd(),
+		newURLCmd(),
 		newListCmd(),
 		newTreeCmd(),
 		newUpdateCmd(),
@@ -73,6 +82,7 @@ func registerRootCommands(rootCmd *cobra.Command) {
 		// Hidden harness-glue verbs; the handshake serves N and N-1 and marks
 		// N-1 glue for refresh (ADR-007 §6.5).
 		newAttachCmd(),
+		newDispatcherCmd(),
 	)
 	registerRemainingRootCommands(rootCmd)
 }
@@ -104,6 +114,7 @@ func registerRemainingRootCommands(rootCmd *cobra.Command) {
 		newSyncCmd(),
 		newDaemonCmd(),
 		newHooksCmd(),
+		newHookCmd(),
 		newDoctorCmd(),
 	)
 }

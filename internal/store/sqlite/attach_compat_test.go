@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -54,7 +55,7 @@ func attachReaderCommand(t *testing.T, binary, project, dsn string, args ...stri
 	t.Logf("released reader before execution commit=%s sha256=%x", compat054TagCommit, sha256.Sum256(raw))
 	cmd := exec.CommandContext(t.Context(), binary, args...)
 	cmd.Dir = project
-	cmd.Env = append(os.Environ(), "MTIX_SYNC_DSN="+dsn, "MTIX_SYNC_HOOK=")
+	cmd.Env = append(hostguard.Environ(), "MTIX_SYNC_DSN="+dsn, "MTIX_SYNC_HOOK=")
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "released reader %v: %s", args, output)
 	t.Logf("released reader pid=%d exit=%d args=%v", cmd.Process.Pid, cmd.ProcessState.ExitCode(), args)
@@ -64,10 +65,10 @@ func attachReaderCommand(t *testing.T, binary, project, dsn string, args ...stri
 func attachSeedLocalState(t *testing.T, s *sqlite.Store) {
 	t.Helper()
 	for _, query := range []string{
-		"INSERT INTO agent_registrations(agent_id,harness,uid,host_id,origin,registered_at,last_seen,registrar_version,attach_protocol,returned_seq_mark) VALUES('worker','local','uid','host','manual','now','now','v',1,7)",
+		"INSERT INTO agent_registrations(agent_id,harness,uid,host_id,origin,registered_at,last_seen,registrar_version,attach_protocol,returned_seq_mark,stale_since) VALUES('worker','local','uid','host','manual','now','now','v',1,7,'then')",
 		"INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome) VALUES('worker','host','uid',7,1,'now','claimed')",
 		"INSERT INTO wake_scan_cursor VALUES('host','uid',7)",
-		"INSERT INTO dispatcher_heartbeat VALUES('host','uid',123,1,'v','now')",
+		"INSERT INTO dispatcher_heartbeat(host_id,uid,pid,protocol,version,seen_at) VALUES('host','uid',123,1,'v','now')",
 		"INSERT INTO board_flags VALUES('flag','kept','now','local')",
 		"INSERT INTO attach_pending(kind,board_key,path,payload,queued_at) VALUES('registration','board','project','kept','now')",
 		"INSERT INTO wake_leases(agent_id,host_id,uid,holder,expires_at,high_water,dirty,acquired_at) VALUES('worker','host','uid','holder','later',7,0,'now')",

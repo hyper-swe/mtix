@@ -28,7 +28,7 @@ func TestDiscardUnsharedEvents_StoreThatSynced_DeletesNothing(t *testing.T) {
 	require.NotZero(t, before)
 
 	require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error {
-		return discardUnsharedEvents(ctx, tx, &ExportData{}) // a file that holds nothing
+		return discardUnsharedEvents(ctx, tx, &ExportData{}, false) // a file that holds nothing
 	}))
 	var after int
 	require.NoError(t, raw.QueryRow(`SELECT COUNT(*) FROM sync_events WHERE node_id = 'MTIX-2'`).Scan(&after))

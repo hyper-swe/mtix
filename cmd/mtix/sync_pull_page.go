@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
@@ -49,8 +50,8 @@ func (c *pageCursor) advance(events []*model.SyncEvent) error {
 		c.passed = map[string]struct{}{}
 	case end.Lamport == c.at.Lamport && !c.hasPassed(end.EventID):
 	default:
-		return fmt.Errorf("%w (cursor: lamport %d, event %q; page ends at lamport %d, event %q)",
-			errPageNotAfterCursor, c.at.Lamport, c.at.EventID, end.Lamport, end.EventID)
+		return fmt.Errorf("%w (cursor: lamport %d, event %s; page ends at lamport %d, event %s)",
+			errPageNotAfterCursor, c.at.Lamport, format.EventID(c.at.EventID), end.Lamport, format.EventID(end.EventID))
 	}
 	c.passed[end.EventID] = struct{}{}
 	c.at = end

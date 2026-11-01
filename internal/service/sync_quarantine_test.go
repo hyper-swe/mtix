@@ -44,7 +44,7 @@ func TestSyncService_ListQuarantined_EveryRowInRetryOrder(t *testing.T) {
 		require.Equal(t, fmt.Sprintf("e%05d", i+1), q.EventID)
 	}
 	require.Equal(t, service.QuarantinedEvent{
-		EventID: "e00007", NodeID: "TEST-7", OpType: "update_field", LamportClock: 7, Source: "sweep",
+		EventID: "e00007", Handle: service.QuarantineHandle("e00007"), EventIDSHA256: service.QuarantineHandleFull("e00007"), NodeID: "TEST-7", OpType: "update_field", LamportClock: 7, Source: "sweep",
 		Reason: "why", Attempts: 1, FirstSeen: "2026-09-25T00:00:00Z", LastAttempt: "2026-09-25T01:00:00Z",
 		CLIVersion: "v",
 	}, got[6])

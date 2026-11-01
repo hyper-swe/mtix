@@ -22,10 +22,19 @@ type HubMarkStore interface {
 // HubEvidence is what the caller observed outside the store. EnvDSNConnected
 // is true only after a sync or relay command actually connected with an
 // environment DSN for this board; a DSN that is merely exported is false.
+// EnvDSNExported is true while an environment DSN is exported: it is only
+// transient evidence for the replace guards (SyncService.noteHubEvidence)
+// and never becomes the sticky mark (MTIX-107.31.8).
 type HubEvidence struct {
 	ConfigKeys      bool
 	SecretsDSN      bool
 	EnvDSNConnected bool
+	EnvDSNExported  bool
+	// DSNRefused is true while a DSN is set up that the transport refuses to
+	// use (a DSN key in a tracked config file, a secrets file with the wrong
+	// mode). Like EnvDSNExported it is transient evidence for the replace
+	// guards and never becomes the mark (MTIX-107.31.8).
+	DSNRefused bool
 }
 
 // HubStatus is the answer to "is this board connected to a hub or relay".

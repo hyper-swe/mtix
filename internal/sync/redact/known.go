@@ -13,10 +13,37 @@ import (
 // knownMask replaces a known secret, matching the marker DSN uses.
 const knownMask = "REDACTED"
 
-// passwordSetting matches a password given as a setting, in URL-query
-// form (?password=v or &password=v) or keyword/value form
-// (password=v, password = 'quoted v'). Group 1 is the raw value.
-var passwordSetting = regexp.MustCompile(`(?i)(?:^|[?&\s])password\s*=\s*('(?:[^'\\]|\\.)*'|[^&\s]+)`)
+// passwordValues returns the value of every password setting in dsn as
+// written, read the way the parser reads it (MTIX-87): in a URL query
+// (?password=v or &password=v) a value ends at '&' or white space; in the
+// key=value form it is single-quoted, or bare and ended by ASCII white
+// space, a backslash escaping the next character in both. So a bare
+// password holding an ampersand or an escaped space is one value.
+func passwordValues(dsn string) []string {
+	var out []string
+	for _, m := range passwordKey.FindAllStringSubmatchIndex(dsn, -1) {
+		start := m[3]
+		inQuery := m[0] > 0 && (dsn[m[0]-1] == '?' || dsn[m[0]-1] == '&')
+		out = append(out, dsn[start:passwordValueEnd(dsn, start, inQuery)])
+	}
+	return out
+}
+
+// unescapeValue returns v without the backslashes that escape the
+// character after them.
+func unescapeValue(v string) string {
+	if !strings.Contains(v, `\`) {
+		return v
+	}
+	var b strings.Builder
+	for i := 0; i < len(v); i++ {
+		if v[i] == '\\' && i+1 < len(v) {
+			i++
+		}
+		b.WriteByte(v[i])
+	}
+	return b.String()
+}
 
 // minBarePassword is the length from which Known removes a password
 // wherever it appears. A shorter password is removed only where it
@@ -122,12 +149,14 @@ func knownPasswords(dsn string) []string {
 		_, pw, _ := strings.Cut(rest[:at], ":")
 		out = append(out, pw)
 	}
-	for _, m := range passwordSetting.FindAllStringSubmatch(dsn, -1) {
-		v := m[1]
+	for _, v := range passwordValues(dsn) {
 		out = append(out, v)
+		inner := v
 		if len(v) >= 2 && strings.HasPrefix(v, "'") && strings.HasSuffix(v, "'") {
-			unquoted := strings.NewReplacer(`\'`, `'`, `\\`, `\`).Replace(v[1 : len(v)-1])
-			out = append(out, unquoted)
+			inner = v[1 : len(v)-1]
+		}
+		if inner != v || strings.Contains(v, `\`) {
+			out = append(out, unescapeValue(inner))
 		}
 	}
 	return out

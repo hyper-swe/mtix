@@ -43,6 +43,10 @@ const (
 
 	// exitCodeInboxInterrupted means SIGINT/SIGTERM cleanly stopped an inbox wait.
 	exitCodeInboxInterrupted = 7
+
+	// exitCodeClaudeHookWake: `mtix hook claude-session` has an envelope on stderr and
+	// wants the Claude harness to wake the session (asyncRewake reads exit 2).
+	exitCodeClaudeHookWake = 2
 )
 
 // exitCodeForError maps an error to its contract exit code.
@@ -60,6 +64,8 @@ func exitCodeForError(err error) int {
 		return exitCodeInboxInterrupted
 	case errors.Is(err, errInboxWaitEmpty):
 		return exitCodeInboxEmpty
+	case errors.Is(err, errClaudeHookWake):
+		return exitCodeClaudeHookWake
 	case errors.Is(err, errHardenPending), errors.Is(err, service.ErrDoctorChecksFailed):
 		return exitCodeHardenPending
 	default:

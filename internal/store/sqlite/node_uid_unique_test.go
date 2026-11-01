@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -156,7 +157,7 @@ func TestApply_CreateNode_UIDHeldByAnotherNode_RefusedNamingHolder(t *testing.T)
 	other.UID = first.EventID
 	err := applyOnce(t, s, other)
 	require.ErrorIs(t, err, model.ErrConflict)
-	assert.Contains(t, err.Error(), "uid "+first.EventID+" is held by local task MTIX-1")
+	assert.Contains(t, err.Error(), "uid "+format.EventID(first.EventID)+" is held by local task MTIX-1")
 	assert.Equal(t, 1, countNodes(t, raw))
 
 	// A replay of the same create at the same id is still a no-op.

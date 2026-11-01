@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 type wakeCapture struct{ dir string }
@@ -59,6 +61,7 @@ func runWakeFixture(t *testing.T, source, input string) wakeCapture {
 	for _, name := range []string{"claude", "codex", "agent"} {
 		write(name, harness)
 	}
+	installWakeRecorders(t, dir)
 	write("wake.sh", source)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
@@ -68,7 +71,7 @@ func runWakeFixture(t *testing.T, source, input string) wakeCapture {
 	if strings.Contains(source, "${HARNESS_BIN:-codex}") {
 		harnessName = "codex"
 	}
-	cmd.Env = append(os.Environ(), "PATH="+dir+":/usr/bin:/bin", "WAKE_DIR="+dir, "WAKE_AGENT_LOG="+filepath.Join(dir, "logs", "wake.log"), "MTIX_BIN="+filepath.Join(dir, "mtix"), "HARNESS_BIN="+filepath.Join(dir, harnessName))
+	cmd.Env = append(hostguard.Environ(), "PATH="+dir+":/usr/bin:/bin", "WAKE_DIR="+dir, "WAKE_AGENT_LOG="+filepath.Join(dir, "logs", "wake.log"), "MTIX_BIN="+filepath.Join(dir, "mtix"), "HARNESS_BIN="+filepath.Join(dir, harnessName))
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "owned routine output: %s", output)
 	args, err := os.ReadFile(filepath.Join(dir, "mtix-args"))
@@ -76,6 +79,7 @@ func runWakeFixture(t *testing.T, source, input string) wakeCapture {
 	require.Equal(t, []string{"inbox", "--agent", "fixture-worker", "--format", "prompt"}, wakeArgs(args))
 	_, err = os.Stat(filepath.Join(dir, "unexpected"))
 	require.True(t, os.IsNotExist(err))
+	require.NoError(t, wakeRecordersUnused(dir))
 	return wakeCapture{dir}
 }
 

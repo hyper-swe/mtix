@@ -17,7 +17,7 @@ func renderInboxEnvelope(agent string, events []service.InboxEvent) (string, err
 		return "", fmt.Errorf("MCP inbox operator state: %w", err)
 	}
 	state := oplocal.New(env)
-	caps, reports, err := state.EnvelopeCaps()
+	caps, reports, err := state.EnvelopeCapsForAgent(agent)
 	if err != nil {
 		return "", fmt.Errorf("MCP inbox envelope configuration: %w; %s", err, state.EnvelopeCapsRemedy(reports...))
 	}

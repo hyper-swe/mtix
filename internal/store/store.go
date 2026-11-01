@@ -112,6 +112,9 @@ type Store interface {
 	// Returns ErrNotFound if the node does not exist.
 	DeleteNode(ctx context.Context, id string, cascade bool, deletedBy string) error
 
+	// DeleteNodeWithRoot deletes one node with an explicit recovery group root.
+	DeleteNodeWithRoot(ctx context.Context, id, rootID, deletedBy string) error
+
 	// UndeleteNode restores a soft-deleted node.
 	// Returns ErrNotFound if the node does not exist.
 	UndeleteNode(ctx context.Context, id string) error

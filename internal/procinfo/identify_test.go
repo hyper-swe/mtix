@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -102,5 +103,45 @@ func TestParseProcArgs2_ExecPathPaddingAndArgv0(t *testing.T) {
 	for _, bad := range [][]byte{nil, {1, 0, 0}, append([]byte{1, 0, 0, 0}, []byte("/only/exec")...)} {
 		_, _, ok = procinfo.ParseProcArgs2(bad)
 		assert.False(t, ok)
+	}
+}
+
+func TestParseProcArgs2Args_ReadsDeclaredArgumentCount(t *testing.T) {
+	raw := append([]byte{4, 0, 0, 0}, []byte("/usr/bin/mtix\x00\x00\x00mtix\x00-C\x00/work/proj\x00daemon\x00PATH=/bin\x00")...)
+	args, ok := procinfo.ParseProcArgs2Args(raw)
+	assert.True(t, ok)
+	assert.Equal(t, []string{"mtix", "-C", "/work/proj", "daemon"}, args, "environment entries after argc are not arguments")
+
+	for name, bad := range map[string][]byte{
+		"nil":         nil,
+		"short":       {1, 0, 0},
+		"zero-argc":   append([]byte{0, 0, 0, 0}, []byte("/x\x00")...),
+		"no-exe-end":  append([]byte{1, 0, 0, 0}, []byte("/only/exec")...),
+		"missing-arg": append([]byte{3, 0, 0, 0}, []byte("/x\x00\x00a\x00b\x00")...),
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, ok := procinfo.ParseProcArgs2Args(bad)
+			assert.False(t, ok)
+		})
+	}
+}
+
+func TestInfo_OwnProcess_ReportsFullArguments(t *testing.T) {
+	p, err := procinfo.Info(os.Getpid())
+	if errors.Is(err, procinfo.ErrUnsupported) {
+		t.Skip("unsupported platform")
+	}
+	require.NoError(t, err)
+	require.NotEmpty(t, p.Args, "a process can read its own arguments")
+	assert.Equal(t, os.Args, p.Args)
+	if runtime.GOOS == "linux" {
+		wd, wdErr := os.Getwd()
+		require.NoError(t, wdErr)
+		want, evalErr := filepath.EvalSymlinks(wd)
+		require.NoError(t, evalErr)
+		require.NotEmpty(t, p.Cwd, "linux reports the working directory of a readable process")
+		got, evalErr := filepath.EvalSymlinks(p.Cwd)
+		require.NoError(t, evalErr)
+		assert.Equal(t, want, got)
 	}
 }

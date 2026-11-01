@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -64,7 +65,11 @@ func invalidNodeIDDetail(invalid []sqlite.InvalidNodeID) string {
 		if i == maxListedInvalidIDs {
 			break
 		}
-		entry := fmt.Sprintf("%q (uid %s)", n.ID, emptyDash(n.UID))
+		uid := emptyDash(n.UID)
+		if !app.jsonOutput && n.UID != "" {
+			uid = format.EventID(n.UID)
+		}
+		entry := fmt.Sprintf("%q (uid %s)", n.ID, uid)
 		if n.Deleted {
 			entry += " deleted"
 		}

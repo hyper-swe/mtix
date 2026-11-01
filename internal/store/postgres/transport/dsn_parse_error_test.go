@@ -14,8 +14,12 @@ import (
 // The fixed messages a DSN that cannot be parsed produces (FR-18.17,
 // MTIX-95.15). EnforceTLSPosture prefixes them with "parse dsn: ".
 const (
-	wantSchemeMessage = "parse dsn: DSN could not be parsed: it must start with postgres:// or postgresql://"
-	wantURLMessage    = "parse dsn: DSN could not be parsed: percent-encode reserved characters in the user name and password"
+	wantSchemeMessage = "parse dsn: DSN could not be parsed: it must start with postgres:// or postgresql://, " +
+		"or use the key=value form (host=... user=... password='...')"
+	wantURLMessage = "parse dsn: DSN could not be parsed: percent-encode reserved characters in the user name " +
+		"and password, or use the key=value form (host=... user=... password='...')"
+	wantKeyValueMessage = "parse dsn: DSN could not be parsed: check that each setting is key=value, " +
+		"single-quote a password that holds a space, and escape ' and \\ in it with a backslash"
 )
 
 // parseErrorUser, parseErrorSecret and parseErrorHost are the synthetic
@@ -56,9 +60,12 @@ func TestDSNParseError_NoSecretFragment(t *testing.T) {
 		{"no scheme, password first",
 			parseErrorSecret + "@" + parseErrorHost,
 			parseErrorSecret, wantSchemeMessage},
-		{"no scheme, keyword/value form",
-			"host=" + parseErrorHost + " user=" + parseErrorUser + " password=" + parseErrorSecret,
-			parseErrorSecret, wantSchemeMessage},
+		{"keyword/value form, unterminated quote",
+			"host=" + parseErrorHost + " user=" + parseErrorUser + " password='" + parseErrorSecret,
+			parseErrorSecret, wantKeyValueMessage},
+		{"keyword/value form, dangling backslash",
+			"host=" + parseErrorHost + " user=" + parseErrorUser + " password=" + parseErrorSecret + `\`,
+			parseErrorSecret, wantKeyValueMessage},
 		{"unsupported scheme",
 			"mysql://" + parseErrorUser + ":" + parseErrorSecret + "@" + parseErrorHost + "/mtix",
 			parseErrorSecret, wantSchemeMessage},

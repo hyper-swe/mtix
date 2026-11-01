@@ -172,7 +172,7 @@ export function CreateNodeModal({
           </h2>
           <button
             onClick={onClose}
-            className="p-1 rounded hover:opacity-70 cursor-pointer"
+            className="p-1 rounded-sm hover:opacity-70 cursor-pointer"
             aria-label="Close"
             style={{ color: "var(--color-text-tertiary)" }}
           >
@@ -194,7 +194,7 @@ export function CreateNodeModal({
               onChange={(e) => setTitle(e.target.value)}
               placeholder="Issue title"
               maxLength={500}
-              className="w-full text-sm py-2 px-3 rounded outline-none"
+              className="w-full text-sm py-2 px-3 rounded-sm outline-hidden"
               style={{
                 backgroundColor: "var(--color-bg)",
                 color: "var(--color-text-primary)",
@@ -213,7 +213,7 @@ export function CreateNodeModal({
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Description (optional)"
               rows={2}
-              className="w-full text-sm py-2 px-3 rounded outline-none resize-y"
+              className="w-full text-sm py-2 px-3 rounded-sm outline-hidden resize-y"
               style={{
                 backgroundColor: "var(--color-bg)",
                 color: "var(--color-text-primary)",
@@ -233,7 +233,7 @@ export function CreateNodeModal({
               onChange={(e) => setPrompt(e.target.value)}
               placeholder="LLM prompt (optional)"
               rows={3}
-              className="w-full text-sm py-2 px-3 rounded outline-none resize-y font-mono"
+              className="w-full text-sm py-2 px-3 rounded-sm outline-hidden resize-y font-mono"
               style={{
                 backgroundColor: "var(--color-bg)",
                 color: "var(--color-text-primary)",
@@ -262,7 +262,7 @@ export function CreateNodeModal({
                     key={p}
                     type="button"
                     onClick={() => setPriority(p)}
-                    className="flex-1 py-1.5 text-xs font-medium rounded cursor-pointer"
+                    className="flex-1 py-1.5 text-xs font-medium rounded-sm cursor-pointer"
                     style={{
                       backgroundColor: priority === p ? "var(--color-accent)" : "var(--color-bg)",
                       color: priority === p ? "#ffffff" : "var(--color-text-secondary)",
@@ -285,7 +285,7 @@ export function CreateNodeModal({
               value={parentId}
               onChange={(e) => setParentId(e.target.value)}
               placeholder="Parent ID (optional, e.g. 1.2)"
-              className="w-full text-sm py-2 px-3 rounded outline-none font-mono"
+              className="w-full text-sm py-2 px-3 rounded-sm outline-hidden font-mono"
               style={{
                 backgroundColor: "var(--color-bg)",
                 color: "var(--color-text-primary)",
@@ -310,7 +310,7 @@ export function CreateNodeModal({
               // Inherited from the parent and locked — a node can never live in
               // a different project than its parent.
               <div
-                className="w-full text-sm py-2 px-3 rounded font-mono flex items-center gap-2"
+                className="w-full text-sm py-2 px-3 rounded-sm font-mono flex items-center gap-2"
                 style={{
                   backgroundColor: "var(--color-hover)",
                   color: "var(--color-text-secondary)",
@@ -337,7 +337,7 @@ export function CreateNodeModal({
                     setPendingNewProject(null);
                   }}
                   placeholder="Project prefix (e.g. MTIX)"
-                  className="w-full text-sm py-2 px-3 rounded outline-none font-mono"
+                  className="w-full text-sm py-2 px-3 rounded-sm outline-hidden font-mono"
                   style={{
                     backgroundColor: "var(--color-bg)",
                     color: "var(--color-text-primary)",
@@ -360,7 +360,7 @@ export function CreateNodeModal({
           {/* New-project confirmation step (D5) */}
           {pendingNewProject && (
             <div
-              className="mb-4 px-3 py-2.5 rounded"
+              className="mb-4 px-3 py-2.5 rounded-sm"
               style={{
                 backgroundColor: "var(--color-accent-muted)",
                 border: "1px solid var(--color-accent)",
@@ -376,7 +376,7 @@ export function CreateNodeModal({
               <div className="flex gap-2">
                 <button
                   type="button"
-                  className="px-3 py-1 text-xs rounded cursor-pointer"
+                  className="px-3 py-1 text-xs rounded-sm cursor-pointer"
                   style={{
                     color: "var(--color-text-secondary)",
                     border: "1px solid var(--color-border)",
@@ -389,7 +389,7 @@ export function CreateNodeModal({
                 </button>
                 <button
                   type="button"
-                  className="px-3 py-1 text-xs font-medium rounded cursor-pointer"
+                  className="px-3 py-1 text-xs font-medium rounded-sm cursor-pointer"
                   style={{
                     backgroundColor: "var(--color-accent)",
                     color: "#ffffff",
@@ -411,7 +411,7 @@ export function CreateNodeModal({
           {/* Error */}
           {error && (
             <div
-              className="mb-4 text-xs px-3 py-2 rounded"
+              className="mb-4 text-xs px-3 py-2 rounded-sm"
               style={{
                 color: "var(--color-status-blocked)",
                 backgroundColor: "var(--color-status-blocked-bg)",
@@ -435,7 +435,7 @@ export function CreateNodeModal({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-3 py-1.5 text-sm rounded cursor-pointer"
+                className="px-3 py-1.5 text-sm rounded-sm cursor-pointer"
                 style={{
                   color: "var(--color-text-secondary)",
                   border: "1px solid var(--color-border)",
@@ -447,7 +447,7 @@ export function CreateNodeModal({
               <button
                 type="submit"
                 disabled={submitting || !title.trim()}
-                className="px-4 py-1.5 text-sm font-medium rounded cursor-pointer"
+                className="px-4 py-1.5 text-sm font-medium rounded-sm cursor-pointer"
                 style={{
                   backgroundColor: submitting || !title.trim() ? "var(--color-border)" : "var(--color-accent)",
                   color: submitting || !title.trim() ? "var(--color-text-tertiary)" : "#ffffff",

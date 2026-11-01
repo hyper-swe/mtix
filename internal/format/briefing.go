@@ -51,8 +51,13 @@ var defaultBriefingFields = []briefingField{
 // Output is streamed line-by-line (not buffered) per FR-17.9.
 //
 // Control characters are sanitized per FR-17 audit T10: \x00-\x08,
-// \x0b-\x1f, \x7f are replaced with U+FFFD. Tab (\x09) and newline
-// (\x0a) are preserved. Fields containing newlines are auto-promoted
+// \x0b-\x1f, \x7f are replaced with U+FFFD, and so are the C1 controls,
+// the bidirectional embedding, override and isolate controls, the
+// zero-width characters (U+200B-U+200D, U+2060, U+FEFF), the tag
+// characters (U+E0001, U+E0020-U+E007F) and the line and paragraph
+// separators (MTIX-100.7). The directional marks (U+200E, U+200F, U+061C)
+// and other format characters, such as variation selectors, are kept. Tab
+// (\x09) and newline (\x0a) are preserved. Fields containing newlines are auto-promoted
 // to multi-line block format per FR-17 audit T11.
 func RenderBriefing(w io.Writer, nodes []*model.Node, opts BriefingOpts) error {
 	fields, err := resolveBriefingFields(opts.Fields)

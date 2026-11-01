@@ -58,7 +58,7 @@ func readPermissionDoctorContext() permissionDoctorContext {
 }
 
 func permissionDoctorIdentity() (service.PermissionBoard, error) {
-	board := service.PermissionBoard{Checkout: filepath.Clean(filepath.Dir(app.mtixDir)), Evidence: collectHubEvidence()}
+	board := service.PermissionBoard{Checkout: filepath.Clean(filepath.Dir(app.mtixDir)), Evidence: lenientHubEvidence()}
 	if app.store == nil || app.mtixDir == "" {
 		return board, fmt.Errorf("permission diagnostics need an initialized project: %w", model.ErrInvalidInput)
 	}

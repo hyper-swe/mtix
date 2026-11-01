@@ -242,11 +242,10 @@ func (bs *blockers) holdFor(c holdCheck) (*blocker, string, bool) {
 // with it the tree the rule reads, and a renumber can leave numbers no held
 // creation's event names; the first finding then stands.
 func (bs *blockers) heldFor(reason string) bool {
-	rest, ok := strings.CutPrefix(reason, holdDependsPrefix)
+	eventID, ok := heldDependencyID(reason)
 	if !ok {
 		return false
 	}
-	eventID, _, _ := strings.Cut(rest, " ")
 	_, held := bs.byEvent[eventID]
 	return held
 }

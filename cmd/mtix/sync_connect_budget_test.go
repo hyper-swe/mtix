@@ -123,7 +123,9 @@ func TestDoctor_ConnectBudgetMatchesSync(t *testing.T) {
 		fn   string
 		role string
 	}{
-		{"runSyncInit", "sync init"},
+		// Init delegates to the options-aware flow; both connect and registration
+		// retain this budget, while migration has its own deadline.
+		{"runSyncInitWithOptions", "sync init"},
 		{"runSyncClone", "sync clone"},
 		{"runSyncPush", "sync push"},
 		{"connectAndPull", "sync pull"},

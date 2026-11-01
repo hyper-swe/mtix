@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -175,12 +176,30 @@ func TestToolQuery_ProgressChildren_ReturnExactFields(t *testing.T) {
 	require.Zero(t, got.Children[0].Progress)
 }
 
-func TestToolQuery_Context_ReturnsAncestorAndTargetFields(t *testing.T) {
+func TestToolQuery_Context_DefaultChainIsSlimAndPromptsInAssembled(t *testing.T) {
 	env := newBehaviorTools(t)
 	root := behaviorNode(t, env, "Context root", "")
 	child := behaviorNode(t, env, "Context target", root.ID)
 	var got service.ContextResponse
 	require.NoError(t, json.Unmarshal([]byte(behaviorCall(t, env.reg, "mtix_context", fmt.Sprintf(`{"id":%q}`, child.ID))), &got))
+	require.Len(t, got.Chain, 2)
+	for i, n := range []*model.Node{root, child} {
+		require.Equal(t, n.ID, got.Chain[i].ID)
+		require.Equal(t, n.Title, got.Chain[i].Title)
+		require.Equal(t, n.Status, got.Chain[i].Status)
+		require.Empty(t, got.Chain[i].Prompt, "MTIX-225: prompt lives in assembled_prompt only")
+		require.Equal(t, n.Description, got.Chain[i].Description, "description is not in assembled_prompt, so slim keeps it")
+	}
+	require.Contains(t, got.AssembledPrompt, root.Prompt)
+	require.Contains(t, got.AssembledPrompt, child.Prompt)
+}
+
+func TestToolQuery_Context_ChainTrue_ReturnsAncestorAndTargetFields(t *testing.T) {
+	env := newBehaviorTools(t)
+	root := behaviorNode(t, env, "Context root", "")
+	child := behaviorNode(t, env, "Context target", root.ID)
+	var got service.ContextResponse
+	require.NoError(t, json.Unmarshal([]byte(behaviorCall(t, env.reg, "mtix_context", fmt.Sprintf(`{"id":%q,"chain":true}`, child.ID))), &got))
 	require.Len(t, got.Chain, 2)
 	for i, n := range []*model.Node{root, child} {
 		require.Equal(t, n.ID, got.Chain[i].ID)
@@ -232,7 +251,7 @@ func TestToolMutation_ResolvedAnnotation_PersistsAndLeavesOtherOpen(t *testing.T
 	require.Len(t, before.Annotations, 2)
 	id := before.Annotations[0].ID
 	out := behaviorCall(t, env.reg, "mtix_resolve_annotation", fmt.Sprintf(`{"id":%q,"annotation_id":%q,"author":"test-author"}`, node.ID, id))
-	require.Equal(t, "Annotation "+id+" resolved on "+node.ID, out)
+	require.Equal(t, "Annotation "+format.EventID(id)+" resolved on "+node.ID, out)
 	after, err := env.store.GetNode(t.Context(), node.ID)
 	require.NoError(t, err)
 	require.True(t, after.Annotations[0].Resolved)

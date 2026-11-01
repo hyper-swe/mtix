@@ -164,6 +164,13 @@ func TestCLI_CollisionsResolve_RenumbersLoser_NoNodeLost(t *testing.T) {
 	open, err = pool.ListOpenCollisions(ctx, "TEST")
 	require.NoError(t, err)
 	assert.Empty(t, open, "the collision is resolved")
+	require.NoError(t, runSyncCollisionsResolve(ctx, &out, &errBuf,
+		[]string{strconv.FormatInt(collisionID, 10)}, transport.Options{InsecureTLS: true}, "incoming"))
+	require.Contains(t, out.String(), "(no-op)")
+	require.Equal(t, moved.ID, "TEST-1.2")
+	_, err = app.store.GetNode(ctx, "TEST-1.3")
+	require.ErrorIs(t, err, model.ErrNotFound)
+
 }
 
 // TestCLI_CollisionsResolve_RejectsBadWinner validates the --winner flag.

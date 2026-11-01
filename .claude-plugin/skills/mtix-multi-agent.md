@@ -15,7 +15,7 @@ allowed-tools:
 
 # MTIX — Multi-Agent Coordination
 
-Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim and unclaim keep their existing required/default actor rules. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
+Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
 ## Health checks
 
@@ -58,6 +58,19 @@ suppresses the missing-pointer requirement; existing pointers are allowed and
 `mtix -C <board-root> docs generate`, then rerun doctor. Generation keeps the
 first live owned pointer and removes later duplicates, preserving other bytes.
 This check never writes documents or Git exclusions, including with `--fix`.
+
+Every write (for example `mtix create`) re-exports `.mtix/tasks.json` in this
+binary's export schema: `2.0.0`, or `2.1.0` with `history.export`. The first
+write after an mtix upgrade can change a committed file's `schema_version` and
+add fields, which breaks a reader that rejects unknown fields.
+`sync.auto_sync` does not stop this re-export: it turns off automatic import
+only. The read-only `export.schema` check reports PASS when the file declares
+the schema this binary writes and WARN with the fix when it declares another.
+To upgrade deliberately, run `mtix sync` and, when it reports no pending import,
+`mtix sync --fix`, then commit `.mtix/tasks.json` and update the strict reader.
+To keep the older schema, write to the board only with the mtix version that
+wrote it. When the file declares a NEWER schema than this binary writes, the
+fix says to upgrade mtix instead. The check never writes the file, including with `--fix`.
 
 Setup completion (`setup.done`, MTIX-112.19.2) remains a FUTURE registration.
 Do not infer that setup is current from the absence of that row.
@@ -119,8 +132,8 @@ approval or confirmation.
 ## Guarded wake ledger
 
 The local wake ledger and callable guarded wake service provide the foundation
-for host dispatch. Host-dispatcher discovery, enrollment and setup wiring are
-not supplied by this feature. The guarded service supports dispatch protocol 1
+for host dispatch. Experimental host dispatch is available but disabled by default; enrollment
+is service-only until setup integration ships. The guarded service supports dispatch protocol 1
 and reads the board's minimum protocol before every pass, even an empty pass.
 A newer floor stops the pass before any claim or send and raises an
 operator-local `wake.version-skew` alert. Follow the alert's compatible-binary
@@ -187,6 +200,8 @@ requires active count, even `--all=false`. `--count=false` alone keeps ordinary
 listing behavior; count flags cannot be used on inbox ack or lease subcommands.
 
 ## Inbox envelopes and replies
+
+The plain `mtix inbox --agent <agent-id>` listing prints each author and node id on one line and each body with its lines kept and indented, after removing control characters, escapes, bidirectional overrides and isolates, zero-width and other invisible format characters (the directional marks U+200E, U+200F and U+061C are kept), so a stored body cannot forge another entry or the ack line. Use `--json` for the exact stored text.
 
 Read agent-ready messages with `mtix inbox --agent <agent-id> --format context`.
 `--format prompt` starts with a fixed nudge containing only your id and event
@@ -363,8 +378,9 @@ Heartbeats prove agent liveness. Without them, the system assumes the agent has 
 When unclaiming a node (via `mcp__mtix__mtix_unclaim`):
 
 1. **Always provide a reason** — the next agent needs context on why you stopped
-2. **Document progress** — use `mcp__mtix__mtix_annotate` to record what was completed, what remains, and any issues discovered
-3. **Clean state** — ensure no partial changes are left that would confuse the next agent
+2. **Release only your own claim** — pass your `agent_id`; mtix refuses an unclaim of another agent's claim (`ErrAlreadyClaimed`) and names the current assignee. Pass `force: true` only when that agent is stale or gone; the activity log records you, the previous assignee and your reason
+3. **Document progress** — use `mcp__mtix__mtix_annotate` to record what was completed, what remains, and any issues discovered
+4. **Clean state** — ensure no partial changes are left that would confuse the next agent
 
 ## Independent Verification
 
@@ -385,7 +401,7 @@ When `mcp__mtix__mtix_stale` reports stale agents:
 1. **Investigate first** — is the agent truly dead, or just temporarily unresponsive?
 2. **Check partial work** — use `mcp__mtix__mtix_agent_work` to see what the stale agent was working on
 3. **Document** — add a comment to affected nodes explaining the stale detection
-4. **Reclaim if needed** — unclaim the node so it becomes available for other agents
+4. **Reclaim if needed** — unclaim the node with `force: true` and a reason so it becomes available for other agents
 5. **Never delete agent records** — they are part of the audit trail
 
 ## Parallel Work Coordination
@@ -438,3 +454,102 @@ operator to review the named hook, then run `mtix hooks trust <hook>` from an
 interactive operator terminal outside agent sessions. Agents never run this
 approval command themselves. Changing one hook or its project script requires
 review of that hook; other hook approvals remain independent.
+
+Webhook hooks need the same operator consent for each origin. `mtix hooks status`
+lists every webhook origin that is not consented, with the exact fix. An agent
+asks the operator to run `mtix hooks allow-origin <url>` from an interactive
+operator terminal outside agent sessions; agents never run it themselves.
+Loopback, link-local and private destinations stay refused unless the operator
+lists that origin with `--allow-private`. A webhook without consent is skipped
+and recorded; redirects to an origin that is not consented are not followed.
+
+## Wake process context and host controls
+
+This build stores and reports `wake.live` and `wake.max_hop_depth`, and applies `wake.confirm_window` now in `mtix inbox status`.
+The wake scanner is live in this build: `wake.live` and the hop and back-off guards apply to every scan.
+No live delivery route is built yet, so a scan never wakes an agent live (`MTIX_WAKE_HOP` delivery begins with the first route); read your inbox.
+
+The wake scan runs at the end of every mutation command and every dispatcher or daemon tick,
+starts no timer and contacts no hub. It marks a registration stale when its session is dead
+(the addressed events stay in the inbox) and deletes a registration unseen for 24 hours whose
+session is dead. No delivery route is built yet (MTIX-112.40.3, MTIX-112.40.4), so no agent is
+woken live. The `wake.scanner` doctor row reports active or idle, registration
+and stale counts, and the exact `mtix agent unregister <agent-id> --force` fix for a stale row.
+
+Set `mtix config set wake.live off` to stop live wakes on this host, or append
+`--agent worker` for one agent. `wake.settings` in `mtix doctor --json` shows
+effective policy and source; the admin skill lists every key and default.
+Wake and envelope budgets default unlimited. Hop depth defaults to 32 and the
+unacked threshold to 5; the guards are always on. Handle messages, reply, then
+ack after handling. You should not need to tune these settings.
+
+When a delivery route exists, a wake exec child will carry `MTIX_WAKE_HOP`
+(maximum covered-event hop) and
+`MTIX_WAKE_ATTEMPT` (audit only). Addressed replies increment the inherited
+hop; absent or malformed context starts at zero, with a warning for malformed
+context. A hook nudge into an already-running session carries no environment
+change, so replies there start at zero. The hop guard is an accident net, not
+an adversarial control. The scanner will leave a held wake unacknowledged and its alert will name
+the exact config command. The callable dispatcher enforces recipient budgets
+across boards and durable backoff; held wakes re-arm in the same dispatcher; scanner discovery remains
+a separate feature. Configuring settings does not install a wake route.
+
+A local board identity keeps moved boards and ordinary database copies on the
+same protected counter floor, including moves back to an earlier path. Each
+fresh fenced attempt still spends one credit. The identity stays local; exports
+and sync do not carry it. Identity-less restores at an unseen path, and legacy
+mirrors without an identity, may under-count history, never over-count. They
+establish an uncharged history baseline while retaining existing recipient
+credits and unacked debt. An identity-less database at a previously used path
+is treated as that path's board and can charge its own history. Doctor reads
+this state without creating an identity.
+
+Ack after handling keeps backoff quiet. Each new acknowledgement on any board
+resets this host recipient's delay; repeating an already acknowledged event or
+prefix does not reset it or return rate allowance. After five unacknowledged
+wakes, the next waits 1 minute, doubling to a 30-minute ceiling. A configured
+recipient limit holds before claim or send, preserving inbox events. The
+protected mirror retains spent allowance across restart or restore;
+`budget.rewind` in doctor text and JSON reports a rewound counter without
+resetting allowance, even with `--fix`.
+
+A held event stays unacknowledged in your inbox. When the hold lifts (the operator loosens
+the printed setting), the first pass of the callable dispatcher wakes it, from your registration's own
+high-water mark, and nothing is skipped. Once a dispatcher is wired in, your inbox calls and
+the operator's grant and setting changes also trigger that re-check; this build wires none,
+so nothing is delivered automatically. Ack after handling keeps back-off quiet and nothing is skipped.
+`wake.guard-trips` in doctor text and JSON lists recent loop-guard trips; it is read-only.
+
+## Wake delivery status
+
+`mtix comment --to <agent>` prints the addressee's wake state under its confirmation line, and with
+`--json` adds `wake` (`state`, `reason`, `fix`; `route` and `since` appear only on rows read from the wake ledger). `mtix inbox status --agent <agent> [--json] [--limit N]`
+shows the current state and the last wake outcomes with their age. It reads local state only and never contacts a hub.
+The message is always in the inbox: any state other than `confirmed` means the wake is unconfirmed, never that the
+message is lost.
+
+| State | Meaning | Next step |
+|---|---|---|
+| `queued` | A session and a dispatcher exist and no nudge is recorded yet | `mtix inbox status --agent <agent>` |
+| `nudged` | A nudge was sent and the confirmation window is open | wait, then `mtix inbox status --agent <agent>` |
+| `unconfirmed` | A nudge was sent and `wake.confirm_window` passed unseen | `mtix inbox --agent <agent> --wait` |
+| `confirmed` | The session was seen acting on the nudge | none |
+| `held` | The route needs approval: `mtix agent allow <agent>` | read the inbox: `mtix inbox --agent <agent>` |
+| `undeliverable` | No route could deliver; `reason` says why | `mtix inbox --agent <agent> --wait` |
+| `off` | Live wake is off for the agent | `mtix config set wake.live on --agent <agent>` |
+| `no-live-session` | The agent has no registered session on this host | `mtix agent register <agent>` |
+| `no-dispatcher` | No dispatcher heartbeat: nothing nudges, the event waits in the inbox | `mtix inbox --agent <agent> --wait` |
+| `unknown` | A source could not be read; `reason` names it | `mtix doctor --json` |
+
+`unconfirmed` is derived at read time from `wake.confirm_window` (default 30 seconds; set it with
+`mtix config set wake.confirm_window 60`, whole seconds 1 to 86400; it is an ordinary setting and needs no terminal). It is never written as an inbox event and no timer runs.
+In this build the states `nudged`, `unconfirmed`, `confirmed`, `held` and `undeliverable` come from wake ledger
+rows, and nothing writes ledger rows until a delivery route is built, so they are seeded-only today. Approving a held
+wake does not yet send a fresh nudge (follow-up MTIX-112.40.10); read the inbox yourself.
+
+`mtix doctor --json` reports `wake.listener.routes`, `wake.listener.dispatcher` and `wake.listener.unconfirmed-rate`
+(warns above 20 percent unconfirmed over 24 hours), each with a runnable `fix`. The rows `wake.listener.hook-installed`,
+`wake.listener.waiter-armed`, `wake.listener.route-contract` and `wake.listener.bypass-hold` are present as INFO rows
+with `data.reachable` false and `data.blocked_by` naming the ticket whose adapter is not built yet (hook waiter
+MTIX-112.40.4 and install MTIX-112.40.5, session socket MTIX-112.40.3): they are not reachable in this build and are never silently skipped.
+

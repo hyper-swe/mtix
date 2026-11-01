@@ -177,7 +177,7 @@ export function NodeDetail({
           {isEditingTitle ? (
             <input
               ref={titleInputRef}
-              className="w-full text-lg font-medium border-b-2 outline-none bg-transparent"
+              className="w-full text-lg font-medium border-b-2 outline-hidden bg-transparent"
               style={{
                 color: "var(--color-text-primary)",
                 borderColor: "var(--color-accent)",
@@ -209,7 +209,7 @@ export function NodeDetail({
           />
 
           <span
-            className="text-xs font-medium px-1.5 py-0.5 rounded"
+            className="text-xs font-medium px-1.5 py-0.5 rounded-sm"
             style={{
               backgroundColor: "var(--color-border)",
               color: "var(--color-text-primary)",
@@ -278,7 +278,7 @@ export function NodeDetail({
               </button>
             </div>
             <div
-              className="text-sm whitespace-pre-wrap rounded p-2"
+              className="text-sm whitespace-pre-wrap rounded-sm p-2"
               style={{
                 color: "var(--color-text-primary)",
                 backgroundColor: "var(--color-bg)",
@@ -402,7 +402,7 @@ export function NodeDetail({
                     data-testid="dep-item"
                   >
                     <span
-                      className="px-1.5 py-0.5 rounded font-mono"
+                      className="px-1.5 py-0.5 rounded-sm font-mono"
                       style={{
                         backgroundColor: "var(--color-border)",
                         color: "var(--color-text-primary)",

@@ -20,6 +20,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func compat054Command(t *testing.T, dir string, command string, args ...string) []byte {
@@ -28,7 +30,7 @@ func compat054Command(t *testing.T, dir string, command string, args ...string) 
 	cmd.Dir = dir
 	if command == "git" {
 		// Read-only canonical tag operations must not inherit worktree selection.
-		for _, value := range os.Environ() {
+		for _, value := range hostguard.Environ() {
 			key, _, _ := strings.Cut(value, "=")
 			if key != "GIT_DIR" && key != "GIT_WORK_TREE" && key != "GIT_COMMON_DIR" && key != "GIT_INDEX_FILE" {
 				cmd.Env = append(cmd.Env, value)
@@ -42,7 +44,7 @@ func compat054Command(t *testing.T, dir string, command string, args ...string) 
 
 func compat054Binary(t *testing.T) string {
 	t.Helper()
-	cache, err := os.UserCacheDir()
+	cache, err := hostguard.RealCacheDir()
 	require.NoError(t, err)
 	start, err := os.Getwd()
 	require.NoError(t, err)
@@ -88,7 +90,7 @@ func buildCompat054(t *testing.T, repo, commit, cache, path string) string {
 	output := filepath.Join(dir, "reader")
 	cmd := exec.CommandContext(t.Context(), "go", "build", "-o", output, "./cmd/mtix")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=-mod=mod")
+	cmd.Env = append(hostguard.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=-mod=mod")
 	log, err := cmd.CombinedOutput()
 	require.NoError(t, err, "real v0.5.4 tag build failed (report actual failure; never skip): %s", log)
 	raw, err := os.ReadFile(output)

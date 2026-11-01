@@ -982,3 +982,8 @@ func (n *noopFlusher) Flush() {}
 
 // Ensure failReader implements io.Reader.
 var _ io.Reader = (*failReader)(nil)
+
+// DeleteNodeWithRoot satisfies the grouped recovery store contract.
+func (m *dbMockStore) DeleteNodeWithRoot(ctx context.Context, id, _ string, author string) error {
+	return m.DeleteNode(ctx, id, false, author)
+}

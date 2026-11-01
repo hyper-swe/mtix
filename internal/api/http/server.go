@@ -29,6 +29,13 @@ type ServerConfig struct {
 	Port      string // HTTP port (default 6849).
 	RateLimit int    // Requests/second per client address (0=disabled per NFR-1.5).
 	Version   string // Build version reported by /health (default "dev" per FR-7.3b).
+
+	// InsecureBind is the operator's explicit opt-in to a non-loopback bind
+	// (NFR-5.2, MTIX-220).
+	InsecureBind bool
+	// AuthToken is the bearer token every request must present on a
+	// non-loopback bind. It is never logged. Loopback binds ignore it.
+	AuthToken string
 }
 
 // Server is the main HTTP server for mtix per FR-7.1.
@@ -136,6 +143,11 @@ func (s *Server) setupMiddleware() {
 	s.router.Use(LoggingMiddleware(s.logger))
 	s.router.Use(SecurityHeadersMiddleware())
 	s.router.Use(CacheControlMiddleware())
+	// MTIX-220: on a network bind, authenticate before anything else can
+	// answer, so an unauthenticated caller learns nothing (Host, Origin, CSRF).
+	if !isLoopbackHost(s.config.Bind) && s.config.AuthToken != "" {
+		s.router.Use(AuthMiddleware(s.config.AuthToken))
+	}
 	s.router.Use(HostAllowlistMiddleware(s.config.Bind))
 	s.router.Use(CORSMiddleware(s.config.Bind, s.config.Port))
 
@@ -205,12 +217,14 @@ func (s *Server) Router() *gin.Engine {
 func (s *Server) Start() error {
 	addr := net.JoinHostPort(s.config.Bind, s.config.Port)
 
-	// Security warning for non-localhost binding per NFR-5.2.
+	// NFR-5.2 / MTIX-220: a network bind needs --insecure-bind and a token.
+	if err := CheckExposure(s.config.Bind, s.config.InsecureBind, s.config.AuthToken != ""); err != nil {
+		return err
+	}
 	if !isLoopbackHost(s.config.Bind) {
 		fmt.Fprintf(s.warnOut, "\n"+
-			"WARNING: Binding to %s exposes the API to the network without authentication.\n"+
-			"All task data is readable and writable by anyone who can reach this address.\n"+
-			"This is intended for trusted networks only (e.g., local development, VPN).\n\n",
+			"WARNING: Serving on %s over plain HTTP. Requests need the bearer token, but the token and\n"+
+			"all task data travel unencrypted. Use only on trusted networks (for example a VPN).\n\n",
 			addr)
 	}
 

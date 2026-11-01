@@ -65,14 +65,24 @@ func newSyncRelayCmd() *cobra.Command {
 // configured. An unconfigured relay is not an error anywhere: a store
 // that never wanted this transport should not have to say so.
 func relayDir() string {
-	if app.configSvc == nil {
-		return ""
-	}
-	dir, err := app.configSvc.Get("sync.relay.dir")
+	dir, err := relayDirChecked()
 	if err != nil {
 		return ""
 	}
 	return dir
+}
+
+// relayDirChecked is relayDir with the read error kept, for the replace
+// guards, which fail closed when the evidence cannot be read (MTIX-107.31.8).
+func relayDirChecked() (string, error) {
+	if app.configSvc == nil {
+		return "", nil
+	}
+	dir, err := app.configSvc.Get("sync.relay.dir")
+	if err != nil {
+		return "", fmt.Errorf("read sync.relay.dir: %w", err)
+	}
+	return dir, nil
 }
 
 // relayConfigInt reads a numeric relay setting, falling back to its

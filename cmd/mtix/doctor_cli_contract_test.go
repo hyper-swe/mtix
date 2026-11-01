@@ -23,6 +23,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/testutil"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 type doctorCLIOutput struct {
@@ -51,10 +52,10 @@ func doctorCLIBoard(t *testing.T, relay string) string {
 
 func doctorCLIEnv(args string, dsn string) []string {
 	var env []string
-	for _, value := range os.Environ() {
+	for _, value := range hostguard.Environ() {
 		key, _, _ := strings.Cut(value, "=")
 		// Preserve GOCOVERDIR so instrumented child main writes coverage without warnings.
-		if strings.HasPrefix(key, "MTIX_") && key != isolatedOperatorEnv {
+		if strings.HasPrefix(key, "MTIX_") && !strings.HasPrefix(key, "MTIX_TEST_") {
 			continue
 		}
 		// Preserve GOCOVERDIR for instrumented stock-main children.
@@ -88,19 +89,74 @@ func doctorCLIExecute(t *testing.T, root string, dsn string, args ...string) doc
 	return doctorCLIOutput{stdout: stdout.String(), stderr: stderr.String(), exit: cmd.ProcessState.ExitCode()}
 }
 
+// doctorCLIRows validates the public row envelope and returns its string fields.
+// Optional structured data is validated separately instead of decoded as a string.
 func doctorCLIRows(t *testing.T, body string) []map[string]string {
 	t.Helper()
-	var rows []map[string]string
-	require.NoError(t, json.Unmarshal([]byte(body), &rows), "doctor must emit an array: %s", body)
-	require.NotNil(t, rows, "empty output is [] rather than null")
-	for _, row := range rows {
-		assert.Len(t, row, 4)
+	var wire []map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal([]byte(body), &wire), "doctor must emit an array: %s", body)
+	require.NotNil(t, wire, "empty output is [] rather than null")
+	rows := make([]map[string]string, 0, len(wire))
+	for _, raw := range wire {
+		for key := range raw {
+			require.Contains(t, []string{"id", "status", "detail", "fix", "data"}, key)
+		}
+		row := map[string]string{}
 		for _, key := range []string{"id", "status", "detail", "fix"} {
-			assert.Contains(t, row, key)
+			require.Contains(t, raw, key)
+			require.NotEqual(t, "null", string(raw[key]), "required doctor fields are strings")
+			var value string
+			require.NoError(t, json.Unmarshal(raw[key], &value))
+			row[key] = value
+		}
+		if data, present := raw["data"]; present {
+			var object map[string]json.RawMessage
+			require.NoError(t, json.Unmarshal(data, &object))
+			require.NotNil(t, object, "optional doctor data is an object")
 		}
 		assert.Contains(t, []string{"pass", "warn", "fail", "info"}, row["status"])
+		rows = append(rows, row)
 	}
 	return rows
+}
+
+func assertWakeSettingsDoctorInfo(t *testing.T, id, status, detail, fix string) bool {
+	t.Helper()
+	switch id {
+	case "wake.settings":
+		require.Equal(t, "info", status)
+		require.Contains(t, detail, "wake.max_hop_depth=32 (default)")
+		require.Contains(t, fix, "mtix config set wake.live off")
+	case "settings.ignored-workspace-key":
+		require.Equal(t, "info", status)
+		require.Contains(t, detail, "No workspace wake authority keys")
+		require.Empty(t, fix)
+	default:
+		return false
+	}
+	return true
+}
+
+// assertWakeScannerDoctorInfo checks the wake.scanner row on an empty board: INFO, idle, with a runnable fix.
+func assertWakeScannerDoctorInfo(t *testing.T, id, status, fix string) bool {
+	t.Helper()
+	if id != "wake.scanner" {
+		return false
+	}
+	require.Equal(t, "info", status)
+	require.True(t, fix == "" || strings.HasPrefix(fix, "mtix "), "scanner fix must be empty or runnable: "+fix)
+	return true
+}
+
+// assertWakeListenerDoctorInfo checks one wake.listener row on an empty board: INFO with a runnable fix.
+func assertWakeListenerDoctorInfo(t *testing.T, id, status, fix string) bool {
+	t.Helper()
+	if !strings.HasPrefix(id, "wake.listener.") {
+		return false
+	}
+	require.Equal(t, "info", status, id)
+	require.True(t, strings.HasPrefix(fix, "mtix "), id+" must carry a runnable fix: "+fix)
+	return true
 }
 
 func TestDoctorCLI_Help_DocumentsJSONFixAndExitCodes(t *testing.T) {
@@ -121,15 +177,15 @@ func TestDoctorCLI_Unconfigured_DocumentAndRetainedWakeInfoExitZero(t *testing.T
 			out := doctorCLIExecute(t, root, "", append([]string{"doctor"}, flags...)...)
 			assert.Equal(t, 0, out.exit, out.stderr)
 			rows := doctorCLIRows(t, out.stdout)
-			wantRows := 2
+			wantRows := 15 // docs, wake.scanner, 5 wake rows and the 8 wake.listener rows (7 plus hook-errors, MTIX-112.40.4)
 			if runtime.GOOS == "windows" {
 				wantRows++
 				assert.Equal(t, "platform.windows", rows[0]["id"])
 				assert.Equal(t, "info", rows[0]["status"])
 			}
 			require.Len(t, rows, wantRows)
-			assert.Equal(t, "docs.stale", rows[len(rows)-2]["id"])
-			assert.Equal(t, "warn", rows[len(rows)-2]["status"])
+			assert.Equal(t, "docs.stale", rows[len(rows)-15]["id"])
+			assert.Equal(t, "warn", rows[len(rows)-15]["status"])
 
 			wakeRows := 0
 			for _, row := range rows {
@@ -137,8 +193,15 @@ func TestDoctorCLI_Unconfigured_DocumentAndRetainedWakeInfoExitZero(t *testing.T
 					wakeRows++
 				}
 			}
-			assert.Equal(t, 1, wakeRows)
-			assert.Equal(t, "wake.ledger", rows[len(rows)-1]["id"])
+			assert.Equal(t, 3, wakeRows)
+			assert.Equal(t, "wake.ledger", rows[len(rows)-9]["id"])
+			listenerRows := 0
+			for _, row := range rows {
+				if assertWakeListenerDoctorInfo(t, row["id"], row["status"], row["fix"]) {
+					listenerRows++
+				}
+			}
+			assert.Equal(t, 8, listenerRows, "every documented wake.listener row is present with a fix")
 			assert.Empty(t, out.stderr)
 		})
 	}
@@ -152,6 +215,12 @@ func TestDoctorCLI_BrokenRelay_OnlyApplicableRowsExitTwo(t *testing.T) {
 	var relayFailure bool
 	for _, row := range rows {
 		if assertEmptyWakeDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) {
+			continue
+		}
+		if assertWakeSettingsDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) {
+			continue
+		}
+		if assertWakeListenerDoctorInfo(t, row["id"], row["status"], row["fix"]) || assertWakeScannerDoctorInfo(t, row["id"], row["status"], row["fix"]) {
 			continue
 		}
 		if runtime.GOOS == "windows" && row["id"] == "platform.windows" {

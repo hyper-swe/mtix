@@ -116,8 +116,12 @@ func writeProtectedAlertFixture(t *testing.T, state *oplocal.State, name, target
 	dir, err := state.Path()
 	require.NoError(t, err)
 	source := filepath.Join(dir, name+".json")
-	before, err := os.Stat(source)
+	// Capture identity from the open handle before Windows loses the old name.
+	sourceFile, err := os.Open(source)
 	require.NoError(t, err)
+	before, err := sourceFile.Stat()
+	require.NoError(t, err)
+	require.NoError(t, sourceFile.Close())
 	// Overwriting a pre-created inode preserves its existing native access rules.
 	require.NoError(t, os.WriteFile(source, data, 0600))
 	path := filepath.Join(dir, target)

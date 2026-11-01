@@ -31,6 +31,8 @@ type Annotation struct {
 	// comment. Carried onto the emitted comment event's payload so the
 	// addressee's inbox (a query over the journal) surfaces it.
 	Addressee string `json:"addressee,omitempty"`
+	// Hop is transient send metadata, retained only in the comment event payload.
+	Hop int64 `json:"-"`
 }
 
 // SortAnnotations returns a copy of annotations ordered by (CreatedAt, ID),
@@ -42,4 +44,26 @@ func SortAnnotations(annotations []Annotation) []Annotation {
 		return cmp.Or(a.CreatedAt.Compare(b.CreatedAt), cmp.Compare(a.ID, b.ID))
 	})
 	return sorted
+}
+
+// AnnotationShortIDLen is the length of the short annotation id that
+// `mtix show` prints and the shortest prefix `mtix resolve-annotation`
+// accepts. A ULID starts with a 10-character millisecond timestamp, so 12
+// characters add two random characters and keep two annotations written in the
+// same millisecond apart in all but rare cases (an ambiguous prefix is refused,
+// never guessed).
+const AnnotationShortIDLen = 12
+
+// ShortAnnotationID returns the first AnnotationShortIDLen characters of an
+// annotation id, or the whole id when it is shorter. It never splits a
+// character.
+func ShortAnnotationID(id string) string {
+	n := 0
+	for i := range id {
+		if n == AnnotationShortIDLen {
+			return id[:i]
+		}
+		n++
+	}
+	return id
 }

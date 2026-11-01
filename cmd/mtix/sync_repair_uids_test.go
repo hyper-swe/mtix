@@ -68,7 +68,7 @@ func TestPrintUIDRepairReports_PartialRepairIsLoud(t *testing.T) {
 	assert.Contains(t, stdout.String(), "MTIX: stamped 2 hub create row(s); 5 already stamped, 1 mismatched, 2 hub-only")
 	assert.Contains(t, stderr.String(), "2 create row(s) on the hub have no local node and stay unstamped: MTIX-7, MTIX-8")
 	assert.Contains(t, stderr.String(), "repair-uids --project MTIX")
-	assert.Contains(t, stderr.String(), "MTIX-3 carries uid h on the hub but l locally; left untouched")
+	assert.Contains(t, stderr.String(), `MTIX-3 carries uid "h" on the hub but "l" locally; left untouched`)
 	assert.NotContains(t, stdout.String(), "DRY RUN")
 }
 

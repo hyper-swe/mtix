@@ -597,3 +597,8 @@ func (m *mockStore) GetActivity(_ context.Context, _ string, _, _ int) ([]model.
 	return nil, nil
 }
 func (m *mockStore) Close() error { return nil }
+
+// DeleteNodeWithRoot preserves the mock's delete failure behavior for rerun.
+func (m *mockStore) DeleteNodeWithRoot(ctx context.Context, id, _ string, author string) error {
+	return m.DeleteNode(ctx, id, false, author)
+}

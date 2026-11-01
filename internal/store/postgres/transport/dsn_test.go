@@ -63,16 +63,33 @@ func TestSource_RefusesEmptySecretsFile(t *testing.T) {
 }
 
 func TestSource_RefusesLooseSecretsFileMode(t *testing.T) {
-	dir := withMTIXDir(t)
-	t.Setenv(transport.EnvDSN, "")
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dir, transport.SecretsFilename),
-		[]byte("postgres://user:pass@host/db\n"),
-		0o644,
-	))
-	_, err := transport.Source(dir)
-	require.Error(t, err)
-	require.True(t, errors.Is(err, transport.ErrSecretsFileMode))
+	tests := []struct {
+		name         string
+		creationMode os.FileMode
+	}{
+		{"ordinary_creation", 0o644},
+		{"secure_creation", 0o600},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := withMTIXDir(t)
+			t.Setenv(transport.EnvDSN, "")
+			path := filepath.Join(dir, transport.SecretsFilename)
+			require.NoError(t, os.WriteFile(
+				path,
+				[]byte("postgres://user:pass@host/db\n"),
+				tt.creationMode,
+			))
+			// Creation permissions are narrowed by umask; force the loose fixture.
+			require.NoError(t, os.Chmod(path, 0o644))
+			info, err := os.Stat(path)
+			require.NoError(t, err)
+			require.Equal(t, os.FileMode(0o644), info.Mode().Perm())
+			_, err = transport.Source(dir)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, transport.ErrSecretsFileMode))
+		})
+	}
 }
 
 func TestSource_NoSourceConfigured(t *testing.T) {
@@ -201,8 +218,15 @@ func TestEnforceTLS_DoesNotOverrideExplicitSSLROOTCERT(t *testing.T) {
 		"explicit DSN value beats env var")
 }
 
-func TestEnforceTLS_RejectsNonURLDSN(t *testing.T) {
-	_, err := transport.EnforceTLSPosture("host=foo dbname=bar", transport.Options{})
+func TestEnforceTLS_RejectsUnknownFormDSN(t *testing.T) {
+	_, err := transport.EnforceTLSPosture("foo/bar", transport.Options{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "postgres://")
+	require.Contains(t, err.Error(), "key=value")
+}
+
+func TestEnforceTLS_AcceptsKeyValueDSN(t *testing.T) {
+	out, err := transport.EnforceTLSPosture("host=foo dbname=bar", transport.Options{})
+	require.NoError(t, err)
+	require.Contains(t, out, "sslmode='verify-full'")
 }

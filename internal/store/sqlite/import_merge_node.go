@@ -43,6 +43,9 @@ func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 			touched = append(touched, &data.Nodes[i])
 		}
 		if res != nil {
+			if err := appendWorkflowResolution(ctx, tx, &data.Nodes[i], res); err != nil {
+				return result, err
+			}
 			result.WorkflowResolved = append(result.WorkflowResolved, *res)
 		}
 	}

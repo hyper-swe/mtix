@@ -17,7 +17,7 @@ import (
 func RegisterWorkflowTools(reg *ToolRegistry, nodeSvc *service.NodeService, bgSvc *service.BackgroundService, opts ...ToolOption) {
 	cfg := applyToolOptions(opts)
 	registerClaimTool(reg, nodeSvc)
-	registerUnclaimTool(reg, nodeSvc)
+	registerUnclaimTool(reg, nodeSvc, cfg.author)
 	registerDoneTool(reg, nodeSvc)
 	registerDeferTool(reg, nodeSvc, cfg.author)
 	registerCancelTool(reg, nodeSvc)
@@ -53,36 +53,46 @@ func registerClaimTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Claimed %s for %s", p.ID, p.AgentID)), nil
+		return SuccessResult(textClaimed(p.ID, p.AgentID)), nil
 	})
 }
 
-func registerUnclaimTool(reg *ToolRegistry, svc *service.NodeService) {
+// registerUnclaimTool registers mtix_unclaim (FR-10.4). The actor is agent_id
+// when given, otherwise the server process identity (WithAuthor); only the
+// assignee may release a claim unless force is set (MTIX-169).
+func registerUnclaimTool(reg *ToolRegistry, svc *service.NodeService, author string) {
 	reg.Register(ToolDef{
 		Name:        "mtix_unclaim",
-		Description: "Release a node assignment",
+		Description: "Release a node assignment. Only the assignee can release it unless force is true.",
 		InputSchema: SchemaObj{
 			Type: "object",
 			Properties: map[string]SchemaProp{
-				"id":     {Type: "string", Description: "Node ID"},
-				"reason": {Type: "string", Description: "Reason for release"},
+				"id":       {Type: "string", Description: "Node ID"},
+				"reason":   {Type: "string", Description: "Reason for release"},
+				"agent_id": {Type: "string", Description: "Acting agent ID; defaults to the server's MTIX_AUTHOR_ID or author_id"},
+				"force":    {Type: "boolean", Description: "Release a claim held by another agent; the activity log names you, the previous assignee and the reason"},
 			},
 			Required: []string{"id", "reason"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
 		var p struct {
-			ID     string `json:"id"`
-			Reason string `json:"reason"`
+			ID      string `json:"id"`
+			Reason  string `json:"reason"`
+			AgentID string `json:"agent_id"`
+			Force   bool   `json:"force"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse unclaim args: %w", err)
 		}
+		if p.AgentID == "" {
+			p.AgentID = author
+		}
 
-		if err := svc.UnclaimNode(ctx, p.ID, p.Reason, "mcp"); err != nil {
+		if err := svc.UnclaimNode(ctx, p.ID, p.Reason, p.AgentID, p.Force); err != nil {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Unclaimed %s", p.ID)), nil
+		return SuccessResult(textUnclaimed(p.ID)), nil
 	})
 }
 
@@ -109,7 +119,7 @@ func registerDoneTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("%s → done", p.ID)), nil
+		return SuccessResult(textDone(p.ID)), nil
 	})
 }
 
@@ -159,9 +169,9 @@ func registerDeferTool(reg *ToolRegistry, svc *service.NodeService, author strin
 		}
 
 		if wake != nil {
-			return SuccessResult(fmt.Sprintf("Deferred %s until %s", p.ID, wake.Format(time.RFC3339))), nil
+			return SuccessResult(textDeferred(p.ID, wake.Format(time.RFC3339))), nil
 		}
-		return SuccessResult(fmt.Sprintf("Deferred %s", p.ID)), nil
+		return SuccessResult(textDeferred(p.ID, "")), nil
 	})
 }
 
@@ -192,7 +202,7 @@ func registerCancelTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Cancelled %s: %s", p.ID, p.Reason)), nil
+		return SuccessResult(textCancelled(p.ID, p.Reason)), nil
 	})
 }
 
@@ -219,7 +229,7 @@ func registerReopenTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Reopened %s", p.ID)), nil
+		return SuccessResult(textReopened(p.ID)), nil
 	})
 }
 
@@ -372,6 +382,6 @@ func registerRerunTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, err
 		}
 
-		return SuccessResult(fmt.Sprintf("Rerun %s with strategy %s", p.ID, p.Strategy)), nil
+		return SuccessResult(textRerun(p.ID, p.Strategy)), nil
 	})
 }

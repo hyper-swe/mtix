@@ -279,9 +279,8 @@ The web UI is a Vite + React + TypeScript SPA embedded in the Go binary via `//g
 | `@testing-library/react` | ^16.1.0 | MIT | React component testing utilities | **APPROVED** |
 | `@testing-library/jest-dom` | ^6.6.3 | MIT | DOM assertion matchers | **APPROVED** |
 | `jsdom` | ^25.0.1 | MIT | DOM simulation for tests | **APPROVED** |
-| `tailwindcss` | ^3.4.16 | MIT | Utility-first CSS framework | **APPROVED** |
-| `postcss` | ^8.4.49 | MIT | CSS processing (Tailwind dependency) | **APPROVED** |
-| `autoprefixer` | ^10.4.20 | MIT | CSS vendor prefixing | **APPROVED** |
+| `tailwindcss` | ^4.3.3 | MIT | Utility-first CSS framework (major version bump from ^3.4.16, MTIX-186) | **APPROVED** |
+| `@tailwindcss/vite` | ^4.3.3 | MIT | Tailwind's own Vite plugin; part of the approved Tailwind tool and replaces the PostCSS setup (MTIX-186) | **APPROVED** |
 | `eslint` | ^9.15.0 | MIT | JavaScript/TypeScript linter | **APPROVED** |
 | `@typescript-eslint/eslint-plugin` | ^8.15.0 | MIT | TypeScript ESLint rules | **APPROVED** |
 | `@typescript-eslint/parser` | ^8.15.0 | BSD-2 | TypeScript ESLint parser | **APPROVED** |
@@ -309,6 +308,9 @@ The web UI is a Vite + React + TypeScript SPA embedded in the Go binary via `//g
 | Advisory | Severity | Package | Status |
 |----------|----------|---------|--------|
 | GHSA-67mh-4wv8-2f99 | Moderate | `esbuild` ≤0.24.2 | **FIXED** — Upgrade `vite` to ≥6.2.0 and `vitest` to ≥3.2.0 resolves this. Dev-only; does not affect production bundle. |
+| GHSA-vfj7-8cjw-p6xm | High | `braces` (through `micromatch`, `fast-glob` and `tailwindcss` 3.x) | **FIXED** — `tailwindcss` 4 no longer depends on this chain. `npm audit` reports 0 vulnerabilities (MTIX-186). |
+
+**Package changes (MTIX-186).** `tailwindcss` moved from ^3.4.16 to ^4.3.3 and gained Tailwind's own `@tailwindcss/vite` plugin, so the approved tool is the same and no new tool is added. `postcss` and `autoprefixer` are no longer direct dependencies: Tailwind 4 handles CSS processing and vendor prefixes itself, and Vite bundles the PostCSS it needs.
 
 ### Web UI Security Monitoring
 

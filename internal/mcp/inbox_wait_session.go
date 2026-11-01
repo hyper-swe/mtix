@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/hyper-swe/mtix/internal/format"
 )
 
 // Bound long-lived waits independently of the serial ordinary-tool route.
@@ -127,7 +129,7 @@ func (s *Server) runInboxWait(ctx context.Context, session *inboxWaitSession, ke
 		result, err = s.tools.Call(ctx, params.Name, params.Arguments)
 	}
 	if err != nil {
-		result = ErrorResult(err.Error())
+		result = ErrorResult(format.SafeText(err.Error()))
 	}
 	if !session.complete(key, wait) {
 		return

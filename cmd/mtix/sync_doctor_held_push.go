@@ -52,7 +52,7 @@ func checkHeldPushEvents(ctx context.Context, st *sqlite.Store) (bool, string) {
 	}
 	items := make([]string, 0, len(held)+1)
 	for _, h := range held {
-		reason := []rune(oneLine(h.Reason))
+		reason := []rune(displayHoldReason(h.Reason))
 		if len(reason) > heldPushReasonRunes {
 			reason = append(reason[:heldPushReasonRunes], []rune("...")...)
 		}

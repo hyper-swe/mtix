@@ -136,7 +136,7 @@ export function StaleBoard({
         return (
           <div
             key={reason}
-            className="rounded border"
+            className="rounded-sm border"
             style={{
               borderColor: "var(--color-border)",
               backgroundColor: "var(--color-surface)",
@@ -205,7 +205,7 @@ export function StaleBoard({
                 <div className="flex gap-1 shrink-0">
                   {entry.reason === "blocked_not_unblocked" && (
                     <button
-                      className="text-xs px-1.5 py-0.5 rounded cursor-pointer"
+                      className="text-xs px-1.5 py-0.5 rounded-sm cursor-pointer"
                       style={{
                         backgroundColor: "var(--color-status-done)",
                         color: "#FFFFFF",
@@ -217,7 +217,7 @@ export function StaleBoard({
                     </button>
                   )}
                   <button
-                    className="text-xs px-1.5 py-0.5 rounded cursor-pointer"
+                    className="text-xs px-1.5 py-0.5 rounded-sm cursor-pointer"
                     style={{
                       backgroundColor: "var(--color-accent)",
                       color: "#FFFFFF",
@@ -228,7 +228,7 @@ export function StaleBoard({
                     Reassign
                   </button>
                   <button
-                    className="text-xs px-1.5 py-0.5 rounded cursor-pointer"
+                    className="text-xs px-1.5 py-0.5 rounded-sm cursor-pointer"
                     style={{
                       color: "var(--color-text-secondary)",
                       border: "1px solid var(--color-border)",

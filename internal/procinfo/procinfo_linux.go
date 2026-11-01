@@ -68,7 +68,9 @@ func Info(pid int) (Proc, error) {
 	p.Exe, _ = os.Readlink(dir + "/exe")                             // best effort: another user's process is unreadable
 	if cmdline, rerr := os.ReadFile(dir + "/cmdline"); rerr == nil { // #nosec G304 -- pid is an integer
 		p.Argv0, _, _ = strings.Cut(string(cmdline), "\x00")
+		p.Args = splitCmdline(cmdline)
 	}
+	p.Cwd, _ = os.Readlink(dir + "/cwd") // best effort: another user's process is unreadable
 	return p, nil
 }
 
@@ -86,4 +88,14 @@ func parseStatInfo(data []byte) (Proc, error) {
 		return Proc{}, fmt.Errorf("malformed process stat: %w", err)
 	}
 	return Proc{PPID: ppid, Name: string(data[open+1 : end]), StartTime: string(fields[19])}, nil
+}
+
+// splitCmdline splits a /proc/<pid>/cmdline buffer into its arguments. An empty
+// buffer (a zombie, or a kernel thread) yields nil: the arguments are unknown.
+func splitCmdline(raw []byte) []string {
+	raw = bytes.TrimSuffix(raw, []byte{0})
+	if len(raw) == 0 {
+		return nil
+	}
+	return strings.Split(string(raw), "\x00")
 }

@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -75,7 +76,9 @@ func TestPull_InvalidNodeID_QuarantinedNotApplied(t *testing.T) {
 			require.Contains(t, held, bad.EventID)
 			requireNotApplied(t, bad)
 			q := requireQuarantinedAs(t, bad, "pull", "invalid node id")
-			require.Contains(t, q.Reason, tt.badID, "the reason names the id")
+			// The reason shows the id escaped (printable non-ASCII as \u00e9), never raw.
+			require.Contains(t, q.Reason, strings.ReplaceAll(tt.badID, "é", `\u00e9`), "the reason names the escaped id")
+			require.NotContains(t, q.Reason, "é", "the reason never shows the raw character")
 			require.Equal(t, 1, countTestRows(t, `SELECT COUNT(*) FROM nodes`),
 				"only the valid create applied")
 			require.Equal(t, create.LamportClock, peerLamport(t),

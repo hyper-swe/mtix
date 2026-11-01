@@ -15,20 +15,15 @@
 // benchmark alone would never fail a build. The Benchmarks are for
 // diagnosing a regression the Tests catch.
 //
-// The publish gate compares the median of seven independently prepared
-// 200-event batches against the unchanged 1 ms/event ceiling. Each sample
-// times only PublishPending; fixture creation is excluded. This is a median
-// of batch-average per-event costs, not a distribution of individual append
-// latencies. Up to three scheduling or I/O outliers cannot fail the gate,
-// while a slowdown affecting the majority of batches still fails it.
-// All samples publish real pending events from a fresh rig; empty polls and
-// partial publication cannot lower the median. No race-specific budget or
-// skip is used. BenchmarkRelayPublish remains available for diagnosis.
+// The ordinary publish gate compares seven real candidate/reference pairs.
+// Race and short runs retain that relative check. Explicit relay-quiet mode
+// additionally checks the frozen reference against the 1 ms/event ceiling.
 package benchmarks
 
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -36,18 +31,16 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/relay/ingest"
 	"github.com/hyper-swe/mtix/internal/relay/publisher"
 	"github.com/hyper-swe/mtix/internal/relay/segment"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 )
 
 const (
-	// relayPublishBudget is the unchanged FR-21 §9 local append ceiling.
-	relayPublishBudget = 1 * time.Millisecond
-
 	relayPeerID = "0123456789abcdef"
 )
 
@@ -93,33 +86,61 @@ func (r *relayRig) journal(tb testing.TB, n int) {
 
 func (r *relayRig) publisher(tb testing.TB) *publisher.Publisher {
 	tb.Helper()
+	return r.publisherWithLimit(tb, 0)
+}
+
+func (r *relayRig) publisherWithLimit(tb testing.TB, limit int) *publisher.Publisher {
+	tb.Helper()
 	p, err := publisher.New(publisher.Config{
 		Journal: r.store, SegmentsDir: r.segDir, PeerID: relayPeerID,
-		Key: relayKey, KeyEpoch: 1,
+		Key: relayKey, KeyEpoch: 1, BatchLimit: limit,
 		Logger: slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError})),
 	})
 	require.NoError(tb, err)
 	return p
 }
 
-// TestRelayPublish_MeetsTheLatencyTarget asserts the FR-21 §9 publish
-// budget. This is the gate CI actually runs.
+var relayQuiet = flag.Bool("relay-quiet", false, "also enforce FR-21 reference ceiling; requires non-race, non-short")
+
+// TestRelayPublish_MeetsTheLatencyTarget always checks relative publisher cost.
 func TestRelayPublish_MeetsTheLatencyTarget(t *testing.T) {
-	median, err := checkRelayPublishLatency(func() (int, time.Duration, error) {
-		r := newRelayRig(t)
-		r.journal(t, 200)
-		p := r.publisher(t)
-		start := time.Now()
-		n, err := p.PublishPending(context.Background())
-		return n, time.Since(start), err
-	})
+	require.NoError(t, relayQuietModeError(*relayQuiet, relayRaceEnabled, testing.Short()))
+	pairIndex := 0
+	result, err := checkRelayPublishLatency(func(referenceFirst bool) relayPublishPair {
+		pair := measureRelayPublishPair(t, referenceFirst)
+		pairIndex++
+		logRelayPublishPair(t, pairIndex, pair)
+		return pair
+	}, *relayQuiet)
+	t.Logf("relay publish: median paired ratio %.6f (limit %.6f), reference %v/event, candidate %v/event, quiet=%t", result.MedianRatio, relayPublishMaxRatio, result.ReferenceBatch/200, result.CandidateBatch/200, *relayQuiet)
 	require.NoError(t, err)
-	t.Logf("relay publish: median batch cost %v/event (budget %v)", median, relayPublishBudget)
 }
 
-// checkRelayPublishLatency validates every batch before comparing the
+// checkRelayPublishLatency validates all seven real pairs and alternates their
+// timing order. Invalid later observations cannot hide behind earlier samples.
+func checkRelayPublishLatency(measure func(bool) relayPublishPair, quiet bool) (relayPublishSummary, error) {
+	var costs [7][2]time.Duration
+	for i := range costs {
+		referenceFirst := i%2 == 0
+		pair := measure(referenceFirst)
+		if pair.ReferenceFirst != referenceFirst {
+			return relayPublishSummary{}, fmt.Errorf("pair %d: incorrect timing order", i+1)
+		}
+		for side, measurement := range []relayPublishMeasurement{pair.Reference, pair.Candidate} {
+			name := []string{"reference", "candidate"}[side]
+			if err := validateRelayPublishMeasurement(name, measurement.Count, measurement.Elapsed, measurement.Err); err != nil {
+				return relayPublishSummary{}, fmt.Errorf("pair %d: %w", i+1, err)
+			}
+			costs[i][side] = measurement.Elapsed
+		}
+	}
+	return evaluateRelayPublishCosts(costs, relayPublishMaxRatio, quiet)
+}
+
+// checkRelayReferenceLatency preserves absolute reference boundary controls.
+// It validates every batch before comparing the
 // median batch-average per-event cost against the FR-21 §9 ceiling.
-func checkRelayPublishLatency(measure func() (int, time.Duration, error)) (time.Duration, error) {
+func checkRelayReferenceLatency(measure func() (int, time.Duration, error)) (time.Duration, error) {
 	const samples = 7
 	durations := make([]time.Duration, samples)
 	for i := range durations {
@@ -130,10 +151,14 @@ func checkRelayPublishLatency(measure func() (int, time.Duration, error)) (time.
 		if n != 200 {
 			return 0, fmt.Errorf("publish batch %d: got %d events, want 200", i+1, n)
 		}
-		durations[i] = elapsed / time.Duration(n)
+		if elapsed <= 0 {
+			return 0, fmt.Errorf("publish batch %d: elapsed time must be positive, got %v", i+1, elapsed)
+		}
+		durations[i] = elapsed
 	}
-	median, _ := summary(durations)
-	if median > relayPublishBudget {
+	total, _ := summary(durations)
+	median := total / 200
+	if total > relayPublishBudget*200 {
 		return median, fmt.Errorf("relay publish median batch cost is %v/event over %d batches (budget %v)", median, samples, relayPublishBudget)
 	}
 	return median, nil
@@ -179,14 +204,15 @@ func TestRelayIngest_TickIOIsBoundedByNewWorkNotHistory(t *testing.T) {
 func BenchmarkRelayPublish(b *testing.B) {
 	r := newRelayRig(b)
 	r.journal(b, b.N)
-	p := r.publisher(b)
+	p := r.publisherWithLimit(b, b.N)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 	n, err := p.PublishPending(context.Background())
 	b.StopTimer()
 	require.NoError(b, err)
-	require.Positive(b, n)
+	require.Equal(b, b.N, n, "the benchmark denominator must match published events")
+	b.Logf("relay publish benchmark: prepared=%d published=%d requested=%d", r.made, n, b.N)
 }
 
 // BenchmarkRelayIngest measures a poll's read cost: one directory

@@ -5,12 +5,16 @@ package validator_test
 
 import (
 	"encoding/json"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
+	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
 // TestValidateIngest_InvalidNodeID_Rejected: a pulled event is refused when
@@ -25,19 +29,19 @@ func TestValidateIngest_InvalidNodeID_Rejected(t *testing.T) {
 		payload string
 		want    string
 	}{
-		{"node id with a non-ASCII segment", model.OpCreateNode, "MTIX-1é.4", `{"title":"x"}`, `node_id "MTIX-1é.4"`},
+		{"node id with a non-ASCII segment", model.OpCreateNode, "MTIX-1é.4", `{"title":"x"}`, `node_id "MTIX-1\u00e9.4"`},
 		{"node id without a dash", model.OpComment, "MTIX1", `{"body":"x"}`, `node_id "MTIX1"`},
 		{"node id with a trailing dot", model.OpDelete, "MTIX-1.", `{}`, `node_id "MTIX-1."`},
 		{"node id with a space", model.OpClaim, "MTIX-1 .2", `{"agent_id":"a"}`, `node_id "MTIX-1 .2"`},
 		{"node id with a lowercase prefix", model.OpSetPrompt, "mtix-1", `{"prompt_text":"x"}`, `node_id "mtix-1"`},
 		{"parent id with a non-ASCII segment", model.OpCreateNode, "MTIX-1.4",
-			`{"title":"x","parent_id":"MTIX-1é"}`, `parent_id "MTIX-1é"`},
+			`{"title":"x","parent_id":"MTIX-1é"}`, `parent_id "MTIX-1\u00e9"`},
 		{"link_dep endpoint", model.OpLinkDep, "MTIX-1",
 			`{"depends_on_node_id":"MTIX-2.x","dep_type":"blocks"}`, `depends_on_node_id "MTIX-2.x"`},
 		{"link_dep without an endpoint", model.OpLinkDep, "MTIX-1",
 			`{"dep_type":"blocks"}`, `depends_on_node_id ""`},
 		{"unlink_dep endpoint", model.OpUnlinkDep, "MTIX-1",
-			`{"depends_on_node_id":"MTIX-2é"}`, `depends_on_node_id "MTIX-2é"`},
+			`{"depends_on_node_id":"MTIX-2é"}`, `depends_on_node_id "MTIX-2\u00e9"`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -89,4 +93,33 @@ func TestValidate_InvalidNodeID_PushUnchanged(t *testing.T) {
 	e.NodeID = "MTIX-1é.4"
 
 	require.NoError(t, validator.Validate(e, refNow, nil))
+}
+
+// TestValidateEventNodeIDs_HostileIDs_PrintableASCII proves refusals render
+// opaque node-id bytes safely, including printable non-ASCII (MTIX-187.7.12).
+func TestValidateEventNodeIDs_HostileIDs_PrintableASCII(t *testing.T) {
+	for _, fixture := range testutil.HostileIDs() {
+		t.Run(fixture.Name, func(t *testing.T) {
+			e := validEvent()
+			e.NodeID = fixture.Value
+
+			err := validator.ValidateEventNodeIDs(e)
+
+			require.ErrorIs(t, err, validator.ErrInvalidNodeID)
+			require.ErrorIs(t, err, model.ErrInvalidInput)
+			message := err.Error()
+			for i := range len(message) {
+				require.True(t, message[i] >= 0x20 && message[i] <= 0x7e,
+					"non-printable-ASCII byte at offset %d", i)
+			}
+			_, rendered, found := strings.Cut(message, " node_id ")
+			require.True(t, found)
+			rendered, found = strings.CutSuffix(rendered, ": "+format.EventID(model.ValidateSyncNodeID(fixture.Value).Error())+": "+model.ErrInvalidInput.Error())
+			require.True(t, found)
+			decoded, decodeErr := strconv.Unquote(rendered)
+			require.NoError(t, decodeErr)
+			require.Equal(t, fixture.Value, decoded)
+			require.Equal(t, fixture.Value, e.NodeID)
+		})
+	}
 }

@@ -15,6 +15,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 // The cmd PostgreSQL matrix also exercises the real released-reader store fixture.
@@ -24,7 +25,7 @@ func TestAttachSchema_PostgresPull_PreservesLocalState(t *testing.T) {
 	require.NoError(t, err)
 	cmd := exec.CommandContext(t.Context(), "go", "test", "./internal/store/sqlite", "-run", "^TestAttachSchema_054BinaryOpensMigratedStore$", "-count=1", "-v")
 	cmd.Dir = filepath.Clean(filepath.Join(dir, "..", ".."))
-	cmd.Env = append(os.Environ(), "MTIX_ATTACH_TEST_DSN="+dsn)
+	cmd.Env = append(hostguard.Environ(), "MTIX_ATTACH_TEST_DSN="+dsn)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, "released-reader fixture: %s", output)
 	t.Logf("released-reader child pid=%d output:\n%s", cmd.Process.Pid, output)

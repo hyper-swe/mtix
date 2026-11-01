@@ -127,6 +127,15 @@ func keepsLoggedNode(l loggedNode, byUID map[string]bool, byID map[string]*expor
 	return f != nil && f.UID != "" && f.Title == l.title && (!l.pushed || model.IsBackfillUID(l.uid))
 }
 
+// storeSyncs reports whether the replace treats the store as synced: asSynced
+// (AsSyncedStore) says so, or the store records it (syncedWithHub).
+func storeSyncs(ctx context.Context, q rowQuerier, asSynced bool) (bool, error) {
+	if asSynced {
+		return true, nil
+	}
+	return syncedWithHub(ctx, q)
+}
+
 // refuseDroppingLoggedNodes returns an error wrapping
 // ErrReplaceOnSyncedStore when the store has synced with a hub and the
 // replace of data (the file as the replace writes it) would leave a local
@@ -137,8 +146,8 @@ func keepsLoggedNode(l loggedNode, byUID map[string]bool, byID map[string]*expor
 // task would never come back. A renumbered task keeps its uid and is not
 // refused. It runs in the import's transaction tx, before anything is
 // deleted.
-func refuseDroppingLoggedNodes(ctx context.Context, tx *sql.Tx, data *ExportData) error {
-	synced, err := syncedWithHub(ctx, tx)
+func refuseDroppingLoggedNodes(ctx context.Context, tx *sql.Tx, data *ExportData, asSynced bool) error {
+	synced, err := storeSyncs(ctx, tx, asSynced)
 	if err != nil || !synced {
 		return err
 	}
@@ -192,8 +201,8 @@ func droppedLoggedNodes(ctx context.Context, tx *sql.Tx, data *ExportData) ([]lo
 // the new board lacks would otherwise reach a hub or relay with the first
 // push, creating a task this board does not hold. A synced store is refused
 // before this runs (refuseDroppingLoggedNodes); it does nothing for one.
-func discardUnsharedEvents(ctx context.Context, tx *sql.Tx, data *ExportData) error {
-	synced, err := syncedWithHub(ctx, tx)
+func discardUnsharedEvents(ctx context.Context, tx *sql.Tx, data *ExportData, asSynced bool) error {
+	synced, err := storeSyncs(ctx, tx, asSynced)
 	if err != nil || synced {
 		return err
 	}

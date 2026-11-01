@@ -22,6 +22,9 @@ type receivedImport struct {
 	diff                        *sqlite.ReplaceDiff
 	resolution                  *sqlite.BaseResolution
 	start                       time.Time
+	// assumeSynced: transient hub evidence (an exported DSN) makes the replace
+	// guards treat the store as synced (sqlite.AsSyncedStore, MTIX-107.31.8).
+	assumeSynced bool
 }
 
 func (s *SyncService) applyReceivedImport(ctx context.Context, ri *receivedImport) error {
@@ -36,8 +39,11 @@ func (s *SyncService) applyReceivedImport(ctx context.Context, ri *receivedImpor
 	s.logger.Info("sync_import_triggered", "event", "sync_import_triggered", "file_hash", ri.fileHash,
 		"stored_hash", string(ri.storedHash), "file_size", len(ri.data), "node_count", ri.incoming.NodeCount)
 	// MTIX-95.31.4: nothing is written if the store changed after the loss check.
-	unchanged := sqlite.IfStoreUnchanged(ri.local.Checksum)
-	importRes, importErr := s.store.Import(ctx, ri.written, sqlite.ImportModeReplace, false, unchanged)
+	opts := []sqlite.ImportOption{sqlite.IfStoreUnchanged(ri.local.Checksum)}
+	if ri.assumeSynced {
+		opts = append(opts, sqlite.AsSyncedStore())
+	}
+	importRes, importErr := s.store.Import(ctx, ri.written, sqlite.ImportModeReplace, false, opts...)
 	if importErr != nil {
 		return fmt.Errorf("auto-import: %w", importErr)
 	}

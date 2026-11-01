@@ -72,6 +72,10 @@ type Approval struct {
 // ApproveDSN applies the TLS posture to dsn and returns the approved
 // configuration (FR-18.15, FR-18.17, MTIX-95.20, MTIX-95.25).
 //
+// The DSN is the postgres:// URL form or the libpq key=value form. The
+// key=value form needs no encoding for any password character, and the
+// MTIX_SYNC_PASSWORD variable supplies a password the DSN does not name.
+//
 // It defaults sslmode to verify-full when the DSN names none, refuses a
 // weaker sslmode unless opts.InsecureTLS is set, and adds
 // MTIX_SYNC_SSLROOTCERT as sslrootcert when the DSN names none. It then
@@ -92,24 +96,23 @@ type Approval struct {
 // connection string, is replaced by one fixed message wrapping only
 // ErrDSNMalformed.
 func ApproveDSN(dsn string, opts Options) (*Approval, error) {
-	u, err := parseDSN(dsn)
+	settings, err := parseDSN(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("parse dsn: %w", err)
 	}
-	q := u.Query()
-	mode := strings.ToLower(q.Get("sslmode"))
+	mode := strings.ToLower(settings.get("sslmode"))
 	if mode == "" {
 		mode = sslModeVerifyFull
-		q.Set("sslmode", mode)
+		settings.set("sslmode", mode)
 	}
 	if mode != sslModeVerifyFull && !opts.InsecureTLS {
 		return nil, fmt.Errorf("sslmode=%s: %w", sslModeLabel(mode), ErrTLSWeakWithoutFlag)
 	}
-	if rootCert := os.Getenv(EnvSSLRootCert); rootCert != "" && q.Get("sslrootcert") == "" {
-		q.Set("sslrootcert", rootCert)
+	if rootCert := os.Getenv(EnvSSLRootCert); rootCert != "" && settings.get("sslrootcert") == "" {
+		settings.set("sslrootcert", rootCert)
 	}
-	u.RawQuery = q.Encode()
-	normalized := u.String()
+	settings.setPasswordIfAbsent(os.Getenv(EnvPassword))
+	normalized := settings.String()
 
 	cfg, err := pgxpool.ParseConfig(normalized)
 	if err != nil {
@@ -120,8 +123,8 @@ func ApproveDSN(dsn string, opts Options) (*Approval, error) {
 	if err != nil {
 		return nil, err
 	}
-	approval.SSLRootCert = q.Get("sslrootcert")
-	approval.TargetSessionAttrs = q.Get("target_session_attrs")
+	approval.SSLRootCert = settings.get("sslrootcert")
+	approval.TargetSessionAttrs = settings.get("target_session_attrs")
 	return approval, nil
 }
 

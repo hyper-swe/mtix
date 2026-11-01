@@ -42,6 +42,7 @@ type WSHub struct {
 	broadcast  chan service.Event
 	logger     *slog.Logger
 	done       chan struct{}
+	closeOnce  sync.Once
 }
 
 // NewWSHub creates a new WebSocket hub.
@@ -104,9 +105,12 @@ func (h *WSHub) Broadcast(_ context.Context, event service.Event) error {
 	return nil
 }
 
-// Close shuts down the hub and closes all connections.
+// Close signals the hub to shut down and close its connections.
+// Repeated and concurrent calls are safe.
 func (h *WSHub) Close() {
-	close(h.done)
+	h.closeOnce.Do(func() {
+		close(h.done)
+	})
 }
 
 // ClientCount returns the number of connected clients.
@@ -189,6 +193,9 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 		CheckOrigin: func(r *http.Request) bool {
 			return allowedOrigin(r.Header.Get("Origin"), s.config.Bind, s.config.Port)
 		},
+		// MTIX-220: the only subprotocol ever answered is the fixed name, so
+		// a client's mtix.auth.<token> offer is never echoed back.
+		Subprotocols:    []string{wsAuthProtocol},
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 	}

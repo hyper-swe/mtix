@@ -144,12 +144,14 @@ func markSameTaskAtUpgrade(loss *NodeLoss, l, in *exportNode) {
 //     marked backfill uid, which the replace keeps (keptUIDCopy,
 //     MTIX-95.31.9). The copy is
 //     current when the file carries activity (schema 2.0.0 or later),
-//     holds every local activity entry of the node, and its updated_at is
-//     not older than the local one. Activity is append-only, and the
+//     the local node has activity, the copy holds every local entry, and
+//     its updated_at is not older than the local one. Activity is append-only, and the
 //     writes that record none (mtix update, mtix delete) still move
 //     updated_at, so such a copy has seen the local changes, and a field
 //     it cleared was cleared on purpose (unclaim, reopen, undefer,
 //     undelete). A 1.x file carries no activity and is never current. A
+//     node without activity is never inferred current: a later timestamp
+//     alone cannot prove a teammate saw a local-only edit (MTIX-107.88). A
 //     skewed clock can make a current copy look older: that refuses, the
 //     safe side.
 //
@@ -158,15 +160,28 @@ func DiffReplace(local, file *ExportData) (*ReplaceDiff, error) {
 	if local == nil || file == nil {
 		return nil, fmt.Errorf("compare exports for a replace import: missing export: %w", model.ErrInvalidInput)
 	}
-	return diffReplace(local, file, carriesNodeColumns(file.SchemaVersion))
+	descends := fileDescends(file)
+	removals := provenDependencyRemovals(local, newReplaceIndex(local, file), descends)
+	return diffReplace(local, file, descends, removals)
 }
 
-// diffReplace is DiffReplace with the file's currency given: fileCarriesActivity
-// true reads a field the file's copy leaves empty as a deliberate change when
-// the copy holds every local activity entry. ResolveWithBase passes true for
-// the board it resolved, because it decided each field against the base
-// (MTIX-95.31.15.1).
-func diffReplace(local, file *ExportData, fileCarriesActivity bool) (*ReplaceDiff, error) {
+// fileDescends is the currency verdict for a file as it was read: the copy of a
+// task has seen every local entry, is not older, and the local task has
+// activity (copyIsCurrent). A dependency removal is proven only by this verdict,
+// on every path, because a base never holds dependencies (MTIX-107.44).
+func fileDescends(file *ExportData) func(*exportNode, *exportNode) bool {
+	return func(l, in *exportNode) bool {
+		return copyIsCurrent(l, in, carriesNodeColumns(file.SchemaVersion))
+	}
+}
+
+// diffReplace compares exports using current to decide whether a field cleared
+// in the file is deliberate. ResolveWithBase supplies its field-by-field verdict
+// instead of inferring currency from activity (MTIX-95.31.15.1). removals holds
+// the dependency removals the caller proved against the file as read, never
+// against a resolved copy (MTIX-107.44).
+func diffReplace(local, file *ExportData, current func(*exportNode, *exportNode) bool,
+	removals map[string]bool) (*ReplaceDiff, error) {
 	idx := newReplaceIndex(local, file)
 	matched := make(map[*exportNode]bool, len(file.Nodes))
 	sameTaskAt := make(map[string]string, len(local.Nodes)) // local id -> the file's id of that task
@@ -189,7 +204,7 @@ func diffReplace(local, file *ExportData, fileCarriesActivity bool) (*ReplaceDif
 			continue
 		}
 		matched[in], sameTaskAt[l.ID] = true, in.ID
-		loss, changed, err := compareReplacedNode(l, keptUIDCopy(l, in), fileCarriesActivity) // MTIX-95.31.9
+		loss, changed, err := compareReplacedNode(l, keptUIDCopy(l, in), current(l, in)) // MTIX-95.31.9
 		if err != nil {
 			return nil, err
 		}
@@ -206,7 +221,7 @@ func diffReplace(local, file *ExportData, fileCarriesActivity bool) (*ReplaceDif
 			diff.Added = append(diff.Added, file.Nodes[i].ID)
 		}
 	}
-	diff.compareDependencies(local.Dependencies, file.Dependencies, sameTaskAt)
+	diff.compareDependencies(local.Dependencies, file.Dependencies, sameTaskAt, removals)
 	diff.sort()
 	return diff, nil
 }
@@ -279,11 +294,10 @@ func (d *ReplaceDiff) sort() {
 func depLabel(d *exportDep) string { return d.DepType + " " + d.ToID }
 
 // compareDependencies records the dependencies only the file holds and
-// those only the store holds; each of the latter is a loss of the node it
-// starts from. A local dependency's ends are read as the file's ids of the
+// those only the store holds; an unproven removal is a loss of its source. A local dependency's ends are read as the file's ids of the
 // same tasks (sameTaskAt), so a dependency on a task the file holds under
 // another id is held (MTIX-95.31.4).
-func (d *ReplaceDiff) compareDependencies(local, file []exportDep, sameTaskAt map[string]string) {
+func (d *ReplaceDiff) compareDependencies(local, file []exportDep, sameTaskAt map[string]string, removals map[string]bool) {
 	key := func(dep *exportDep) string { return dep.FromID + "\x00" + dep.ToID + "\x00" + dep.DepType }
 	inFile := func(id string) string {
 		if moved, ok := sameTaskAt[id]; ok {
@@ -304,6 +318,9 @@ func (d *ReplaceDiff) compareDependencies(local, file []exportDep, sameTaskAt ma
 			continue
 		}
 		d.DepsRemoved = append(d.DepsRemoved, dep.FromID+" "+depLabel(dep))
+		if removals[dependencyRemovalKey(dep.FromID, dep.ToID, dep.DepType)] {
+			continue
+		}
 		loss := d.lossOf(dep.FromID)
 		loss.Dependencies = append(loss.Dependencies, depLabel(dep))
 	}
@@ -328,8 +345,9 @@ func (d *ReplaceDiff) lossOf(id string) *NodeLoss {
 // compareReplacedNode compares the local copy of a node with the file's and
 // returns what replacing it would lose, and whether the two differ. Cleared
 // fields count only when the file's copy is not current: the file carries
-// no activity, lacks a local activity entry, or its copy is older.
-func compareReplacedNode(local, in *exportNode, fileCarriesActivity bool) (NodeLoss, bool, error) {
+// no activity, the local node has none, the copy lacks a local entry,
+// or its timestamp is older.
+func compareReplacedNode(local, in *exportNode, current bool) (NodeLoss, bool, error) {
 	loss := NodeLoss{NodeID: local.ID, SoftDeleted: local.DeletedAt != ""}
 	localJSON, err := json.Marshal(local)
 	if err != nil {
@@ -341,7 +359,7 @@ func compareReplacedNode(local, in *exportNode, fileCarriesActivity bool) (NodeL
 	}
 	loss.Annotations, loss.Unresolved = lostAnnotations(local.Annotations, in.Annotations)
 	loss.Activity = lostActivity(local.Activity, in.Activity)
-	if !copyIsCurrent(local, in, fileCarriesActivity) {
+	if !current {
 		loss.Fields, err = blankedFields(localJSON, inJSON)
 		if err != nil {
 			return loss, false, fmt.Errorf("compare node %s: %w", local.ID, err)
@@ -352,12 +370,14 @@ func compareReplacedNode(local, in *exportNode, fileCarriesActivity bool) (NodeL
 
 // copyIsCurrent reports whether the file's copy of a node has seen every
 // local change (FR-15.2i): the file carries activity (schema 2.0.0 or
-// later), the copy holds every local activity entry of the node, and its
-// updated_at is not older than the local one. DiffReplace lists a field the
+// later), the local node has activity, the copy holds every local entry,
+// and its updated_at is not older than the local one. DiffReplace lists a field the
 // copy leaves empty as a loss only when it is not current, and merge keeps
-// such a field by the same rule (MTIX-95.31.4).
+// such a field by the same rule (MTIX-95.31.4). With no local activity,
+// a later timestamp cannot prove the copy saw a local edit (MTIX-107.88);
+// conservatively preserve non-empty local fields the copy leaves empty.
 func copyIsCurrent(local, in *exportNode, fileCarriesActivity bool) bool {
-	return fileCarriesActivity && lostActivity(local.Activity, in.Activity) == 0 && !olderCopy(in.UpdatedAt, local.UpdatedAt)
+	return fileCarriesActivity && len(local.Activity) > 0 && lostActivity(local.Activity, in.Activity) == 0 && !olderCopy(in.UpdatedAt, local.UpdatedAt)
 }
 
 // olderCopy reports whether the file's updated_at is older than the local

@@ -136,6 +136,13 @@ func registerMCPTools(reg *mcp.ToolRegistry) string {
 // otherwise, so the tools keep their "mcp" default instead of the CLI's
 // "cli" fallback.
 func mcpToolAuthor() string {
+	return configuredAuthorID()
+}
+
+// configuredAuthorID returns the process identity (app.authorID, MTIX-24)
+// when MTIX_AUTHOR_ID or the author_id config key sets one, and "" when only
+// the "cli" fallback applies (MTIX-169).
+func configuredAuthorID() string {
 	if os.Getenv(sqlite.AuthorIDEnv) != "" {
 		return app.authorID
 	}
@@ -165,6 +172,9 @@ func runMCP(channelAgent string, readOnly bool) error {
 	// MTIX-53: fire hooks on every mutation host-side (exec cold-start path).
 	// After wireMirrorExporter so the mirror keeps on-commit slot 0.
 	defer wireHookDispatch()()
+
+	// MTIX-112.20.1: an agent mutation through MCP is real activity.
+	defer wireHubActivity()()
 
 	srv := mcp.NewServer(os.Stdin, os.Stdout, logger, version)
 	reg := srv.Registry()

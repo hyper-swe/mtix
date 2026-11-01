@@ -47,9 +47,15 @@ func LoggingMiddleware(logger *slog.Logger) gin.HandlerFunc {
 
 // SecurityHeadersMiddleware adds defense-in-depth response headers:
 // X-Frame-Options prevents clickjacking, X-Content-Type-Options prevents
-// MIME sniffing, and Referrer-Policy prevents URL leakage.
+// MIME sniffing, and Referrer-Policy prevents URL leakage. CSP restricts scripts
+// to same-origin assets per NFR-5.1. Inline styles support React style props;
+// HTTPS images preserve SafeMarkdown images (external servers see requests).
 func SecurityHeadersMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		c.Header("Content-Security-Policy", "default-src 'none'; script-src 'self'; "+
+			"style-src 'self' 'unsafe-inline'; img-src 'self' https:; font-src 'self'; "+
+			"connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; "+
+			"form-action 'none'; frame-ancestors 'none'")
 		c.Header("X-Frame-Options", "DENY")
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("Referrer-Policy", "same-origin")
@@ -115,7 +121,7 @@ func CORSMiddleware(bind, port string) gin.HandlerFunc {
 			c.Header("Vary", "Origin")
 		}
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, X-Requested-With, X-Agent-ID, X-Request-ID")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, X-Agent-ID, X-Request-ID")
 		c.Header("Access-Control-Expose-Headers", "X-Request-ID")
 
 		if c.Request.Method == http.MethodOptions {

@@ -20,10 +20,12 @@ func (s *Store) initializeSchema(ctx context.Context) error {
 
 // withSchemaTx retains initialization on low-space stores while ordinary writes remain guarded.
 func (s *Store) withSchemaTx(ctx context.Context, fn func(*sql.Tx) error) (err error) {
-	tx, err := s.writeDB.BeginTx(ctx, nil)
+	wtx, err := s.beginWriterTx(ctx) // pinned until Release: MTIX-198
 	if err != nil {
 		return fmt.Errorf("begin schema transaction: %w", err)
 	}
+	defer wtx.Release(ctx)
+	tx := wtx.Tx
 	defer func() {
 		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
 			s.logger.Error("schema rollback failed", "error", rbErr)
@@ -33,8 +35,8 @@ func (s *Store) withSchemaTx(ctx context.Context, fn func(*sql.Tx) error) (err e
 	if callbackErr := fn(tx); callbackErr != nil {
 		return callbackErr
 	}
-	if err = tx.Commit(); err != nil {
-		return fmt.Errorf("commit schema transaction: %w", err)
+	if err = wtx.Commit(); err != nil {
+		return wtx.RecoverAfterCommit(ctx, fmt.Errorf("commit schema transaction: %w", err)) // MTIX-198
 	}
 	return nil
 }
@@ -45,7 +47,7 @@ func (s *Store) populateSchema(ctx context.Context, conn *sql.Tx, randomID func(
 	if err := conn.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*'").Scan(&existing); err != nil {
 		return fmt.Errorf("inspect existing schema: %w", err)
 	}
-	if _, err := conn.ExecContext(ctx, schemaSQL); err != nil {
+	if _, err := conn.ExecContext(ctx, schemaSQL+quarantineAcknowledgementDDL); err != nil {
 		return fmt.Errorf("create schema: %w", err)
 	}
 	if existing != 0 {

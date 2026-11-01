@@ -20,7 +20,7 @@ allowed-tools:
 
 # MTIX — Task Execution
 
-Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim and unclaim keep their existing required/default actor rules. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
+Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
 ## NON-NEGOTIABLE: Context Chain Traversal
 
@@ -49,6 +49,20 @@ This applies even when:
 - The user asks for a "quick fix"
 - The change seems trivially small
 
+## Every action item becomes a ticket
+
+When you find or promise an action item (a follow-up, cleanup, promised check or open question), file an mtix ticket right away. Do not leave it in chat, notes or a state file. A ticket keeps the item traceable, findable later and auditable.
+
+```bash
+mtix create "Add retry to the export check" --under PROJ-12 --type chore \
+  --description "Why the item exists and its scope" \
+  --prompt "Exact files, functions and edge cases" \
+  --acceptance "Testable outcome"
+mtix create "Cleanup after the migration" --description "..." --prompt "..." --acceptance "..."
+```
+
+Use `--under <id>` to place the item under related work. Omit it for a new root ticket.
+
 ## Execution Protocol
 
 Follow this sequence exactly:
@@ -60,7 +74,7 @@ Call `mcp__mtix__mtix_session_start` with your agent ID and the MTIX project. Th
 Call `mcp__mtix__mtix_ready` to list nodes available for pickup. These are unassigned, unblocked nodes in `open` status.
 
 ### 3. Read Context (MANDATORY)
-Call `mcp__mtix__mtix_context` with the node ID. Read the ENTIRE assembled prompt. This is your briefing — business goal, technical constraints, exact instructions, acceptance criteria, and test specifications.
+Call `mcp__mtix__mtix_context` with the node ID. Read the ENTIRE `assembled_prompt` field (ancestor prompts and unresolved annotations appear there once; the structured `chain` carries id, tier, title, status and description but no prompt, creator or annotations unless you pass `chain: true`). This is your briefing — business goal, technical constraints, exact instructions, acceptance criteria, and test specifications.
 
 ### 4. Claim
 Call `mcp__mtix__mtix_claim` with the node ID and your agent ID. This prevents other agents from picking up the same work.
@@ -119,6 +133,12 @@ Every completed task must have an auditable trail:
 3. Verification evidence (tests passing, acceptance criteria met)
 
 This is not optional — it is the baseline for all MTIX work, aligned with DO-178C, IEC 62304, NASA-STD-8739.8, and MIL-STD-498 standards.
+
+## Sharing a ticket link
+
+To point a person at a ticket, run `mtix url <id>` (for example `mtix url MTIX-12.3`; add `--json` for `{"id", "url"}`). It prints the link that opens that ticket's full detail (prompt, annotations, acceptance) in the web UI, and the link survives reload and back/forward in the browser. It needs a running `mtix serve` for this project: with none running it prints nothing on stdout and exits non-zero naming `mtix serve`, so start the server (or ask the user to) and run it again; an unknown id fails with not found. The command contacts no remote service and never needs a credential. Never put a token in a URL.
+
+Verify: `mtix url <id>` prints one `http://<host>:<port>/ticket/<id>` line (host is the address the serve is bound to, `127.0.0.1` for a wildcard bind); opening it shows the ticket detail on first load, and `?node=<id>` on any web UI address is rewritten to the same path. Troubleshoot: a non-zero exit naming `mtix serve` means no live serve for this project (`mtix serve` writes `.mtix/serve.json` while it runs and removes it on exit; a record whose process is dead, or whose port does not answer as an mtix serve, counts as none, and the file is not the lock that routes commands; `mtix init` git-ignores it, and in a project created earlier `mtix doctor` (row `serve.record.ignore`, `--json` carries its `fix`) warns when a git repository does not ignore it and prints the exact line to run, `printf '\n.mtix/serve.json\n' >> .gitignore`); to target another project from any directory run `mtix -C <dir> url <id>`; an invalid id is rejected before anything is looked up.
 
 ## Watching Task Events
 

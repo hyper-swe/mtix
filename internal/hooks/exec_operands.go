@@ -345,6 +345,7 @@ func splitOption(arg string) (value, prefix string) {
 // projectPath classifies a path against both the entered (logical) and the
 // resolved project root. resolved follows links through the deepest existing
 // parent, so a path that does not exist yet is judged where it would land.
+// An exhausted link budget returns ("", false, true) to require refusal.
 func projectPath(logical, root, value string) (resolved string, lexical, inside bool) {
 	if value == "" {
 		return "", false, false
@@ -353,48 +354,40 @@ func projectPath(logical, root, value string) (resolved string, lexical, inside 
 	lexical = err == nil && in
 	path := value
 	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, path)
+		// Not Join: cleaning would apply a parent segment to link text.
+		path = root + string(filepath.Separator) + value
 	}
-	resolved = resolveDeepest(path, 0)
+	var complete bool
+	resolved, complete = resolveDeepestStatus(path, 0)
+	if !complete {
+		// No physical answer exists within the budget. Mark it for refusal
+		// regardless of its lexical relationship to the project (FR-19.2).
+		return "", false, true
+	}
 	rel, err := filepath.Rel(root, resolved)
-	return resolved, lexical, lexical || (err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+	byName := err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	return resolved, lexical, lexical || byName || underRoot(root, resolved)
 }
 
-// resolveDeepest resolves links up to the deepest existing parent and
-// re-attaches the rest, following a dangling link by its target.
-func resolveDeepest(path string, depth int) string {
-	if depth > 32 {
-		return path
+// underRoot reports whether path is the project root or lies under it by file
+// identity: some existing ancestor of path is the same file as root. A string
+// comparison alone is wrong on a case-insensitive volume, where a case-variant
+// spelling names the same file.
+func underRoot(root, path string) bool {
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return false
 	}
-	current, rest := filepath.Clean(path), ""
-	for {
-		if _, err := os.Lstat(current); err == nil {
-			return filepath.Join(resolveExisting(current, depth), rest)
+	for current := filepath.Clean(path); ; {
+		if info, statErr := os.Stat(current); statErr == nil && os.SameFile(rootInfo, info) {
+			return true
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return path
+			return false
 		}
-		rest = filepath.Join(filepath.Base(current), rest)
 		current = parent
 	}
-}
-
-// resolveExisting resolves a path that exists; a dangling link is followed by
-// its target.
-func resolveExisting(current string, depth int) string {
-	if info, err := os.Lstat(current); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		if target, rerr := os.Readlink(current); rerr == nil {
-			if !filepath.IsAbs(target) {
-				target = filepath.Join(filepath.Dir(current), target)
-			}
-			return resolveDeepest(target, depth+1)
-		}
-	}
-	if resolved, err := filepath.EvalSymlinks(current); err == nil {
-		return resolved
-	}
-	return current
 }
 
 // checkOperands refuses a launch that would run, by path, a file that is not
@@ -411,6 +404,8 @@ func checkOperands(h Hook, in *hookInputs) error {
 		}
 		resolved, lexical, inside := projectPath(in.logical, in.root, value)
 		switch {
+		case inside && resolved == "":
+			return fmt.Errorf("exec launch refused for hook %q: path %q exceeds the link expansion limit", h.Name, arg)
 		case i == in.script && inside:
 			return fmt.Errorf("exec launch refused for hook %q: script %q is not an approved project file; create it and approve the hook again", h.Name, arg)
 		case inside && !lexical:

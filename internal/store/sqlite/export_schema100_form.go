@@ -33,6 +33,7 @@ func Schema100Form(data *ExportData) (*ExportData, error) {
 	}
 	form := *data
 	form.SchemaVersion = schemaVersion100
+	form.IDsChecksum = "" // the 1.0.0 form carries no hex field (its uid is already spelled)
 	if data.Nodes != nil {
 		form.Nodes = make([]exportNode, len(data.Nodes))
 		for i := range data.Nodes {
@@ -57,6 +58,9 @@ func schema100Node(n *exportNode) exportNode {
 		Status: n.Status, Progress: n.Progress, Assignee: n.Assignee, Creator: n.Creator,
 		AgentState: n.AgentState, Weight: n.Weight, ContentHash: n.ContentHash,
 		CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt, ClosedAt: n.ClosedAt,
-		DeferUntil: n.DeferUntil, DeletedAt: n.DeletedAt, UID: n.UID,
+		DeferUntil: n.DeferUntil, DeletedAt: n.DeletedAt,
+		// The raw uid, no hex field: encoding/json spells an invalid-UTF-8
+		// uid exactly as 0.5.3 wrote it (MTIX-187.7.15.1).
+		UID: n.UID, plainUID: true,
 	}
 }

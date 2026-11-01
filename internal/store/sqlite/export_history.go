@@ -10,6 +10,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -35,6 +36,9 @@ type exportHistoryEntry struct {
 	Old     *string `json:"old,omitempty"`
 	New     *string `json:"new,omitempty"`
 	EventID string  `json:"event_id,omitempty"`
+
+	// readerView: see exportNode.readerView.
+	readerView bool
 }
 
 // SetHistoryExportSource installs the reader of the history.export switch
@@ -169,6 +173,10 @@ func validateExportHistory(data *ExportData) error {
 // origin among the values mtix writes, ts in the fixed-width UTC form that
 // task_history stores (it sorts as text).
 func checkHistoryEntry(e exportHistoryEntry) error {
+	if e.Kind == string(model.HistoryKindResolution) && !validResolutionMarker(e.Field, e.Old, e.New) {
+		return fmt.Errorf("history entry %s for task %s: resolution records require absent old/new values and a valid workflow selector: %w",
+			format.EventID(e.ID), format.EventID(e.TaskUID), model.ErrInvalidInput)
+	}
 	for name, v := range map[string]string{"id": e.ID, "task_uid": e.TaskUID, "ts": e.TS,
 		"actor": e.Actor, "origin": e.Origin, "kind": e.Kind, "field": e.Field} {
 		if v == "" {
@@ -176,7 +184,7 @@ func checkHistoryEntry(e exportHistoryEntry) error {
 		}
 	}
 	switch model.HistoryKind(e.Kind) {
-	case model.HistoryKindChange, model.HistoryKindRedaction, model.HistoryKindRetentionDrop:
+	case model.HistoryKindChange, model.HistoryKindRedaction, model.HistoryKindRetentionDrop, model.HistoryKindResolution:
 	default:
 		return fmt.Errorf("history entry %q has unknown kind %q: %w", e.ID, e.Kind, model.ErrInvalidInput)
 	}

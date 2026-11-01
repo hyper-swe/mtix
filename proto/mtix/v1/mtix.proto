@@ -188,6 +188,7 @@ message UnclaimRequest {
   string id     = 1;
   string agent  = 2;
   string reason = 3;
+  bool   force  = 4;  // Release a claim held by another agent
 }
 
 message DoneRequest {

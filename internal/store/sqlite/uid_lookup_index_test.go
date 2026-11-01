@@ -110,8 +110,10 @@ func TestUIDLookupQueries_ExplainQueryPlan_SearchIDXNodesUID(t *testing.T) {
 		{"node-uid helper", "Store.ResolveDisplayPathByUID", "nodes"},
 		{"settlement", "Store.loadSettleTarget", "nodes"},
 		{"local renumber of an import", "idOfUID", "nodes"},
-		{"push subject by uid", "Store.PushSubjects", "n"},
-		{"push subject of a creation without a uid, by its event id", "Store.PushSubjects", "s"},
+		{"push subject by uid", "pushSubjects", "n"},
+		{"push subject of a creation without a uid, by its event id", "pushSubjects", "s"},
+		{"held push creation by uid, without payload", "heldPushCreations", "n"},
+		{"held push creation without a uid, by its event id, without payload", "heldPushCreations", "s"},
 		{"held push event by uid", "Store.HeldPushEvents", "n"},
 		{"held push creation without a uid, by its event id", "Store.HeldPushEvents", "s"},
 	}

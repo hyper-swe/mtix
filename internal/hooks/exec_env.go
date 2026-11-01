@@ -136,7 +136,8 @@ func envPassCheck(h Hook) string {
 }
 
 // childEnvironment builds the environment of an exec hook child.
-func childEnvironment(parent []string, goos string, h Hook, event []byte, scriptPath, pathValue string) []string {
+func childEnvironment(parent []string, goos string, delivery Delivery, scriptPath, pathValue string) []string {
+	h, event := delivery.Hook, delivery.EventJSON
 	var pass []string
 	if h.Exec != nil {
 		pass = h.Exec.EnvPass
@@ -159,7 +160,7 @@ func childEnvironment(parent []string, goos string, h Hook, event []byte, script
 	if author := h.Match.ToAgent; validChildAuthor(author) {
 		out = append(out, "MTIX_AUTHOR_ID="+author)
 	}
-	return out
+	return append(out, h.wakeEnv...)
 }
 
 func passedThrough(goos string, pass []string, name string) bool {

@@ -52,6 +52,10 @@ type TemplateData struct {
 	// ConfigKeys is the list of valid configuration keys.
 	ConfigKeys []string
 
+	// ListenDefault is the shipped value of sync.listen (service.DefaultListenHold),
+	// rendered into the agent docs so flipping the default is one constant.
+	ListenDefault string
+
 	// ErrorCodes is the list of sentinel error names.
 	ErrorCodes []string
 
@@ -210,5 +214,6 @@ func BuildTemplateData(
 		MCPTools:      IntrospectMCPTools(reg),
 		ConfigKeys:    IntrospectConfig(),
 		ErrorCodes:    IntrospectErrors(),
+		ListenDefault: service.DefaultListenValue(),
 	}
 }

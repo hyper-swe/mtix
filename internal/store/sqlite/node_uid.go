@@ -82,10 +82,12 @@ func (s *Store) BackfillUIDs(ctx context.Context) error {
 func (s *Store) backfillUIDsFromCreateEvents(ctx context.Context) error {
 	// Step 1: deterministic fill from each node's create_node event, and the
 	// history keyed by those nodes' ids moved to their uids, in one transaction.
-	tx, err := s.writeDB.BeginTx(ctx, nil)
+	wtx, err := s.beginWriterTx(ctx) // pinned until Release: MTIX-198
 	if err != nil {
 		return fmt.Errorf("backfill uids from create events: %w", err)
 	}
+	defer wtx.Release(ctx)
+	tx := wtx.Tx
 	defer func() { _ = tx.Rollback() }() //nolint:errcheck // rollback after commit is a no-op
 	ids, err := uidlessNodeIDs(ctx, tx)  // the nodes this backfill may fill, and so the only history it may rekey
 	if err != nil {
@@ -107,8 +109,8 @@ func (s *Store) backfillUIDsFromCreateEvents(ctx context.Context) error {
 	if err := rekeyFilledHistory(ctx, tx, ids); err != nil { // MTIX-95.31.19.3
 		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("backfill uids from create events: commit: %w", err)
+	if err := wtx.Commit(); err != nil {
+		return wtx.RecoverAfterCommit(ctx, fmt.Errorf("backfill uids from create events: commit: %w", err)) // MTIX-198
 	}
 	return nil
 }

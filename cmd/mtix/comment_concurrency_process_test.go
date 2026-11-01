@@ -23,6 +23,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 const commentProcessCount = 14
@@ -79,7 +80,7 @@ func runCommentChild(t *testing.T, dir, id, text string) (string, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, "-test.run=^TestComment_CLIProcessHelper$", "--", id, text)
 	cmd.Dir = filepath.Dir(dir)
-	for _, value := range os.Environ() {
+	for _, value := range hostguard.Environ() {
 		key, _, _ := strings.Cut(value, "=")
 		if !strings.HasPrefix(key, "MTIX_") && !strings.HasPrefix(key, "PG") && key != "XDG_CONFIG_HOME" {
 			cmd.Env = append(cmd.Env, value)

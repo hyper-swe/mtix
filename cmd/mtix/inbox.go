@@ -20,6 +20,7 @@ import (
 	inboxformat "github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -66,7 +67,7 @@ func newInboxCmd() *cobra.Command {
 	cmd.Flags().StringVar(&format, "format", "",
 		"Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection)")
 	_ = cmd.MarkFlagRequired("agent")
-	cmd.AddCommand(newInboxAckCmd(), newInboxLeaseCmd())
+	cmd.AddCommand(newInboxAckCmd(), newInboxLeaseCmd(), newInboxStatusCmd())
 	return cmd
 }
 
@@ -139,6 +140,7 @@ func runInbox(agent string, wait bool, timeout int, format string) error {
 func waitInbox(ctx context.Context, agent string, timeout time.Duration) ([]sqlite.InboxEvent, error) {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	defer joinListener(agent, os.Stderr)() // MTIX-112.20.4: arm a lease, start the board listener if absent
 	events, err := app.store.InboxWait(ctx, agent, timeout)
 	if errors.Is(err, context.Canceled) && ctx.Err() == context.Canceled {
 		return nil, errInboxWaitInterrupted
@@ -146,12 +148,15 @@ func waitInbox(ctx context.Context, agent string, timeout time.Duration) ([]sqli
 	return events, err
 }
 
+// inboxBodyIndent indents continuation lines of an inbox body under its entry.
+const inboxBodyIndent = "    "
+
 // writeInbox renders the inbox in the selected shape: agent-ready formats
 // (MTIX-56.8), JSON, or the human listing.
 func writeInbox(agent, format string, events []sqlite.InboxEvent) error {
 	out := NewOutputWriter(app.jsonOutput)
 	if format != "" {
-		caps, err := loadInboxEnvelopeCaps()
+		caps, err := loadInboxEnvelopeCaps(agent)
 		if err != nil {
 			return err
 		}
@@ -182,7 +187,11 @@ func writeInbox(agent, format string, events []sqlite.InboxEvent) error {
 		return fmt.Errorf("render inbox: %w", err)
 	}
 	for _, e := range events {
-		out.WriteHuman("[%d] %s  %s: %s\n", e.Seq, e.NodeID, e.Author, e.Body)
+		// Author and node id are one-line text; the body keeps its lines but
+		// every continuation line is indented, so a stored body cannot forge
+		// another entry or the ack line (MTIX-187.7.13).
+		out.WriteHuman("[%d] %s  %s: %s\n", e.Seq, inboxformat.SafeLine(e.NodeID), inboxformat.SafeLine(e.Author),
+			indentContinuation(inboxformat.SafeBlock(e.Body), inboxBodyIndent))
 	}
 	out.WriteHuman("\nack with: mtix inbox ack %d --agent %s%s\n", events[len(events)-1].Seq, agent, boardArg)
 	return nil
@@ -211,13 +220,17 @@ func explainAckBoard(err error) error {
 		err, inboxBoardRoot())
 }
 
-func loadInboxEnvelopeCaps() (inboxformat.Caps, error) {
+func loadInboxEnvelopeCaps(agents ...string) (inboxformat.Caps, error) {
 	env, err := oplocal.FromProcess()
 	if err != nil {
 		return inboxformat.Caps{}, fmt.Errorf("inbox operator state: %w", err)
 	}
 	state := oplocal.New(env)
-	caps, reports, err := state.EnvelopeCaps()
+	agent := ""
+	if len(agents) > 0 {
+		agent = agents[0]
+	}
+	caps, reports, err := state.EnvelopeCapsForAgent(agent)
 	if err != nil {
 		return inboxformat.Caps{}, fmt.Errorf("inbox envelope configuration: %w; %s", err, state.EnvelopeCapsRemedy(reports...))
 	}
@@ -262,10 +275,11 @@ func runInboxAck(agent string, seqs []string, through bool) error {
 	}
 	ctx := sessionContext(context.Background()) // refreshes last_seen for the registered session
 	out := NewOutputWriter(app.jsonOutput)
+	inbox := service.NewInboxService(app.store)
 
 	if through {
 		// Cumulative: mark everything up to the highest given seq as seen.
-		if err := app.store.InboxAckThrough(ctx, agent, maxSeq); err != nil {
+		if err := inbox.InboxAckThrough(ctx, agent, maxSeq); err != nil {
 			return explainAckBoard(err)
 		}
 		if app.jsonOutput {
@@ -277,7 +291,7 @@ func runInboxAck(agent string, seqs []string, through bool) error {
 
 	// Selective (default): ack exactly the given seq(s); unacked events resurface.
 	for _, n := range parsed {
-		if err := app.store.InboxAck(ctx, agent, n); err != nil {
+		if err := inbox.InboxAck(ctx, agent, n); err != nil {
 			return explainAckBoard(err)
 		}
 	}

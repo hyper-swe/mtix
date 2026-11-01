@@ -3,7 +3,13 @@
 
 package transport
 
-import "context"
+import (
+	"context"
+
+	"github.com/jackc/pgx/v5"
+
+	"github.com/hyper-swe/mtix/internal/model"
+)
 
 // SetAfterCommitForTest sets the push commit seam of p (MTIX-95.3, review
 // F-80): hook runs after each push transaction's COMMIT succeeded, and a
@@ -34,4 +40,37 @@ func ReleaseUnheldSessionLockForTest(ctx context.Context, p *Pool) (bool, error)
 	defer conn.Release()
 	relErr := releaseSessionLock(ctx, conn)
 	return conn.Conn().IsClosed(), relErr
+}
+
+// PushOneEventForTest runs one event through the push path of a zero Pool on
+// tx, as PushEventsResult does inside its transaction, so tests can drive
+// the per-event error paths with a scripted transaction (MTIX-187.4.4).
+func PushOneEventForTest(ctx context.Context, tx pgx.Tx, e *model.SyncEvent) error {
+	acc := &pushAccum{
+		seenPrefixes: map[string]struct{}{},
+		batchClaims:  map[registryKey]batchClaim{},
+	}
+	return (&Pool{}).pushOneEvent(ctx, tx, e, acc)
+}
+
+// RecordCollisionForTest runs the restore-collision recorder on tx
+// (MTIX-187.4.4).
+func RecordCollisionForTest(ctx context.Context, tx pgx.Tx, rc *RestoreCollision) error {
+	return recordCollision(ctx, tx, rc, "uid", 1)
+}
+
+// PersistConflictsForTest runs the conflict writer on tx (MTIX-187.4.4).
+func PersistConflictsForTest(ctx context.Context, tx pgx.Tx, conf []ConflictDescriptor) error {
+	return persistConflicts(ctx, tx, conf)
+}
+
+// ElsewhereRefusalForTest returns the registry-index refusal for duplicate
+// creates recorded at another number (MTIX-187.4.4).
+func ElsewhereRefusalForTest(eventIDs []string) error { return elsewhereRefusal(eventIDs) }
+
+// SetBeforeMigrateCommitForTest sets p's before-commit seam (FR-18.4).
+// Tests set it before calling Migrate, never concurrently with Migrate.
+// Compiled into tests only; the hook belongs to this Pool, not package state.
+func SetBeforeMigrateCommitForTest(p *Pool, hook func(pgx.Tx) error) {
+	p.beforeMigrateCommit = hook
 }

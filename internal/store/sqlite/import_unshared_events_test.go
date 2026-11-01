@@ -285,3 +285,37 @@ func TestImport_ReplaceOnNeverSyncedStore_MatchesEventsByUIDThenNumber(t *testin
 	assert.Equal(t, 1, countRows(t, raw, `SELECT COUNT(*) FROM sync_quarantine WHERE event_id = 'ev-by-number-only' AND source = 'pull'`),
 		"a held copy from a pull is not a push hold and stays")
 }
+
+// AsSyncedStore makes a replace treat a store that records no mark as synced:
+// a replace that drops a task whose events the log holds is refused and
+// nothing is discarded; without it the store takes the file (MTIX-107.31.8).
+func TestImport_AsSyncedStore_RefusesWhereAnUnsyncedStoreRuns(t *testing.T) {
+	tests := []struct {
+		name    string
+		opts    []sqlite.ImportOption
+		refused bool
+	}{
+		{"asked to treat the store as synced", []sqlite.ImportOption{sqlite.AsSyncedStore()}, true},
+		{"no option", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			s, raw := mutationTestStore(t)
+			mustCreateNode(t, s, "MTIX-1", "")
+			mustCreateNode(t, s, "MTIX-3", "")
+			before := pendingFor(t, raw, "MTIX-3")
+			require.NotZero(t, before)
+
+			_, err := s.Import(ctx, exportWithout(t, s, "MTIX-3"), sqlite.ImportModeReplace, false, tt.opts...)
+			if tt.refused {
+				require.ErrorIs(t, err, sqlite.ErrReplaceOnSyncedStore)
+				assert.True(t, nodeExists(t, raw, "MTIX-3"))
+				assert.Equal(t, before, pendingFor(t, raw, "MTIX-3"), "nothing is discarded")
+				return
+			}
+			require.NoError(t, err)
+			assert.Zero(t, pendingFor(t, raw, "MTIX-3"))
+		})
+	}
+}

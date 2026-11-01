@@ -32,7 +32,7 @@ func mutationBusyCases() []mutationBusyCase {
 	return []mutationBusyCase{
 		{"create", []string{"create", "Create exactly once", "--prompt", "Create once", "--acceptance", "One node"}, nil},
 		{"claim", []string{"claim", "TEST-1", "--agent", "writer"}, func(t *testing.T) { registerTestAgent(t, "writer") }},
-		{"unclaim", []string{"unclaim", "TEST-1", "--reason", "handoff"}, func(t *testing.T) {
+		{"unclaim", []string{"unclaim", "TEST-1", "--reason", "handoff", "--agent", "writer"}, func(t *testing.T) {
 			registerTestAgent(t, "writer")
 			require.NoError(t, app.nodeSvc.ClaimNode(testContext(t), "TEST-1", "writer"))
 		}},

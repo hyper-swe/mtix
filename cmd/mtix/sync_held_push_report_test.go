@@ -110,8 +110,10 @@ func TestRunSyncDoctor_HeldPushEvents_ListedWithGuidance(t *testing.T) {
 			if tt.held > 5 {
 				require.NotContains(t, check.Detail, "TEST-6 create_node", "at most five are listed")
 			}
-			require.True(t, doctorCheckFromJSON(t, out.Bytes(), "queue draining").Pass,
-				"held push events do not fail the queue check")
+			require.True(t, doctorCheckFromJSON(t, out.Bytes(), "queue draining").Skipped,
+				"an unreachable hub skips queue diagnosis")
+			drainOK, detail := checkQueueDraining(ctx, app.store)
+			require.True(t, drainOK, "held push events do not fail the queue check: %s", detail)
 			require.True(t, doctorCheckFromJSON(t, out.Bytes(), "quarantined events").Pass,
 				"held push events are not quarantined pulled events")
 

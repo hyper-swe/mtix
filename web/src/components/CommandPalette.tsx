@@ -190,7 +190,7 @@ export function CommandPalette({
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder="Search nodes, run commands..."
-            className="flex-1 ml-2.5 bg-transparent outline-none text-sm"
+            className="flex-1 ml-2.5 bg-transparent outline-hidden text-sm"
             style={{ color: "var(--color-text-primary)" }}
             aria-label="Search"
           />

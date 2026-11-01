@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 )
@@ -164,7 +165,7 @@ func runCreateWithProject(title, under, nodeType string, priority int,
 	if app.jsonOutput {
 		return out.WriteJSON(node)
 	}
-	out.WriteHuman("○ Created %s: %s\n", node.ID, node.Title)
+	out.WriteHuman("○ Created %s: %s\n", node.ID, format.SafeLine(node.Title))
 	return nil
 }
 

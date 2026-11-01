@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/testutil/hostguard"
 )
 
 func TestMergeBaseBoard_Canary_ProcessHelper(t *testing.T) {
@@ -62,7 +64,7 @@ func TestMergeBaseBoard_Canary_RequiresExpectedExitAndMarker(t *testing.T) {
 				exit = "2"
 			}
 			cmd := exec.CommandContext(t.Context(), os.Args[0], "-test.run=^TestMergeBaseBoard_Canary_ProcessHelper$", "-test.count=1", "-test.timeout=30s")
-			cmd.Env = append(os.Environ(), "MTIX_BOARD_CANARY_HELPER=1", "MTIX_BOARD_CANARY_POSITIVE=0", "MTIX_BOARD_CANARY_PATH="+boardScript(t, body+"exit "+exit), "MTIX_BOARD_CANARY_MARKER="+marker)
+			cmd.Env = append(hostguard.Environ(), "MTIX_BOARD_CANARY_HELPER=1", "MTIX_BOARD_CANARY_POSITIVE=0", "MTIX_BOARD_CANARY_PATH="+boardScript(t, body+"exit "+exit), "MTIX_BOARD_CANARY_MARKER="+marker)
 			if tc.positive {
 				cmd.Env = append(cmd.Env, "MTIX_BOARD_CANARY_POSITIVE=1")
 			}

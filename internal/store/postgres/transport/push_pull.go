@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/jackc/pgx/v5"
 )
@@ -115,6 +116,16 @@ func (p *Pool) pushEventsOnce(ctx context.Context, events []*model.SyncEvent) (P
 		return PushResult{}, fmt.Errorf("begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	return p.pushEventsInTx(ctx, tx, events)
+}
+
+// pushEventsInTx runs one push inside an open transaction: it installs the
+// transaction-local timeouts first, before any hub read, and commits at the end.
+// The caller owns rollback.
+func (p *Pool) pushEventsInTx(ctx context.Context, tx pgx.Tx, events []*model.SyncEvent) (PushResult, error) {
+	if timeoutErr := setPushTimeouts(ctx, tx); timeoutErr != nil {
+		return PushResult{}, timeoutErr
+	}
 
 	// Read the hub restore_epoch ONCE for this tx (ADR-003 §15). Every create
 	// is stamped with it at acceptance, and the detector compares it against
@@ -203,7 +214,7 @@ func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, 
 	// the number is free and we insert it below.
 	outcome, err := registryDecide(ctx, tx, e, acc.batchClaims, acc.currentEpoch)
 	if err != nil {
-		return fmt.Errorf("registry check for %s: %w", e.EventID, err)
+		return fmt.Errorf("registry check for %s: %w", format.EventID(e.EventID), err)
 	}
 	if outcome.restoreCollision != nil {
 		// RESTORE collision (ADR-003 §6.1/§15, Option B): the number is held
@@ -240,7 +251,7 @@ func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, 
 
 	vcJSON, err := json.Marshal(e.VectorClock)
 	if err != nil {
-		return fmt.Errorf("marshal VC for %s: %w", e.EventID, err)
+		return fmt.Errorf("marshal VC for %s: %w", format.EventID(e.EventID), err)
 	}
 	// uid is dual-carried alongside node_id (ADR-003 §3, §7 Phase 3).
 	// NULL when the pusher (an old CLI) does not set it; apply then falls
@@ -268,7 +279,7 @@ func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, 
 		e.AuthorID, e.AuthorMachineHash, acc.currentEpoch,
 	)
 	if err != nil {
-		return fmt.Errorf("insert %s: %w", e.EventID, err)
+		return fmt.Errorf("insert %s: %w", format.EventID(e.EventID), err)
 	}
 	// ON CONFLICT (event_id) DO NOTHING inserted no row: the event_id is
 	// already on the hub. The event goes to the batch's presence check
@@ -286,96 +297,10 @@ func (p *Pool) pushOneEvent(ctx context.Context, tx pgx.Tx, e *model.SyncEvent, 
 	// out (event_id <> $2), so it sees the same prior events as before it.
 	conf, err := detectConflicts(ctx, tx, e)
 	if err != nil {
-		return fmt.Errorf("detect conflicts for %s: %w", e.EventID, err)
+		return fmt.Errorf("detect conflicts for %s: %w", format.EventID(e.EventID), err)
 	}
 	acc.conflicts = append(acc.conflicts, conf...)
 	return persistConflicts(ctx, tx, conf)
-}
-
-// persistConflicts writes each detected field-level conflict to the
-// hub's sync_conflicts table inside the push transaction (MTIX-15.5.2).
-// Resolution is recorded as 'lww'; a manual override via mtix sync
-// conflicts resolve (15.7) INSERTs a new resolution='manual' row that
-// supersedes the lww row, because the 006_triggers.sql trigger forbids
-// UPDATE on sync_conflicts. Parameterized SQL only.
-func persistConflicts(ctx context.Context, tx pgx.Tx, conf []ConflictDescriptor) error {
-	for _, c := range conf {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO sync_conflicts
-			  (event_id_a, event_id_b, node_id, field_name, resolution)
-			VALUES ($1, $2, $3, $4, 'lww')`,
-			c.NewEventID, c.ConflictingEventID, c.NodeID, c.FieldName,
-		); err != nil {
-			return fmt.Errorf("persist conflict %s vs %s: %w",
-				c.NewEventID, c.ConflictingEventID, err)
-		}
-	}
-	return nil
-}
-
-// detectConflicts looks for prior events on the same node that are
-// concurrent with e per VectorClock.Concurrent. Returns descriptors
-// for every concurrent prior; resolution is a 15.5 concern.
-//
-// Scoping: only field-level updates (update_field, set_acceptance,
-// set_prompt) are checked, since other op_types (claim, transition,
-// delete, link_dep, etc.) have natural single-row outcomes that don't
-// produce field-level conflicts.
-func detectConflicts(ctx context.Context, tx pgx.Tx, e *model.SyncEvent) ([]ConflictDescriptor, error) {
-	switch e.OpType {
-	case model.OpUpdateField, model.OpSetAcceptance, model.OpSetPrompt:
-	default:
-		return nil, nil
-	}
-	fieldName, _ := extractFieldName(e)
-
-	rows, err := tx.Query(ctx, `
-		SELECT event_id, vector_clock
-		FROM sync_events
-		WHERE node_id = $1
-		  AND op_type IN ('update_field','set_acceptance','set_prompt')
-		  AND event_id <> $2`,
-		e.NodeID, e.EventID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []ConflictDescriptor
-	for rows.Next() {
-		var priorID, priorVCJSON string
-		if err := rows.Scan(&priorID, &priorVCJSON); err != nil {
-			return nil, err
-		}
-		var priorVC model.VectorClock
-		if err := json.Unmarshal([]byte(priorVCJSON), &priorVC); err != nil {
-			continue // skip un-parseable; not a conflict by definition
-		}
-		if e.VectorClock.Concurrent(priorVC) {
-			out = append(out, ConflictDescriptor{
-				NewEventID:         e.EventID,
-				ConflictingEventID: priorID,
-				NodeID:             e.NodeID,
-				FieldName:          fieldName,
-			})
-		}
-	}
-	return out, rows.Err()
-}
-
-// extractFieldName pulls the field_name from update_field payloads
-// for conflict-descriptor decoration. Returns "" for set_acceptance /
-// set_prompt (the op_type is the field).
-func extractFieldName(e *model.SyncEvent) (string, error) {
-	if e.OpType != model.OpUpdateField {
-		return "", nil
-	}
-	var p model.UpdateFieldPayload
-	if err := json.Unmarshal(e.Payload, &p); err != nil {
-		return "", err
-	}
-	return p.FieldName, nil
 }
 
 // PullEvents returns up to limit events strictly after the keyset

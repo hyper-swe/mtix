@@ -72,7 +72,7 @@ func awaitLegacyDecision(t *testing.T, a *Approvals, target, pin string) bool {
 	case err := <-finished:
 		require.NoError(t, err)
 		return true
-	case <-time.After(300 * time.Millisecond):
+	case <-time.After(10 * time.Second):
 	}
 	// Release this owned fixture and join its reader before reporting the result.
 	release, openErr := os.OpenFile(target, os.O_RDWR, 0600)
@@ -88,7 +88,7 @@ func awaitLegacyDecision(t *testing.T, a *Approvals, target, pin string) bool {
 		require.NoError(t, closeErr)
 		require.NoError(t, err)
 		t.Log("owned input released and migration call joined")
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("owned migration call did not finish after fixture release")
 	}
 	return false

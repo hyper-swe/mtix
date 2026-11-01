@@ -191,7 +191,13 @@ teammate's concurrent claim or status change.
   are merged and it is recorded in `applied_events`, so a re-pull is a
   no-op. It changes no node column and writes **no** `sync_conflicts`
   row: workflow state is not a user-authored field, and a conflict row
-  for every lost claim race or late replay would be noise.
+  for every lost claim race or late replay would be noise. The FR-19 hook
+  journal skips losing workflow events: they do not report a state change
+  or deliver to any hook adapter. This decision is persisted locally in
+  the same transaction as apply, keyed by event ID, and survives restart.
+  Events that won at ingest remain eligible even if a later event wins.
+  Existing events ingested before this rule have no suppression marker;
+  they are not retroactively reclassified.
 - **Local mutations** need no check. Their Lamport clock is above
   every event the replica holds, so they are the winner when they are
   written.
@@ -399,10 +405,10 @@ planner can serve the query from it. Migrations run in `mtix sync init`
 with the hub owner's DSN, so an existing hub gets the index the next
 time its owner runs `mtix sync init`. Every migration runs in one
 transaction (see [Migration single-flight](#migration-single-flight)),
-so the index is built inside it, not concurrently, and `sync_events`
-stays locked until that transaction commits: pushes and pulls both wait
-for `mtix sync init` to finish. Run it when a pause in sync is
-acceptable. Until the index exists, pulls return the same events, but
+so the index is built inside it, not concurrently. Its SHARE lock blocks
+writers until commit, but allows event SELECTs when no missing column or
+other exclusive DDL needs adding. See the locking and deadline details below.
+Until the index exists, pulls return the same events, but
 each page scans and sorts `sync_events`.
 
 The Lamport clock is stamped by the client that wrote the event, not by
@@ -514,13 +520,23 @@ computed from that value alone, never from this machine's clock, so a
 skewed client clock changes nothing. Because `created_at` is the
 transaction's start time, a push that started before a sweep can
 commit after it with an earlier `created_at`. The 15-minute overlap
-covers push transactions of normal length, which take seconds. It is
-not a bound: the 10-second `statement_timeout` limits each statement,
-not the push transaction, so a stalled push transaction can stay open
-longer than 15 minutes, and an event it then commits is missed by later
-windowed sweeps. Bounding the push transaction is a separate follow-up;
-the complete fix is a hub-assigned event order in a later protocol
-version.
+covers push transactions of normal length, which take seconds. Each push
+attempt sets two bounds with parameterized `set_config(..., true)` before
+its first hub read: `idle_in_transaction_session_timeout` to one minute
+and, where `pg_settings` exposes it (Postgres 17+), `transaction_timeout`
+to ten minutes. Both are transaction-local and provider-independent;
+commit or rollback restores the session settings. A suspended client
+therefore loses its idle transaction and all its uncommitted events after
+one minute. The ten-minute transaction bound also stops a push that stays
+active, and is sized by reasoning, not measurement, for a full 100-event batch
+(a few hub round trips per event, plus registry lock waits of up to 10
+seconds each) over a slow link, while staying under the 15-minute overlap. The hub reports either
+abort as SQLSTATE 25P03 or 25P04; the client treats both as retryable and
+retries the push automatically, idempotently; if the retries are
+exhausted the events stay pending and the next sync pushes them again. Older servers bound idle periods only: repeated shorter
+pauses and statements can still exceed the overlap in total, since the
+10-second `statement_timeout` limits each statement. A hub-assigned event
+order in a later protocol version remains the complete fix.
 
 **Cost.** In the common case, where nothing is missing and the window
 holds at most `--limit` ids, the sweep adds one hub query to each pull:
@@ -704,12 +720,45 @@ sync status` shows `quarantined events` (`quarantined_events` in
 every quarantined event read-only through the service layer: event id,
 node, op, attempts, first seen, last attempt and reason, and in JSON
 also the Lamport clock, source and CLI version. `mtix sync doctor` has a
-`quarantined events` check that fails while the table is not empty; its
+`quarantined events` check that fails while any pulled event is unacknowledged; its
 detail says the events are retried on every pull, to run `mtix sync
 pull` first, and to list them with `mtix sync quarantine list`.
 
 The table is created with `CREATE TABLE IF NOT EXISTS` the next time
 mtix opens the store (no schema version change) and is local only.
+
+**Audited invalid-node-id recovery.** After inspection and reporting to the hub
+maintainer, `mtix sync quarantine acknowledge --handle <handle> --reason <text>` (the handle is the first 12 hex characters of the SHA-256 of the exact event id bytes, printed by `mtix sync quarantine list`, so ids with NUL or invalid UTF-8 can be named; `<event-id>` also works for an ordinary id) records
+an immutable local receipt accepting one pulled invalid-node-id event as
+unapplied. Eligibility is based on the retained raw event and the node-id
+validator, not the stored reason: only `pull`/`sweep` sources are eligible.
+Push holds, unrelated failures, malformed raw JSON, event-id mismatches and
+missing or blank reasons are refused. No terminal or hub connection is needed.
+The first receipt records the resolved process author, reason, UTC
+time and SHA256 of the exact retained raw bytes; a valid repeat returns that
+receipt unchanged. Reasons are limited to 500 UTF-8 bytes. Repeats explicitly report
+that the first receipt stands and the supplied reason was not recorded; response
+JSON includes `already_acknowledged` (`true` for repeats, `false` for new receipts).
+A different raw event with the same id needs a fresh receipt.
+
+Doctor's Fix names the event by its handle: the first 12 hex characters of the SHA-256 of the exact event id bytes, which `mtix sync quarantine list` also prints in a HANDLE column (`handle` and `event_id_sha256` in `--json`). The handle is always printable and typeable, even when the id holds NUL, invalid UTF-8 or shell metacharacters, so the printed command can be copied as it is: `mtix sync quarantine acknowledge --handle <handle> --reason '<your explanation>'`. Replace `<your explanation>` with why this event is safe to accept as unapplied; without `--reason` the command is refused. A handle may be shortened to 8 hex characters; one that matches more than one event is refused with the length that separates them. Use the positional `<event-id>` form only for an ordinary id. Then run doctor again after each acknowledgement. Use `mtix sync quarantine list --json` to report the original id to the operator; JSON keeps NUL and escapable bytes in the id exactly but shows invalid UTF-8 bytes as U+FFFD; `event_id_sha256` and the handle always name the exact stored bytes. A printed handle may be longer than 12 characters when two retained events share a shorter prefix.
+
+The additive `sync_quarantine_acknowledgements` table is local only, outside
+exports/imports and the sync protocol, with no schema version bump. Receipts
+survive later quarantine removal. The guarded transaction rechecks source and
+raw bytes before persisting; any write/read error fails closed. A legacy store
+opened read-only without the additive table treats every pulled event as
+unacknowledged and refuses acknowledgement writes.
+
+Acknowledgement never applies or removes the retained event, changes its original
+reason, clocks, cursors, nodes, sync/applied logs or hub, or acknowledges another
+replica. Every pull still retries it. Status retains the unapplied total and
+adds `acknowledged_quarantined_events` and `unacknowledged_quarantined_events`.
+List text marks acknowledged rows, and JSON adds optional `acknowledgement`
+metadata (`actor`, `reason`, `acknowledged_at`, `raw_event_sha256`). Doctor passes
+its quarantine check only at zero unacknowledged pulled rows and reports the
+retained acknowledged count; other failures retain their results. Verify those
+counts and receipts, rather than expecting the retained total to become zero.
 
 The same table holds the events push holds back, with source `push`
 (see [Push: held events](#push-held-events)). The pull side leaves those
@@ -821,7 +870,31 @@ Refusing changes nothing and names the way out.
   before. A store counts as synced when it carries the hub-connected
   mark, holds a pulled event or an event past `pending`, or has
   published to or ingested from a file relay (a relay publish keeps the
-  journal events pending, so the relay cursors are read too).
+  journal events pending, so the relay cursors are read too). The
+  relay publisher writes its cursor only after the append, so a first
+  publish that crashed or failed to advance leaves no cursor: the
+  automatic import therefore records the local hub or relay evidence (a
+  configured relay directory, hub endpoint or stored DSN) as the
+  hub-connected mark before it imports, and fails closed, importing
+  nothing, if that evidence cannot be read or stored (MTIX-107.31.7).
+  One helper gathers the evidence for the automatic import, the
+  command-line replace guard and the doctor check (MTIX-107.31.8): the
+  config keys (`sync.relay.dir`, `sync.enabled`, `sync.endpoint`), a DSN
+  in the secrets file, one that `transport.Source` refuses, and an
+  exported `MTIX_SYNC_DSN`. The exported DSN is transient: it makes the
+  automatic import treat the store as synced for that import
+  (`sqlite.AsSyncedStore`), so a replace that would delete local data or
+  drop a task the sync log holds is refused, and `mtix import --mode
+  replace` is refused while it is set; it is never recorded as the mark.
+  The command-line guard already counted a refused DSN (a DSN key in a
+  tracked config file, or a secrets file with the wrong mode, even an
+  empty one); the automatic import now counts it too, transiently, and
+  does not record it. Only a DSN in the secrets file, whatever its mode,
+  is recorded as the mark, by its content. Unreadable evidence (a
+  secrets file that is not a regular file or cannot be opened, a config
+  key that cannot be read) is an error: the automatic import stops, and
+  the command-line guards refuse, naming the cause. A missing secrets
+  file is no evidence.
 - **On a store that never synced** nothing was shared, so every event
   is still pending, and a replace that drops a task discards, in the
   same transaction, the pending events of that task (matched by uid, as
@@ -868,24 +941,40 @@ only one runs the DDL, the others see the schema is current and return
 cleanly. See `internal/store/postgres/transport/migrate.go` and
 `TestMigrate_ConcurrentSingleFlight`.
 
-Every migration file runs in that one transaction, so an index a
-migration adds (014, 015) is built inside it, not concurrently. The
-transaction also re-runs the `ALTER TABLE sync_events ADD COLUMN IF NOT
-EXISTS` of migrations 010 and 013, which take an `ACCESS EXCLUSIVE` lock
-on `sync_events` even when the column exists, and hold it until the
-transaction commits. So while `mtix sync init` migrates, pushes and
-pulls both wait for it. A push or pull whose statement waits past its
-10-second statement timeout is retried, up to 5 attempts in all (about
-50 seconds, `DefaultRetryConfig` in `transport/retry.go`), so it
-normally completes once `mtix sync init` finishes. It fails only if the
-wait outlasts its retries; a push then keeps its events queued and a
-pull keeps its cursor, and the next one succeeds. Run `mtix sync init`
-when a pause in sync is acceptable.
-On a large hub the first build of an index makes that pause longer;
-once the index exists its `CREATE INDEX IF NOT EXISTS` only checks for
-it. `mtix sync init` gives the connection and the whole migration 30
-seconds; a migration that takes longer is rolled back, and the hub
-keeps working without the new index (pulls stay correct, only slower).
+**Init locking and deadlines.** `mtix sync init` allows 30 seconds to connect,
+then a separate `--migrate-timeout` (default `5m`, positive Go duration)
+for the entire migration, including waiting for the migration advisory lock.
+Other init callers and admin commands (`mtix sync migrate`,
+`mtix sync repair-uids` and `mtix sync harden --apply`) take this lock too;
+their own deadlines may end the wait first. Ordinary pushes and pulls do
+not acquire it. Migrations still replay to restore missing functions and triggers.
+Migrations 010 and 013 check the column catalog before ALTER: an up-to-date
+`sync_events` takes no `ACCESS EXCLUSIVE` column lock, so event SELECTs can
+continue. Adding a missing column blocks both event reads and writes until
+commit or rollback. The migration's index statements (including first builds
+of 014/015) take `SHARE` locks that block event writes until the transaction
+ends, even when every index already exists. Index statements alone allow
+event SELECTs. Migration 006 skips unchanged, enabled
+audit/conflict triggers, so an up-to-date hub takes no `ACCESS EXCLUSIVE`
+relation lock. Trigger repair drops and recreates a trigger, blocking reads
+and writes on its table until commit or rollback. Thus init can still delay
+a push, even on a current hub. A queued exclusive lock can also make later
+SELECTs wait. Schedule upgrades and restore initialization when a sync pause
+is acceptable.
+
+On migration deadline expiry, init names `--migrate-timeout`. Migration is
+atomic: an interrupted index build rolls back. Retry as the hub owner using
+the larger budget printed in the error. For a default-budget timeout,
+`mtix sync init --migrate-timeout=15m` is one example; increase it further for
+the hub's size, then run `mtix sync doctor`. This also applies to a joiner's first init and
+the post-restore runbook: repeated short retries cannot finish an index that
+always exceeds the budget. Locks last until commit or rollback, within the
+migration budget plus server cancellation/rollback cleanup; an earlier caller
+cancellation or server timeout can end the attempt sooner. Waiting pushes and
+pulls have their own statement timeout and retry limits (normally five
+10-second attempts plus backoff), and may fail before init ends. Their queued
+events and pull cursor survive; retry them after init succeeds. After migration,
+registry checks and hub registration get a fresh 30-second budget.
 
 ## Transport security
 

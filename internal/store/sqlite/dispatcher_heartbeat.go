@@ -29,11 +29,11 @@ func (s *Store) RecordDispatcherHeartbeat(ctx context.Context, hb DispatcherHear
 	}
 	return s.WithTx(ctx, func(tx *sql.Tx) error {
 		// One row per (host, uid): the latest heartbeat replaces the previous one.
-		_, err := tx.ExecContext(ctx, `INSERT INTO dispatcher_heartbeat(host_id,uid,pid,protocol,version,seen_at)
-			VALUES(?,?,?,?,?,?)
+		_, err := tx.ExecContext(ctx, `INSERT INTO dispatcher_heartbeat(host_id,uid,pid,protocol,version,seen_at,capabilities)
+			VALUES(?,?,?,?,?,?,?)
 			ON CONFLICT(host_id,uid) DO UPDATE SET pid=excluded.pid, protocol=excluded.protocol,
-			version=excluded.version, seen_at=excluded.seen_at`,
-			hb.HostID, hb.UID, hb.PID, hb.Protocol, hb.Version, hb.SeenAt)
+			version=excluded.version, seen_at=excluded.seen_at, capabilities=excluded.capabilities`,
+			hb.HostID, hb.UID, hb.PID, hb.Protocol, hb.Version, hb.SeenAt, HistoryReaderCapability)
 		if err != nil {
 			return fmt.Errorf("record dispatcher heartbeat: %w", err)
 		}

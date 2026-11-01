@@ -4,7 +4,7 @@ go 1.26.0
 
 // toolchain pins the patched Go for govulncheck-clean builds.
 // Bump when stdlib CVEs land; see docs/audit/MTIX-15-audit-pass2.md.
-toolchain go1.26.9
+toolchain go1.26.10
 
 require (
 	github.com/anishathalye/porcupine v1.3.1

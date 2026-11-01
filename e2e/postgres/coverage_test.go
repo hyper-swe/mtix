@@ -288,6 +288,44 @@ func TestRedactDSN_PasswordKvForm(t *testing.T) {
 	assert.Contains(t, got, dsnReplacement)
 }
 
+// TestRedactDSN_KeyValueFormsAllRedacted covers the quoted, spaced, upper
+// case and unterminated password forms (MTIX-87): CI logs are public.
+func TestRedactDSN_KeyValueFormsAllRedacted(t *testing.T) {
+	for name, in := range map[string]string{
+		"quoted":       "dial password='Sekr3tPW' host=db",
+		"spaced":       "dial password = Sekr3tPW host=db",
+		"spaced quote": "dial password = 'Sekr3tPW' host=db",
+		"escaped":      `dial password='ab\'TAILESC' host=db`,
+		"with spaces":  "dial password='Sekr3tPW and more' host=db",
+		"upper":        "dial PASSWORD=Sekr3tPW host=db",
+		"unterminated": "dial host=db password='Sekr3tPW tail",
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := RedactDSN(in)
+			assert.NotContains(t, got, "Sekr3tPW")
+			assert.NotContains(t, got, "and more")
+			assert.NotContains(t, got, "TAILESC", "nothing after an escaped quote stays visible")
+			assert.Contains(t, got, dsnReplacement)
+		})
+	}
+	for name, in := range map[string]string{
+		"semicolon":     "dial password=ab;TAILONE host=db",
+		"double quote":  `dial password=ab"TAILTWO host=db`,
+		"single quote":  "dial password=ab'TAILTHREE host=db",
+		"angle bracket": "dial password=ab<TAILFOUR>x host=db",
+		"closing angle": "dial password=ab>TAILFIVE host=db",
+		"backslash":     `dial password=ab\ TAILSIX host=db`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			got := RedactDSN(in)
+			assert.NotContains(t, got, "TAIL")
+			assert.Contains(t, got, "host=db", "the next setting stays readable")
+		})
+	}
+	out := captureRedacted(func(w io.Writer) { _, _ = w.Write([]byte("dial password = 'Sekr3tPW' host=db")) })
+	assert.NotContains(t, out, "Sekr3tPW", "the redacting writer masks the spaced form too")
+}
+
 // TestRedactingWriter_ShortCircuitsCleanInput ensures writes that contain
 // no DSN-shaped content pass through verbatim.
 func TestRedactingWriter_ShortCircuitsCleanInput(t *testing.T) {

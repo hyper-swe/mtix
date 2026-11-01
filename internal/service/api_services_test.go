@@ -36,7 +36,7 @@ func TestAPIWorkflowServices_PersistAndBroadcast(t *testing.T) {
 			case "claim":
 				err = svc.ClaimNode(ctx, n.ID, "writer")
 			case "unclaim":
-				err = svc.UnclaimNode(ctx, n.ID, "release", "writer")
+				err = svc.UnclaimNode(ctx, n.ID, "release", "writer", false)
 			case "cancel":
 				err = svc.CancelNode(ctx, n.ID, "cancel", "writer", false)
 			}
@@ -149,7 +149,7 @@ func TestAPIWorkflowServices_BackendFailuresDoNotBroadcast(t *testing.T) {
 	require.ErrorIs(t, failing.AppendAnnotation(ctx, n.ID, model.Annotation{Text: "hello"}), model.ErrConflict)
 	require.Empty(t, bc.events)
 	require.ErrorIs(t, svc.AppendAnnotation(ctx, "TEST-999", model.Annotation{}), model.ErrNotFound)
-	require.ErrorIs(t, svc.UnclaimNode(ctx, "TEST-999", "reason", "writer"), model.ErrNotFound)
+	require.ErrorIs(t, svc.UnclaimNode(ctx, "TEST-999", "reason", "writer", false), model.ErrNotFound)
 	require.ErrorIs(t, svc.ForceReclaimNode(ctx, "TEST-999", "writer", time.Hour), model.ErrNotFound)
 	require.ErrorIs(t, svc.CancelNode(ctx, "TEST-999", "reason", "writer", false), model.ErrNotFound)
 	require.Empty(t, bc.events)

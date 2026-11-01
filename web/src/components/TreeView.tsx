@@ -219,7 +219,7 @@ function TreeRow({
       {/* Expand/collapse toggle */}
       {hasChildren ? (
         <button
-          className="w-4 h-4 flex items-center justify-center mr-1 flex-shrink-0 rounded"
+          className="w-4 h-4 flex items-center justify-center mr-1 shrink-0 rounded-sm"
           style={{
             color: "var(--color-text-tertiary)",
           }}
@@ -238,16 +238,16 @@ function TreeRow({
           )}
         </button>
       ) : (
-        <span className="w-4 h-4 mr-1 flex-shrink-0" />
+        <span className="w-4 h-4 mr-1 shrink-0" />
       )}
 
       {/* Status icon */}
-      <span className="mr-1.5 flex-shrink-0">
+      <span className="mr-1.5 shrink-0">
         <StatusIcon status={node.status} size={12} />
       </span>
 
       {/* Node ID (short) */}
-      <span className="mr-1.5 flex-shrink-0">
+      <span className="mr-1.5 shrink-0">
         <NodeID
           id={node.id}
           short
@@ -279,7 +279,7 @@ function TreeRow({
       {/* Progress for parent nodes */}
       {node.child_count > 0 && (
         <span
-          className="text-[10px] ml-1 flex-shrink-0 tabular-nums"
+          className="text-[10px] ml-1 shrink-0 tabular-nums"
           style={{ color: "var(--color-text-tertiary)" }}
         >
           {Math.round(node.progress * 100)}%

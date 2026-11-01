@@ -33,7 +33,11 @@ func appendLoggedNodesCheck(ctx context.Context, r DoctorReport, st *sqlite.Stor
 	if err != nil {
 		return appendCheck(r, loggedNodesCheckName, false, err.Error())
 	}
-	if !synced && !hubConfigured(app.mtixDir) && !hubMarkConnected() {
+	counts, err := hubGuardCounts(ctx)
+	if err != nil {
+		return appendCheck(r, loggedNodesCheckName, false, err.Error())
+	}
+	if !synced && !counts {
 		return appendCheck(r, loggedNodesCheckName, true, "ok (the store does not sync with a hub)")
 	}
 	missing, err := st.MissingLoggedNodes(ctx)

@@ -25,7 +25,7 @@ func envMap(env []string) map[string]string {
 
 func TestChildEnvironment_LocaleWildcardNeverAdmitsCredentialShapedNames(t *testing.T) {
 	parent := []string{"LC_API_TOKEN=t", "LC_DB_PASSWORD=p", "LC_MTIX_SYNC_DSN=d", "LC_FOO=x", "LC_ALL=C", "LC_CTYPE=C", "LC_TIME=C", "LC_MESSAGES=C", "LC_IDENTIFICATION=C"}
-	got := envMap(childEnvironment(parent, "linux", Hook{Name: "wake"}, nil, "", "/fixed"))
+	got := envMap(childEnvironment(parent, "linux", Delivery{Hook: Hook{Name: "wake"}}, "", "/fixed"))
 	for _, name := range []string{"LC_API_TOKEN", "LC_DB_PASSWORD", "LC_MTIX_SYNC_DSN", "LC_FOO"} {
 		require.NotContains(t, got, name)
 	}

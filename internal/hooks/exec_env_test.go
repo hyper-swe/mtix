@@ -160,7 +160,7 @@ func TestExecEnvPass_NamedVariablesReachTheChildExceptDeniedOnes(t *testing.T) {
 func TestChildEnvironment_DenyListWinsOverEnvPass(t *testing.T) {
 	hook := Hook{Name: "wake", Exec: &ExecConfig{Command: []string{"sh"}, EnvPass: []string{"GITHUB_TOKEN", "MTIX_SYNC_DSN", "PATH", "BASH_ENV", "MY_SETTING", "lowercase_ok"}}}
 	parent := []string{"GITHUB_TOKEN=t", "MTIX_SYNC_DSN=d", "PATH=/evil", "BASH_ENV=/e", "MY_SETTING=v", "lowercase_ok=1", "OTHER=x", "HOME=/h"}
-	env := childEnvironment(parent, "linux", hook, []byte("{}"), "/s", "/fixed")
+	env := childEnvironment(parent, "linux", Delivery{Hook: hook, EventJSON: []byte("{}")}, "/s", "/fixed")
 	got := map[string]string{}
 	for _, kv := range env {
 		name, value, _ := strings.Cut(kv, "=")
@@ -178,7 +178,7 @@ func TestChildEnvironment_DenyListWinsOverEnvPass(t *testing.T) {
 func TestChildEnvironment_WindowsAllowlistAndCaseInsensitiveNames(t *testing.T) {
 	hook := Hook{Name: "wake"}
 	parent := []string{"SYSTEMROOT=C:\\Windows", "ComSpec=cmd", "pathext=.EXE", "USERPROFILE=u", "TEMP=t", "TMP=t", "APPDATA=a", "SECRET_X=1", "Path=p"}
-	env := childEnvironment(parent, "windows", hook, nil, "", "C:\\fixed")
+	env := childEnvironment(parent, "windows", Delivery{Hook: hook}, "", "C:\\fixed")
 	got := map[string]bool{}
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
@@ -234,7 +234,7 @@ func TestChildEnvironment_AuthorIDOnlyForAValidAddressee(t *testing.T) {
 	}
 	for to, want := range map[string]bool{"developer": true, "": false, strings.Repeat("a", 65): false, "bad\nid": false, strings.Repeat("a", 64): true} {
 		hook := Hook{Name: "wake", Match: Match{ToAgent: to}}
-		require.Equal(t, want, has(childEnvironment([]string{"MTIX_AUTHOR_ID=sender"}, "linux", hook, nil, "", "/fixed")), "%q", to)
+		require.Equal(t, want, has(childEnvironment([]string{"MTIX_AUTHOR_ID=sender"}, "linux", Delivery{Hook: hook}, "", "/fixed")), "%q", to)
 	}
 }
 

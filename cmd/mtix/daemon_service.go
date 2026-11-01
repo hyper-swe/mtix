@@ -47,6 +47,10 @@ type serviceSpec struct {
 	Start      [][]string
 	Stop       [][]string
 	Status     [][]string
+
+	// NotLoadedExit is the exit code of the Status command that proves the label is not
+	// loaded (launchctl print: 113, systemctl status: 4); 0 when none can be proven.
+	NotLoadedExit int
 }
 
 // buildServiceSpec assembles the platform service for the project rooted at
@@ -96,6 +100,8 @@ func buildServiceSpec(goos, exe, projectRoot, home string, intervalSec int) (*se
 			Start:      [][]string{{"launchctl", "kickstart", "-k", target}},
 			Stop:       [][]string{{"launchctl", "kill", "SIGTERM", target}},
 			Status:     [][]string{{"launchctl", "print", target}},
+
+			NotLoadedExit: 113,
 		}, nil
 
 	case "linux":
@@ -125,6 +131,8 @@ WantedBy=default.target
 			Start:  [][]string{{"systemctl", "--user", "start", name}},
 			Stop:   [][]string{{"systemctl", "--user", "stop", name}},
 			Status: [][]string{{"systemctl", "--user", "status", "--no-pager", name}},
+
+			NotLoadedExit: 4,
 		}, nil
 
 	case "windows":
@@ -153,6 +161,11 @@ WantedBy=default.target
 // /opt/homebrew/bin symlink already yields a stable path (os.Executable does
 // not resolve symlinks); this guards the direct-Cellar invocation.
 func stableExecutablePath(exe string) string {
+	// Only the running executable's absolute path is eligible for Homebrew mapping.
+	if !filepath.IsAbs(exe) {
+		return exe
+	}
+	exe = filepath.Clean(exe)
 	const marker = "/Cellar/"
 	i := strings.Index(exe, marker)
 	if i < 0 {
@@ -165,7 +178,12 @@ func stableExecutablePath(exe string) string {
 		return exe
 	}
 	stable := filepath.Join(prefix, "opt", parts[0], parts[2])
-	if _, err := os.Stat(stable); err != nil {
+	// Resolve only for the metadata probe; retain the stable symlink as the service target.
+	resolved, err := filepath.EvalSymlinks(stable)
+	if err != nil || !filepath.IsAbs(resolved) {
+		return exe
+	}
+	if _, err := os.Stat(filepath.Clean(resolved)); err != nil {
 		return exe // not a real brew layout — keep what we were given
 	}
 	return stable

@@ -27,6 +27,11 @@ func (s *Store) finishExport(data *ExportData, project, mtixVersion string) (*Ex
 	if err != nil {
 		return nil, fmt.Errorf("compute checksum: %w", err)
 	}
+	idsChecksum, err := computeIDsChecksum(data.Nodes, data.History)
+	if err != nil {
+		return nil, fmt.Errorf("compute ids checksum: %w", err)
+	}
+	data.IDsChecksum = idsChecksum
 	data.Version = 1
 	data.SchemaVersion = SchemaVersionV1
 	if data.historyOn {

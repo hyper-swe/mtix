@@ -12,6 +12,8 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+
+	"github.com/hyper-swe/mtix/internal/format"
 )
 
 // Server implements the MCP protocol over stdio transport per MTIX-6.1.1.
@@ -161,7 +163,7 @@ func (s *Server) handleRequest(ctx context.Context, req *Request) error {
 		return s.sendResult(req.ID, map[string]string{})
 	default:
 		return s.sendError(req.ID, ErrCodeMethodNotFound,
-			fmt.Sprintf("method not found: %s", req.Method))
+			fmt.Sprintf("method not found: %s", format.SafeText(req.Method)))
 	}
 }
 
@@ -231,7 +233,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) error {
 
 	result, err := s.tools.Call(ctx, params.Name, params.Arguments)
 	if err != nil {
-		return s.sendResult(req.ID, ErrorResult(err.Error()))
+		return s.sendResult(req.ID, ErrorResult(format.SafeText(err.Error())))
 	}
 
 	return s.sendResult(req.ID, result)

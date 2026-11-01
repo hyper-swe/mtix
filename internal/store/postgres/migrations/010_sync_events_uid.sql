@@ -21,7 +21,20 @@
 -- already ran it. No backfill of historical rows is performed: legacy rows
 -- keep uid NULL and resolve by node_id, so there is no data motion.
 
-ALTER TABLE sync_events ADD COLUMN IF NOT EXISTS uid TEXT;
+-- MTIX-107.52: IF NOT EXISTS on ALTER itself still takes ACCESS EXCLUSIVE.
+-- Check the visible table's catalog first under the migration advisory lock.
+-- The released column definition and existing-row behavior stay identical.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_catalog.pg_attribute
+        WHERE attrelid = 'sync_events'::regclass
+          AND attname = 'uid' AND NOT attisdropped
+    ) THEN
+        ALTER TABLE sync_events ADD COLUMN IF NOT EXISTS uid TEXT;
+    END IF;
+END
+$$;
 
 -- Lookup support for uid-keyed resolution (ADR-003 §3). Partial: only
 -- uid-bearing rows participate, mirroring the SQLite mirror index.

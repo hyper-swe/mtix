@@ -12,6 +12,8 @@ import (
 	"log/slog"
 	"net/http"
 	"sync"
+
+	"github.com/hyper-swe/mtix/internal/format"
 )
 
 // SSEServer implements MCP over Server-Sent Events per FR-14.1a.
@@ -128,7 +130,7 @@ func (s *SSEServer) processMessage(ctx context.Context, data []byte) *Response {
 		return &Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error:   &RPCError{Code: ErrCodeMethodNotFound, Message: fmt.Sprintf("unknown method: %s", req.Method)},
+			Error:   &RPCError{Code: ErrCodeMethodNotFound, Message: fmt.Sprintf("unknown method: %s", format.SafeText(req.Method))},
 		}
 	}
 }
@@ -173,7 +175,7 @@ func (s *SSEServer) handleSSEToolsCall(ctx context.Context, req Request) *Respon
 		return &Response{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Result:  mustMarshal(ErrorResult(err.Error())),
+			Result:  mustMarshal(ErrorResult(format.SafeText(err.Error()))),
 		}
 	}
 

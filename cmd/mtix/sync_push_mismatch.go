@@ -9,6 +9,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -38,7 +39,7 @@ func holdMismatches(ctx context.Context, stderr io.Writer, store *sqlite.Store,
 	for _, m := range mismatches {
 		e, ok := byID[m.EventID]
 		if !ok {
-			return 0, fmt.Errorf("the hub reported event %s, which this batch did not send", oneLine(m.EventID))
+			return 0, fmt.Errorf("the hub reported event %s, which this batch did not send", format.EventID(m.EventID))
 		}
 		q, err := pushHold(e, mismatchReason(m))
 		if err != nil {

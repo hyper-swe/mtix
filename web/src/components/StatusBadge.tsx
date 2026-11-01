@@ -104,7 +104,7 @@ export function StatusBadge({
   return (
     <div className={`relative inline-block ${className}`} ref={popoverRef}>
       <button
-        className="px-2.5 py-1 text-[11px] font-semibold rounded cursor-pointer flex items-center gap-1.5"
+        className="px-2.5 py-1 text-[11px] font-semibold rounded-sm cursor-pointer flex items-center gap-1.5"
         style={{
           backgroundColor: STATUS_BG[status] ?? "var(--color-hover)",
           color: statusColor,
@@ -147,7 +147,7 @@ export function StatusBadge({
               data-testid={`transition-${t}`}
             >
               <span
-                className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                className="w-1.5 h-1.5 rounded-full shrink-0"
                 style={{ backgroundColor: `var(--color-status-${t.replace("_", "-")})` }}
               />
               {STATUS_LABELS[t]}
@@ -176,7 +176,7 @@ export function StatusBadge({
           </p>
           <div className="flex gap-2">
             <button
-              className="px-2.5 py-1 text-xs rounded cursor-pointer font-medium"
+              className="px-2.5 py-1 text-xs rounded-sm cursor-pointer font-medium"
               style={{
                 backgroundColor: "var(--color-status-blocked)",
                 color: "#ffffff",
@@ -188,7 +188,7 @@ export function StatusBadge({
               Confirm
             </button>
             <button
-              className="px-2.5 py-1 text-xs rounded cursor-pointer"
+              className="px-2.5 py-1 text-xs rounded-sm cursor-pointer"
               style={{
                 color: "var(--color-text-secondary)",
                 border: "1px solid var(--color-border)",

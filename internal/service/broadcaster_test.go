@@ -38,21 +38,21 @@ func TestBroadcaster_BroadcastEvent_AllSubscribersReceive(t *testing.T) {
 	select {
 	case e := <-ch1:
 		assert.Equal(t, service.EventNodeCreated, e.Type)
-	case <-time.After(time.Second):
+	case <-time.After(serviceCompletionHangBound):
 		t.Fatal("ch1 timed out")
 	}
 
 	select {
 	case e := <-ch2:
 		assert.Equal(t, service.EventNodeCreated, e.Type)
-	case <-time.After(time.Second):
+	case <-time.After(serviceCompletionHangBound):
 		t.Fatal("ch2 timed out")
 	}
 
 	select {
 	case e := <-ch3:
 		assert.Equal(t, service.EventNodeCreated, e.Type)
-	case <-time.After(time.Second):
+	case <-time.After(serviceCompletionHangBound):
 		t.Fatal("ch3 timed out")
 	}
 }
@@ -82,7 +82,7 @@ func TestBroadcaster_SubscriptionFilter_UnderPrefix(t *testing.T) {
 	select {
 	case e := <-ch:
 		assert.Equal(t, "PROJ-1.2", e.NodeID)
-	case <-time.After(time.Second):
+	case <-time.After(serviceCompletionHangBound):
 		t.Fatal("timed out waiting for event")
 	}
 
@@ -118,7 +118,7 @@ func TestBroadcaster_SubscriptionFilter_EventTypeWhitelist(t *testing.T) {
 	select {
 	case e := <-ch:
 		assert.Equal(t, service.EventNodeCreated, e.Type)
-	case <-time.After(time.Second):
+	case <-time.After(serviceCompletionHangBound):
 		t.Fatal("timed out")
 	}
 
@@ -186,35 +186,30 @@ func TestBroadcaster_ConcurrentBroadcast_ThreadSafe(t *testing.T) {
 		channels[i] = hub.Subscribe(service.SubscriptionFilter{})
 	}
 
+	const producers, batchSize = 10, 20
+	want := concurrentBroadcastIDs(producers * batchSize)
 	// Broadcast from multiple goroutines concurrently.
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for i := 0; i < producers; i++ {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
-			for j := 0; j < 20; j++ {
+			for j := 0; j < batchSize; j++ {
 				_ = hub.Broadcast(context.Background(), service.Event{
 					Type:   service.EventNodeCreated,
-					NodeID: "PROJ-1",
+					NodeID: want[idx*batchSize+j],
 				})
 			}
 		}(i)
 	}
 	wg.Wait()
 
-	// Drain all channels to verify no deadlock.
+	// Producers have joined, so every delivery is already buffered.
 	for _, ch := range channels {
-		count := 0
-		for {
-			select {
-			case <-ch:
-				count++
-			case <-time.After(100 * time.Millisecond):
-				goto done
-			}
-		}
-	done:
+		got := drainConcurrentBroadcastIDs(t, ch)
+		count := len(got)
 		assert.Greater(t, count, 0, "subscriber should have received some events")
+		assert.ElementsMatch(t, want, got, "each subscriber must receive every broadcast exactly once")
 	}
 }
 

@@ -6,7 +6,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"math"
@@ -87,65 +86,26 @@ func minFreeBytes() uint64 {
 // (absent or zero bytes) is the truncation unrecoverable-in-place, and
 // opening it — which may reset the WAL and checkpoint garbage — would
 // destroy evidence. Fail stop instead.
+//
+// Root cause (MTIX-107.109): the file size, header and WAL must be read as
+// one consistent observation. A concurrent first opener can initialize and
+// checkpoint the database between a size sample and the header read, so a
+// stale size compared against the completed header reported a false
+// truncation. The header and the final size come from one open descriptor;
+// the WAL is stat-ed by path before that final size is measured, so a
+// checkpoint that grows the file and then removes the WAL cannot be seen
+// half-way (validateOpenDBFile, database_header.go). The first size sample
+// only gates the empty and sub-header cases.
 func validateDBFile(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		// Missing file is a fresh database, not corruption.
-		return nil //nolint:nilerr // absence is the legitimate fresh-DB case
-	}
-	size := info.Size()
-	if size == 0 {
+	f, err := os.Open(path)
+	if os.IsNotExist(err) {
 		return nil
 	}
-	if size < 100 {
-		return fmt.Errorf("database file %s is %d bytes, smaller than a SQLite header; %s: %w",
-			path, size, recoveryGuidance, model.ErrCorrupted)
-	}
-
-	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("open database header %s: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
-
-	header := make([]byte, 100)
-	if _, err := f.ReadAt(header, 0); err != nil {
-		return fmt.Errorf("read database header %s: %w", path, err)
-	}
-	if string(header[:16]) != "SQLite format 3\x00" {
-		return fmt.Errorf("database file %s does not have a SQLite header; %s: %w",
-			path, recoveryGuidance, model.ErrCorrupted)
-	}
-
-	pageSize := uint64(binary.BigEndian.Uint16(header[16:18]))
-	if pageSize == 1 {
-		pageSize = 65536
-	}
-	pageCount := uint64(binary.BigEndian.Uint32(header[28:32]))
-	changeCounter := binary.BigEndian.Uint32(header[24:28])
-	versionValidFor := binary.BigEndian.Uint32(header[92:96])
-
-	// The in-header page count is only authoritative when
-	// version-valid-for matches the change counter (SQLite file format
-	// §1.3.7). When they differ, a legacy writer left the count stale —
-	// fall through and let quick_check judge.
-	if versionValidFor != changeCounter {
-		return nil
-	}
-
-	if pageCount*pageSize <= uint64(size) {
-		return nil
-	}
-
-	// Header claims more pages than the file holds. Recoverable only if
-	// a WAL with content exists for SQLite to replay.
-	if walInfo, walErr := os.Stat(path + "-wal"); walErr == nil && walInfo.Size() > 0 {
-		return nil
-	}
-
-	return fmt.Errorf(
-		"database file %s is truncated: header records %d pages of %d bytes (%d bytes total) but the file is %d bytes, and no WAL exists to repair it; %s: %w",
-		path, pageCount, pageSize, pageCount*pageSize, size, recoveryGuidance, model.ErrCorrupted)
+	return validateOpenDBFile(path, f)
 }
 
 // quickCheck runs PRAGMA quick_check(1) and returns its first result row.

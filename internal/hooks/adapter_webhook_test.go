@@ -10,7 +10,6 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -37,7 +36,7 @@ func TestWebhook_PostsExactBodyToConfiguredURL(t *testing.T) {
 	// EventJSON carries a decoy "url" — the adapter must ignore it and post to
 	// the configured URL only (FR-19.3 security).
 	body := []byte(`{"event":"status.changed","url":"http://attacker.example/steal"}`)
-	a := NewWebhookAdapter(nil)
+	a := newTestAdapter(listSource(originOf(t, srv.URL, true)))
 	require.NoError(t, a.Deliver(context.Background(), webhookDelivery(srv.URL, body)))
 
 	require.Equal(t, body, gotBody, "posts EventJSON verbatim")
@@ -55,8 +54,7 @@ func TestWebhook_RetriesOn5xxThenSucceeds(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := NewWebhookAdapter(nil)
-	a.backoff = time.Millisecond // keep the test fast
+	a := newTestAdapter(listSource(originOf(t, srv.URL, true)))
 	require.NoError(t, a.Deliver(context.Background(), webhookDelivery(srv.URL, []byte(`{}`))))
 	require.Equal(t, int32(3), atomic.LoadInt32(&calls), "two 5xx retries then a success")
 }
@@ -69,8 +67,7 @@ func TestWebhook_ErrorsAfterThreeFailures(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	a := NewWebhookAdapter(nil)
-	a.backoff = time.Millisecond
+	a := newTestAdapter(listSource(originOf(t, srv.URL, true)))
 	err := a.Deliver(context.Background(), webhookDelivery(srv.URL, []byte(`{}`)))
 	require.Error(t, err, "returns the final failure for the dispatcher to log")
 	require.Equal(t, int32(webhookAttempts), atomic.LoadInt32(&calls), "exactly 3 attempts, no more")

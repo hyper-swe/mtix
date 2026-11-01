@@ -18,7 +18,7 @@ import (
 )
 
 // showLongHelp lists exactly the lines `mtix show` prints (MTIX-98). Keep it in
-// step with runShow: a test fails when a printed label is missing here.
+// step with runShow: tests compare the documented and printed labels in order.
 const showLongHelp = `Show a node's details and annotations as labeled lines, in this order:
 
   ID           node id, marked when the id is still provisional
@@ -28,19 +28,26 @@ const showLongHelp = `Show a node's details and annotations as labeled lines, in
                time, or for other statuses even with a stale wake time
   Priority     priority (1 = critical ... 5 = backlog)
   Type         node type
+  Issue type   issue type (only when set)
   Assignee     current assignee (only when set)
   Desc         full description (only when set; omitted when it holds only
-               whitespace or control characters), further lines indented
+               whitespace, control characters or invisible formatting
+               characters), further lines indented
   Annotations  every annotation, oldest first (equal times by id): its ISO-8601 UTC timestamp
-               ("unknown time" when none was recorded), author, addressee
+               ("unknown time" when none was recorded), its short id in
+               the form (id "01ARZ3NDEKTS") when it has one (the first 12
+               characters; mtix resolve-annotation accepts it, and --json
+               has the full id), author, addressee
                and resolved marker when present, then the text, with
                further lines indented and "(empty)" for an empty text;
                "Annotations: none" when the node has none
-  Prompt       the prompt, cut to 100 characters ending in "..." when
-               longer (only when set; omitted when it holds only
-               whitespace or control characters), further lines indented
+  Prompt       up to 100 characters (Unicode code points) of the normalized prompt;
+               longer prompts are cut to 97 characters followed by ...
+               (only when set; omitted when it holds only
+               whitespace, control characters or invisible formatting
+               characters), further lines indented
   Progress     progress bar
-  Created      creation time
+  Created      creation time: 2006-01-02 15:04 (UTC, no zone)
   History      with --history: the change history, newest first, at most
                --history-limit entries (default 50), one line each with the
                UTC time, field, actor, origin and, for a structured field,
@@ -49,16 +56,23 @@ const showLongHelp = `Show a node's details and annotations as labeled lines, in
 
 Annotation text, author and addressee, the description and the prompt are
 normalized for the terminal: control characters other than newline and tab
-are removed (so CRLF becomes LF), and leading blank lines and trailing
-whitespace are trimmed, so a stored carriage return or escape sequence
-cannot overwrite a line or restyle the terminal. Title and assignee still
-print as stored, control characters and newlines included. Invisible
-Unicode formatting characters, such as bidirectional overrides, are not
-removed yet, so text can still display in a misleading order; quote exact
-text from --json.
+are removed (so CRLF becomes LF), bidirectional controls (such as
+overrides and isolates), zero-width characters and tag characters
+(U+E0001, U+E0020-U+E007F) are removed, the line separator and
+paragraph separator (U+2028, U+2029) become newlines, and
+leading blank lines and trailing whitespace are trimmed, so stored text
+cannot overwrite a line, restyle the terminal or display in a misleading
+order. Title and assignee print on one line through the same rule (control
+characters, escapes, bidirectional controls, zero-width and tag characters
+and every other invisible format character removed; tabs, newlines and
+the line and paragraph separators become spaces; printable non-ASCII text
+stays readable). The directional marks (U+200E, U+200F, U+061C) are
+kept, so a lone mark can still change how digits are ordered. The
+--history list follows the same rule and prints each entry on one line,
+with line breaks shown as spaces. Quote exact text from --json.
 
-Acceptance criteria, labels, dependencies, activity and the full prompt are
-not printed. Use --json for the complete node record, including every
+Other fields, for example acceptance criteria, labels, dependencies, activity
+and the full prompt, are not printed. Use --json for the complete node record, including every
 annotation.`
 
 // newShowCmd creates the mtix show command per FR-6.3.
@@ -142,7 +156,8 @@ func newTreeCmd() *cobra.Command {
 	return cmd
 }
 
-// runShow displays full details of a single node with status icons and progress bars.
+// runShow displays selected node fields and all annotations as labeled terminal text.
+// Use --json for the complete record (FR-6.3).
 func runShow(id string) error {
 	return runShowWith(id, showOptions{historyLimit: service.DefaultHistoryLimit})
 }
@@ -171,7 +186,7 @@ func runShowWith(id string, opts showOptions) error {
 	// A provisional id is flagged so the reader knows its number is not yet
 	// settled and must not be externalized (ADR-003 §8).
 	out.WriteHuman("ID:       %s\n", format.AnnotateID(node.ID))
-	out.WriteHuman("Title:    %s\n", node.Title)
+	out.WriteHuman("Title:    %s\n", format.SafeLine(node.Title))
 	out.WriteHuman("Status:   %s\n", showStatus(node))
 	out.WriteHuman("Priority: %d\n", node.Priority)
 	out.WriteHuman("Type:     %s\n", node.NodeType)
@@ -179,7 +194,7 @@ func runShowWith(id string, opts showOptions) error {
 		out.WriteHuman("Issue type: %s\n", node.IssueType)
 	}
 	if node.Assignee != "" {
-		out.WriteHuman("Assignee: %s\n", node.Assignee)
+		out.WriteHuman("Assignee: %s\n", format.SafeLine(node.Assignee))
 	}
 	// Description and prompt are normalized and their continuation lines
 	// indented, so no stored line can pass for a label; one that normalizes
@@ -189,10 +204,10 @@ func runShowWith(id string, opts showOptions) error {
 	}
 	writeAnnotations(out, node.Annotations)
 	if prompt := displayText(node.Prompt); prompt != "" {
-		out.WriteHuman("Prompt:   %s\n", indentContinuation(truncateChars(prompt, 100), showValueIndent))
+		out.WriteHuman("Prompt:   %s\n", indentContinuation(Truncate(prompt, 100), showValueIndent))
 	}
 	out.WriteHuman("Progress: %s\n", ProgressBar(node.Progress, 15))
-	out.WriteHuman("Created:  %s\n", node.CreatedAt.Format("2006-01-02 15:04"))
+	out.WriteHuman("Created:  %s\n", node.CreatedAt.UTC().Format("2006-01-02 15:04"))
 	if opts.history {
 		return writeShowHistory(ctx, out, node.ID, opts.historyLimit)
 	}
@@ -216,11 +231,21 @@ func writeAnnotations(out OutputWriter, annotations []model.Annotation) {
 	out.WriteHuman("Annotations:\n")
 	for _, a := range model.SortAnnotations(annotations) {
 		lines := strings.Split(indentContinuation(annotationText(a.Text), annotationTextIndent), "\n")
-		out.WriteHuman("  [%s] %s: %s\n", annotationTime(a.CreatedAt), annotationByline(a), lines[0])
+		out.WriteHuman("  [%s] %s%s: %s\n", annotationTime(a.CreatedAt), annotationIDMarker(a), annotationByline(a), lines[0])
 		for _, line := range lines[1:] {
 			out.WriteHuman("%s\n", line)
 		}
 	}
+}
+
+// annotationIDMarker renders the short annotation id that `mtix
+// resolve-annotation` accepts (MTIX-100.3), quoted printable ASCII like every
+// stored id (format.EventID). An annotation with no id gets no marker.
+func annotationIDMarker(a model.Annotation) string {
+	if a.ID == "" {
+		return ""
+	}
+	return "(id " + format.EventID(model.ShortAnnotationID(a.ID)) + ") "
 }
 
 // annotationByline renders the author, the addressee when the annotation is
@@ -328,7 +353,7 @@ func runList(status, under, assignee, nodeType, priority, fields, changedSince, 
 			fmt.Sprintf("%s %s", icon, n.Status),
 			fmt.Sprintf("%d", n.Priority),
 			fmt.Sprintf("%.0f%%", n.Progress*100),
-			Truncate(n.Title, 50),
+			Truncate(format.SafeLine(n.Title), 50),
 		})
 	}
 	out.WriteTable(headers, rows)

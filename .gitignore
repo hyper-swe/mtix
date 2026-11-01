@@ -107,6 +107,7 @@ screenshots/playwright/
 # FR-19 preview build + local exec-trust records (never commit)
 dist/mtix-fr19-preview
 .mtix/hooks.trust
+.mtix/serve.json
 dist/mtix-fr19-preview-linux-arm64
 
 # Internal design/incident artifacts — never publish (may name internal projects/agents)

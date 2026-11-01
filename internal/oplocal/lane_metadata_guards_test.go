@@ -79,7 +79,7 @@ func TestLaneMetadata_FIFO_RefusesBeforeOpening(t *testing.T) {
 	started := make(chan struct{})
 	go func() { close(started); _, err := laneMetadata(path); done <- err }()
 	<-started
-	timer := time.NewTimer(time.Second)
+	timer := time.NewTimer(oplocalCompletionHangBound)
 	defer timer.Stop()
 	select {
 	case err := <-done:
@@ -106,7 +106,7 @@ func releaseMetadataFIFOReader(t *testing.T, path string, done <-chan error) {
 	select {
 	case err := <-done:
 		require.Error(t, err)
-	case <-time.After(2 * time.Second):
+	case <-time.After(oplocalCompletionHangBound):
 		t.Fatal("owned FIFO reader did not join")
 	}
 }

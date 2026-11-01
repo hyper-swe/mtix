@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -27,6 +28,29 @@ import (
 //
 // Returns ErrNotFound if the node does not exist or is already deleted.
 func (s *Store) DeleteNode(ctx context.Context, id string, cascade bool, deletedBy string) error {
+	return s.deleteNode(ctx, id, deleteOptions{cascade: cascade, deletedBy: deletedBy, rootID: id})
+}
+
+// DeleteNodeWithRoot soft-deletes one node, recording rootID as the delete
+// group for local subtree recovery (MTIX-107.20). It emits one sync delete event.
+// rootID must be the node itself or an ancestor in its dot-notation hierarchy.
+// Returns ErrInvalidInput for an unrelated root and ErrNotFound for a missing
+// or already-deleted node.
+func (s *Store) DeleteNodeWithRoot(ctx context.Context, id, rootID, deletedBy string) error {
+	if rootID == "" || (id != rootID && !strings.HasPrefix(id, rootID+".")) {
+		return fmt.Errorf("delete root %q for %s: %w", rootID, id, model.ErrInvalidInput)
+	}
+	return s.deleteNode(ctx, id, deleteOptions{deletedBy: deletedBy, rootID: rootID})
+}
+
+type deleteOptions struct {
+	cascade   bool
+	deletedBy string
+	rootID    string
+}
+
+func (s *Store) deleteNode(ctx context.Context, id string, opts deleteOptions) error {
+	cascade, deletedBy := opts.cascade, opts.deletedBy
 	// MTIX-95.31.19.2: withHistoryTx appends the task_history entries (cascade included) in this transaction.
 	return s.withHistoryTx(ctx, historyScope{id: id, cascade: cascade, actor: deletedBy}, func(tx *sql.Tx) error {
 		now := s.clock().UTC().Format(time.RFC3339)
@@ -46,8 +70,8 @@ func (s *Store) DeleteNode(ctx context.Context, id string, cascade bool, deleted
 			return fmt.Errorf("soft-delete node %s: %w", id, err)
 		}
 
-		// MTIX-95.18: the target was removed by its own delete.
-		if err := recordCascadeRoot(ctx, tx, id, deletedBy, now); err != nil {
+		// Record this node in the requested recovery group (MTIX-107.20).
+		if err := recordCascadeRoot(ctx, tx, id, opts, now); err != nil {
 			return err
 		}
 
@@ -98,20 +122,16 @@ func loadDeleteTarget(ctx context.Context, tx *sql.Tx, id string) (sql.NullStrin
 	return parentID, nil
 }
 
-// recordCascadeRoot records, in the caller's transaction, that the delete of
-// id removed id itself: its cascade_deletes row names id as the root and is
-// stamped with the deleted_at and deleted_by the delete just wrote
-// (MTIX-95.18). An existing row for id is overwritten, root and stamp: a node
-// being deleted is live, so any row it still carries is stale, left by a
-// restore that did not clear it (an older binary's undelete, an import).
-func recordCascadeRoot(ctx context.Context, tx *sql.Tx, id, deletedBy, now string) error {
+// recordCascadeRoot stamps the target's provenance with the requested delete
+// group. Live nodes may carry stale markers, which this delete overwrites.
+func recordCascadeRoot(ctx context.Context, tx *sql.Tx, id string, opts deleteOptions, now string) error {
 	// Upsert the stamped provenance row of the delete target.
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO cascade_deletes (node_id, root_id, deleted_at, deleted_by)
 		 VALUES (?, ?, ?, ?)
 		 ON CONFLICT(node_id) DO UPDATE SET root_id = excluded.root_id,
 		     deleted_at = excluded.deleted_at, deleted_by = excluded.deleted_by`,
-		id, id, now, deletedBy,
+		id, opts.rootID, now, opts.deletedBy,
 	); err != nil {
 		return fmt.Errorf("record cascade root of %s: %w", id, err)
 	}

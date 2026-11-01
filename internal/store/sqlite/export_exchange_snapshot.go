@@ -7,7 +7,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"strconv"
 )
@@ -97,15 +96,15 @@ func readExchangeBoundary(ctx context.Context, tx *sql.Tx) (ExchangeBoundary, er
 func countUnresolvedExchange(ctx context.Context, tx *sql.Tx, ids []string) (int64, error) {
 	var total int64
 	for start := 0; start < len(ids); start += 500 {
-		raw, err := json.Marshal(ids[start:min(start+500, len(ids))])
+		raw, err := hexIDList(ids[start:min(start+500, len(ids))])
 		if err != nil {
 			return 0, err
 		}
 		var count int64
-		err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM json_each(?) j
+		err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT CAST(unhex(value) AS TEXT) AS value FROM json_each(?)) AS j
    WHERE EXISTS (SELECT 1 FROM sync_quarantine q WHERE q.event_id=j.value)
     OR (NOT EXISTS (SELECT 1 FROM applied_events a WHERE a.event_id=j.value)
-     AND NOT EXISTS (SELECT 1 FROM sync_events s WHERE s.event_id=j.value))`, string(raw)).Scan(&count)
+     AND NOT EXISTS (SELECT 1 FROM sync_events s WHERE s.event_id=j.value))`, raw).Scan(&count)
 		if err != nil {
 			return 0, err
 		}

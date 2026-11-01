@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -51,9 +52,19 @@ func runUnblock(id string) error {
 		return out.WriteJSON(node)
 	}
 	if node.Status == model.StatusBlocked {
-		out.WriteHuman("%s is still blocked — it has unresolved blockers (see 'mtix dep show %s')\n", id, id)
+		out.WriteHuman("%s", stillBlockedLine(id))
 		return nil
 	}
 	out.WriteHuman("✓ %s → %s\n", id, node.Status)
 	return nil
+}
+
+// stillBlockedLine renders the still-blocked notice with a typeable dep show
+// hint: the id is shell-quoted, and an id that cannot be typed (NUL, invalid
+// UTF-8) is shown escaped without a command (MTIX-187.7.6).
+func stillBlockedLine(id string) string {
+	if word, ok := format.ShellOperand(id); ok {
+		return fmt.Sprintf("%s is still blocked — it has unresolved blockers (see `mtix dep show %s`)\n", oneLine(id), word)
+	}
+	return fmt.Sprintf("%s is still blocked — it has unresolved blockers (run mtix dep show with this id)\n", oneLine(id))
 }

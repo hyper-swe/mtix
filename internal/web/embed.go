@@ -55,14 +55,18 @@ func SPAHandler() (http.Handler, error) {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
+		if path == "/api" || strings.HasPrefix(path, "/api/") {
+			http.NotFound(w, r)
+			return
+		}
 		if path == "/" {
 			path = "/index.html"
 		}
 
 		// Try to open the requested file.
 		cleanPath := strings.TrimPrefix(path, "/")
-		if _, err := sub.Open(cleanPath); err != nil {
-			// File not found — serve index.html for SPA routing.
+		if info, err := fs.Stat(sub, cleanPath); err != nil || info.IsDir() {
+			// Missing files and directories use the SPA; never expose listings.
 			serveIndexHTML(w, r, fsys)
 			return
 		}
@@ -79,7 +83,10 @@ func SPAHandler() (http.Handler, error) {
 func serveIndexHTML(w http.ResponseWriter, r *http.Request, fsys http.FileSystem) {
 	w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 	w.Header().Set("Pragma", "no-cache")
-	r.URL.Path = "/index.html"
+	// FileServer redirects explicit index.html URLs. Serve the root index on
+	// a cloned request so deep links retain their URL and request metadata.
+	r = r.Clone(r.Context())
+	r.URL.Path = "/"
 	http.FileServer(fsys).ServeHTTP(w, r)
 }
 

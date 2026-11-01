@@ -19,11 +19,12 @@ import (
 // attachDoctorDeps feed the attach doctor checks (ADR-007 §7: setup.shim,
 // glue.<h>, skew.dispatchers, and attach.failures for attach verb alerts).
 type attachDoctorDeps struct {
-	state       *oplocal.State
-	registry    *attach.Registry
-	current     int
-	clock       func() time.Time
-	dispatchers []service.DispatcherStatus
+	state            *oplocal.State
+	registry         *attach.Registry
+	current          int
+	clock            func() time.Time
+	dispatchers      []service.DispatcherStatus
+	serviceInstalled bool
 	// dispatchersErr is a heartbeat read failure, reported as a FAIL row.
 	dispatchersErr error
 	// unavailable explains why operator state cannot be read at all; then only
@@ -75,7 +76,7 @@ func registerAttachDoctorChecks(ctx context.Context, svc *service.DoctorService,
 	if deps.dispatchersErr != nil {
 		checks = append(checks, failedRowCheck("skew.dispatchers", "dispatcher heartbeats cannot be read: "+deps.dispatchersErr.Error(), "mtix verify"))
 	} else if len(deps.dispatchers) > 0 {
-		checks = append(checks, skewDispatchersCheck(deps.dispatchers, deps.current))
+		checks = append(checks, skewDispatchersCheck(deps.dispatchers, deps.current, deps.serviceInstalled))
 	}
 	for _, check := range checks {
 		if err := svc.Register(check); err != nil {
@@ -188,7 +189,7 @@ func attachFailuresCheck(deps attachDoctorDeps) service.DoctorCheck {
 	}}
 }
 
-func skewDispatchersCheck(statuses []service.DispatcherStatus, current int) service.DoctorCheck {
+func skewDispatchersCheck(statuses []service.DispatcherStatus, current int, installed ...bool) service.DoctorCheck {
 	return service.DoctorCheck{ID: "skew.dispatchers", Run: func(context.Context) service.DoctorResult {
 		var details, pids []string
 		for _, d := range statuses {
@@ -204,6 +205,9 @@ func skewDispatchersCheck(statuses []service.DispatcherStatus, current int) serv
 		}
 		if len(details) == 0 {
 			return service.DoctorResult{Status: service.DoctorPass, Detail: fmt.Sprintf("%d dispatcher(s) at a current attach protocol", len(statuses))}
+		}
+		if len(installed) > 0 && installed[0] {
+			return service.DoctorResult{Status: service.DoctorWarn, Detail: strings.Join(details, "; "), Fix: "mtix dispatcher stop; mtix dispatcher start"}
 		}
 		return service.DoctorResult{Status: service.DoctorWarn,
 			Detail: strings.Join(details, "; ") + "; no dispatcher service is installed by this mtix, so it cannot restart them",
@@ -228,7 +232,7 @@ func productionAttachDoctorDeps(ctx context.Context) (attachDoctorDeps, error) {
 	if err != nil {
 		return attachDoctorDeps{}, err
 	}
-	deps := attachDoctorDeps{state: st, registry: reg, current: attach.Protocol, clock: func() time.Time { return time.Now().UTC() }}
+	deps := attachDoctorDeps{state: st, registry: reg, current: attach.Protocol, serviceInstalled: hostDispatcherInstalled(st), clock: func() time.Time { return time.Now().UTC() }}
 	if app.store == nil {
 		return deps, nil
 	}

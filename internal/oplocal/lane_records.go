@@ -29,8 +29,9 @@ type learnedLane struct {
 
 // ListedBoard is routing data, never an enrollment or confirmation grant.
 type ListedBoard struct {
-	Key  string `json:"board_key"`
-	Path string `json:"path"`
+	Key             string `json:"board_key"`
+	Path            string `json:"path"`
+	StoreInstanceID string `json:"store_instance_id,omitempty"`
 }
 
 var laneHarness = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,31}$`)

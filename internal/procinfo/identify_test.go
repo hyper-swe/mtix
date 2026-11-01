@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -133,4 +134,14 @@ func TestInfo_OwnProcess_ReportsFullArguments(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, p.Args, "a process can read its own arguments")
 	assert.Equal(t, os.Args, p.Args)
+	if runtime.GOOS == "linux" {
+		wd, wdErr := os.Getwd()
+		require.NoError(t, wdErr)
+		want, evalErr := filepath.EvalSymlinks(wd)
+		require.NoError(t, evalErr)
+		require.NotEmpty(t, p.Cwd, "linux reports the working directory of a readable process")
+		got, evalErr := filepath.EvalSymlinks(p.Cwd)
+		require.NoError(t, evalErr)
+		assert.Equal(t, want, got)
+	}
 }

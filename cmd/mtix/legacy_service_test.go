@@ -7,6 +7,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -103,8 +104,49 @@ func TestUninstallLegacyService_UnregistersThenRemovesUnit(t *testing.T) {
 	_, statErr := os.Stat(spec.Path)
 	require.ErrorIs(t, statErr, os.ErrNotExist)
 	require.NoError(t, uninstallLegacyService(t.Context(), io.Discard, spec, run), "idempotent when the unit is already gone")
-	failing := func(context.Context, io.Writer, [][]string, bool) error { return errors.New("systemctl failed") }
-	require.Error(t, uninstallLegacyService(t.Context(), io.Discard, spec, failing))
+}
+
+// runWith fakes the service runner: unregister fails, and the status command reports whether
+// the service is still loaded.
+func runWith(spec *serviceSpec, stillLoaded bool, statusRuns *int) func(context.Context, io.Writer, [][]string, bool) error {
+	return func(_ context.Context, _ io.Writer, cmds [][]string, _ bool) error {
+		if fmt.Sprint(cmds) == fmt.Sprint(spec.Status) {
+			*statusRuns++
+			if stillLoaded {
+				return nil
+			}
+			return errors.New("not loaded")
+		}
+		return errors.New("service manager failed")
+	}
+}
+
+func TestUninstallLegacyService_UnregisterFails_StillLoadedKeepsError(t *testing.T) {
+	home, root := t.TempDir(), t.TempDir()
+	installUnit(t, "linux", root, home)
+	spec, err := buildServiceSpec("linux", "mtix", root, home, daemonDispatchDefaultIntervalSec)
+	require.NoError(t, err)
+	var statusRuns int
+	require.Error(t, uninstallLegacyService(t.Context(), io.Discard, spec, runWith(spec, true, &statusRuns)))
+	require.Equal(t, 1, statusRuns)
+	require.FileExists(t, spec.Path, "a unit whose service is still loaded is not removed")
+}
+
+func TestUninstallLegacyService_AlreadyUnloaded_RerunConverges(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			home, root := t.TempDir(), t.TempDir()
+			installUnit(t, goos, root, home)
+			spec, err := buildServiceSpec(goos, "mtix", root, home, daemonDispatchDefaultIntervalSec)
+			require.NoError(t, err)
+			var statusRuns int
+			require.NoError(t, uninstallLegacyService(t.Context(), io.Discard, spec, runWith(spec, false, &statusRuns)),
+				"the label is gone after the first run: the re-run still completes")
+			require.Equal(t, 1, statusRuns)
+			_, statErr := os.Stat(spec.Path)
+			require.ErrorIs(t, statErr, os.ErrNotExist)
+		})
+	}
 }
 
 func TestHostDispatcher_LegacyService_DoctorFlagsWithSetupFix(t *testing.T) {

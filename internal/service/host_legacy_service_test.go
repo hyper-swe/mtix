@@ -7,6 +7,7 @@ package service_test
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/pushlock"
 )
 
@@ -247,4 +249,51 @@ func TestMigrateLegacyService_PreconditionFails_LegacyServiceUntouched(t *testin
 			require.Empty(t, rows)
 		})
 	}
+}
+
+// TestMigrateLegacyService_LocalWriteFailsAfterUninstall_NamesResidualAndRerunConverges drives
+// the one step that cannot be made safe in advance: a failure after the unit is removed. The
+// board's store is closed by the uninstall hook, so publishing the enrollment fails.
+func TestMigrateLegacyService_LocalWriteFailsAfterUninstall_NamesResidualAndRerunConverges(t *testing.T) {
+	f := newHostFixture(t)
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, ".mtix", "secrets"), []byte("checkout-secret"), 0600))
+	doomed, err := sqlite.New(filepath.Join(f.root, ".mtix", "data", "mtix.db"), slog.Default())
+	require.NoError(t, err)
+	var uninstalls int
+	failing := true
+	enroll := service.NewHostEnrollment(service.HostEnrollmentOptions{State: f.state, Clock: func() time.Time { return f.now },
+		OpenBoard: func(context.Context, string) (*service.HostBoard, error) {
+			if !failing {
+				return f.board(), nil
+			}
+			return service.NewHostBoard(service.HostBoardOptions{Store: doomed, State: f.state, Path: f.root, Host: service.RegistrationHost{HostID: f.host, UID: "test-uid", Version: "test", Protocol: model.AttachProtocol}, PID: 42, Clock: func() time.Time { return f.now }, Liveness: &scanLiveness{}, Adapters: []service.WakeAdapter{f.adapter},
+				Contact: service.NewContactScheduler(func() time.Time { return f.now }, func() (service.ContactInputs, error) {
+					return service.ContactInputs{Mode: service.HubContactMode{Kind: service.HubContactInterval, Interval: time.Second}}, nil
+				})})
+		},
+		ObserveHub: func(context.Context, string) (oplocal.HubIdentity, error) { return observedHub() },
+		UninstallLegacy: func(context.Context, string) error {
+			uninstalls++
+			if failing {
+				return doomed.Close()
+			}
+			return nil
+		},
+		LegacyLive: func(context.Context, string) (bool, error) { return false, nil }})
+	request := service.EnrollmentRequest{Path: f.root, Mode: "yes", Source: "test"}
+
+	err = enroll.MigrateLegacyService(t.Context(), request)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "re-run the migration", "the operator is told the service is already gone")
+	require.Equal(t, 1, uninstalls)
+	rows, listErr := enroll.List(t.Context())
+	require.NoError(t, listErr)
+	require.Empty(t, rows, "a board whose enrollment did not complete stays unenrolled")
+
+	failing = false
+	require.NoError(t, enroll.MigrateLegacyService(t.Context(), request), "the re-run completes")
+	require.Equal(t, 2, uninstalls)
+	rows, listErr = enroll.List(t.Context())
+	require.NoError(t, listErr)
+	require.Len(t, rows, 1)
 }

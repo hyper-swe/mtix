@@ -18,9 +18,11 @@ type procLookup func(pid int) (procinfo.Proc, error)
 
 // pidIsLegacyDaemon reports whether pid is the mtix daemon of the project rooted at projectRoot
 // (argv: mtix [-C root] daemon, or mtix [-C root] sync daemon). A pid reused by any other
-// program, including another mtix command or another project's daemon, is not live. Only an
-// identity that cannot be read fails safe as live: skipping duty is recoverable, a double
-// pull or hook firing is not.
+// program, including another mtix command (daemon install, status and the other service
+// subcommands among them) or another project's daemon, is not live. Only an identity that
+// cannot be read fails safe as live, including a daemon whose project cannot be determined
+// (no -C and an unreadable working directory): skipping duty is recoverable, a double pull or
+// hook firing is not.
 func pidIsLegacyDaemon(lookup procLookup, pid int, projectRoot string) bool {
 	proc, err := lookup(pid)
 	if errors.Is(err, procinfo.ErrNoProcess) {
@@ -29,16 +31,7 @@ func pidIsLegacyDaemon(lookup procLookup, pid int, projectRoot string) bool {
 	if err != nil {
 		return true
 	}
-	known, isMtix := false, false
-	for _, name := range []string{proc.Name, proc.Argv0, proc.Exe} {
-		if name == "" {
-			continue
-		}
-		known = true
-		if strings.HasPrefix(procBase(name), "mtix") {
-			isMtix = true
-		}
-	}
+	known, isMtix := mtixIdentity(proc)
 	if !known {
 		return true
 	}
@@ -52,32 +45,71 @@ func pidIsLegacyDaemon(lookup procLookup, pid int, projectRoot string) bool {
 	if !daemon {
 		return false
 	}
-	if root == "" {
-		root = proc.Cwd
+	root, resolvable := daemonProjectDir(root, proc.Cwd)
+	return !resolvable || sameDirectory(root, projectRoot)
+}
+
+// mtixIdentity reports whether any name the process table gives is known, and whether one of
+// them is an mtix binary.
+func mtixIdentity(proc procinfo.Proc) (known, isMtix bool) {
+	for _, name := range []string{proc.Name, proc.Argv0, proc.Exe} {
+		if name == "" {
+			continue
+		}
+		known = true
+		if strings.HasPrefix(procBase(name), "mtix") {
+			isMtix = true
+		}
 	}
-	return root == "" || sameDirectory(root, projectRoot)
+	return known, isMtix
+}
+
+// daemonProjectDir resolves the project directory a daemon serves: the -C value, taken against
+// the daemon's own working directory when relative, else that working directory. ok is false
+// when the directory cannot be determined, which the caller treats as live.
+func daemonProjectDir(flagRoot, cwd string) (dir string, ok bool) {
+	switch {
+	case flagRoot == "":
+		return cwd, cwd != ""
+	case filepath.IsAbs(flagRoot):
+		return flagRoot, true
+	case cwd == "":
+		return "", false
+	}
+	return filepath.Join(cwd, flagRoot), true
 }
 
 func procBase(name string) string {
 	return strings.ToLower(path.Base(strings.ReplaceAll(name, `\`, "/")))
 }
 
-// parseDaemonArgs reports whether args (argv[0] first) run the daemon subcommand, and the
-// project directory given by -C / --project-dir ("" when absent).
+// daemonServiceVerbs are the `mtix daemon` service-management subcommands; a process running
+// one of them is not a daemon.
+var daemonServiceVerbs = map[string]bool{"install": true, "uninstall": true, "start": true, "stop": true, "status": true, "help": true}
+
+// parseDaemonArgs reports whether args (argv[0] first) run the daemon itself, and the project
+// directory given by -C / --project-dir ("" when absent). Root flags may precede the
+// subcommand, and the value of --log-level is not a subcommand.
 func parseDaemonArgs(args []string) (daemon bool, root string) {
 	var positional []string
-	for i := 1; i < len(args) && len(positional) < 2; i++ {
+	for i := 1; i < len(args) && len(positional) < 3; i++ {
+		tok := args[i]
 		if value, skip, ok := projectDirFlag(args, i); ok {
 			root = value
 			i += skip
-		} else if !strings.HasPrefix(args[i], "-") {
-			positional = append(positional, args[i])
+		} else if tok == "--log-level" {
+			i++
+		} else if !strings.HasPrefix(tok, "-") {
+			positional = append(positional, tok)
 		}
 	}
 	if len(positional) > 0 && positional[0] == "sync" {
 		positional = positional[1:]
 	}
-	return len(positional) > 0 && positional[0] == "daemon", root
+	if len(positional) == 0 || positional[0] != "daemon" {
+		return false, root
+	}
+	return len(positional) < 2 || !daemonServiceVerbs[positional[1]], root
 }
 
 // projectDirFlag recognizes -C x, --project-dir x, --project-dir=x, -Cx and -C=x at args[i];

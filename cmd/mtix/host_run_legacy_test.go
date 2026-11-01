@@ -20,8 +20,8 @@ import (
 )
 
 // TestOpenHostBoard_LegacyServiceLive_NoPullThenPullWhenGone builds the board through the real
-// openHostBoard, so removing the legacy probe from that wiring fails here. The control pass
-// proves the fixture really pulls when no legacy service exists.
+// openHostBoard, so removing the legacy probe from that wiring fails here. The control and
+// release phases prove the fixture really pulls when no legacy service owns the board.
 func TestOpenHostBoard_LegacyServiceLive_NoPullThenPullWhenGone(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses a shell script as the pull child")
@@ -44,16 +44,24 @@ func TestOpenHostBoard_LegacyServiceLive_NoPullThenPullWhenGone(t *testing.T) {
 	exe := filepath.Join(t.TempDir(), "fake-mtix")
 	require.NoError(t, os.WriteFile(exe, []byte("#!/bin/sh\necho pulled >> '"+marker+"'\n"), 0o700))
 	host := service.RegistrationHost{HostID: "legacy-host", UID: "legacy-uid", Version: "test", Protocol: attach.Protocol}
-	dispatcher, err := service.NewHostDispatcher(service.HostDispatcherOptions{State: state, OpenBoard: func(ctx context.Context, row oplocal.ListedBoard) (*service.HostBoard, error) {
-		return openHostBoard(ctx, row, state, host, exe)
-	}})
-	require.NoError(t, err)
+	// Every phase builds its own dispatcher, so its board and contact scheduler are new and a
+	// pull is due again; a phase without a pull therefore proves the legacy probe, not timing.
+	pulled := func() bool {
+		dispatcher, dispatchErr := service.NewHostDispatcher(service.HostDispatcherOptions{State: state, OpenBoard: func(ctx context.Context, row oplocal.ListedBoard) (*service.HostBoard, error) {
+			return openHostBoard(ctx, row, state, host, exe)
+		}})
+		require.NoError(t, dispatchErr)
+		require.NoError(t, dispatcher.Pass(t.Context()))
+		_, statErr := os.Stat(marker)
+		if statErr == nil {
+			require.NoError(t, os.Remove(marker))
+		}
+		return statErr == nil
+	}
 
-	require.NoError(t, dispatcher.Pass(t.Context()))
-	require.FileExists(t, marker, "control: with no legacy service the enrolled board is pulled")
-	require.NoError(t, os.Remove(marker))
-
+	require.True(t, pulled(), "control: with no legacy service the enrolled board is pulled")
 	require.NoError(t, writeDaemonPID(app.mtixDir, startLegacyDaemonHelper(t, root)))
-	require.NoError(t, dispatcher.Pass(t.Context()))
-	require.NoFileExists(t, marker, "a live 0.5.x daemon keeps pull and hook duty")
+	require.False(t, pulled(), "a live 0.5.x daemon keeps pull and hook duty")
+	require.NoError(t, os.Remove(filepath.Join(app.mtixDir, daemonPIDFilename)))
+	require.True(t, pulled(), "once the daemon marker is gone the host pulls again: the marker was what held it back")
 }

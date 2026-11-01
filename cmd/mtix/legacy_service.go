@@ -38,28 +38,16 @@ func legacyServiceProbe(goos string, homeDir func() (string, error)) func(contex
 	}
 }
 
-// legacyUnitInstalled reports whether the per-project unit for projectRoot exists on disk.
-// Platforms without a unit file (Task Scheduler) report false; doctor then relies on the PID file.
-func legacyUnitInstalled(goos, projectRoot, home string) (bool, error) {
-	spec, err := buildServiceSpec(goos, "mtix", projectRoot, home, daemonDispatchDefaultIntervalSec)
-	if err != nil || spec.Path == "" {
-		return false, err
-	}
-	if _, statErr := os.Lstat(spec.Path); statErr != nil {
-		if errors.Is(statErr, os.ErrNotExist) {
-			return false, nil
-		}
-		return false, fmt.Errorf("inspect legacy unit: %w", statErr)
-	}
-	return true, nil
-}
-
 // uninstallLegacyService unregisters the project's per-project unit (stopping its daemon) and
-// removes the unit file. run executes service commands and is injected so tests never touch a
+// removes the unit file; unregistering a service that is not loaded is not an error. run executes service commands and is injected so tests never touch a
 // real launchd or systemd unit.
 func uninstallLegacyService(ctx context.Context, out io.Writer, spec *serviceSpec, run func(context.Context, io.Writer, [][]string, bool) error) error {
 	if err := run(ctx, out, spec.Unregister, true); err != nil {
-		return fmt.Errorf("unregister legacy service: %w", err)
+		// A label that is no longer loaded (an earlier run got this far) has nothing left to
+		// unregister, so the re-run converges; a still-loaded service keeps the error.
+		if statusErr := run(ctx, io.Discard, spec.Status, false); statusErr == nil {
+			return fmt.Errorf("unregister legacy service: %w", err)
+		}
 	}
 	if spec.Path != "" {
 		if err := os.Remove(spec.Path); err != nil && !errors.Is(err, os.ErrNotExist) {

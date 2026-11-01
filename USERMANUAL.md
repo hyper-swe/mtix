@@ -2780,9 +2780,13 @@ daemon) keeps pull and hook duty for its board until that board is migrated.
 While one is live the host dispatcher runs only the wake scanner for the board:
 it makes no hub pull and runs no hook pass, so nothing fires twice, and it
 never writes the daemon's PID file. A PID file whose pid now
-belongs to another program, including another mtix command or another project's
-daemon, is stale and does not count: only this project's `mtix daemon` (or
-`mtix sync daemon`) counts. An installed per-project unit also keeps duty while its
+belongs to another program, including another mtix command (such as
+`mtix daemon status`) or another project's daemon, is stale and does not count:
+only this project's `mtix daemon` (or `mtix sync daemon`) counts. The project is
+read from the daemon's `-C` or `--project-dir` argument (a relative path is taken
+against the daemon's own working directory), else from that working directory. A
+daemon whose project cannot be determined (no such argument and an unreadable
+working directory, as on macOS) counts as live, the safe side. An installed per-project unit also keeps duty while its
 daemon is briefly down, so the host never fires in a supervisor restart gap. Both start orders are
 safe: a daemon that starts after the dispatcher is seen on the next pass.
 `mtix doctor --json` reports `dispatcher.legacy-service` (warn) with

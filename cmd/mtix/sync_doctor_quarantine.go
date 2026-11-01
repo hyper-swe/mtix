@@ -76,8 +76,27 @@ func quarantineFailureDetail(ctx context.Context, st *sqlite.Store, counts sqlit
 	if invalid > 0 {
 		detail += fmt.Sprintf(" (%d of them for an invalid node id)", invalid) + invalidIDQuarantineAction
 	}
+	orphans, err := st.CountQuarantinedCloneOrphans(ctx)
+	if err != nil {
+		return false, detail + " (" + err.Error() + ")"
+	}
+	if orphans > 0 {
+		detail += fmt.Sprintf(" (%d of them clone orphans)", orphans) + cloneOrphanAction
+	}
 	return false, detail
 }
+
+// cloneOrphanAction is the doctor's next step for events 'mtix sync clone'
+// quarantined with the reason 'clone origin: orphaned dependent event, node not
+// found' (MTIX-95.37.1): the hub holds events for a task this clone never
+// created, such as the claim or child create a client before 0.5.4 pushed
+// under a number the hub had renumbered. Retrying cannot apply them while the
+// task is absent; pull retries them and applies one if its create arrives.
+const cloneOrphanAction = ". For a reason starting 'clone origin: orphaned dependent event': the hub holds an event for a task that" +
+	" does not exist in this clone, usually left by a client before 0.5.4 under a number the hub renumbered, and the work is under" +
+	" the renumbered id. Compare with 'mtix sync quarantine list --json', then accept each as unapplied with" +
+	" 'mtix sync quarantine acknowledge --handle <handle> --reason <why>' (the fix field prints it); it stays retained, and" +
+	" a later pull still applies it if its task appears"
 
 // heldUIDAction is the doctor's next step for a pulled create quarantined
 // with the reason 'uid "<u>" is held by local task <id>' (MTIX-95.31.8).

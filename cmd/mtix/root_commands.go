@@ -11,6 +11,9 @@ import (
 
 // rootPostRun preserves the command post-run lifecycle (FR-15.3).
 func rootPostRun(cmd *cobra.Command, _ []string) error {
+	if isDispatcherCommand(cmd) {
+		return nil
+	}
 	// Sync, relay and daemon commands apply foreign events, which set
 	// the hub mark inside the apply transaction: bring the operator-
 	// local mirror up to date (MTIX-112.17.3, ADR-007 A9).
@@ -79,6 +82,7 @@ func registerRootCommands(rootCmd *cobra.Command) {
 		// Hidden harness-glue verbs; the handshake serves N and N-1 and marks
 		// N-1 glue for refresh (ADR-007 §6.5).
 		newAttachCmd(),
+		newDispatcherCmd(),
 	)
 	registerRemainingRootCommands(rootCmd)
 }

@@ -122,8 +122,8 @@ approval or confirmation.
 ## Guarded wake ledger
 
 The local wake ledger and callable guarded wake service provide the foundation
-for host dispatch. Host-dispatcher discovery, enrollment and setup wiring are
-not supplied by this feature. The guarded service supports dispatch protocol 1
+for host dispatch. Experimental host dispatch is available but disabled by default; enrollment
+is service-only until setup integration ships. The guarded service supports dispatch protocol 1
 and reads the board's minimum protocol before every pass, even an empty pass.
 A newer floor stops the pass before any claim or send and raises an
 operator-local `wake.version-skew` alert. Follow the alert's compatible-binary

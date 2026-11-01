@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"testing"
 	"time"
 
@@ -236,4 +237,104 @@ func hookErrorsRow(t *testing.T) service.DoctorResult {
 	}
 	t.Fatal("doctor has no wake.listener.hook-errors row")
 	return service.DoctorResult{}
+}
+
+func TestHookClaudeSession_WokenWaiter_NextStopArmsANewWaiterAndWakesOnNewMail(t *testing.T) {
+	node := wakeStatusApp(t)
+	first := model.Annotation{ID: "hook-wake-8", Author: "sender", Text: "first event", Addressee: "worker", CreatedAt: time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)}
+	second := model.Annotation{ID: "hook-wake-9", Author: "sender", Text: "second event", Addressee: "worker", CreatedAt: time.Date(2026, 11, 1, 9, 1, 0, 0, time.UTC)}
+	third := model.Annotation{ID: "hook-wake-10", Author: "sender", Text: "third event", Addressee: "worker", CreatedAt: time.Date(2026, 11, 1, 9, 2, 0, 0, time.UTC)}
+	_, err := runHookFor(t, service.ClaudeHookSessionStart, 1)
+	require.NoError(t, err, "session-start registers and arms with an empty inbox")
+	sendLater := func(anns ...model.Annotation) {
+		go func() {
+			time.Sleep(600 * time.Millisecond)
+			_ = app.store.SetAnnotations(context.Background(), node, anns)
+		}()
+	}
+	sendLater(first)
+	stderr, err := runHookFor(t, service.ClaudeHookStop, 10)
+	require.ErrorIs(t, err, errClaudeHookWake, "mail that arrives during the wait wakes it")
+	assert.Contains(t, stderr, "first event")
+
+	sendLater(first, second)
+	stderr, err = runHookFor(t, service.ClaudeHookStop, 10)
+
+	require.ErrorIs(t, err, errClaudeHookWake, "the next Stop armed a new waiter, which woke on the new mail")
+	assert.NotContains(t, stderr, service.ClaudeHookAlreadyArmed)
+	assert.Contains(t, stderr, "second event")
+	assert.NotContains(t, stderr, "first event")
+
+	sendLater(first, second, third)
+	stderr, err = runHookFor(t, service.ClaudeHookStop, 10)
+	require.ErrorIs(t, err, errClaudeHookWake)
+	assert.Contains(t, stderr, "third event")
+}
+
+func TestHookClaudeSession_HugeTimeout_NotArmedInsteadOfWaitingForever(t *testing.T) {
+	node := wakeStatusApp(t)
+	addressHookMail(t, node, "hook-wake-11", "x")
+	var stderr bytes.Buffer
+
+	require.NoError(t, runClaudeSessionHook(&stderr, service.ClaudeHookSessionStart, "worker", math.MaxInt))
+
+	assert.Contains(t, stderr.String(), "not armed")
+	host, uid := seededWakeHost(t)
+	rows, err := app.store.ListRegistrations(t.Context(), host, uid)
+	require.NoError(t, err)
+	assert.Empty(t, rows, "an out-of-range timeout arms nothing")
+}
+
+func TestClaudeHookWait_SignalOrCancel_EndsQuietlyWithNoEventsAndNoError(t *testing.T) {
+	wakeStatusApp(t)
+	seedWakeRegistration(t, "worker")
+	ctx, cancel := context.WithCancel(t.Context())
+	go func() {
+		time.Sleep(400 * time.Millisecond)
+		cancel()
+	}()
+
+	got, err := claudeHookWait(ctx, "worker", 0, func(int64) bool { return false }, func(string, io.Writer) func() { return func() {} })
+
+	require.NoError(t, err, "a cancelled wait is not an error")
+	assert.Empty(t, got)
+}
+
+func TestClaudeHookWait_TimeoutZero_WaitsUntilMailArrives(t *testing.T) {
+	node := wakeStatusApp(t)
+	seedWakeRegistration(t, "worker")
+	go func() {
+		time.Sleep(700 * time.Millisecond)
+		_ = app.store.SetAnnotations(context.Background(), node, []model.Annotation{
+			{ID: "hook-wake-12", Author: "sender", Text: "late", Addressee: "worker", CreatedAt: time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)},
+		})
+	}()
+
+	got, err := claudeHookWait(t.Context(), "worker", 0, func(int64) bool { return false }, func(string, io.Writer) func() { return func() {} })
+
+	require.NoError(t, err)
+	assert.Len(t, got, 1, "timeout 0 means no timeout: only mail ends the wait")
+}
+
+func TestClaudeHookBudget_OneDeadlinePerRun_NotPerWait(t *testing.T) {
+	now := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	b := &claudeHookBudget{total: 10 * time.Second, now: func() time.Time { return now }}
+
+	left, expired := b.remaining()
+	assert.Equal(t, 10*time.Second, left)
+	assert.False(t, expired)
+
+	now = now.Add(7 * time.Second)
+	left, expired = b.remaining()
+	assert.Equal(t, 3*time.Second, left, "a re-entered wait gets the time left, not a fresh timeout")
+	assert.False(t, expired)
+
+	now = now.Add(3 * time.Second)
+	_, expired = b.remaining()
+	assert.True(t, expired)
+
+	unlimited := &claudeHookBudget{total: 0, now: func() time.Time { return now }}
+	left, expired = unlimited.remaining()
+	assert.Zero(t, left)
+	assert.False(t, expired, "total 0 means until woken")
 }

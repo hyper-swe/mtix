@@ -24,6 +24,9 @@ type fakeHookLeases struct {
 	acquired int
 	released int
 	relErr   error
+	renewals []string // holder tokens passed to Renew
+	renewErr error
+	relaunch int // Release calls: the store rearms a lease when mail arrived during the wait
 }
 
 func (f *fakeHookLeases) Acquire(_ context.Context, _ WakeLeaseKey, _ time.Duration) (WakeLease, error) {
@@ -37,7 +40,8 @@ func (f *fakeHookLeases) Acquire(_ context.Context, _ WakeLeaseKey, _ time.Durat
 	return WakeLease{Holder: "holder-1"}, nil
 }
 
-func (f *fakeHookLeases) Release(_ context.Context, _ WakeLeaseKey, holder string, _ time.Duration) (WakeLeaseReleaseResult, error) {
+// Abandon frees the lease whatever is pending, as the store does.
+func (f *fakeHookLeases) Abandon(_ context.Context, _ WakeLeaseKey, holder string, _ time.Duration) (WakeLeaseReleaseResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.held = false
@@ -46,6 +50,30 @@ func (f *fakeHookLeases) Release(_ context.Context, _ WakeLeaseKey, holder strin
 		return WakeLeaseReleaseResult{}, errors.New("wrong holder")
 	}
 	return WakeLeaseReleaseResult{}, f.relErr
+}
+
+// Release models the store's relaunch outcome: the lease stays held.
+func (f *fakeHookLeases) Release(_ context.Context, _ WakeLeaseKey, _ string, _ time.Duration) (WakeLeaseReleaseResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.relaunch++
+	return WakeLeaseReleaseResult{Outcome: "relaunch"}, nil
+}
+
+func (f *fakeHookLeases) Renew(_ context.Context, _ WakeLeaseKey, holder string, _ time.Duration) (WakeLease, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.renewals = append(f.renewals, holder)
+	if f.renewErr != nil {
+		return WakeLease{}, f.renewErr
+	}
+	return WakeLease{Holder: holder}, nil
+}
+
+func (f *fakeHookLeases) renewCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.renewals)
 }
 
 // fakeHookClaims claims each event once and records outcomes.
@@ -296,4 +324,55 @@ func TestClaudeHook_LeaseReleaseFails_StillWakesAndRecordsForDoctor(t *testing.T
 	failures, err := r.log.Failures()
 	require.NoError(t, err)
 	assert.Len(t, failures, 1)
+}
+
+func TestClaudeHook_LongWait_RenewsTheLeaseWithItsHolderToken(t *testing.T) {
+	r := newHookRig(t)
+	r.deps.RenewEvery = 5 * time.Millisecond
+	r.deps.Wait = func(_ context.Context, _ func(int64) bool) ([]sqlite.InboxEvent, error) {
+		require.Eventually(t, func() bool { return r.leases.renewCount() >= 3 }, 5*time.Second, time.Millisecond)
+		return nil, nil
+	}
+
+	res := NewClaudeHook(r.deps).Run(t.Context(), ClaudeHookStop)
+
+	assert.Equal(t, ClaudeHookEmpty, res.Outcome)
+	r.leases.mu.Lock()
+	defer r.leases.mu.Unlock()
+	for _, holder := range r.leases.renewals {
+		assert.Equal(t, "holder-1", holder, "the renewal presents the token the lease was acquired with")
+	}
+}
+
+func TestClaudeHook_LeaseLostDuringWait_EndsTheWaitAndRecordsForDoctor(t *testing.T) {
+	r := newHookRig(t)
+	r.deps.RenewEvery = 5 * time.Millisecond
+	r.leases.renewErr = model.ErrAlreadyClaimed
+	r.deps.Wait = func(ctx context.Context, _ func(int64) bool) ([]sqlite.InboxEvent, error) {
+		select {
+		case <-ctx.Done():
+			return nil, nil
+		case <-time.After(5 * time.Second):
+			t.Error("a lost lease must end the wait")
+			return nil, nil
+		}
+	}
+
+	res := NewClaudeHook(r.deps).Run(t.Context(), ClaudeHookStop)
+
+	assert.Zero(t, res.ExitCode)
+	failures, err := r.log.Failures()
+	require.NoError(t, err)
+	require.Len(t, failures, 1)
+	assert.Contains(t, failures[0].Error, "renew waiter lease")
+}
+
+func TestClaudeHook_Run_FreesTheLeaseWithoutRearmingOnEveryOutcome(t *testing.T) {
+	r := newHookRig(t, hookEvent(11, "mail that arrived during the wait"))
+
+	res := NewClaudeHook(r.deps).Run(t.Context(), ClaudeHookStop)
+
+	assert.Equal(t, ClaudeHookWoke, res.Outcome)
+	assert.Zero(t, r.leases.relaunch, "a one-shot hook never rearms its lease")
+	assert.False(t, r.leases.held, "the next Stop can arm a new waiter")
 }

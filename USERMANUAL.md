@@ -1469,7 +1469,12 @@ hook command; it is not meant to be typed by hand, except to re-run a failed hoo
   registration, or claimed by another route, do not end the wait.
 - If the wake is won but a later step fails (a further claim, or recording the delivered outcome), the envelope is still
   delivered and the failure is recorded for doctor, so a claimed event is never silently lost.
-- The waiter is a local wait on the board's inbox. It runs no timer and contacts no hub by itself.
+- The waiter is a local wait on the board's inbox. It polls the local inbox every 250 ms and, like `mtix inbox --wait`,
+  joins the board listener for the length of the wait: it starts the listener if none runs, and on a board that syncs
+  through a relay the listener (and so its hub connection) stays up while the waiter lives. The waiter renews its own
+  lease every 5 minutes, and it exits 0 after `--timeout` seconds in total (default 3600, `0` = until woken); the next
+  Stop or session-start arms a new one. A run that exits, woken or not, frees its lease, so the next Stop always arms a
+  new waiter.
 - A hook never breaks a session: an internal error exits 0 and is recorded. `mtix doctor` shows it as the row
   `wake.listener.hook-errors`, whose `fix` is the exact command that re-runs the failed hook with a short `--timeout 5`, so the re-run returns quickly. A successful re-run clears the
   row. `mtix doctor --json` carries the same row with `id`, `status`, `detail`, `fix` and the `failures` data.

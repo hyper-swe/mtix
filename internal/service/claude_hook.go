@@ -41,7 +41,8 @@ const (
 // ClaudeHookLeases is the single-instance boundary: one holder per registration.
 type ClaudeHookLeases interface {
 	Acquire(ctx context.Context, key WakeLeaseKey, ttl time.Duration) (WakeLease, error)
-	Release(ctx context.Context, key WakeLeaseKey, holder string, ttl time.Duration) (WakeLeaseReleaseResult, error)
+	Renew(ctx context.Context, key WakeLeaseKey, holder string, ttl time.Duration) (WakeLease, error)
+	Abandon(ctx context.Context, key WakeLeaseKey, holder string, ttl time.Duration) (WakeLeaseReleaseResult, error)
 }
 
 // ClaudeHookClaims is the wake-ledger boundary: one claim per registration and event.
@@ -62,6 +63,7 @@ type ClaudeHookDeps struct {
 	Claims     ClaudeHookClaims
 	Log        *ClaudeHookLog
 	LeaseTTL   time.Duration
+	RenewEvery time.Duration // how often a long wait renews the lease; 0 = LeaseTTL/3
 	ClaimLease time.Duration
 }
 
@@ -143,14 +145,59 @@ func (h *ClaudeHook) run(ctx context.Context, ev ClaudeHookEvent) (res ClaudeHoo
 	if err != nil {
 		return res, nil, fmt.Errorf("take waiter lease: %w", err)
 	}
+	// The hook is one-shot: nothing keeps waiting after it exits, so the lease is
+	// abandoned, never released (Release would rearm it when mail arrived during
+	// the wait, leaving a lease no holder serves and the next Stop arming nothing).
 	defer func() {
-		if _, rerr := h.d.Leases.Release(context.WithoutCancel(ctx), h.d.Key, lease.Holder, h.d.LeaseTTL); rerr != nil {
+		if _, rerr := h.d.Leases.Abandon(context.WithoutCancel(ctx), h.d.Key, lease.Holder, h.d.LeaseTTL); rerr != nil {
 			relErr = errors.Join(relErr, fmt.Errorf("release waiter lease: %w", rerr))
 		}
 	}()
-	res, err = h.wakeOnce(ctx)
-	relErr, res.soft = res.soft, nil
+	waitCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stopRenew := h.keepLease(waitCtx, cancel, lease.Holder)
+	res, err = h.wakeOnce(waitCtx)
+	if rerr := stopRenew(); rerr != nil {
+		relErr = errors.Join(relErr, rerr)
+	}
+	relErr = errors.Join(relErr, res.soft)
+	res.soft = nil
 	return res, relErr, err
+}
+
+// keepLease renews the waiter lease every RenewEvery while a long wait runs, so
+// the lease outlives the wait and a second session-start cannot arm a second
+// waiter. If the lease is lost the wait is cancelled (another waiter owns the
+// registration). The returned stop ends the renewer and reports a failure.
+func (h *ClaudeHook) keepLease(ctx context.Context, cancel context.CancelFunc, holder string) (stop func() error) {
+	every := h.d.RenewEvery
+	if every <= 0 {
+		every = h.d.LeaseTTL / 3
+	}
+	done := make(chan struct{})
+	var renewErr error
+	go func() {
+		defer close(done)
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if _, err := h.d.Leases.Renew(ctx, h.d.Key, holder, h.d.LeaseTTL); err != nil && ctx.Err() == nil {
+					renewErr = fmt.Errorf("renew waiter lease: %w", err)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+	return func() error {
+		cancel()
+		<-done
+		return renewErr
+	}
 }
 
 // wakeOnce waits for events, claims each once in the wake ledger and turns the

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -66,8 +67,8 @@ func claudeHookLog() *service.ClaudeHookLog {
 
 // runClaudeSessionHook never fails a session: only the wake sentinel is returned.
 func runClaudeSessionHook(stderr io.Writer, ev service.ClaudeHookEvent, agent string, timeout int) error {
-	if app.store == nil || timeout < 0 {
-		fmt.Fprintf(stderr, "mtix hook claude-session: not armed (no mtix project here, or a negative --timeout)\n")
+	if app.store == nil || timeout < 0 || int64(timeout) > math.MaxInt64/int64(time.Second) {
+		fmt.Fprintf(stderr, "mtix hook claude-session: not armed (no mtix project here, or --timeout negative or too large)\n")
 		return nil
 	}
 	hook, err := newClaudeSessionHook(agent, time.Duration(timeout)*time.Second)
@@ -96,6 +97,7 @@ func newClaudeSessionHook(agent string, wait time.Duration) (*service.ClaudeHook
 	if err != nil {
 		return nil, err
 	}
+	budget := &claudeHookBudget{total: wait, now: time.Now}
 	return service.NewClaudeHook(service.ClaudeHookDeps{
 		Key: key,
 		Register: func(ctx context.Context) error {
@@ -107,7 +109,11 @@ func newClaudeSessionHook(agent string, wait time.Duration) (*service.ClaudeHook
 		},
 		Wakeable: func(ctx context.Context) (bool, string, error) { return perms.Wakeable(ctx, board, agent) },
 		Wait: func(ctx context.Context, skip func(int64) bool) ([]sqlite.InboxEvent, error) {
-			return claudeHookWait(ctx, agent, wait, skip, joinListener)
+			remaining, expired := budget.remaining()
+			if expired {
+				return nil, nil
+			}
+			return claudeHookWait(ctx, agent, remaining, skip, joinListener)
 		},
 		Render: func(events []sqlite.InboxEvent) (string, error) {
 			caps, cerr := loadInboxEnvelopeCaps(agent)
@@ -122,6 +128,28 @@ func newClaudeSessionHook(agent string, wait time.Duration) (*service.ClaudeHook
 		LeaseTTL:   claudeHookLeaseTTL,
 		ClaimLease: claudeHookClaimLease,
 	}), nil
+}
+
+// claudeHookBudget is the single --timeout of one hook run, shared by every
+// Wait call of that run: a lost claim re-enters the wait with the time left,
+// not a fresh full timeout. total 0 means no timeout.
+type claudeHookBudget struct {
+	total time.Duration
+	now   func() time.Time
+	end   time.Time
+}
+
+// remaining starts the clock on first use and returns the time left (0 with
+// total 0 = no limit) or expired once it has run out.
+func (b *claudeHookBudget) remaining() (left time.Duration, expired bool) {
+	if b.total <= 0 {
+		return 0, false
+	}
+	if b.end.IsZero() {
+		b.end = b.now().Add(b.total)
+	}
+	left = b.end.Sub(b.now())
+	return left, left <= 0
 }
 
 // registrationEpoch is the epoch of this host and user's registration of the agent.

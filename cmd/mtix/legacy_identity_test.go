@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/procinfo"
@@ -107,6 +109,13 @@ func TestRunsDaemon_Table(t *testing.T) {
 		{"value-flag-then-service-verb", []string{"mtix", "daemon", "--interval", "30", "status"}, false},
 		{"equals-flag-then-service-verb", []string{"mtix", "daemon", "--interval=30", "stop"}, false},
 		{"equals-flag-before-other-subcommand", []string{"mtix", "--log-level=debug", "show", "daemon"}, false},
+		{"short-flag-value-named-verb", []string{"mtix", "daemon", "-C", "stop"}, true},
+		{"log-level-value-named-verb", []string{"mtix", "daemon", "--log-level", "status"}, true},
+		{"project-dir-value-named-verb", []string{"mtix", "daemon", "--project-dir", "install"}, true},
+		{"equals-log-level-then-verb", []string{"mtix", "daemon", "--log-level=debug", "stop"}, false},
+		{"value-flag-value-then-verb", []string{"mtix", "daemon", "-C", "stop", "status"}, false},
+		{"dangling-value-flag-after-daemon", []string{"mtix", "daemon", "--log-level"}, true},
+		{"sync-value-named-verb", []string{"mtix", "sync", "daemon", "--interval", "start"}, true},
 		{"sync-service-verb", []string{"mtix", "sync", "daemon", "install"}, false},
 		{"daemon-as-flag-value-then-verb", []string{"mtix", "-C", "daemon", "status"}, false},
 		{"other-subcommand", []string{"mtix", "show", "daemon"}, false},
@@ -119,4 +128,45 @@ func TestRunsDaemon_Table(t *testing.T) {
 			require.Equal(t, tt.want, runsDaemon(tt.args))
 		})
 	}
+}
+
+// TestDaemonValueFlags_MatchCommandTree walks the real command tree under daemon and sync
+// daemon (root persistent flags included) and fails when a non-bool flag is missing from the
+// skip set, or when the set names a flag that no longer exists as a non-bool flag.
+func TestDaemonValueFlags_MatchCommandTree(t *testing.T) {
+	root := newRootCmd()
+	found := map[string]bool{}
+	for _, cmd := range daemonCommandsUnder(t, root) {
+		collect := func(f *pflag.Flag) {
+			if f.Value.Type() == "bool" {
+				return
+			}
+			found["--"+f.Name] = true
+			if f.Shorthand != "" {
+				found["-"+f.Shorthand] = true
+			}
+		}
+		cmd.Flags().VisitAll(collect)
+		cmd.InheritedFlags().VisitAll(collect)
+	}
+	for flag := range found {
+		require.Truef(t, daemonValueFlags[flag], "non-bool flag %s is missing from daemonValueFlags", flag)
+	}
+	for flag := range daemonValueFlags {
+		require.Truef(t, found[flag], "daemonValueFlags names %s, which is no longer a non-bool daemon flag", flag)
+	}
+}
+
+// daemonCommandsUnder returns daemon, sync daemon and every subcommand of both.
+func daemonCommandsUnder(t *testing.T, root *cobra.Command) []*cobra.Command {
+	t.Helper()
+	var out []*cobra.Command
+	for _, path := range [][]string{{"daemon"}, {"sync", "daemon"}} {
+		cmd, _, err := root.Find(path)
+		require.NoError(t, err)
+		require.Equal(t, "daemon", cmd.Name())
+		out = append(out, cmd)
+		out = append(out, cmd.Commands()...)
+	}
+	return out
 }

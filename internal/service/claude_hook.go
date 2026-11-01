@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -65,6 +66,7 @@ type ClaudeHookDeps struct {
 	LeaseTTL   time.Duration
 	RenewEvery time.Duration // how often a long wait renews the lease; 0 = LeaseTTL/3
 	ClaimLease time.Duration
+	Now        func() time.Time // the clock; nil = time.Now
 }
 
 // ClaudeHookResult is what the command prints and exits with.
@@ -80,7 +82,12 @@ type ClaudeHookResult struct {
 type ClaudeHook struct{ d ClaudeHookDeps }
 
 // NewClaudeHook builds a ClaudeHook from its dependencies.
-func NewClaudeHook(d ClaudeHookDeps) *ClaudeHook { return &ClaudeHook{d: d} }
+func NewClaudeHook(d ClaudeHookDeps) *ClaudeHook {
+	if d.Now == nil {
+		d.Now = time.Now
+	}
+	return &ClaudeHook{d: d}
+}
 
 // Run handles one hook event. It never returns an error and never panics out: a
 // hook must not break a session, so an internal failure is recorded for doctor
@@ -145,59 +152,122 @@ func (h *ClaudeHook) run(ctx context.Context, ev ClaudeHookEvent) (res ClaudeHoo
 	if err != nil {
 		return res, nil, fmt.Errorf("take waiter lease: %w", err)
 	}
+	var renewer *leaseRenewer
 	// The hook is one-shot: nothing keeps waiting after it exits, so the lease is
 	// abandoned, never released (Release would rearm it when mail arrived during
 	// the wait, leaving a lease no holder serves and the next Stop arming nothing).
+	// A lease the renewer already gave up is not abandoned again with a dead token.
 	defer func() {
+		if renewer != nil && renewer.wasLost() {
+			return
+		}
 		if _, rerr := h.d.Leases.Abandon(context.WithoutCancel(ctx), h.d.Key, lease.Holder, h.d.LeaseTTL); rerr != nil {
 			relErr = errors.Join(relErr, fmt.Errorf("release waiter lease: %w", rerr))
 		}
 	}()
 	waitCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	stopRenew := h.keepLease(waitCtx, cancel, lease.Holder)
+	renewer = h.keepLease(waitCtx, cancel, lease.Holder)
+	// Registered after the Abandon defer, so it runs first on every path, a
+	// panic included: no Renew is in flight when the lease is abandoned.
+	defer func() { relErr = errors.Join(relErr, renewer.stop()) }()
 	res, err = h.wakeOnce(waitCtx)
-	if rerr := stopRenew(); rerr != nil {
-		relErr = errors.Join(relErr, rerr)
-	}
 	relErr = errors.Join(relErr, res.soft)
 	res.soft = nil
 	return res, relErr, err
 }
 
+// leaseRenewer is the goroutine that keeps the waiter lease alive during a wait.
+type leaseRenewer struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+	mu     sync.Mutex
+	err    error
+	lost   bool
+}
+
+func (r *leaseRenewer) fail(err error, lost bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.err = errors.Join(r.err, err)
+	r.lost = r.lost || lost
+}
+
+func (r *leaseRenewer) wasLost() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.lost
+}
+
+// stop ends the renewer, waits until it has returned and reports its failure.
+func (r *leaseRenewer) stop() error {
+	r.cancel()
+	<-r.done
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.err
+}
+
 // keepLease renews the waiter lease every RenewEvery while a long wait runs, so
 // the lease outlives the wait and a second session-start cannot arm a second
-// waiter. If the lease is lost the wait is cancelled (another waiter owns the
-// registration). The returned stop ends the renewer and reports a failure.
-func (h *ClaudeHook) keepLease(ctx context.Context, cancel context.CancelFunc, holder string) (stop func() error) {
+// waiter. Only losing the lease ends the wait: another holder owns it, or Renew
+// handed back a different token (the row vanished and Renew re-took a fresh
+// lease, which is abandoned at once). Any other Renew error is retried on the
+// next tick until the lease would have expired. A panic in the renewer is
+// recovered and recorded; it must not take the hook down.
+func (h *ClaudeHook) keepLease(ctx context.Context, cancel context.CancelFunc, holder string) *leaseRenewer {
 	every := h.d.RenewEvery
 	if every <= 0 {
 		every = h.d.LeaseTTL / 3
 	}
-	done := make(chan struct{})
-	var renewErr error
+	r := &leaseRenewer{cancel: cancel, done: make(chan struct{})}
 	go func() {
-		defer close(done)
+		defer close(r.done)
+		defer func() {
+			if p := recover(); p != nil {
+				r.fail(fmt.Errorf("lease renewer panic: %v", p), false)
+				cancel()
+			}
+		}()
 		t := time.NewTicker(every)
 		defer t.Stop()
+		lastOK := h.d.Now()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				if _, err := h.d.Leases.Renew(ctx, h.d.Key, holder, h.d.LeaseTTL); err != nil && ctx.Err() == nil {
-					renewErr = fmt.Errorf("renew waiter lease: %w", err)
+				if !h.renewOnce(ctx, r, holder, &lastOK) {
 					cancel()
 					return
 				}
 			}
 		}
 	}()
-	return func() error {
-		cancel()
-		<-done
-		return renewErr
+	return r
+}
+
+// renewOnce renews once and reports whether the renewer should go on.
+func (h *ClaudeHook) renewOnce(ctx context.Context, r *leaseRenewer, holder string, lastOK *time.Time) bool {
+	lease, err := h.d.Leases.Renew(ctx, h.d.Key, holder, h.d.LeaseTTL)
+	switch {
+	case ctx.Err() != nil:
+		return false
+	case err == nil && lease.Holder == holder:
+		*lastOK = h.d.Now()
+		return true
+	case err == nil:
+		_, aerr := h.d.Leases.Abandon(context.WithoutCancel(ctx), h.d.Key, lease.Holder, h.d.LeaseTTL)
+		r.fail(errors.Join(fmt.Errorf("renew waiter lease: lease lost, renew returned a different holder: %w", model.ErrAlreadyClaimed), aerr), true)
+		return false
+	case errors.Is(err, model.ErrAlreadyClaimed):
+		r.fail(fmt.Errorf("renew waiter lease: lease lost: %w", err), true)
+		return false
+	case h.d.Now().Sub(*lastOK) >= h.d.LeaseTTL:
+		r.fail(fmt.Errorf("renew waiter lease: lease expired before a renewal succeeded: %w", err), false)
+		return false
 	}
+	return true // a transient error: retry on the next tick while the lease still holds
 }
 
 // wakeOnce waits for events, claims each once in the wake ledger and turns the

@@ -26,7 +26,16 @@ type fakeHookLeases struct {
 	relErr   error
 	renewals []string // holder tokens passed to Renew
 	renewErr error
-	relaunch int // Release calls: the store rearms a lease when mail arrived during the wait
+	relaunch int                                                         // Release calls: the store rearms a lease when mail arrived during the wait
+	renewFn  func(ctx context.Context, holder string) (WakeLease, error) // overrides Renew; runs outside the lock
+	order    []string                                                    // "abandon" and renewer-reported steps, in order
+	abandons []string                                                    // holder tokens passed to Abandon
+}
+
+func (f *fakeHookLeases) note(step string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.order = append(f.order, step)
 }
 
 func (f *fakeHookLeases) Acquire(_ context.Context, _ WakeLeaseKey, _ time.Duration) (WakeLease, error) {
@@ -46,6 +55,8 @@ func (f *fakeHookLeases) Abandon(_ context.Context, _ WakeLeaseKey, holder strin
 	defer f.mu.Unlock()
 	f.held = false
 	f.released++
+	f.order = append(f.order, "abandon")
+	f.abandons = append(f.abandons, holder)
 	if holder != "holder-1" {
 		return WakeLeaseReleaseResult{}, errors.New("wrong holder")
 	}
@@ -60,10 +71,16 @@ func (f *fakeHookLeases) Release(_ context.Context, _ WakeLeaseKey, _ string, _ 
 	return WakeLeaseReleaseResult{Outcome: "relaunch"}, nil
 }
 
-func (f *fakeHookLeases) Renew(_ context.Context, _ WakeLeaseKey, holder string, _ time.Duration) (WakeLease, error) {
+func (f *fakeHookLeases) Renew(ctx context.Context, _ WakeLeaseKey, holder string, _ time.Duration) (WakeLease, error) {
+	f.mu.Lock()
+	f.renewals = append(f.renewals, holder)
+	fn := f.renewFn
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(ctx, holder)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.renewals = append(f.renewals, holder)
 	if f.renewErr != nil {
 		return WakeLease{}, f.renewErr
 	}

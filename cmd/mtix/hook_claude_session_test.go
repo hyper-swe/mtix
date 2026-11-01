@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -337,4 +338,84 @@ func TestClaudeHookBudget_OneDeadlinePerRun_NotPerWait(t *testing.T) {
 	left, expired = unlimited.remaining()
 	assert.Zero(t, left)
 	assert.False(t, expired, "total 0 means until woken")
+}
+
+func TestClaudeHookWait_ListInboxFailsFromCancelledContext_NoEventsAndNoError(t *testing.T) {
+	wakeStatusApp(t)
+	seedWakeRegistration(t, "worker")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel() // the store's list call itself observes the cancel and fails
+
+	got, err := claudeHookWait(ctx, "worker", 0, func(int64) bool { return false }, func(string, io.Writer) func() { return func() {} })
+
+	require.NoError(t, err, "a list that failed because the wait was cancelled is not an error")
+	assert.Empty(t, got)
+}
+
+// armAndDeliver wakes the agent once so that its first mail is claimed, then
+// every later wait sees that event again and loses the claim.
+func armAndDeliver(t *testing.T) string {
+	t.Helper()
+	node := wakeStatusApp(t)
+	addressHookMail(t, node, "hook-lost-1", "first mail")
+	_, err := runHook(t, service.ClaudeHookSessionStart)
+	require.ErrorIs(t, err, errClaudeHookWake)
+	return node
+}
+
+func TestHookClaudeSession_ClaimsLostTwice_ExitsAtTheSingleTimeout(t *testing.T) {
+	node := armAndDeliver(t)
+	go func() {
+		time.Sleep(600 * time.Millisecond)
+		ctx := context.Background()
+		_ = app.store.SetAnnotations(ctx, node, []model.Annotation{
+			{ID: "hook-lost-1", Author: "sender", Text: "first mail", Addressee: "worker", CreatedAt: time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)},
+			{ID: "hook-lost-2", Author: "sender", Text: "second mail", Addressee: "worker", CreatedAt: time.Date(2026, 11, 1, 9, 1, 0, 0, time.UTC)},
+		})
+		// Another route wins the second event's claim before this waiter can.
+		key, kerr := leaseIdentity("worker")
+		epoch, eerr := registrationEpoch(ctx, key)
+		events, lerr := app.store.InboxList(ctx, "worker")
+		if kerr != nil || eerr != nil || lerr != nil {
+			return
+		}
+		for _, e := range events {
+			_, _, _ = app.store.ClaimWake(ctx, model.WakeKey{AgentID: "worker", HostID: key.HostID, UID: key.UID, EventSeq: e.Seq, Epoch: epoch}, time.Hour)
+		}
+	}()
+
+	start := time.Now()
+	stderr, err := runHookFor(t, service.ClaudeHookStop, 1)
+	elapsed := time.Since(start)
+
+	require.NoError(t, err, "both claims were lost: no wake")
+	assert.NotContains(t, stderr, "second mail")
+	assert.GreaterOrEqual(t, elapsed, 900*time.Millisecond, "the run waits out its timeout")
+	assert.Less(t, elapsed, 1500*time.Millisecond, "one --timeout covers every re-entered wait, not one full timeout per wait")
+}
+
+func TestClaudeSessionHook_ReenteredWaitAfterTheDeadline_EndsInsteadOfWaitingForever(t *testing.T) {
+	armAndDeliver(t)
+	var mu sync.Mutex
+	calls := 0
+	t0 := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	now := func() time.Time { // each reading is 600 ms later than the last
+		mu.Lock()
+		defer mu.Unlock()
+		calls++
+		return t0.Add(time.Duration(calls-1) * 600 * time.Millisecond)
+	}
+	hook, err := newClaudeSessionHook("worker", time.Second, now)
+	require.NoError(t, err)
+	done := make(chan service.ClaudeHookResult, 1)
+
+	go func() { done <- hook.Run(context.Background(), service.ClaudeHookStop) }()
+
+	select {
+	case res := <-done:
+		assert.Equal(t, service.ClaudeHookEmpty, res.Outcome, "an expired budget ends the run with no wake")
+		assert.Zero(t, res.ExitCode)
+	case <-time.After(5 * time.Second):
+		t.Fatal("a wait entered after the deadline waited without a limit")
+	}
 }

@@ -71,7 +71,7 @@ func runClaudeSessionHook(stderr io.Writer, ev service.ClaudeHookEvent, agent st
 		fmt.Fprintf(stderr, "mtix hook claude-session: not armed (no mtix project here, or --timeout negative or too large)\n")
 		return nil
 	}
-	hook, err := newClaudeSessionHook(agent, time.Duration(timeout)*time.Second)
+	hook, err := newClaudeSessionHook(agent, time.Duration(timeout)*time.Second, time.Now)
 	if err != nil {
 		if rerr := claudeHookLog().Record(agent, ev, err); rerr != nil {
 			err = errors.Join(err, rerr)
@@ -88,7 +88,7 @@ func runClaudeSessionHook(stderr io.Writer, ev service.ClaudeHookEvent, agent st
 	return nil
 }
 
-func newClaudeSessionHook(agent string, wait time.Duration) (*service.ClaudeHook, error) {
+func newClaudeSessionHook(agent string, wait time.Duration, now func() time.Time) (*service.ClaudeHook, error) {
 	key, err := leaseIdentity(agent)
 	if err != nil {
 		return nil, err
@@ -97,7 +97,7 @@ func newClaudeSessionHook(agent string, wait time.Duration) (*service.ClaudeHook
 	if err != nil {
 		return nil, err
 	}
-	budget := &claudeHookBudget{total: wait, now: time.Now}
+	budget := &claudeHookBudget{total: wait, now: now}
 	return service.NewClaudeHook(service.ClaudeHookDeps{
 		Key: key,
 		Register: func(ctx context.Context) error {
@@ -127,6 +127,7 @@ func newClaudeSessionHook(agent string, wait time.Duration) (*service.ClaudeHook
 		Log:        claudeHookLog(),
 		LeaseTTL:   claudeHookLeaseTTL,
 		ClaimLease: claudeHookClaimLease,
+		Now:        time.Now,
 	}), nil
 }
 

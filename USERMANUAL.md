@@ -1473,8 +1473,10 @@ hook command; it is not meant to be typed by hand, except to re-run a failed hoo
   joins the board listener for the length of the wait: it starts the listener if none runs, and on a board that syncs
   through a relay the listener (and so its hub connection) stays up while the waiter lives. The waiter renews its own
   lease every 5 minutes, and it exits 0 after `--timeout` seconds in total (default 3600, `0` = until woken); the next
-  Stop or session-start arms a new one. A run that exits, woken or not, frees its lease, so the next Stop always arms a
-  new waiter.
+  Stop or session-start arms a new one. A run that exits, woken or not, frees its lease, so the next Stop arms a new
+  waiter. If the waiter loses its lease (it stalled past the lease time and another waiter took it, or a renewal found a
+  different holder), it frees any lease it re-took by mistake, ends the wait with no wake and records the loss for
+  `mtix doctor`; a transient renewal error is retried on the next renewal until the lease would have expired.
 - A hook never breaks a session: an internal error exits 0 and is recorded. `mtix doctor` shows it as the row
   `wake.listener.hook-errors`, whose `fix` is the exact command that re-runs the failed hook with a short `--timeout 5`, so the re-run returns quickly. A successful re-run clears the
   row. `mtix doctor --json` carries the same row with `id`, `status`, `detail`, `fix` and the `failures` data.

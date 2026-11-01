@@ -134,6 +134,54 @@ func TestDeleteNode_RecalculatesParentProgress(t *testing.T) {
 	assert.Equal(t, 1.0, parentNode.Progress)
 }
 
+// TestDeleteNode_CascadeSubtree_RecalculatesSurvivingAncestors pins FR-5.7 on
+// the cascade path (MTIX-107.20.1.1): cascade-deleting a subtree that holds a
+// done and an open child must recompute the surviving parent and grandparent
+// in the same transaction, so the committed state already shows the new values.
+func TestDeleteNode_CascadeSubtree_RecalculatesSurvivingAncestors(t *testing.T) {
+	t.Parallel()
+	s := newTestStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Truncate(time.Second)
+
+	// PROJ-1 (grandparent) > PROJ-1.1 (parent) > { PROJ-1.1.1 done leaf,
+	// PROJ-1.1.2 (subtree root) > { PROJ-1.1.2.1 done, PROJ-1.1.2.2 open } }.
+	require.NoError(t, s.CreateNode(ctx, makeRootNode("PROJ-1", "PROJ", "Grandparent", now)))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1", "PROJ-1", "PROJ", "Parent", 1, 1, now)))
+	doneLeaf := makeChildNode("PROJ-1.1.1", "PROJ-1.1", "PROJ", "Done Leaf", 2, 1, now)
+	doneLeaf.Progress = 1.0
+	doneLeaf.Status = model.StatusDone
+	require.NoError(t, s.CreateNode(ctx, doneLeaf))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1.2", "PROJ-1.1", "PROJ", "Subtree Root", 2, 2, now)))
+	doneChild := makeChildNode("PROJ-1.1.2.1", "PROJ-1.1.2", "PROJ", "Done Child", 3, 1, now)
+	doneChild.Progress = 1.0
+	doneChild.Status = model.StatusDone
+	require.NoError(t, s.CreateNode(ctx, doneChild))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1.2.2", "PROJ-1.1.2", "PROJ", "Open Child", 3, 2, now)))
+
+	// Subtree root is at 0.5, so parent and grandparent average 1.0 and 0.5 to 0.75.
+	for id, want := range map[string]float64{"PROJ-1.1.2": 0.5, "PROJ-1.1": 0.75, "PROJ-1": 0.75} {
+		before, err := s.GetNode(ctx, id)
+		require.NoError(t, err)
+		require.Equal(t, want, before.Progress, "%s starts at %v", id, want)
+	}
+
+	require.NoError(t, s.DeleteNode(ctx, "PROJ-1.1.2", true, "admin"))
+
+	// The cascade took the whole subtree.
+	for _, id := range []string{"PROJ-1.1.2", "PROJ-1.1.2.1", "PROJ-1.1.2.2"} {
+		_, err := s.GetNode(ctx, id)
+		require.ErrorIs(t, err, model.ErrNotFound, "%s is soft-deleted by the cascade", id)
+	}
+
+	// Only the done leaf is left under the parent, so both ancestors are at 1.0.
+	for _, id := range []string{"PROJ-1.1", "PROJ-1"} {
+		after, err := s.GetNode(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, 1.0, after.Progress, "%s rolls up to 1.0 after the cascade delete", id)
+	}
+}
+
 // TestDeleteNode_CreatesActivityEntry is a placeholder — activity recording
 // is handled in the service layer for delete operations.
 func TestDeleteNode_CreatesActivityEntry(t *testing.T) {

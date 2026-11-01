@@ -69,15 +69,21 @@ func provenNotLoaded(spec *serviceSpec, statusErr error) bool {
 	return spec.NotLoadedExit != 0 && errors.As(statusErr, &coded) && coded.ExitCode() == spec.NotLoadedExit
 }
 
-// unreadableUnitFix is the exact inspection command for the skipped entries; removing them is
-// the operator's decision, never an agent's.
+// unreadableUnitFix is the exact inspection command for the skipped entries, and nothing else.
+// The doctor Fix field must paste into a shell as it stands, so the operator-decision prose lives
+// in the row Detail. Each path is single-quoted, an embedded apostrophe is rewritten as quote,
+// backslash, quote, quote, and a double dash ends option parsing. Spaces, apostrophes, several
+// paths and a leading dash are therefore safe.
 func unreadableUnitFix(skipped []string) string {
 	quoted := make([]string, len(skipped))
 	for i, p := range skipped {
 		quoted[i] = "'" + strings.ReplaceAll(p, "'", `'\''`) + "'"
 	}
-	return "ls -l " + strings.Join(quoted, " ") + "; repairing or removing an entry is the operator's decision, then run mtix doctor again"
+	return "ls -l -- " + strings.Join(quoted, " ")
 }
+
+// unreadableUnitDetail is the prose for the scan row; the operator decision stays out of the Fix.
+const unreadableUnitDetail = "the scan for a 0.5.x per-project unit skipped entries it cannot read; no board is stopped by them. Run the fix command to inspect them; repairing or removing an entry is the operator decision, then run mtix doctor again"
 
 // registerUnreadableUnitDoctor reports sibling unit files the scan had to skip, so a stray
 // entry is visible and fixable without stopping any board (Commandment 15).
@@ -85,7 +91,7 @@ func registerUnreadableUnitDoctor(svc *service.DoctorService, skipped []string) 
 	return svc.Register(service.DoctorCheck{ID: "dispatcher.legacy-unit-scan", Run: func(context.Context) service.DoctorResult {
 		return service.DoctorResult{Status: service.DoctorWarn,
 			Fix:    unreadableUnitFix(skipped),
-			Detail: "the scan for a 0.5.x per-project unit skipped entries it cannot read; no board is stopped by them",
+			Detail: unreadableUnitDetail,
 			Data:   map[string]any{"unreadable_units": skipped}}
 	}})
 }

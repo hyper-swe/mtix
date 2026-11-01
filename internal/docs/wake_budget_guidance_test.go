@@ -48,7 +48,7 @@ func TestWakeBudgetGuidance_AckRoutineAndScannerBoundary(t *testing.T) {
 			for _, phrase := range []string{"callable dispatcher", "across boards", "new acknowledgement", "already acknowledged", "budget.rewind", "ack after handling"} {
 				require.Contains(t, body, phrase)
 			}
-			require.Contains(t, body, "when the wake scanner ships")
+			require.Contains(t, body, "The wake scanner is live in this build")
 			require.NotContains(t, body, "Scanner discovery, budget/back-off enforcement")
 		})
 	}

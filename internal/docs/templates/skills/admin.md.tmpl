@@ -11,15 +11,17 @@ allowed-tools:
 ## Host wake settings
 
 This build stores and reports `wake.live` and `wake.max_hop_depth`, and applies `wake.confirm_window` now in `mtix inbox status`.
-Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
-when the wake scanner ships. They do not control live delivery in this build.
+The wake scanner is live in this build: `wake.live` and the hop and back-off guards apply to every scan.
+No live delivery route is built yet, so a scan never wakes an agent live (`MTIX_WAKE_HOP` delivery begins with the first route); read your inbox.
 
-The wake scan core ships in this build, but nothing constructs or runs it yet:
-no delivery route exists before a later release. So in this build no scan runs,
-no registration is marked stale by a scan and no stale registration is expired by
-one, and no agent is woken live.
+The wake scan runs at the end of every mutation command and every dispatcher or daemon tick,
+starts no timer and contacts no hub. It marks a registration stale when its session is dead
+(the addressed events stay in the inbox) and deletes a registration unseen for 24 hours whose
+session is dead. No delivery route is built yet (MTIX-112.40.3, MTIX-112.40.4), so no agent is
+woken live. The `wake.scanner` doctor row reports active or idle, registration
+and stale counts, and the exact `mtix agent unregister <agent-id> --force` fix for a stale row.
 
-**When the scanner is available, stop live wakes on this host with `mtix config set wake.live off`.**
+**Stop live wakes on this host with `mtix config set wake.live off`.**
 For one agent use `mtix config set wake.live off --agent worker`.
 The stored live-wake default is on, regardless of session approval mode.
 You should not need to tune these settings: use the normal handle, reply and ack routine.
@@ -29,7 +31,7 @@ These keys belong to this host's operator-local `wake.json`, never to
 `data.host` and `data.agents`. Without `--agent` the config commands select
 the host scope; `--agent worker` selects that agent's override. An omitted
 agent key inherits the host value, then the default. Effective host live-off
-dominates an agent live-on override; the scanner will enforce that value. Settings in a committed
+dominates an agent live-on override; the scanner enforces that value. Settings in a committed
 workspace file are ignored and reported; they never grant wake authority.
 Existing flat envelope and strict-identity settings remain readable.
 
@@ -43,7 +45,7 @@ Existing flat envelope and strict-identity settings remain readable.
 | `wake.envelope_max_events` | unset, unlimited | Events in one pulled envelope |
 | `wake.envelope_max_body_bytes` | unset, unlimited | Bytes per event body |
 | `wake.envelope_max_total_bytes` | unset, unlimited | Total envelope bytes |
-| `wake.max_hop_depth` | `32` | Scanner hop guard; depth 32 will be allowed, 33 held |
+| `wake.max_hop_depth` | `32` | Scanner hop guard; depth 32 is allowed, 33 held |
 | `wake.backoff_after_unacked` | `5` | Enforced by the callable dispatcher: durable unacknowledged-wake backoff |
 | `wake.confirm_window` | `30` | Seconds a sent nudge may stay unseen before `mtix inbox status` and `mtix comment --to` show it as `unconfirmed` (read-time only, no timer, no inbox event). An ordinary setting, not a guard: whole seconds 1 to 86400, and setting it never needs a terminal |
 | `inbox.strict_board_identity` | `false` | Also require matching hub identity |
@@ -66,7 +68,7 @@ with `--fix`; it never changes these settings or grants permission.
 
 Addressed-comment payloads carry optional nonnegative integer `hop` context;
 missing means zero; malformed sync metadata warns and is read as zero without
-withholding the comment. When the scanner ships, a wake exec child receives
+withholding the comment. When a delivery route exists, a wake exec child receives
 `MTIX_WAKE_HOP`, the maximum
 hop of its covered events, and `MTIX_WAKE_ATTEMPT`, an audit-only attempt token.
 Its addressed sends carry one more hop. Other sends start at zero; malformed

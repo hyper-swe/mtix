@@ -1356,9 +1356,11 @@ A pi session is woken by a wait child started by the pi extension, not by the ho
 scanner (which skips pi registrations). The wait verb claims each addressed event once
 through the same wake ledger, records it as sent, prints one wake line and exits 0 only
 after that claim; an event that was claimed but not acknowledged never wakes the session
-again. The session handle is validated (1 to 128 characters from letters, digits, `.`,
-`_`, `:` and `-`, starting with a letter or digit) and is passed to the child as one
-argument, never through a shell.
+again. The session handle follows the same rule as agent registration (non-empty, at most
+256 bytes, no control characters), so every session that can register can wait, and it is
+passed to the child as one argument, never through a shell. The wait child ends when its
+parent process changes, so it never outlives pi, and the extension retries a failed child
+a few times with a growing delay before giving up; messages stay in the inbox either way.
 
 This is experimental and off by default: this build embeds the extension file but no
 setup, refresh or doctor command installs it, and the live pi leg (the interactive

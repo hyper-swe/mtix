@@ -24,14 +24,18 @@ func TestPiExtension_AssetContract(t *testing.T) {
 		"attach", "wait", "--harness", "pi", "--session", // the wait child
 		"spawn(",                                     // argv spawn
 		"triggerTurn: true", `deliverAs: "followUp"`, // V-P4 and V-L5
-		"getSessionId()", // V-P2
-		"MTIX_BIN",       // absolute path of mtix, never PATH lookup
+		"getSessionId()",                             // V-P2
+		"MTIX_BIN",                                   // absolute path of mtix, never PATH lookup
+		`child.on("error"`,                           // a missing binary must not crash the host
+		"MAX_RETRIES", "setTimeout(", "MAX_DELAY_MS", // bounded backoff, then give up: no tight loop
 	} {
 		assert.Contains(t, src, want)
 	}
 	for _, bad := range []string{"exec(", "execSync", "shell: true", "child_process.exec", "eval(", "PRIME-TOKEN"} {
 		assert.NotContains(t, src, bad, "the session id is argv only, never a shell")
 	}
+	assert.NotContains(t, src, "session_start registers", "the pi adapter does nothing for session-start")
+	assert.Contains(t, src, "mtix agent register", "the header says where registration comes from")
 	assert.Contains(t, src, "path.isAbsolute", "the mtix binary must be an absolute path")
 	assert.Equal(t, src, string(attach.PiExtensionSource()))
 	b := attach.PiExtensionSource()

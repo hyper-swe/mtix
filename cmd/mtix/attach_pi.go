@@ -42,16 +42,7 @@ func productionAttachAdapters() map[string]attach.Adapter {
 			return host.HostID, host.UID, nil
 		},
 		Lease: piWaitLease,
-		Wait: func(ctx context.Context) error {
-			t := time.NewTimer(piWaitPoll)
-			defer t.Stop()
-			select {
-			case <-ctx.Done():
-				return fmt.Errorf("wait cancelled: %w", ctx.Err())
-			case <-t.C:
-				return nil
-			}
-		},
+		Wait:  piParentWatch(os.Getppid, piWaitPoll),
 	})
 	if err == nil {
 		adapters[attach.HarnessPi] = pi
@@ -75,4 +66,24 @@ func openPiWaitBoard(context.Context) (service.PiWaitStore, func() error, error)
 		return nil, nil, fmt.Errorf("open board: %w", err)
 	}
 	return st, st.Close, nil
+}
+
+// piParentWatch returns the wait between polls. It ends the wait with an error as soon as
+// the parent process changes (pi died, so the child was re-parented), so an orphaned wait
+// child never polls forever.
+func piParentWatch(getppid func() int, poll time.Duration) func(context.Context) error {
+	parent := getppid()
+	return func(ctx context.Context) error {
+		t := time.NewTimer(poll)
+		defer t.Stop()
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait cancelled: %w", ctx.Err())
+		case <-t.C:
+		}
+		if now := getppid(); now != parent {
+			return fmt.Errorf("the parent process changed from %d to %d: pi is gone", parent, now)
+		}
+		return nil
+	}
 }

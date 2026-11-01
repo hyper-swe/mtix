@@ -148,12 +148,25 @@ func TestAttachWaitPi_UnackedEvent_NoRetrigger(t *testing.T) {
 	require.Error(t, err)
 	assert.Empty(t, out)
 	assert.Equal(t, 1, p.ledgerRows())
+}
 
-	// A new event still wakes exactly once, and the old one stays quiet.
-	next := p.addEvent("sender")
+// Each event wakes once, in order; a claimed event is never woken again while a newer one waits.
+func TestAttachWaitPi_TwoEvents_EachWakesOnce(t *testing.T) {
+	p := newPiFixtureLease(t, 20*time.Millisecond)
+	first, second := p.addEvent("sender"), p.addEvent("sender")
+	out, err := p.run(t.Context(), piSession)
+	require.NoError(t, err)
+	assert.Contains(t, out, `"seq":`+itoa(first))
 	out, err = p.run(t.Context(), piSession)
 	require.NoError(t, err)
-	assert.Contains(t, out, `"seq":`+itoa(next))
+	assert.Contains(t, out, `"seq":`+itoa(second))
+
+	time.Sleep(50 * time.Millisecond) // past the lease: only the terminal rows keep both quiet
+	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	out, err = p.run(ctx, piSession)
+	require.Error(t, err)
+	assert.Empty(t, out)
 	assert.Equal(t, 2, p.ledgerRows())
 }
 
@@ -188,7 +201,7 @@ func TestAttachWaitPi_LostRaceOrClaimError_NoExit0NoLine(t *testing.T) {
 func TestAttachWaitPi_HostileSession_RejectedBeforeAnyRead(t *testing.T) {
 	p := newPiFixture(t)
 	p.addEvent("sender")
-	for _, bad := range []string{"", "a b", "x;rm -rf /", "$(id)", "../x", "-x", "a\nb", strings.Repeat("a", attach.MaxSessionLen+1)} {
+	for _, bad := range []string{"", "a\nb", "a\x00b", strings.Repeat("a", attach.MaxSessionLen+1)} {
 		out, err := p.run(t.Context(), bad)
 		require.Error(t, err, "session %q", bad)
 		assert.Empty(t, out)

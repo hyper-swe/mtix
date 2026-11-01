@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,4 +57,22 @@ func TestAttachVerb_SessionFlag_ReachesTheAdapter(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, adapter.calls, 1)
 	assert.Equal(t, "abc-1", adapter.calls[0].Session)
+}
+
+// The wait child must not outlive pi: a changed parent pid ends the wait.
+func TestPiParentWatch_ParentChanges_EndsTheWait(t *testing.T) {
+	ppid := 100
+	wait := piParentWatch(func() int { return ppid }, time.Millisecond)
+	require.NoError(t, wait(context.Background()), "the parent is unchanged")
+	ppid = 1 // re-parented to init: pi died
+	err := wait(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "pi is gone")
+}
+
+func TestPiParentWatch_CancelledContext_ReturnsCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	wait := piParentWatch(func() int { return 7 }, time.Hour)
+	require.ErrorIs(t, wait(ctx), context.Canceled)
 }

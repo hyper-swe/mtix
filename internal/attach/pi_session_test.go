@@ -12,6 +12,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/attach"
 )
 
+// The wait verb and agent registration share one rule (model.ValidateSessionHandle).
 func TestValidateSession_Table(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -21,17 +22,14 @@ func TestValidateSession_Table(t *testing.T) {
 		{"uuid", "01a13d60-79cf-7000-8000-aaaaaaaaaaaa", false},
 		{"colon and dot", "pi:abc.def_1", false},
 		{"max length", strings.Repeat("a", attach.MaxSessionLen), false},
+		{"socket style path", "/tmp/cc-socks/abc def.sock", false},
+		{"non-ascii", "sessi\u00f3n", false},
+		{"leading dash is data, argv only", "-x", false},
 		{"empty", "", true},
 		{"too long", strings.Repeat("a", attach.MaxSessionLen+1), true},
-		{"leading dash looks like a flag", "-x", true},
-		{"leading dot", ".x", true},
-		{"space", "a b", true},
-		{"shell metacharacters", "a;b", true},
-		{"command substitution", "$(id)", true},
 		{"newline", "a\nb", true},
 		{"nul", "a\x00b", true},
-		{"slash", "a/b", true},
-		{"non-ascii", "sessión", true},
+		{"tab", "a\tb", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

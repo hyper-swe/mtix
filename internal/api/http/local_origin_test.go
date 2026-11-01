@@ -23,20 +23,29 @@ type originCase struct {
 }
 
 // originCases lists the Origin values that CORSMiddleware and the
-// WebSocket upgrade must treat alike (MTIX-95.14): http or https with a
-// host that is exactly localhost or a loopback IP, any port; an empty
-// Origin (a non-browser client) is accepted.
+// WebSocket upgrade must treat alike for a server bound to 127.0.0.1:8377
+// (MTIX-95.14, MTIX-221): only the server's own origin is accepted, that
+// is http on port 8377 with the bind host or the loopback alias
+// localhost, 127.0.0.1 or [::1]. Other ports, https and other loopback
+// addresses are refused; an empty Origin (a non-browser client) is
+// accepted.
 func originCases() []originCase {
 	return []originCase{
 		{"no origin header", "", true},
-		{"localhost with port", "http://localhost:9999", true},
-		{"localhost without port", "http://localhost", true},
-		{"localhost over https", "https://localhost:3000", true},
-		{"localhost in capitals", "http://LOCALHOST:3000", true},
+		{"localhost with port", "http://localhost:9999", false},
+		{"localhost on own port", "http://localhost:8377", true},
+		{"localhost without port", "http://localhost", false},
+		{"localhost over https", "https://localhost:3000", false},
+		{"localhost over https on own port", "https://localhost:8377", false},
+		{"localhost in capitals", "http://LOCALHOST:3000", false},
+		{"localhost in capitals on own port", "http://LOCALHOST:8377", true},
 		{"ipv4 loopback", "http://127.0.0.1:8377", true},
-		{"other ipv4 loopback address", "http://127.0.0.2:8080", true},
+		{"ipv4 loopback on another port", "http://127.0.0.1:9999", false},
+		{"other ipv4 loopback address", "http://127.0.0.2:8080", false},
+		{"other ipv4 loopback address on own port", "http://127.0.0.2:8377", false},
 		{"ipv6 loopback", "http://[::1]:8377", true},
-		{"ipv6 loopback over https", "https://[::1]", true},
+		{"ipv6 loopback on another port", "http://[::1]:9999", false},
+		{"ipv6 loopback over https", "https://[::1]", false},
 		{"ipv6 loopback without brackets", "http://::1:8377", false},
 		{"ipv6 loopback without brackets or port", "http://::1", false},
 		{"localhost as a subdomain label", "http://localhost.example.net", false},
@@ -71,7 +80,7 @@ func corsTestRouter(bind, port string) *gin.Engine {
 }
 
 // TestCORSMiddleware_Origin_AcceptsOnlyLocalOrigins verifies that
-// CORSMiddleware grants cross-origin access to local origins only and
+// CORSMiddleware grants cross-origin access to the own origin only and
 // refuses every other Origin with 403, preflight included (FR-9.1,
 // MTIX-95.14).
 func TestCORSMiddleware_Origin_AcceptsOnlyLocalOrigins(t *testing.T) {
@@ -120,7 +129,7 @@ func TestCORSMiddleware_Origin_AcceptsOnlyLocalOrigins(t *testing.T) {
 // (FR-7.5, MTIX-95.14). The handler is mounted without CORSMiddleware so
 // the upgrade's own check is the one under test.
 func TestHandleWebSocket_Origin_AcceptsOnlyLocalOrigins(t *testing.T) {
-	s := testServer(t)
+	s := ownPortTestServer(t)
 	router := setupTestRouter()
 	router.GET("/ws/events", s.handleWebSocket)
 	ts := httptest.NewServer(router)

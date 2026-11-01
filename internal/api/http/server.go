@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"syscall"
 	"time"
 
@@ -36,6 +37,10 @@ type ServerConfig struct {
 	// AuthToken is the bearer token every request must present on a
 	// non-loopback bind. It is never logged. Loopback binds ignore it.
 	AuthToken string
+	// AllowedOrigins lists extra browser origins, each exactly
+	// scheme://host[:port], that the server accepts besides its own origin
+	// (MTIX-221). It is empty by default.
+	AllowedOrigins []string
 }
 
 // Server is the main HTTP server for mtix per FR-7.1.
@@ -93,6 +98,7 @@ func newServer(services Services, logger *slog.Logger, config ServerConfig, cloc
 	if clock == nil {
 		clock = time.Now
 	}
+	config.AllowedOrigins = slices.Clone(config.AllowedOrigins)
 
 	if logger == nil {
 		logger = slog.Default()
@@ -149,7 +155,7 @@ func (s *Server) setupMiddleware() {
 		s.router.Use(AuthMiddleware(s.config.AuthToken))
 	}
 	s.router.Use(HostAllowlistMiddleware(s.config.Bind))
-	s.router.Use(CORSMiddleware(s.config.Bind, s.config.Port))
+	s.router.Use(CORSMiddleware(s.config.Bind, s.config.Port, s.config.AllowedOrigins...))
 
 	if s.config.RateLimit > 0 {
 		s.router.Use(RateLimitMiddleware(s.config.RateLimit, rateLimitMaxKeys, s.clock))
@@ -219,6 +225,9 @@ func (s *Server) Start() error {
 
 	// NFR-5.2 / MTIX-220: a network bind needs --insecure-bind and a token.
 	if err := CheckExposure(s.config.Bind, s.config.InsecureBind, s.config.AuthToken != ""); err != nil {
+		return err
+	}
+	if err := ValidateAllowedOrigins(s.config.AllowedOrigins); err != nil {
 		return err
 	}
 	if !isLoopbackHost(s.config.Bind) {

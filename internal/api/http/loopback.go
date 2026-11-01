@@ -28,46 +28,6 @@ func bindNamesServer(bind string) bool {
 	return bind != "" && !net.ParseIP(bind).IsUnspecified()
 }
 
-// allowedOrigin reports whether the server bound to bind:port accepts a
-// request's Origin header; CORSMiddleware and the WebSocket upgrade both
-// use it (FR-9.1, MTIX-95.14). An empty Origin comes from a non-browser
-// client and is accepted. Any other Origin must be exactly
-// scheme://host[:port], with an IPv6 host in brackets, and either be http
-// or https on a loopback host (isLoopbackHost), on any port, or be the
-// server's own origin (isOwnOrigin).
-func allowedOrigin(origin, bind, port string) bool {
-	if origin == "" {
-		return true
-	}
-	u, err := url.Parse(origin)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
-		return false
-	}
-	// An origin is scheme and authority only: no user info, path, query
-	// or fragment.
-	if origin != u.Scheme+"://"+u.Host {
-		return false
-	}
-	// An IPv6 host is written in brackets, as browsers send it.
-	if strings.Contains(u.Hostname(), ":") && !strings.HasPrefix(u.Host, "[") {
-		return false
-	}
-	return isLoopbackHost(u.Hostname()) || isOwnOrigin(u, bind, port)
-}
-
-// isOwnOrigin reports whether u is the origin of pages this server serves
-// when it is bound to an address that names it (bindNamesServer): scheme
-// http, host equal to the bind host, and port equal to the configured
-// port, where an origin without a port means 80 (MTIX-95.14).
-func isOwnOrigin(u *url.URL, bind, port string) bool {
-	originPort := u.Port()
-	if originPort == "" {
-		originPort = "80"
-	}
-	return u.Scheme == "http" && bindNamesServer(bind) &&
-		strings.EqualFold(u.Hostname(), bind) && originPort == port
-}
-
 // allowedHost reports whether a request's Host header names this server
 // (MTIX-95.14): a loopback host (isLoopbackHost) on any port, or exactly
 // the bind host when the bind address names the server (bindNamesServer).

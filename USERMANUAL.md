@@ -1568,6 +1568,26 @@ requests and can observe the viewer's IP address; avoid external images in
 sensitive comments. The policy is applied by `mtix serve`, including SPA
 fallback routes; the Vite development server does not apply this header.
 
+`mtix serve` accepts browser requests only from its own origin: `http` on
+its `--port`, with the host `localhost`, `127.0.0.1`, `[::1]` or the
+`--addr` host. A page served by another local web server, on another port,
+cannot send requests to it or read its responses, and no response carries
+`Access-Control-Allow-Credentials`. The web UI that `mtix serve` serves
+itself is on that origin and needs no setting.
+
+The Vite development server (`npm run dev` in `web/`) serves the UI at
+`http://localhost:5173` and forwards `/api`, `/ws` and `/admin` to
+`127.0.0.1:6849`, so the browser sends `Origin: http://localhost:5173`.
+For development, start the server with that origin allowed:
+
+```bash
+mtix serve --port 6849 --allow-origin http://localhost:5173
+```
+
+If you open the development server under another name, such as
+`http://127.0.0.1:5173`, allow that exact origin instead, or add a second
+`--allow-origin`.
+
 ### Views
 
 - **All Issues** — Filterable table of all nodes with status, priority, assignee, and progress. Filter by status using the tab bar.
@@ -1630,6 +1650,7 @@ The UI connects to `/ws/events` via WebSocket for live updates. Connection statu
 | `--addr` | `127.0.0.1` | Bind address (when not given, the `api.bind` setting applies, else `127.0.0.1`); a non-loopback address needs `--insecure-bind` |
 | `--insecure-bind` | `false` | Allow a non-loopback bind; the server then requires a bearer token (see below) |
 | `--port` | `8377` | HTTP port |
+| `--allow-origin` | none | Also accept browser requests from this exact origin, written as `scheme://host[:port]` (repeatable; see "Accepted Requests") |
 
 The server binds to localhost by default (`--addr`, else the `api.bind` setting, else `127.0.0.1`). A loopback bind needs no credential.
 
@@ -1640,7 +1661,7 @@ To reach the server from another machine, bind to the address that clients use a
 `mtix serve` answers a request only when it is addressed to this server and, for a browser, comes from a local page:
 
 - **Host.** The `Host` header must name `localhost` or a loopback address (`127.0.0.1`, `::1` and the rest of the loopback range), on any port. When `--addr` is a specific address or host name, that exact address or name is accepted as well. A wildcard bind such as `--addr 0.0.0.0` or `--addr ::` adds no name, so it accepts loopback names only: bind to the specific address clients use. Other requests get `403` with error code `HOST_NOT_ALLOWED`.
-- **Browser origin.** A request that carries an `Origin` header is accepted when that origin is `http` or `https` on `localhost` or a loopback address, on any port (for example `http://localhost:5173` or `http://[::1]:8377`). When `--addr` is a specific address or host name, the server's own origin is accepted as well: `http`, that address or name, and the `--port` value (for example `http://192.168.1.20:8377` for `--addr 192.168.1.20 --port 8377`), so a page served from that address passes the origin check. Until the web UI can ask for the bearer token (a follow-up), the embedded web UI cannot load data on a network bind, because every route, the UI included, needs the token; use an API client there. Any other origin gets `403`, with error code `ORIGIN_NOT_ALLOWED` for HTTP requests; the WebSocket upgrade at `/ws/events` applies the same rule. Clients that send no `Origin` header, such as the CLI, scripts and SDKs, are not affected.
+- **Browser origin.** A request that carries an `Origin` header is accepted only when that origin is the server's own origin: scheme `http`, the `--port` value, and a host that is `localhost`, `127.0.0.1` or `[::1]` (for example `http://localhost:8377` or `http://[::1]:8377` for `--port 8377`). An origin without a port means port 80. When `--addr` is a specific address or host name, that address or name is accepted as the host as well (for example `http://192.168.1.20:8377` for `--addr 192.168.1.20 --port 8377`), so a page served from that address passes the origin check. A page on any other port, including another local web server, is refused, and so are `https` origins and other loopback addresses such as `127.0.0.2`. To accept another origin, name it exactly with `--allow-origin`, for example `--allow-origin http://localhost:5173`; repeat the flag for each origin. An allowed origin is matched exactly, apart from letter case: it must be written as a browser sends it, with no path or trailing slash and without the default port, or `mtix serve` refuses to start. The allow-list is empty by default. Until the web UI can ask for the bearer token (a follow-up), the embedded web UI cannot load data on a network bind, because every route, the UI included, needs the token; use an API client there. Any other origin gets `403`, with error code `ORIGIN_NOT_ALLOWED` for HTTP requests; the WebSocket upgrade at `/ws/events` applies the same rule. Clients that send no `Origin` header, such as the CLI, scripts and SDKs, are not affected. No response carries `Access-Control-Allow-Credentials`.
 - **Client address.** The client address in the request log is the address of the TCP connection. Behind a reverse proxy, the log shows the proxy's address.
 
 `GET /health` reports the version of the running `mtix` binary in its `version` field.

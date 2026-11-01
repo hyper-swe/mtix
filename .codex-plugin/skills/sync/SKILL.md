@@ -139,6 +139,19 @@ scanning continues. Keep the lock files intact. One protected operator-local
 lock keeps a single host process per OS user. Enrollment changes retain source
 and time operator-locally and publish only a neutral board activity line.
 
+A 0.5.x per-project service (the `mtix daemon` unit or a running per-project
+daemon) keeps pull and hook duty for its board until that board is migrated.
+While one is live the host dispatcher runs only the wake scanner for the board:
+it makes no hub pull and runs no hook pass, so nothing fires twice, and it
+never writes the daemon's PID file. A PID file whose pid now
+belongs to another program is stale and does not count. Both start orders are
+safe: a daemon that starts after the dispatcher is seen on the next pass.
+`mtix doctor --json` reports `dispatcher.legacy-service` (warn) with
+`daemon_live`, `daemon_pid` and `unit_installed`; its fix reads mtix setup,
+run by the operator in that project once the setup command ships. This build has
+no setup command, so leave the service running and do not stop, uninstall or migrate
+it yourself.
+
 `mtix doctor --json` exposes `dispatcher.host`, `board.enrolled` and, for a hub
 worktree, `board.worktree-unenrolled`, including enrollment history. These checks
 never enroll a checkout, including with `--fix`; setup remedies await setup

@@ -2775,6 +2775,19 @@ into a worktree, an agent confirmation and a manual pull never enroll a
 checkout. Existing per-project daemons and listeners retain their duty until
 explicit migration; do not remove them as part of trying the experiment.
 
+A 0.5.x per-project service (the `mtix daemon` unit or a running per-project
+daemon) keeps pull and hook duty for its board until that board is migrated.
+While one is live the host dispatcher runs only the wake scanner for the board:
+it makes no hub pull and runs no hook pass, so nothing fires twice, and it
+never writes the daemon's PID file. A PID file whose pid now
+belongs to another program is stale and does not count. Both start orders are
+safe: a daemon that starts after the dispatcher is seen on the next pass.
+`mtix doctor --json` reports `dispatcher.legacy-service` (warn) with
+`daemon_live`, `daemon_pid` and `unit_installed`; its fix reads mtix setup,
+run by the operator in that project once the setup command ships. This build has
+no setup command, so leave the service running and do not stop, uninstall or migrate
+it yourself.
+
 Only enrolled checkouts contact the hub under `sync.hub_contact`: activity,
 interval or manual. Activity lets an idle scale-to-zero database sleep; interval
 keeps it awake, and manual makes no automatic hub contact. Contact costs apply

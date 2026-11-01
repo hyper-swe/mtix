@@ -184,7 +184,8 @@ func daemonPIDFileLive(mtixDir string) (bool, int, error) {
 		// Diagnostic only: never delete a marker without lifetime ownership.
 		return false, 0, nil
 	}
-	if !pidLive(pid) {
+	if !pidLive(pid) || !pidIsMtixProcess(pid) {
+		// A reused pid held by a non-mtix process is stale, not a live legacy service (D11).
 		return false, 0, nil
 	}
 	return true, pid, nil

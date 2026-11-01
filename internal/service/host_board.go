@@ -33,6 +33,9 @@ type HostBoardOptions struct {
 	Hooks    func(context.Context)
 	Contact  *ContactScheduler
 	Close    func() error
+	// LegacyService reports whether a 0.5.x per-project service still owns pull and hook duty for
+	// the board's .mtix directory (ADR-007 D11); nil means no legacy probe.
+	LegacyService func(ctx context.Context, mtixDir string) (bool, error)
 }
 
 // HostBoard composes the real scanner and fenced dispatcher for FR-20.4.
@@ -205,6 +208,10 @@ func (b *HostBoard) effects(ctx context.Context, row oplocal.ListedBoard) (retEr
 	if err != nil || !enrolled {
 		return err
 	}
+	// A live 0.5.x per-project service keeps pull and hook duty until setup migrates it (D11).
+	if legacy, err := b.legacyLive(ctx, row); err != nil || legacy {
+		return err
+	}
 	if b.opts.Contact != nil && b.opts.Pull != nil && b.opts.Contact.Decide().Contact {
 		dsn, err := readCheckoutSecret(filepath.Join(row.Path, ".mtix"))
 		if err != nil {
@@ -217,4 +224,18 @@ func (b *HostBoard) effects(ctx context.Context, row oplocal.ListedBoard) (retEr
 	}
 	b.opts.Hooks(ctx)
 	return retErr
+}
+
+// legacyLive reports whether a 0.5.x service still owns this board's pull and hook duty.
+// It only reads; the host dispatcher never writes the legacy PID file (ADR-007 D11).
+// A probe error fails closed: the caller skips effects and surfaces the error.
+func (b *HostBoard) legacyLive(ctx context.Context, row oplocal.ListedBoard) (bool, error) {
+	if b.opts.LegacyService == nil {
+		return false, nil
+	}
+	live, err := b.opts.LegacyService(ctx, filepath.Join(row.Path, ".mtix"))
+	if err != nil {
+		return false, fmt.Errorf("legacy service probe: %w", err)
+	}
+	return live, nil
 }

@@ -25,7 +25,11 @@ import (
 const HostEnrollmentNotice = "dispatcher enrollment changed on a host (see that host's mtix doctor)"
 
 // EnrollmentRequest comes from an explicit operator action, never registration or routing.
-type EnrollmentRequest struct{ Path, Mode, Source string }
+type EnrollmentRequest struct {
+	Path, Mode, Source string
+	// MigrateLegacy removes the board's 0.5.x per-project service before enrolling (ADR-007 D11).
+	MigrateLegacy bool
+}
 
 // HostEnrollmentOptions supplies checkout opening and observation using that checkout's secrets.
 type HostEnrollmentOptions struct {
@@ -33,6 +37,10 @@ type HostEnrollmentOptions struct {
 	Clock      func() time.Time
 	OpenBoard  func(context.Context, string) (*HostBoard, error)
 	ObserveHub func(context.Context, string) (oplocal.HubIdentity, error)
+	// UninstallLegacy stops and removes the per-project service of the checkout root.
+	UninstallLegacy func(ctx context.Context, root string) error
+	// LegacyLive reports whether a legacy daemon still runs for the board's .mtix directory.
+	LegacyLive func(ctx context.Context, mtixDir string) (bool, error)
 }
 
 // HostEnrollment is the service-only surface consumed by setup; it creates no agent grants.
@@ -58,6 +66,12 @@ func (s *HostEnrollment) List(ctx context.Context) ([]oplocal.EnrolledBoard, err
 // Enroll requires an explicit mode and independently observes the hub with checkout-only secrets.
 func (s *HostEnrollment) Enroll(ctx context.Context, r EnrollmentRequest) error {
 	return s.change(ctx, r, true)
+}
+
+// MigrateLegacyService replaces a board's 0.5.x per-project service with enrollment (ADR-007 D11, FR-20.4).
+func (s *HostEnrollment) MigrateLegacyService(ctx context.Context, r EnrollmentRequest) error {
+	r.MigrateLegacy = true
+	return s.Enroll(ctx, r)
 }
 
 // Unenroll revokes only this checkout after any in-flight locked pass completes.
@@ -95,17 +109,68 @@ func (s *HostEnrollment) change(ctx context.Context, r EnrollmentRequest, enroll
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, lock.Release()) }()
-	return s.completeChange(ctx, b, row, r, enroll)
+	return s.apply(ctx, canonical, b, row, r, enroll)
 }
 
-func (s *HostEnrollment) completeChange(ctx context.Context, b *HostBoard, row oplocal.ListedBoard, r EnrollmentRequest, enroll bool) error {
-	var entry *oplocal.EnrolledBoard
-	action := "unenroll"
+// enrollmentPlan is what the preflight learned before any state is touched.
+type enrollmentPlan struct {
+	enroll bool
+	hub    oplocal.HubIdentity
+}
+
+// apply runs every fallible precondition (hub observation, checkout secret, migration hooks)
+// before the legacy service is removed, so a refusal never leaves the board without an owner
+// of pull and hook duty (ADR-007 D11). The dispatch lock is already held by the caller.
+func (s *HostEnrollment) apply(ctx context.Context, root string, b *HostBoard, row oplocal.ListedBoard, r EnrollmentRequest, enroll bool) error {
+	plan := enrollmentPlan{enroll: enroll}
+	migrate := enroll && r.MigrateLegacy
+	if migrate && (s.opts.UninstallLegacy == nil || s.opts.LegacyLive == nil) {
+		return fmt.Errorf("legacy service migration requires an uninstaller and a liveness probe: %w", model.ErrInvalidInput)
+	}
 	if enroll {
 		hub, err := s.observe(ctx, b)
 		if err != nil {
 			return err
 		}
+		plan.hub = hub
+	}
+	if migrate {
+		if err := s.migrateLegacy(ctx, root); err != nil {
+			return err
+		}
+	}
+	if err := s.completeChange(ctx, b, row, r, plan); err != nil {
+		if migrate {
+			// Only local state writes remain after the removal; name the residual so the operator re-runs.
+			return fmt.Errorf("legacy service removed but enrollment did not complete; re-run the migration: %w", err)
+		}
+		return err
+	}
+	return nil
+}
+
+// migrateLegacy removes the per-project service under the dispatch lock, so no host pass
+// overlaps it, and refuses to enroll while a legacy daemon still runs (D11). Callers run it
+// only after the enrollment preconditions passed.
+func (s *HostEnrollment) migrateLegacy(ctx context.Context, root string) error {
+	if err := s.opts.UninstallLegacy(ctx, root); err != nil {
+		return fmt.Errorf("uninstall legacy service: %w", err)
+	}
+	live, err := s.opts.LegacyLive(ctx, filepath.Join(root, ".mtix"))
+	if err != nil {
+		return fmt.Errorf("verify legacy service stopped: %w", err)
+	}
+	if live {
+		return fmt.Errorf("legacy daemon still running; stop it and re-run the migration: %w", model.ErrConflict)
+	}
+	return nil
+}
+
+func (s *HostEnrollment) completeChange(ctx context.Context, b *HostBoard, row oplocal.ListedBoard, r EnrollmentRequest, plan enrollmentPlan) error {
+	var entry *oplocal.EnrolledBoard
+	action := "unenroll"
+	if plan.enroll {
+		hub := plan.hub
 		if err := s.opts.State.ListBoardInstance(ctx, row); err != nil {
 			return err
 		}

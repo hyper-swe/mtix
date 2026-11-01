@@ -78,6 +78,10 @@ func runServeWith(cfg mtixhttp.ServerConfig) error {
 	}
 	srv := mtixhttp.NewServer(services, app.logger, cfg, clock)
 
+	// MTIX-232: make this serve discoverable by mtix url; removed on return,
+	// which covers clean exit and SIGINT/SIGTERM shutdown.
+	defer announceServe(serveAnnounceConfig{host: cfg.Bind, port: cfg.Port, now: clock, logger: app.logger})()
+
 	fmt.Printf("Starting mtix server at %s:%s\n", cfg.Bind, cfg.Port)
 	return srv.ListenAndServeWithGracefulShutdown()
 }

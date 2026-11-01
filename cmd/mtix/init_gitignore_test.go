@@ -22,7 +22,7 @@ func TestRunInit_DefaultExclusion_PreservesContent(t *testing.T) {
 	require.NoError(t, runInit("TEST"))
 	content, err := os.ReadFile(path)
 	require.NoError(t, err)
-	assert.Equal(t, "# project rules\nbuild/\n.mtix/hooks.trust\n", string(content))
+	assert.Equal(t, "# project rules\nbuild/\n.mtix/hooks.trust\n.mtix/serve.json\n", string(content))
 }
 
 func TestRunInit_ExclusionReadError_ReturnsError(t *testing.T) {

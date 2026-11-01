@@ -23,9 +23,12 @@ serve running the command prints nothing on stdout and exits non-zero.
 The id must be a display id such as MTIX-12.3. An unknown id fails with not
 found. With --json the output is {"id": ..., "url": ...}.
 
-The link always uses the loopback address 127.0.0.1 and the serve's port. A serve
-bound to another address with --insecure-bind is not reachable at that link:
-replace the host by hand.`
+The serve publishes .mtix/serve.json (pid, port, bound host) while
+it runs and removes it when it stops. The link uses the host the serve is bound
+to, or 127.0.0.1 when it is bound to a wildcard address. A stale record (dead
+process, or a port that does not answer as an mtix serve) counts as no running
+serve. 'mtix doctor' warns when a git project does not ignore the file and
+prints the fix. Use 'mtix -C <dir> url <id>' to target another project.`
 
 // newURLCmd creates the mtix url command (MTIX-230).
 func newURLCmd() *cobra.Command {
@@ -42,7 +45,8 @@ func newURLCmd() *cobra.Command {
 
 // runURL prints the absolute web UI URL of one ticket for the running serve.
 // The id is validated before use, the node must exist, and the serve is
-// discovered through the same PID lock that routes other commands (FR-14.1b).
+// discovered through the serve-address record .mtix/serve.json that mtix serve
+// writes (MTIX-232), not the PID lock that routes other commands (FR-14.1b).
 // Nothing is written to stdout on any error.
 func runURL(id string) error {
 	if app.nodeSvc == nil {
@@ -59,11 +63,11 @@ func runURL(id string) error {
 	if err != nil {
 		return err
 	}
-	port, alive := readPIDLock(mtixDir)
+	rec, alive := readServeRecord(mtixDir)
 	if !alive {
 		return fmt.Errorf("no running serve for this project: start it with 'mtix serve', then run mtix url again")
 	}
-	link := fmt.Sprintf("http://127.0.0.1:%d/ticket/%s", port, url.PathEscape(node.ID))
+	link := fmt.Sprintf("http://%s:%d/ticket/%s", serveLinkHost(rec.Host), rec.Port, url.PathEscape(node.ID))
 
 	out := NewOutputWriter(app.jsonOutput)
 	if app.jsonOutput {

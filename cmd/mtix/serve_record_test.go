@@ -309,10 +309,11 @@ func TestRunInit_IgnoresServeRecord(t *testing.T) {
 }
 
 // reapedChildPID returns the PID of a child that has exited and been reaped,
-// so no live process owns it.
+// so no live process owns it. The child is this test binary run with a filter
+// that selects no test, so it needs no external program and works on Windows.
 func reapedChildPID(t *testing.T) int {
 	t.Helper()
-	c := exec.Command("true")
+	c := exec.Command(os.Args[0], "-test.run=^$") //nolint:gosec // G204: re-executes this test binary only
 	require.NoError(t, c.Run())
 	return c.Process.Pid
 }

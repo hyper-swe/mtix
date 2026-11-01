@@ -1077,9 +1077,21 @@ Each node block is separated by `=` characters. Single-line fields use
 `LABEL: value`. Multi-line fields use `LABEL:\n  indented body`. Control
 characters, bidirectional embedding, override and isolate controls,
 zero-width characters, tag characters and the line and paragraph
-separators (U+2028, U+2029) are sanitized (each replaced with U+FFFD). The
-directional marks (U+200E, U+200F, U+061C) and other format characters,
-such as variation selectors, are kept. Fields containing
+separators (U+2028, U+2029) are sanitized (each replaced with U+FFFD), and
+so is every other Unicode format character (including the directional marks
+U+200E, U+200F and U+061C), every variation selector (including the
+selectors that can hide data after an emoji, and the Mongolian free
+variation selectors), the combining grapheme joiner, the Khmer inherent
+vowels, the Hangul fillers, every unassigned code point and the Unicode
+noncharacters. The one exception is a single U+FE0F directly after a
+symbol character such as an emoji, which is kept so emoji still display
+as emoji; a second selector, a U+FE0F after any other character and
+U+FE0E are replaced. The braille blank U+2800 is also kept, because it is
+an assigned symbol. The inbox envelope drops the same characters. Unassigned
+means unassigned in the Unicode tables of the Go release mtix was built
+with. A person reading `mtix show` is not affected: show
+keeps the directional marks and variation selectors, and `--json` always
+returns the stored text exactly. Fields containing
 newlines in normally single-line positions are auto-promoted to multi-line
 to prevent label injection.
 

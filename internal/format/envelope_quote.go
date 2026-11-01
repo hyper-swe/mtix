@@ -6,18 +6,13 @@ package format
 import (
 	"strconv"
 	"strings"
-	"unicode"
 )
 
+// neutralize drops every character the agent-text rule rejects (mapAgentText; tab and newline stay)
+// and defuses the envelope markers in quoted text.
 func neutralize(value string) string {
-	var b strings.Builder
-	for _, r := range value {
-		if unicode.Is(unicode.Cf, r) || (unicode.IsControl(r) && r != '\n' && r != '\t') {
-			continue
-		}
-		b.WriteRune(r)
-	}
-	return strings.NewReplacer(BeginMarker, "[quoted begin marker]", EndMarker, "[quoted end marker]", Preamble, "[quoted provenance line]", "reply:", "reply (quoted):", "ack:", "ack (quoted):").Replace(b.String())
+	value = mapAgentText(value, -1)
+	return strings.NewReplacer(BeginMarker, "[quoted begin marker]", EndMarker, "[quoted end marker]", Preamble, "[quoted provenance line]", "reply:", "reply (quoted):", "ack:", "ack (quoted):").Replace(value)
 }
 
 func quoteMetadata(value string) string { return strconv.QuoteToASCII(neutralize(value)) }

@@ -55,6 +55,8 @@ type fakeHookClaims struct {
 	outcomes map[int64]model.WakeOutcome
 	epochs   []int64
 	claimErr error
+	failSeq  int64 // ClaimWake fails for this event only (0 = off)
+	recErr   error // RecordWakeOutcome fails
 }
 
 func newFakeHookClaims() *fakeHookClaims {
@@ -67,6 +69,9 @@ func (f *fakeHookClaims) ClaimWake(_ context.Context, key model.WakeKey, _ time.
 	if f.claimErr != nil {
 		return model.WakeAttempt{}, false, f.claimErr
 	}
+	if f.failSeq != 0 && key.EventSeq == f.failSeq {
+		return model.WakeAttempt{}, false, errors.New("claim store down")
+	}
 	f.epochs = append(f.epochs, key.Epoch)
 	if f.claimed[key.EventSeq] {
 		return model.WakeAttempt{}, false, nil
@@ -78,6 +83,9 @@ func (f *fakeHookClaims) ClaimWake(_ context.Context, key model.WakeKey, _ time.
 func (f *fakeHookClaims) RecordWakeOutcome(_ context.Context, a model.WakeAttempt, o model.WakeOutcome) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.recErr != nil {
+		return f.recErr
+	}
 	f.outcomes[a.Key.EventSeq] = o
 	return nil
 }
@@ -99,7 +107,7 @@ func newHookRig(t *testing.T, events ...sqlite.InboxEvent) *hookRig {
 		Register: func(context.Context) error { r.registered++; return nil },
 		Epoch:    func(context.Context) (int64, error) { return 7, nil },
 		Wakeable: func(context.Context) (bool, string, error) { return true, "implicit local registration", nil },
-		Wait:     func(context.Context) ([]sqlite.InboxEvent, error) { return events, nil },
+		Wait:     func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) { return events, nil },
 		Render: func(es []sqlite.InboxEvent) (string, error) {
 			out := "ENVELOPE"
 			for _, e := range es {
@@ -133,7 +141,10 @@ func TestClaudeHook_SessionStart_RegistersBeforeArming(t *testing.T) {
 	r := newHookRig(t)
 	order := []string{}
 	r.deps.Register = func(context.Context) error { order = append(order, "register"); return nil }
-	r.deps.Wait = func(context.Context) ([]sqlite.InboxEvent, error) { order = append(order, "wait"); return nil, nil }
+	r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) {
+		order = append(order, "wait")
+		return nil, nil
+	}
 
 	res := NewClaudeHook(r.deps).Run(t.Context(), ClaudeHookSessionStart)
 
@@ -154,7 +165,7 @@ func TestClaudeHook_SecondStartWhileArmed_ReportsAlreadyArmedAndWaitsOnce(t *tes
 	var waits int
 	var mu sync.Mutex
 	entered, release := make(chan struct{}), make(chan struct{})
-	r.deps.Wait = func(context.Context) ([]sqlite.InboxEvent, error) {
+	r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) {
 		mu.Lock()
 		waits++
 		mu.Unlock()
@@ -182,7 +193,7 @@ func TestClaudeHook_WakePolicyHolds_NoLeaseNoWait(t *testing.T) {
 		t.Run(reason, func(t *testing.T) {
 			r := newHookRig(t, hookEvent(1, "a"))
 			r.deps.Wakeable = func(context.Context) (bool, string, error) { return false, reason, nil }
-			r.deps.Wait = func(context.Context) ([]sqlite.InboxEvent, error) {
+			r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) {
 				t.Fatal("a held agent must not wait")
 				return nil, nil
 			}
@@ -225,12 +236,14 @@ func TestClaudeHook_InternalErrors_ExitZeroAndRecordedForDoctor(t *testing.T) {
 			r.deps.Wakeable = func(context.Context) (bool, string, error) { return false, "", boom }
 		}, ClaudeHookStop},
 		{"wait", func(r *hookRig) {
-			r.deps.Wait = func(context.Context) ([]sqlite.InboxEvent, error) { return nil, boom }
+			r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) { return nil, boom }
 		}, ClaudeHookStop},
 		{"epoch", func(r *hookRig) { r.deps.Epoch = func(context.Context) (int64, error) { return 0, boom } }, ClaudeHookStop},
 		{"claim", func(r *hookRig) { r.claims.claimErr = boom }, ClaudeHookStop},
 		{"render", func(r *hookRig) { r.deps.Render = func([]sqlite.InboxEvent) (string, error) { return "", boom } }, ClaudeHookStop},
-		{"panic", func(r *hookRig) { r.deps.Wait = func(context.Context) ([]sqlite.InboxEvent, error) { panic("kaboom") } }, ClaudeHookStop},
+		{"panic", func(r *hookRig) {
+			r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) { panic("kaboom") }
+		}, ClaudeHookStop},
 		{"unknown event", func(*hookRig) {}, ClaudeHookEvent("nope")},
 	}
 	for _, tt := range tests {
@@ -255,7 +268,7 @@ func TestClaudeHook_InternalErrors_ExitZeroAndRecordedForDoctor(t *testing.T) {
 func TestClaudeHook_SuccessAfterFailure_ClearsTheRecord(t *testing.T) {
 	r := newHookRig(t)
 	fail := true
-	r.deps.Wait = func(context.Context) ([]sqlite.InboxEvent, error) {
+	r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) {
 		if fail {
 			return nil, errors.New("transient")
 		}

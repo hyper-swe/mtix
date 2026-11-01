@@ -106,7 +106,9 @@ func newClaudeSessionHook(agent string, wait time.Duration) (*service.ClaudeHook
 			return registrationEpoch(ctx, key)
 		},
 		Wakeable: func(ctx context.Context) (bool, string, error) { return perms.Wakeable(ctx, board, agent) },
-		Wait:     func(ctx context.Context) ([]sqlite.InboxEvent, error) { return claudeHookWait(ctx, agent, wait) },
+		Wait: func(ctx context.Context, skip func(int64) bool) ([]sqlite.InboxEvent, error) {
+			return claudeHookWait(ctx, agent, wait, skip, joinListener)
+		},
 		Render: func(events []sqlite.InboxEvent) (string, error) {
 			caps, cerr := loadInboxEnvelopeCaps(agent)
 			if cerr != nil {
@@ -136,15 +138,50 @@ func registrationEpoch(ctx context.Context, key service.WakeLeaseKey) (int64, er
 	return 0, fmt.Errorf("agent %s is not registered on this host: run the session-start hook first", key.AgentID)
 }
 
-// claudeHookWait is the same level-triggered wait as `mtix inbox --wait`,
-// including the board listener lease (MTIX-112.20.4). A signal ends it quietly.
-func claudeHookWait(ctx context.Context, agent string, timeout time.Duration) ([]sqlite.InboxEvent, error) {
+// claudeHookJoin joins the board listener for the duration of a wait and
+// returns the function that ends the join.
+type claudeHookJoin func(agent string, out io.Writer) func()
+
+// claudeHookPollInterval matches the poll of `mtix inbox --wait`.
+const claudeHookPollInterval = 250 * time.Millisecond
+
+// claudeHookWait is the level-triggered wait of `mtix inbox --wait`, including
+// the board listener lease (MTIX-112.20.4), except that events for which skip
+// is true do not end it: a re-arm waits for new mail only. A signal or the
+// timeout (0 = none) ends it quietly with no events.
+func claudeHookWait(ctx context.Context, agent string, timeout time.Duration, skip func(int64) bool, join claudeHookJoin) ([]sqlite.InboxEvent, error) {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	defer joinListener(agent, io.Discard)()
-	events, err := app.store.InboxWait(ctx, agent, timeout)
-	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
-		return nil, nil
+	defer join(agent, io.Discard)()
+	waitCtx := ctx
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		waitCtx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
 	}
-	return events, err
+	ticker := time.NewTicker(claudeHookPollInterval)
+	defer ticker.Stop()
+	for {
+		events, err := app.store.InboxList(ctx, agent)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("list inbox: %w", err)
+		}
+		var fresh []sqlite.InboxEvent
+		for _, e := range events {
+			if !skip(e.Seq) {
+				fresh = append(fresh, e)
+			}
+		}
+		if len(fresh) > 0 {
+			return fresh, nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return nil, nil
+		case <-ticker.C:
+		}
+	}
 }

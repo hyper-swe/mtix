@@ -6,11 +6,13 @@ package service
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -104,11 +106,40 @@ func TestClaudeHookDoctorCheck_Failure_ExactFixAndJSONData(t *testing.T) {
 	res := check.Run(t.Context())
 
 	assert.Equal(t, DoctorFail, res.Status)
-	assert.Equal(t, "mtix hook claude-session session-start --agent worker", res.Fix)
+	assert.Equal(t, "mtix hook claude-session session-start --agent worker --timeout 5", res.Fix)
 	assert.Contains(t, res.Detail, "register agent: boom")
 	assert.Contains(t, res.Detail, "2026-11-01T09:30:00Z")
 	data, err := json.Marshal(res)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), `"failures":[{"agent":"worker","event":"session-start"`)
 	assert.NotContains(t, res.Fix, "<", "a fix never carries a placeholder")
+}
+
+func TestClaudeHookLog_Record_LongMultiByteText_StaysValidUTF8(t *testing.T) {
+	log := newHookLog(t)
+	text := "a" + strings.Repeat("é", 200) // byte 300 falls inside a rune
+	require.NoError(t, log.Record("worker", ClaudeHookStop, errors.New(text)))
+
+	failures, err := log.Failures()
+	require.NoError(t, err)
+	require.Len(t, failures, 1)
+	assert.True(t, utf8.ValidString(failures[0].Error))
+	assert.NotContains(t, failures[0].Error, "�", "no replacement character from a cut rune")
+	assert.LessOrEqual(t, len(failures[0].Error), claudeHookErrorMax)
+	assert.Equal(t, "a"+strings.Repeat("é", 149), failures[0].Error)
+}
+
+func TestClaudeHookLog_Failures_StopsAtTheRecordLimit(t *testing.T) {
+	log := newHookLog(t)
+	require.NoError(t, os.MkdirAll(log.Dir, 0o700))
+	for i := 0; i < claudeHookRecordLimit+44; i++ {
+		name := fmt.Sprintf("agent%03d.stop.json", i)
+		body := fmt.Sprintf(`{"agent":"agent%03d","event":"stop","error":"x"}`, i)
+		require.NoError(t, os.WriteFile(filepath.Join(log.Dir, name), []byte(body), 0o600))
+	}
+
+	failures, err := log.Failures()
+
+	require.NoError(t, err)
+	assert.Len(t, failures, claudeHookRecordLimit, "a hostile directory cannot flood doctor")
 }

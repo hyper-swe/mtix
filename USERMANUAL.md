@@ -1465,10 +1465,13 @@ hook command; it is not meant to be typed by hand, except to re-run a failed hoo
   waiter arms. A held agent exits 0 with the reason; the message stays in the inbox.
 - Each event is claimed once in the wake ledger. When the waiter wins the claim it writes the quoted envelope to stderr
   and exits 2, which is the exit code that wakes an idle Claude session. An event another route already claimed
-  never wakes the session twice.
+  never wakes the session twice. A re-arm after a wake waits only for new mail: events already delivered to this
+  registration, or claimed by another route, do not end the wait.
+- If the wake is won but a later step fails (a further claim, or recording the delivered outcome), the envelope is still
+  delivered and the failure is recorded for doctor, so a claimed event is never silently lost.
 - The waiter is a local wait on the board's inbox. It runs no timer and contacts no hub by itself.
 - A hook never breaks a session: an internal error exits 0 and is recorded. `mtix doctor` shows it as the row
-  `wake.listener.hook-errors`, whose `fix` is the exact command that re-runs the failed hook. A successful re-run clears the
+  `wake.listener.hook-errors`, whose `fix` is the exact command that re-runs the failed hook with a short `--timeout 5`, so the re-run returns quickly. A successful re-run clears the
   row. `mtix doctor --json` carries the same row with `id`, `status`, `detail`, `fix` and the `failures` data.
 
 Installing these hooks, by plugin or by a consented user-level block, comes with MTIX-112.40.5; until it ships nothing

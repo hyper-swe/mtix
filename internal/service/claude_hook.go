@@ -53,11 +53,11 @@ type ClaudeHookClaims interface {
 // ClaudeHookDeps are the injected collaborators of ClaudeHook.
 type ClaudeHookDeps struct {
 	Key        WakeLeaseKey
-	Register   func(ctx context.Context) error                        // session-start only
-	Epoch      func(ctx context.Context) (int64, error)               // the registration epoch
-	Wakeable   func(ctx context.Context) (bool, string, error)        // the wake policy (A12)
-	Wait       func(ctx context.Context) ([]sqlite.InboxEvent, error) // level-triggered inbox wait
-	Render     func(events []sqlite.InboxEvent) (string, error)       // the quoted envelope
+	Register   func(ctx context.Context) error                                                   // session-start only
+	Epoch      func(ctx context.Context) (int64, error)                                          // the registration epoch
+	Wakeable   func(ctx context.Context) (bool, string, error)                                   // the wake policy (A12)
+	Wait       func(ctx context.Context, skip func(seq int64) bool) ([]sqlite.InboxEvent, error) // inbox wait that ignores skipped events
+	Render     func(events []sqlite.InboxEvent) (string, error)                                  // the quoted envelope
 	Leases     ClaudeHookLeases
 	Claims     ClaudeHookClaims
 	Log        *ClaudeHookLog
@@ -71,6 +71,7 @@ type ClaudeHookResult struct {
 	Envelope string // stderr text when ExitCode is ClaudeHookExitWake
 	Outcome  string
 	Detail   string // reason for held, or the recorded error text
+	soft     error  // a failure that did not stop the wake; run hands it on as relErr
 }
 
 // ClaudeHook runs the Claude session hooks as a service (FR-20, ADR-007 R2/R3).
@@ -144,56 +145,91 @@ func (h *ClaudeHook) run(ctx context.Context, ev ClaudeHookEvent) (res ClaudeHoo
 	}
 	defer func() {
 		if _, rerr := h.d.Leases.Release(context.WithoutCancel(ctx), h.d.Key, lease.Holder, h.d.LeaseTTL); rerr != nil {
-			relErr = fmt.Errorf("release waiter lease: %w", rerr)
+			relErr = errors.Join(relErr, fmt.Errorf("release waiter lease: %w", rerr))
 		}
 	}()
 	res, err = h.wakeOnce(ctx)
+	relErr, res.soft = res.soft, nil
 	return res, relErr, err
 }
 
 // wakeOnce waits for events, claims each once in the wake ledger and turns the
-// claimed ones into the exit-2 envelope. Events another route already claimed
-// are skipped, so one event wakes the session once.
+// claimed ones into the exit-2 envelope. An event another route (or an earlier
+// run of this registration) already claimed is skipped and does not end the
+// wait, so a re-arm blocks until NEW mail arrives and one event wakes the
+// session once. res.soft is a failure that did not stop the wake.
 func (h *ClaudeHook) wakeOnce(ctx context.Context) (ClaudeHookResult, error) {
-	events, err := h.d.Wait(ctx)
-	if err != nil {
-		return ClaudeHookResult{}, fmt.Errorf("wait for inbox: %w", err)
+	seen := map[int64]bool{}
+	skip := func(seq int64) bool { return seen[seq] }
+	for {
+		events, err := h.d.Wait(ctx, skip)
+		if err != nil {
+			return ClaudeHookResult{}, fmt.Errorf("wait for inbox: %w", err)
+		}
+		if len(events) == 0 {
+			return ClaudeHookResult{Outcome: ClaudeHookEmpty}, nil
+		}
+		fresh := unseenEvents(events, seen)
+		if len(fresh) == 0 {
+			return ClaudeHookResult{Outcome: ClaudeHookClaimLost}, nil // a Wait that ignored skip must not spin
+		}
+		epoch, err := h.d.Epoch(ctx)
+		if err != nil {
+			return ClaudeHookResult{}, fmt.Errorf("read registration epoch: %w", err)
+		}
+		won, attempts, cerr := h.claimEvents(ctx, fresh, epoch, seen)
+		if len(won) > 0 {
+			res, derr := h.deliver(ctx, won, attempts)
+			res.soft = errors.Join(res.soft, cerr) // a claim failure must not cost the wake already won
+			return res, derr
+		}
+		if cerr != nil {
+			return ClaudeHookResult{}, cerr
+		}
 	}
-	if len(events) == 0 {
-		return ClaudeHookResult{Outcome: ClaudeHookEmpty}, nil
+}
+
+func unseenEvents(events []sqlite.InboxEvent, seen map[int64]bool) []sqlite.InboxEvent {
+	var fresh []sqlite.InboxEvent
+	for _, e := range events {
+		if !seen[e.Seq] {
+			fresh = append(fresh, e)
+		}
 	}
-	epoch, err := h.d.Epoch(ctx)
-	if err != nil {
-		return ClaudeHookResult{}, fmt.Errorf("read registration epoch: %w", err)
-	}
+	return fresh
+}
+
+// claimEvents claims each event once; a lost claim is remembered in seen. On a
+// claim error it stops and returns the claims won so far, which the caller delivers.
+func (h *ClaudeHook) claimEvents(ctx context.Context, events []sqlite.InboxEvent, epoch int64, seen map[int64]bool) ([]sqlite.InboxEvent, []model.WakeAttempt, error) {
 	var won []sqlite.InboxEvent
 	var attempts []model.WakeAttempt
 	for _, e := range events {
 		key := model.WakeKey{AgentID: h.d.Key.AgentID, HostID: h.d.Key.HostID, UID: h.d.Key.UID, EventSeq: e.Seq, Epoch: epoch}
 		attempt, claimed, cerr := h.d.Claims.ClaimWake(ctx, key, h.d.ClaimLease)
 		if cerr != nil {
-			return ClaudeHookResult{}, fmt.Errorf("claim wake for event %d: %w", e.Seq, cerr)
+			return won, attempts, fmt.Errorf("claim wake for event %d: %w", e.Seq, cerr)
 		}
-		if claimed {
-			won = append(won, e)
-			attempts = append(attempts, attempt)
+		if !claimed {
+			seen[e.Seq] = true
+			continue
 		}
+		won = append(won, e)
+		attempts = append(attempts, attempt)
 	}
-	if len(won) == 0 {
-		return ClaudeHookResult{Outcome: ClaudeHookClaimLost}, nil
-	}
-	return h.deliver(ctx, won, attempts)
+	return won, attempts, nil
 }
 
+// deliver renders the claimed events and settles them. A failed outcome write
+// does not cancel the wake: the envelope is still returned and the failure is
+// the soft error, logged for doctor (the claim lease expires by itself).
 func (h *ClaudeHook) deliver(ctx context.Context, won []sqlite.InboxEvent, attempts []model.WakeAttempt) (ClaudeHookResult, error) {
 	text, err := h.d.Render(won)
 	if err != nil {
 		return ClaudeHookResult{}, errors.Join(fmt.Errorf("render envelope: %w", err), h.settle(ctx, attempts, model.WakeError))
 	}
-	if err := h.settle(ctx, attempts, model.WakeDelivered); err != nil {
-		return ClaudeHookResult{}, err
-	}
-	return ClaudeHookResult{ExitCode: ClaudeHookExitWake, Envelope: text, Outcome: ClaudeHookWoke}, nil
+	soft := h.settle(ctx, attempts, model.WakeDelivered)
+	return ClaudeHookResult{ExitCode: ClaudeHookExitWake, Envelope: text, Outcome: ClaudeHookWoke, soft: soft}, nil
 }
 
 // settle records the terminal outcome of every claim this run holds.

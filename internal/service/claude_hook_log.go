@@ -65,7 +65,7 @@ func (l *ClaudeHookLog) Record(agent string, ev ClaudeHookEvent, err error) erro
 	}
 	text := err.Error()
 	if len(text) > claudeHookErrorMax {
-		text = text[:claudeHookErrorMax]
+		text = strings.ToValidUTF8(text[:claudeHookErrorMax], "") // a cut rune is dropped, never stored half-written
 	}
 	data, merr := json.Marshal(ClaudeHookFailure{Agent: agent, Event: ev, At: l.Clock().UTC(), Error: text})
 	if merr != nil {
@@ -129,7 +129,7 @@ func ClaudeHookDoctorCheck(log *ClaudeHookLog) DoctorCheck {
 			Status: DoctorFail,
 			Detail: fmt.Sprintf("%d Claude session hook failure(s); first: %s %s at %s: %s",
 				len(failures), first.Agent, first.Event, first.At.Format(time.RFC3339), first.Error),
-			Fix:  fmt.Sprintf("mtix hook claude-session %s --agent %s", first.Event, first.Agent),
+			Fix:  fmt.Sprintf("mtix hook claude-session %s --agent %s --timeout 5", first.Event, first.Agent), // short wait: the re-run clears the record, it must not block
 			Data: map[string]any{"failures": failures},
 		}
 	}}

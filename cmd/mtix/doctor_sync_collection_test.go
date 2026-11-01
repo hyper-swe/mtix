@@ -61,7 +61,7 @@ func TestDoctorSync_ConfigurationSelectsApplicableTransports(t *testing.T) {
 			} else {
 				assert.NoError(t, err)
 				for _, row := range rows {
-					if assertEmptyWakeDoctorInfo(t, row.ID, string(row.Status), row.Detail, row.Fix) || assertWakeSettingsDoctorInfo(t, row.ID, string(row.Status), row.Detail, row.Fix) {
+					if assertEmptyWakeDoctorInfo(t, row.ID, string(row.Status), row.Detail, row.Fix) || assertWakeSettingsDoctorInfo(t, row.ID, string(row.Status), row.Detail, row.Fix) || assertWakeListenerDoctorInfo(t, row.ID, string(row.Status), row.Fix) || assertWakeScannerDoctorInfo(t, row.ID, string(row.Status), row.Fix) {
 						continue
 					}
 					assert.Contains(t, []string{"platform.windows", "docs.stale"}, row.ID)
@@ -142,7 +142,9 @@ func TestDoctor_RoutingAndAutoImport_ExplicitlyLocalDiagnostic(t *testing.T) {
 	for _, cmd := range root.Commands() {
 		names = append(names, cmd.Name())
 	}
-	assert.Len(t, names, 53, strings.Join(names, ",")) // 53 with the hidden attach group (MTIX-112.19.3)
+	assert.Len(t, names, 56, strings.Join(names, ",")) // 55: 53 with the hidden attach group (MTIX-112.19.3), plus url (MTIX-230) the experimental dispatcher (MTIX-112.17.13) and the hook group (MTIX-112.40.4)
+	assert.Contains(t, names, "dispatcher")
+	assert.Contains(t, names, "url")
 }
 
 func TestDoctor_JSONFlagErrorAndOutsideProject(t *testing.T) {

@@ -19,11 +19,11 @@ func TestAttachSchema_Columns_MatchStoredContract(t *testing.T) {
 	require.NoError(t, s.Close())
 	db := newTestDB(t, path)
 	expected := map[string][]string{
-		"agent_registrations":     {"agent_id", "harness", "session_handle", "uid", "host_id", "pid", "pid_start_time", "permission_mode", "mode_seen_at", "origin", "epoch", "high_water", "pending_hold", "registered_at", "last_seen", "registrar_version", "attach_protocol", "principal_id", "returned_seq_mark"},
+		"agent_registrations":     {"agent_id", "harness", "session_handle", "uid", "host_id", "pid", "pid_start_time", "permission_mode", "mode_seen_at", "origin", "epoch", "high_water", "pending_hold", "registered_at", "last_seen", "registrar_version", "attach_protocol", "principal_id", "returned_seq_mark", "capabilities", "stale_since"},
 		"wake_ledger":             {"agent_id", "host_id", "uid", "event_seq", "epoch", "claimed_at", "outcome", "attempt_token", "route", "reason", "outcome_at"},
 		"wake_outcome_rejections": {"agent_id", "host_id", "uid", "event_seq", "epoch", "attempt_token", "outcome", "rejected_at"},
 		"wake_scan_cursor":        {"host_id", "uid", "cursor"},
-		"dispatcher_heartbeat":    {"host_id", "uid", "pid", "protocol", "version", "seen_at"},
+		"dispatcher_heartbeat":    {"host_id", "uid", "pid", "protocol", "version", "seen_at", "capabilities"},
 		"board_flags":             {"key", "value", "set_at", "source"},
 		"attach_pending":          {"id", "kind", "board_key", "path", "payload", "queued_at"},
 	}

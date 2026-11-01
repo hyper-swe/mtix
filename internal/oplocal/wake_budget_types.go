@@ -11,8 +11,10 @@ import (
 
 // WakeBudgetCredit preserves the exact rolling-window time of charged attempts.
 type WakeBudgetCredit struct {
-	At    time.Time `json:"at"`
-	Count int64     `json:"count"`
+	// Sender is empty for legacy or unexplained charges, which count for every sender.
+	Sender string    `json:"sender,omitempty"`
+	At     time.Time `json:"at"`
+	Count  int64     `json:"count"`
 }
 
 // WakeBudgetSource preserves both accepted and conservatively pending counters.

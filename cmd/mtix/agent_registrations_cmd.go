@@ -20,12 +20,13 @@ import (
 
 // sessionReport is what `agent register` tells the caller about the session.
 type sessionReport struct {
-	Outcome    string
-	Harness    string
-	Origin     string
-	Epoch      int64
-	NoticeSent bool
-	Warning    string
+	Outcome        string
+	Harness        string
+	Origin         string
+	Epoch          int64
+	NoticeSent     bool
+	Warning        string
+	RoutingWarning string
 }
 
 func (r *sessionReport) addTo(out map[string]any) {
@@ -38,6 +39,9 @@ func (r *sessionReport) addTo(out map[string]any) {
 	}
 	out["session"], out["harness"], out["origin"] = r.Outcome, r.Harness, r.Origin
 	out["epoch"], out["notice_sent"] = r.Epoch, r.NoticeSent
+	if r.RoutingWarning != "" {
+		out["routing_warning"] = r.RoutingWarning
+	}
 }
 
 func (r *sessionReport) print() {
@@ -47,6 +51,9 @@ func (r *sessionReport) print() {
 		fmt.Fprintf(os.Stderr, "warning: session not registered: %s\n", r.Warning)
 	default:
 		fmt.Printf("Session %s (harness %s, origin %s, epoch %d)\n", strings.ReplaceAll(r.Outcome, "_", " "), r.Harness, r.Origin, r.Epoch)
+		if r.RoutingWarning != "" {
+			fmt.Fprintf(os.Stderr, "warning: session registered; checkout routing unavailable: %s; inspect mtix doctor\n", r.RoutingWarning)
+		}
 		if r.NoticeSent {
 			fmt.Println("The displaced session was told with one notice.")
 		}
@@ -72,7 +79,7 @@ func registerCurrentSession(ctx context.Context, agentID string, opts sessionOpt
 	// A newer CLI that meets an older dispatcher restarts it or says why not (ADR-007 §6.4).
 	productionDispatcherRestart(ctx, os.Stderr)
 	r := res.Registration
-	return &sessionReport{Outcome: res.Outcome, Harness: r.Harness, Origin: r.Origin, Epoch: r.Epoch, NoticeSent: res.NoticeSent}, nil
+	return &sessionReport{Outcome: res.Outcome, Harness: r.Harness, Origin: r.Origin, Epoch: r.Epoch, NoticeSent: res.NoticeSent, RoutingWarning: res.RoutingWarning}, nil
 }
 
 func newAgentUnregisterCmd() *cobra.Command {

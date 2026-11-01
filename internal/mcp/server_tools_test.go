@@ -1657,3 +1657,8 @@ func (b *briefingMockStore) ListNodes(_ context.Context, _ store.NodeFilter, opt
 	}
 	return n, len(b.nodes), nil
 }
+
+// DeleteNodeWithRoot satisfies the grouped recovery store contract.
+func (m *mcpMockStore) DeleteNodeWithRoot(ctx context.Context, id, _ string, author string) error {
+	return m.DeleteNode(ctx, id, false, author)
+}

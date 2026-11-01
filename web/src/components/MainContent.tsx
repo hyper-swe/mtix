@@ -18,14 +18,20 @@ interface MainContentProps {
 }
 
 export function MainContent({ nodeStore }: MainContentProps) {
-  const { view, selectedNodeId, selectNode } = useNavigation();
+  const { view, selectedNodeId, selectNode, invalidTicketRef } = useNavigation();
 
   return (
     <main
       className="h-full"
       style={{ backgroundColor: "var(--color-bg)" }}
     >
-      {view === "node-detail" && selectedNodeId ? (
+      {view === "node-detail" && invalidTicketRef ? (
+        <div className="p-6" data-testid="ticket-not-found" role="alert">
+          <p className="text-sm" style={{ color: "var(--color-text-secondary)" }}>
+            Ticket not found
+          </p>
+        </div>
+      ) : view === "node-detail" && selectedNodeId ? (
         <NodeDetailView
           nodeId={selectedNodeId}
           nodeStore={nodeStore}

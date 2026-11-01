@@ -32,6 +32,8 @@ type Registration struct {
 	LastSeen         string `json:"last_seen"`
 	RegistrarVersion string `json:"registrar_version"`
 	AttachProtocol   int64  `json:"attach_protocol"`
+	// StaleSince is when the wake scanner first saw the session dead; empty when not marked.
+	StaleSince string `json:"stale_since,omitempty"`
 }
 
 // RegistrationKey identifies a registration: one row per agent, host and
@@ -44,7 +46,8 @@ type RegistrationKey struct {
 
 const registrationColumns = `agent_id, host_id, uid, harness, COALESCE(session_handle,''),
 	COALESCE(pid,0), COALESCE(pid_start_time,''), COALESCE(permission_mode,''), origin, epoch,
-	high_water, pending_hold, registered_at, last_seen, registrar_version, attach_protocol`
+	high_water, pending_hold, registered_at, last_seen, registrar_version, attach_protocol,
+	COALESCE(stale_since,'')`
 
 type registrationScanner interface{ Scan(dest ...any) error }
 
@@ -55,7 +58,7 @@ func scanRegistration(r registrationScanner) (*Registration, error) {
 	)
 	if err := r.Scan(&reg.AgentID, &reg.HostID, &reg.UID, &reg.Harness, &reg.SessionHandle,
 		&reg.PID, &reg.PIDStartTime, &reg.PermissionMode, &reg.Origin, &reg.Epoch,
-		&reg.HighWater, &hold, &reg.RegisteredAt, &reg.LastSeen, &reg.RegistrarVersion, &reg.AttachProtocol); err != nil {
+		&reg.HighWater, &hold, &reg.RegisteredAt, &reg.LastSeen, &reg.RegistrarVersion, &reg.AttachProtocol, &reg.StaleSince); err != nil {
 		return nil, err
 	}
 	reg.PendingHold = hold != 0
@@ -114,10 +117,10 @@ func upsertRegistration(ctx context.Context, tx *sql.Tx, r *Registration) error 
 	_, err := tx.ExecContext(ctx, `
 		INSERT OR REPLACE INTO agent_registrations
 		(agent_id, harness, session_handle, uid, host_id, pid, pid_start_time, permission_mode,
-		 origin, epoch, high_water, pending_hold, registered_at, last_seen, registrar_version, attach_protocol)
-		VALUES (?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, 0), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?)`,
+		 origin, epoch, high_water, pending_hold, registered_at, last_seen, registrar_version, attach_protocol, capabilities)
+		VALUES (?, ?, NULLIF(?, ''), ?, ?, NULLIF(?, 0), NULLIF(?, ''), NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		r.AgentID, r.Harness, r.SessionHandle, r.UID, r.HostID, r.PID, r.PIDStartTime, r.PermissionMode,
-		r.Origin, r.Epoch, r.HighWater, hold, r.RegisteredAt, r.LastSeen, r.RegistrarVersion, r.AttachProtocol)
+		r.Origin, r.Epoch, r.HighWater, hold, r.RegisteredAt, r.LastSeen, r.RegistrarVersion, r.AttachProtocol, HistoryReaderCapability)
 	if err != nil {
 		return fmt.Errorf("write registration %q: %w", r.AgentID, err)
 	}

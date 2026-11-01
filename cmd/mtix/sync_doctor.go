@@ -26,13 +26,15 @@ import (
 // check that needs attention: it is shown as WARN and keeps the doctor's
 // exit code 0 (MTIX-95.1). Fix is the command that addresses the check,
 // and Findings carries the hub-privileges check's findings. The three are
-// omitted when empty, so the other checks marshal as before.
+// omitted when empty, so the other checks marshal as before. Skipped marks a
+// check that did not run; it is not a passing or failing diagnosis (MTIX-217).
 type DoctorCheck struct {
 	Recent         []oplocal.Alert              `json:"recent,omitempty"`
 	PendingExports *service.PendingExportStatus `json:"pending_exports,omitempty"`
 	Name           string                       `json:"name"`
 	Pass           bool                         `json:"pass"`
 	Warn           bool                         `json:"warn,omitempty"`
+	Skipped        bool                         `json:"skipped,omitempty"`
 	Detail         string                       `json:"detail,omitempty"`
 	Fix            string                       `json:"fix,omitempty"`
 	Findings       []transport.PrivilegeFinding `json:"findings,omitempty"`
@@ -87,6 +89,11 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  Self-replay conflict rows - informational, always PASS: counts conflict rows
+                           written before 0.5.4 by the replay of this store's
+                           own events; they are not conflicts and are not
+                           counted; fix: none required; inspect with
+                           'mtix sync conflicts list --all'
   board.id               - one committed board identity; a hub board also
                            needs a known local hub observation
   board.hub-identity-changed - warns when the observed hub differs from
@@ -109,6 +116,14 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
   Hub privileges         - which roles other than the table owner can use the
                            sync tables, and whether every TRUNCATE guard is in
                            place (the check mtix sync harden runs)
+
+When PG reachable fails, queue draining, schema current and hub privileges
+are SKIPPED with a hub-unreachable reason. Fix connectivity and run doctor
+again before diagnosing the pusher. A reachable hub still fails queue
+draining for eligible events pending over 1h, even if its schema check
+fails. Skipped rows have pass=false and skipped=true in --json (skipped is
+omitted otherwise); they do not fail the report themselves. Unified mtix
+doctor maps them to INFO with the same reason. PG reachable still fails.
 
 Each hub check allows 30 s to connect, the same budget as mtix sync init,
 clone, push and pull, so a hub that is resuming from idle passes.
@@ -164,9 +179,9 @@ whenever mtix sync harden would report a finding, not only a role outside
 the list or a missing or disabled TRUNCATE guard, but also a kept role
 that can grant its access on or holds a privilege another role granted
 it, an mtix object owned by another role, and a membership through which
-a role can reach every table. If the check cannot run, it is a WARN by
-default and fails in strict mode. The check contacts the hub only while
-the doctor runs.
+a role can reach every table. If the hub is reachable but the check cannot
+run, it is a WARN by default and fails in strict mode. The check contacts
+the hub only while the doctor runs.
 
 Exit code: 0 on all-pass, including checks that pass with a WARN; 2 if
 any check fails. --json output for agents and CI consumption.`
@@ -246,7 +261,7 @@ func appendHubReadyChecks(ctx context.Context, report DoctorReport, dsn string, 
 
 	// Schema current is only meaningful if PG is reachable.
 	if dsnErr != nil || !lastCheckPassed(report) {
-		return appendCheck(report, schemaCurrentName, false, "skipped (PG unreachable)"), false
+		return appendDoctorCheck(report, skippedHubCheck(schemaCurrentName)), false
 	}
 	kept, keptErr := doctorKeptRoles()
 	strict := keptErr != nil || len(kept) > 0 // a value is set: strict mode was intended
@@ -261,9 +276,12 @@ func appendHubReadyChecks(ctx context.Context, report DoctorReport, dsn string, 
 func appendLocalChecks(ctx context.Context, report DoctorReport) DoctorReport {
 	report = appendEnvelopeCapsCheck(report)
 	report = appendDoctorCheck(report, checkPendingExports(ctx))
-	if app.store == nil {
+	switch {
+	case doctorHubUnreachable(report):
+		report = appendDoctorCheck(report, skippedHubCheck("queue draining"))
+	case app.store == nil:
 		report = appendCheck(report, "queue draining", false, "local store not initialized")
-	} else {
+	default:
 		drainOK, detail := checkQueueDraining(ctx, app.store)
 		report = appendCheck(report, "queue draining", drainOK, detail)
 	}
@@ -272,6 +290,7 @@ func appendLocalChecks(ctx context.Context, report DoctorReport) DoctorReport {
 		report = appendWakeBudgetRewindCheck(ctx, report, app.store)
 	}
 	report = appendHeldPushCheck(ctx, report, app.store)
+	report = appendSelfReplayConflictCheck(ctx, report, app.store)
 	modeOK, detail := checkSecretsFileMode(app.mtixDir)
 	return appendCheck(report, "secrets file mode", modeOK, detail)
 }
@@ -281,10 +300,10 @@ func appendCheck(r DoctorReport, name string, pass bool, detail string) DoctorRe
 }
 
 // appendDoctorCheck adds c to r. A failing check fails the report; a WARN,
-// which passes, does not (MTIX-95.1).
+// which passes, does not (MTIX-95.1). A skipped check does not fail it either.
 func appendDoctorCheck(r DoctorReport, c DoctorCheck) DoctorReport {
 	r.Checks = append(r.Checks, c)
-	if !c.Pass {
+	if !c.Pass && !c.Skipped {
 		r.OverallPass = false
 	}
 	return r
@@ -377,14 +396,17 @@ func checkSecretsFileMode(mtixDir string) (bool, string) {
 	return true, "ok"
 }
 
-// printDoctorTable writes one line per check, marked PASS, WARN or FAIL,
+// printDoctorTable writes one line per check, marked PASS, WARN, FAIL or SKIPPED,
 // with a check's fix, when it has one, on an indented line under it
 // (MTIX-95.7), and a summary that counts warnings (MTIX-95.1).
 func printDoctorTable(w io.Writer, r DoctorReport) {
-	warnings := 0
+	warnings, skipped := 0, 0
 	for _, c := range r.Checks {
 		mark := "PASS"
 		switch {
+		case c.Skipped:
+			mark = "SKIPPED"
+			skipped++
 		case !c.Pass:
 			mark = "FAIL"
 		case c.Warn:
@@ -400,6 +422,8 @@ func printDoctorTable(w io.Writer, r DoctorReport) {
 	switch {
 	case !r.OverallPass:
 		fmt.Fprintln(w, "one or more checks FAILED \u2014 see above")
+	case skipped > 0:
+		fmt.Fprintf(w, "no checks failed (%d warnings, %d skipped)\n", warnings, skipped)
 	case warnings == 1:
 		fmt.Fprintln(w, "all checks passed (1 warning)")
 	case warnings > 1:

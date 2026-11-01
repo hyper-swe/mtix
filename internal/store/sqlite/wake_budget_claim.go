@@ -79,6 +79,10 @@ func (s *Store) wakeBudgetProposal(ctx context.Context, tx *sql.Tx, key model.Wa
 	if found && id.String() == previous.Token {
 		return p, fmt.Errorf("accounted wake fence was not fresh: %w", model.ErrConflict)
 	}
+	p.Sender, err = wakeBudgetSender(ctx, tx, key)
+	if err != nil {
+		return p, fmt.Errorf("read wake sender: %w", err)
+	}
 	p.Claimable = true
 	p.Attempt = model.WakeAttempt{Key: key, Token: id.String(), ClaimedAt: now}
 	return p, nil

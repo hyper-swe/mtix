@@ -62,6 +62,11 @@ func (f *wakeBudgetFixture) board(t *testing.T, count int) *wakeBudgetBoard {
 
 func (f *wakeBudgetFixture) boardFor(t *testing.T, count int, agent string) *wakeBudgetBoard {
 	t.Helper()
+	return f.boardFrom(t, count, agent, "sender")
+}
+
+func (f *wakeBudgetFixture) boardFrom(t *testing.T, count int, agent, sender string) *wakeBudgetBoard {
+	t.Helper()
 	b := &wakeBudgetBoard{fixture: f, path: filepath.Join(t.TempDir(), "wake.db")}
 	b.open(t)
 	t.Cleanup(func() { require.NoError(t, b.store.Close()) })
@@ -71,7 +76,7 @@ func (f *wakeBudgetFixture) boardFor(t *testing.T, count int, agent string) *wak
 	node, err := nodes.CreateNode(t.Context(), &service.CreateNodeRequest{Project: "TEST", Title: "recipient budget", Creator: "sender"})
 	require.NoError(t, err)
 	for range count {
-		require.NoError(t, prompts.AddAnnotation(t.Context(), node.ID, "budget event", "sender", agent))
+		require.NoError(t, prompts.AddAnnotation(t.Context(), node.ID, "budget event", sender, agent))
 	}
 	entries, err := b.store.InboxList(t.Context(), agent)
 	require.NoError(t, err)

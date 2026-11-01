@@ -66,20 +66,21 @@ func freshnessFlag(cmd *cobra.Command, name string) string {
 // command gets no freshness fields until its read semantics are declared (FR-6.2).
 func fixedCommandFreshness(path string) freshnessScope {
 	switch path {
-	case "agent list", "agent work", "blocked", "config get", "context",
+	case "dispatcher status", "agent list", "agent work", "blocked", "config get", "context",
 		"daemon status", "dep show", "hooks fire", "hooks list", "hooks log",
-		"hooks status", "inbox", "list", "orphans", "progress", "projects",
+		"hooks status", "inbox", "inbox status", "list", "orphans", "progress", "projects",
 		"ready", "search", "session summary", "show", "stale", "stats",
 		"sync collisions list", "sync conflicts list", "sync doctor",
-		"sync quarantine list", "sync relay status", "sync status", "tree", "verify":
+		"sync quarantine list", "sync relay status", "sync status", "tree", "url", "verify":
 		return freshnessRead
 	case "attach", "attach prompt-submit", "attach session-end", "attach session-start",
-		"attach wait", "serve", "mcp":
+		"attach wait", "serve", "mcp", "dispatcher run",
+		"hook claude-session":
 		return freshnessProtocol
 	case "agent allow", "agent deny", "agent heartbeat", "agent register", "agent unregister", "annotate",
 		"backup", "cancel", "claim", "comment", "config delete", "config set",
-		"create", "daemon install", "daemon start", "daemon stop", "daemon uninstall",
-		"decompose", "defer", "delete", "dep add", "dep remove", "docs generate",
+		"create", "dispatcher install", "dispatcher start", "dispatcher stop", "dispatcher uninstall", "daemon install", "daemon start", "daemon stop", "daemon uninstall",
+		"decompose", "defer", "delete", "dep add", "dep remove", "docs generate", "hooks allow-origin",
 		"done", "export", "gc", "import", "inbox ack", "inbox lease acquire",
 		"inbox lease release", "init", "micro", "migrate", "plugin install",
 		"prompt", "recover", "reopen", "rerun", "resolve-annotation", "restore",

@@ -83,14 +83,17 @@ type RegistrationHost struct {
 
 // RegistrationDeps are the injected collaborators of RegistrationService.
 type RegistrationDeps struct {
-	Routing   *AttachRouting
-	Store     RegistrationStore
-	Liveness  Liveness
-	TakeOvers TakeOverLog
-	Notices   NoticeSender
-	Logger    *slog.Logger
-	Clock     func() time.Time
-	Host      RegistrationHost
+	Routing *AttachRouting
+	// ResolveRouting is optional CLI routing discovered only after a session commits.
+	// Failure reports a warning and never changes the registration outcome.
+	ResolveRouting func() (*AttachRouting, error)
+	Store          RegistrationStore
+	Liveness       Liveness
+	TakeOvers      TakeOverLog
+	Notices        NoticeSender
+	Logger         *slog.Logger
+	Clock          func() time.Time
+	Host           RegistrationHost
 }
 
 // RegistrationService owns session registrations (ADR-007 §3, MTIX-112.17.4).
@@ -119,9 +122,10 @@ type RegisterSessionRequest struct {
 
 // RegisterSessionResult reports what registration did.
 type RegisterSessionResult struct {
-	Registration *sqlite.Registration
-	Outcome      string
-	NoticeSent   bool
+	Registration   *sqlite.Registration
+	Outcome        string
+	NoticeSent     bool
+	RoutingWarning string
 }
 
 // SessionIdentity is the caller's own session, used to recognize "mine".
@@ -244,6 +248,7 @@ func (s *RegistrationService) RegisterSession(ctx context.Context, req RegisterS
 	if err != nil {
 		return nil, err
 	}
+	res.RoutingWarning = s.recordOptionalAttach(ctx, req)
 	res.Registration = row
 	if res.Outcome == OutcomeTakenOver {
 		res.NoticeSent = s.sendNotice(ctx, req.AgentID, noticeDue)

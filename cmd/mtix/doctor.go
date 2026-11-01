@@ -51,6 +51,10 @@ The read-only export.schema check compares the schema_version .mtix/tasks.json
 declares with the one this binary writes. Every write re-exports the file in
 this binary's schema; sync.auto_sync does not stop that. WARN prints the fix.
 
+The read-only serve.record.ignore check appears only inside a git working tree.
+It WARNs when .mtix/serve.json (the record mtix serve publishes for mtix url) is
+not git-ignored and prints the fix; outside a git tree no row appears.
+
 wake.settings reports effective host/agent wake values and sources.
 settings.ignored-workspace-key reports authority keys ignored in config.yaml
 and prints exact host-local config commands. These checks never change settings.
@@ -121,33 +125,30 @@ func writeDoctorRows(out io.Writer, rows []service.DoctorResult, jsonOutput bool
 }
 
 func newConfiguredDoctorService() (*service.DoctorService, error) {
-	known := knownSyncDSNs()
-	opts := service.DoctorOptions{Platform: runtime.GOOS, Scrub: func(text string) string { return redact.Known(text, known...) }}
-	if app.mtixDir != "" {
-		request := configuredDoctorCollection()
-		if request.Postgres || request.Relay {
-			opts.CollectSync = func(ctx context.Context) ([]service.DoctorResult, error) {
-				return doctorSyncRows(collectSyncDoctor(ctx, request)), nil
-			}
-		}
-	}
-	svc := service.NewDoctorService(opts)
+	svc := service.NewDoctorService(configuredDoctorOptions())
 	if err := registerHistorySizeCheck(svc); err != nil { // MTIX-95.31.19.4
 		return nil, fmt.Errorf("register history size check: %w", err)
+	}
+	if err := registerHistoryExportGuardCheck(svc); err != nil { // MTIX-95.31.19.6
+		return nil, fmt.Errorf("register history export guard check: %w", err)
 	}
 	if err := registerExportSchemaCheck(svc); err != nil { // MTIX-168
 		return nil, fmt.Errorf("register export schema check: %w", err)
 	}
+	if err := registerServeExposureCheck(svc); err != nil { // MTIX-220
+		return nil, fmt.Errorf("register serve exposure check: %w", err)
+	}
+	if err := registerDaemonLogsCheck(svc); err != nil {
+		return nil, fmt.Errorf("register daemon logs check: %w", err)
+	}
 	if err := svc.Register(documentFreshnessCheck(filepath.Dir(app.mtixDir))); err != nil {
 		return nil, fmt.Errorf("register documentation check: %w", err)
 	}
-	if hooksFileExists(app.mtixDir) {
-		if err := svc.Register(hooksProgramsCheck(app.mtixDir)); err != nil {
-			return nil, fmt.Errorf("register hook program check: %w", err)
-		}
-		if err := svc.Register(hooksStrictCheck(app.mtixDir)); err != nil {
-			return nil, fmt.Errorf("register hook strict check: %w", err)
-		}
+	if err := registerHookDoctorChecks(svc); err != nil {
+		return nil, err
+	}
+	if err := registerServeRecordIgnoreCheck(svc); err != nil { // MTIX-232
+		return nil, fmt.Errorf("register serve record ignore check: %w", err)
 	}
 	// Attach rows (setup.shim, glue.<h>, attach.failures, skew.dispatchers)
 	// appear only when something is installed, marked, alerted or beating.
@@ -161,7 +162,43 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	if err := registerWakeDoctorChecks(svc); err != nil {
 		return nil, fmt.Errorf("register wake doctor checks: %w", err)
 	}
+	if err := registerHostDispatcherDoctor(svc); err != nil {
+		return nil, fmt.Errorf("register host dispatcher checks: %w", err)
+	}
 	return svc, nil
+}
+
+// registerHookDoctorChecks registers the hook program, strict and origin
+// checks when the checkout has a hooks file. Split out of
+// newConfiguredDoctorService to keep its cyclomatic complexity within bounds.
+func registerHookDoctorChecks(svc *service.DoctorService) error {
+	if !hooksFileExists(app.mtixDir) {
+		return nil
+	}
+	if err := svc.Register(hooksProgramsCheck(app.mtixDir)); err != nil {
+		return fmt.Errorf("register hook program check: %w", err)
+	}
+	if err := svc.Register(hooksStrictCheck(app.mtixDir)); err != nil {
+		return fmt.Errorf("register hook strict check: %w", err)
+	}
+	if err := svc.Register(hooksOriginsCheck(app.mtixDir)); err != nil {
+		return fmt.Errorf("register hook origin check: %w", err)
+	}
+	return nil
+}
+
+func configuredDoctorOptions() service.DoctorOptions {
+	known := knownSyncDSNs()
+	opts := service.DoctorOptions{Platform: runtime.GOOS, Scrub: func(text string) string { return redact.Known(text, known...) }}
+	if app.mtixDir != "" {
+		request := configuredDoctorCollection()
+		if request.Postgres || request.Relay {
+			opts.CollectSync = func(ctx context.Context) ([]service.DoctorResult, error) {
+				return doctorSyncRows(collectSyncDoctor(ctx, request)), nil
+			}
+		}
+	}
+	return opts
 }
 
 func registerWakeDoctorChecks(svc *service.DoctorService) error {
@@ -176,6 +213,9 @@ func registerWakeDoctorChecks(svc *service.DoctorService) error {
 	}
 	if err := registerConfiguredWakeLedgerDoctor(svc); err != nil {
 		return fmt.Errorf("register wake ledger diagnostics: %w", err)
+	}
+	if err := registerWakeListenerDoctor(svc); err != nil {
+		return fmt.Errorf("register wake listener diagnostics: %w", err)
 	}
 	return nil
 }

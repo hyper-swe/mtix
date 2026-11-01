@@ -33,11 +33,13 @@ prompt chain propagation, and multi-agent orchestration.
 - `defer <id>` — Defer a node until a specified time
 - `delete <id>` — Soft-delete a node
 - `dep` — Manage node dependencies
+- `dispatcher` — Experimental per-user host dispatcher
 - `docs` — Manage agent-facing documentation
 - `doctor` — Run registered checkout and host health checks
 - `done <id>` — Mark a node as done
 - `export` — Export nodes to JSON
 - `gc` — Run garbage collection (clean expired soft-deletes)
+- `hook` — Harness hook programs (run by a Claude Code hook, not by hand)
 - `hooks` — Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `import <file>` — Import nodes from JSON export
 - `inbox` — Show events addressed to an agent
@@ -69,6 +71,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `unclaim <id>` — Release a node assignment
 - `undelete <id>` — Restore a soft-deleted node
 - `update <id>` — Update a node's fields
+- `url <id>` — Print the web UI link for a ticket (needs a running mtix serve)
 - `verify [id]` — Verify content hash integrity
 ---
 
@@ -458,6 +461,7 @@ Show assembled context chain for a node
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--chain` |  | With --json, add prompt, creator and annotations to each structured chain entry (default: they appear once, in assembled_prompt) | false |
 | `--max-tokens` |  | Maximum token budget for assembled prompt (0 = unlimited) | 0 |
 ---
 
@@ -495,8 +499,7 @@ Run the origin-independent dispatch loop. Local work (pending-export
 recovery, relay, hook dispatch) runs every interval (default 5s); the hub is
 contacted only when sync.hub_contact says so: activity (default: only for
 30 minutes after real activity), interval:<duration>, or manual (never). While
-sync.listen is live and a listener holds a lease (a later release; no listener
-exists in this build, so the hold is inert), the hub is also contacted every
+sync.listen is live and a waiter (mtix inbox --wait) holds a lease, the hub is also contacted every
 sync.listen_interval until sync.listen_max_idle after the last activity. Each
 contact pulls new events from the BYO Postgres hub (when one is configured) and
 fires this host's hooks for every journaled event not yet dispatched
@@ -522,6 +525,7 @@ Push and dispatch lock files and their data directory must be real and user-owne
 | `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
 | `--install` |  | Print a systemd unit / launchd plist stub (deprecated: use 'mtix daemon install') | false |
 | `--interval` |  | Pull-then-dispatch interval in seconds | 5 |
+| `--listen` |  | Listener mode: pull once, serve while a waiter lease is live, exit when the last lease ends (started by mtix inbox --wait) | false |
 
 ### Subcommands
 
@@ -700,6 +704,105 @@ Remove a dependency between two nodes
 Show blockers for a node
 ---
 
+## dispatcher
+
+**Usage:** `dispatcher`
+
+Experimental per-user host dispatcher
+
+Experimental host dispatcher, disabled by default until setup integration ships.
+
+One process per OS user scans locally listed checkout stores. Registration lists
+a checkout without granting hub contact or user-hook execution. Only explicitly
+enrolled checkouts may contact their own hub under sync.hub_contact or dispatch
+user hooks. There is no public enrollment command in this build. Existing
+per-project daemons and listeners keep their current behavior.
+
+run and install require --experimental. All process-wide MTIX_SYNC_* overrides
+are removed before opening state and from each checkout pull child. Live harness adapters ship with
+their integrations; absent a route, messages remain available through mtix inbox.
+Task Scheduler and foreground runs do not exit to self-restart after upgrades.
+
+### Subcommands
+
+- `install` — install the per-user experimental dispatcher service
+- `run` — Run the experimental host dispatcher in the foreground
+- `start` — start the per-user experimental dispatcher service
+- `status` — status the per-user experimental dispatcher service
+- `stop` — stop the per-user experimental dispatcher service
+- `uninstall` — uninstall the per-user experimental dispatcher service
+---
+
+## install
+
+**Usage:** `install`
+
+install the per-user experimental dispatcher service
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--experimental` |  | Explicitly opt in to experimental host service installation | false |
+| `--interval` |  | Local scanner interval in seconds | 5 |
+---
+
+## run
+
+**Usage:** `run`
+
+Run the experimental host dispatcher in the foreground
+
+Experimental host dispatcher, disabled by default until setup integration ships.
+
+One process per OS user scans locally listed checkout stores. Registration lists
+a checkout without granting hub contact or user-hook execution. Only explicitly
+enrolled checkouts may contact their own hub under sync.hub_contact or dispatch
+user hooks. There is no public enrollment command in this build. Existing
+per-project daemons and listeners keep their current behavior.
+
+run and install require --experimental. All process-wide MTIX_SYNC_* overrides
+are removed before opening state and from each checkout pull child. Live harness adapters ship with
+their integrations; absent a route, messages remain available through mtix inbox.
+Task Scheduler and foreground runs do not exit to self-restart after upgrades.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--experimental` |  | Explicitly opt in to the unfinished host dispatcher integration | false |
+| `--interval` |  | Local scanner interval in seconds; hub contact follows sync.hub_contact | 5 |
+| `--supervisor` |  | Process supervision: foreground, launchd, systemd or task-scheduler | foreground |
+---
+
+## start
+
+**Usage:** `start`
+
+start the per-user experimental dispatcher service
+---
+
+## status
+
+**Usage:** `status`
+
+status the per-user experimental dispatcher service
+---
+
+## stop
+
+**Usage:** `stop`
+
+stop the per-user experimental dispatcher service
+---
+
+## uninstall
+
+**Usage:** `uninstall`
+
+uninstall the per-user experimental dispatcher service
+---
+
 ## docs
 
 **Usage:** `docs`
@@ -780,6 +883,10 @@ The read-only export.schema check compares the schema_version .mtix/tasks.json
 declares with the one this binary writes. Every write re-exports the file in
 this binary's schema; sync.auto_sync does not stop that. WARN prints the fix.
 
+The read-only serve.record.ignore check appears only inside a git working tree.
+It WARNs when .mtix/serve.json (the record mtix serve publishes for mtix url) is
+not git-ignored and prints the fix; outside a git tree no row appears.
+
 wake.settings reports effective host/agent wake values and sources.
 settings.ignored-workspace-key reports authority keys ignored in config.yaml
 and prints exact host-local config commands. These checks never change settings.
@@ -820,6 +927,36 @@ Export nodes to JSON
 Run garbage collection (clean expired soft-deletes)
 ---
 
+## hook
+
+**Usage:** `hook`
+
+Harness hook programs (run by a Claude Code hook, not by hand)
+
+### Subcommands
+
+- `claude-session <session-start|stop>` — Claude Code session hook: register, arm one inbox waiter, wake the session with exit 2
+---
+
+## claude-session
+
+**Usage:** `claude-session <session-start|stop>`
+
+Claude Code session hook: register, arm one inbox waiter, wake the session with exit 2
+
+Run by a Claude Code hook with asyncRewake. session-start registers --agent and arms its waiter; stop arms it again.
+One waiter runs per registration. When addressed mail arrives the wake policy and the wake ledger are applied once per event,
+the quoted envelope goes to stderr and the exit code is 2, which wakes an idle session. Any internal error exits 0 and is recorded:
+mtix doctor shows it as wake.listener.hook-errors with the command that re-runs the hook.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` |  | Agent id (required) |  |
+| `--timeout` |  | Seconds the waiter stays armed before it exits 0 (0 = until woken) | 3600 |
+---
+
 ## hooks
 
 **Usage:** `hooks`
@@ -828,6 +965,7 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 
 ### Subcommands
 
+- `allow-origin <url>` — Consent to webhook deliveries to one origin on this host
 - `exec-dispatch [any|daemon|off]` — Get or set this host's local exec dispatch policy
 - `fire` — Test hooks.yaml against a sample event (dry-run only, for now)
 - `list` — List configured hooks with their events and delivery adapters
@@ -835,6 +973,21 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `status` — Show operator-local state and per-hook approvals
 - `strict <on|off|status>` — Show or change strict program mode for exec hooks on this host
 - `trust <hook>` — Review and approve one exec hook on this host
+---
+
+## allow-origin
+
+**Usage:** `allow-origin <url>`
+
+Consent to webhook deliveries to one origin on this host
+
+Save operator consent, outside the project, for webhook deliveries to the origin (scheme, host, port) of the URL. Without consent a webhook hook is skipped and reported by hooks status. Loopback, link-local and private destinations are refused unless the origin is listed with --allow-private. Requires terminal stdin outside an agent session.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--allow-private` |  | Also allow loopback, link-local and private destinations for this origin | false |
 ---
 
 ## exec-dispatch
@@ -1013,6 +1166,7 @@ the body.
 
 - `ack <seq>...` — Acknowledge specific inbox events (selective); --through acks everything up to a seq
 - `lease` — Acquire or release board-local wake ownership
+- `status` — Show the wake delivery state for an agent and its recent wake outcomes
 ---
 
 ## ack
@@ -1093,6 +1247,26 @@ mtix inbox lease release --agent developer --holder "$HOLDER"
 | `--holder` |  | Owner token (required for release; renews acquire) |  |
 | `--json` |  | Print JSON | false |
 | `--ttl` |  | Lease duration, inclusive 1m..24h | 15m |
+---
+
+## status
+
+**Usage:** `status`
+
+Show the wake delivery state for an agent and its recent wake outcomes
+
+Show the wake delivery state for an agent and its last wake outcomes with age
+(MTIX-112.40.6). States: queued, nudged, unconfirmed, confirmed, held, undeliverable,
+off, no-live-session, no-dispatcher, unknown. unconfirmed is derived at read time from
+wake.confirm_window (default 30 seconds) and is never written as an inbox event.
+This reads local state only and never contacts a hub.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--agent` |  | Agent id whose wake status to show (required) |  |
+| `--limit` |  | Number of recent wake rows to show (1-1000) | 10 |
 ---
 
 ## init
@@ -1367,6 +1541,15 @@ Rerun invalidates descendants with configurable strategies:
 **Usage:** `resolve-annotation <node-id> <annotation-id>`
 
 Resolve an annotation on a node
+
+Resolve an annotation on a node.
+
+The annotation id is the full id (as in mtix show --json) or the short id that
+mtix show prints, which is the first 12 characters. A prefix works when it is at
+least 12 characters and matches one annotation; an exact full id always wins.
+Several matches are refused with the full ids listed, and no match is a not
+found error. An id with unusual characters prints escaped in mtix show, so copy
+it from mtix show --json instead.
 ---
 
 ## restore
@@ -1412,7 +1595,8 @@ Start the mtix HTTP and WebSocket server
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--addr` |  | Bind address (default localhost; non-localhost exposes API without auth) | 127.0.0.1 |
+| `--addr` |  | Bind address (default: the api.bind setting, else localhost); a non-loopback address needs --insecure-bind | 127.0.0.1 |
+| `--insecure-bind` |  | Allow a non-loopback bind: the server requires a bearer token, created on first use in the operator-local state directory (NFR-5.2) | false |
 | `--port` |  | HTTP port | 8377 |
 ---
 
@@ -1465,21 +1649,26 @@ Show a node's details and annotations as labeled lines, in this order:
                time, or for other statuses even with a stale wake time
   Priority     priority (1 = critical ... 5 = backlog)
   Type         node type
+  Issue type   issue type (only when set)
   Assignee     current assignee (only when set)
   Desc         full description (only when set; omitted when it holds only
                whitespace, control characters or invisible formatting
                characters), further lines indented
   Annotations  every annotation, oldest first (equal times by id): its ISO-8601 UTC timestamp
-               ("unknown time" when none was recorded), author, addressee
+               ("unknown time" when none was recorded), its short id in
+               the form (id "01ARZ3NDEKTS") when it has one (the first 12
+               characters; mtix resolve-annotation accepts it, and --json
+               has the full id), author, addressee
                and resolved marker when present, then the text, with
                further lines indented and "(empty)" for an empty text;
                "Annotations: none" when the node has none
-  Prompt       the prompt, cut to 100 characters ending in "..." when
-               longer (only when set; omitted when it holds only
+  Prompt       up to 100 characters (Unicode code points) of the normalized prompt;
+               longer prompts are cut to 97 characters followed by ...
+               (only when set; omitted when it holds only
                whitespace, control characters or invisible formatting
                characters), further lines indented
   Progress     progress bar
-  Created      creation time
+  Created      creation time: 2006-01-02 15:04 (UTC, no zone)
   History      with --history: the change history, newest first, at most
                --history-limit entries (default 50), one line each with the
                UTC time, field, actor, origin and, for a structured field,
@@ -1503,8 +1692,8 @@ kept, so a lone mark can still change how digits are ordered. The
 --history list follows the same rule and prints each entry on one line,
 with line breaks shown as spaces. Quote exact text from --json.
 
-Acceptance criteria, labels, dependencies, activity and the full prompt are
-not printed. Use --json for the complete node record, including every
+Other fields, for example acceptance criteria, labels, dependencies, activity
+and the full prompt, are not printed. Use --json for the complete node record, including every
 annotation.
 
 ### Flags
@@ -1765,9 +1954,13 @@ keeps the contested number:
   held      the create that currently holds the number on the hub keeps it
   incoming  the blocked (queued) create keeps it
 
-The LOSER renumbers to the next free number under its parent via
-Store.RenumberSubtree (no create event is deleted, no node is lost). The
-moved node may have external references that need updating.
+The hub accepts the choice first; only then does the LOSER renumber to the
+next free number under its parent via Store.RenumberSubtree (no create event
+is deleted, no node is lost). A hub that refuses the update leaves this local
+store unchanged. If the local move fails after the hub accepted, the command
+prints the exact command to run again on the client that owns the losing task;
+a repeat is safe and a completed collision is a no-op. The moved node may have
+external references that need updating.
 
 ### Flags
 
@@ -1800,10 +1993,16 @@ unresolved ones: lww conflicts with no later manual resolution for the
 same node and field ('mtix sync conflicts resolve' records one). A later
 lww conflict on the same node and field is unresolved again.
 
+Self-replay rows are never listed by default and never unresolved: lww
+rows written before 0.5.4, when a pull replayed this store's own pushed
+events, whose winner and loser events were both emitted by this store.
+They are not conflicts, they neither hide nor reopen a genuine conflict,
+and nothing is written to the store to classify them.
+
 --all lists every row, manual resolutions and tombstone rows included,
-each marked unresolved=true or unresolved=false. Default output is a
-plain-text table; --json for agent and CI consumption (each row
-carries "unresolved").
+each marked unresolved=true or unresolved=false and self_replay=true or
+self_replay=false. Default output is a plain-text table; --json for agent
+and CI consumption (each row carries "unresolved" and "self_replay").
 
 When unresolved conflicts exceed 50, a banner is printed pointing
 at --batch <node_id> for batch resolution. --batch <node_id> filters
@@ -1920,6 +2119,11 @@ Run health checks against the local store and the BYO Postgres hub:
                            a field over the 64 KB sync limit) or that
                            depends on a held task creation; names the fix
                            for each ('mtix sync quarantine list')
+  Self-replay conflict rows - informational, always PASS: counts conflict rows
+                           written before 0.5.4 by the replay of this store's
+                           own events; they are not conflicts and are not
+                           counted; fix: none required; inspect with
+                           'mtix sync conflicts list --all'
   board.id               - one committed board identity; a hub board also
                            needs a known local hub observation
   board.hub-identity-changed - warns when the observed hub differs from
@@ -1942,6 +2146,14 @@ Run health checks against the local store and the BYO Postgres hub:
   Hub privileges         - which roles other than the table owner can use the
                            sync tables, and whether every TRUNCATE guard is in
                            place (the check mtix sync harden runs)
+
+When PG reachable fails, queue draining, schema current and hub privileges
+are SKIPPED with a hub-unreachable reason. Fix connectivity and run doctor
+again before diagnosing the pusher. A reachable hub still fails queue
+draining for eligible events pending over 1h, even if its schema check
+fails. Skipped rows have pass=false and skipped=true in --json (skipped is
+omitted otherwise); they do not fail the report themselves. Unified mtix
+doctor maps them to INFO with the same reason. PG reachable still fails.
 
 Each hub check allows 30 s to connect, the same budget as mtix sync init,
 clone, push and pull, so a hub that is resuming from idle passes.
@@ -1997,9 +2209,9 @@ whenever mtix sync harden would report a finding, not only a role outside
 the list or a missing or disabled TRUNCATE guard, but also a kept role
 that can grant its access on or holds a privilege another role granted
 it, an mtix object owned by another role, and a membership through which
-a role can reach every table. If the check cannot run, it is a WARN by
-default and fails in strict mode. The check contacts the hub only while
-the doctor runs.
+a role can reach every table. If the hub is reachable but the check cannot
+run, it is a WARN by default and fails in strict mode. The check contacts
+the hub only while the doctor runs.
 
 Exit code: 0 on all-pass, including checks that pass with a WARN; 2 if
 any check fails. --json output for agents and CI consumption.
@@ -2076,6 +2288,11 @@ Initialize the sync hub for this project (FR-18)
 
 Initialize the BYO Postgres sync hub for this project. Runs the schema
 migration under a PG advisory lock so concurrent first-connects are safe.
+Connect has a 30s budget. Migration has its own --migrate-timeout (default 5m),
+including advisory-lock wait. Index statements block writes until commit even
+when every index already exists; adding missing columns blocks reads too.
+Existing columns skip ALTER. After a migration timeout, retry as the owner with
+the larger --migrate-timeout printed in the error, then run sync doctor.
 
 DSN sources (FR-18.16):
   1. Environment:        MTIX_SYNC_DSN
@@ -2102,6 +2319,7 @@ migrate --yes while the version gate is open, then mtix sync init again.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
+| `--migrate-timeout` |  | Deadline for hub migration, including advisory-lock wait (separate from the 30s connect budget) | 5m0s |
 ---
 
 ## mark-restored
@@ -2718,6 +2936,29 @@ Update a node's fields
 | `--prompt` |  | New prompt |  |
 | `--title` |  | New title |  |
 | `--type` |  | New work classification (bug, feature, task, chore, refactor, test, doc); empty clears, omission preserves; list --type filters hierarchy |  |
+---
+
+## url
+
+**Usage:** `url <id>`
+
+Print the web UI link for a ticket (needs a running mtix serve)
+
+Print the web UI link for a ticket.
+
+The link opens the ticket's full detail (prompt, annotations, acceptance) in
+the running web UI. It needs a running 'mtix serve' for this project; with no
+serve running the command prints nothing on stdout and exits non-zero.
+
+The id must be a display id such as MTIX-12.3. An unknown id fails with not
+found. With --json the output is {"id": ..., "url": ...}.
+
+The serve publishes .mtix/serve.json (pid, port, bound host) while
+it runs and removes it when it stops. The link uses the host the serve is bound
+to, or 127.0.0.1 when it is bound to a wildcard address. A stale record (dead
+process, or a port that does not answer as an mtix serve) counts as no running
+serve. 'mtix doctor' warns when a git project does not ignore the file and
+prints the fix. Use 'mtix -C <dir> url <id>' to target another project.
 ---
 
 ## verify

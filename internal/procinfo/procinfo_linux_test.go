@@ -33,3 +33,13 @@ func TestParseStatInfo_ReadsParentNameAndStart(t *testing.T) {
 		t.Fatal("bad ppid must fail")
 	}
 }
+
+func TestSplitCmdline_SplitsOnNULAndKeepsEmptyUnknown(t *testing.T) {
+	got := splitCmdline([]byte("mtix\x00-C\x00/p\x00daemon\x00"))
+	if len(got) != 4 || got[0] != "mtix" || got[3] != "daemon" {
+		t.Fatalf("got %q", got)
+	}
+	if splitCmdline(nil) != nil || splitCmdline([]byte{0}) != nil {
+		t.Fatal("an empty cmdline means unknown arguments")
+	}
+}

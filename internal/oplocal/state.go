@@ -7,12 +7,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/hyper-swe/mtix/internal/model"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // State operates on one operator directory using injected path inputs.
@@ -24,6 +25,8 @@ type State struct {
 	permissionNoticeProbe func(context.Context, PermissionBatch) (bool, error)
 	beforeCommit          func() error
 	syncDirectory         func(*os.File) error
+	// probeCreate replaces os.CreateTemp in ProbeWritable; tests only.
+	probeCreate func(dir, pattern string) (*os.File, error)
 }
 
 // New constructs a state accessor without creating any files.
@@ -126,31 +129,11 @@ func (s *State) LaneIDs(ctx context.Context, loc LaneLocation) ([]string, error)
 
 // ListBoard adds routing for a checkout without enrolling or confirming it.
 func (s *State) ListBoard(ctx context.Context, key, path string) error {
-	if !validRoutingBoard(key) || !cleanAbsolute(path) {
-		return invalid("listed board identity or path is invalid")
-	}
-	return s.withRouting(ctx, true, func() error {
-		rows, err := s.listedBoardsLocked()
-		if err != nil {
-			return err
-		}
-		for _, row := range rows {
-			if row.Path == path {
-				if row.Key != key {
-					return fmt.Errorf("listed board identity changed: %w", model.ErrConflict)
-				}
-				return nil
-			}
-		}
-		rows = append(rows, ListedBoard{Key: key, Path: path})
-		sort.Slice(rows, func(i, j int) bool { return rows[i].Path < rows[j].Path })
-		return s.WriteJSON("listed-boards", rows)
-	})
+	return s.ListBoardInstance(ctx, ListedBoard{Key: key, Path: path})
 }
 
 // ListedBoards reads routing records without creating a grant or state file.
 func (s *State) ListedBoards(ctx context.Context) ([]ListedBoard, error) {
-	var rows []ListedBoard
-	err := s.withRouting(ctx, false, func() error { var err error; rows, err = s.listedBoardsLocked(); return err })
-	return rows, err
+	boards, err := s.DispatchBoards(ctx)
+	return boards.Listed, err
 }

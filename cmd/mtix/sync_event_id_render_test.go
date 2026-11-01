@@ -277,6 +277,15 @@ func TestScanRawEventIDs_FlagsEveryWrapperAndPassesSafeRendering(t *testing.T) {
 		{"safe quarantine handle", `fmt.Sprintf("--handle %s", service.QuarantineHandleAmong(allIDs, eventID))`, 0},
 		{"other handle helper", `fmt.Sprintf("--handle %s", other.QuarantineHandleAmong(allIDs, eventID))`, 1},
 		{"other method of the service package", `fmt.Sprintf("--handle %s", service.OtherHelper(eventID))`, 1},
+		{"raw UID", `fmt.Sprint(n.UID)`, 1},
+		{"wrapped UID", `fmt.Sprint(emptyDash(n.UID))`, 1},
+		{"safe UID", `fmt.Sprint(format.EventID(n.UID))`, 0},
+		{"raw HubUID", `fmt.Sprint(n.HubUID)`, 1},
+		{"wrapped HubUID", `fmt.Sprint(emptyDash(n.HubUID))`, 1},
+		{"safe HubUID", `fmt.Sprint(format.EventID(n.HubUID))`, 0},
+		{"raw LocalUID", `fmt.Sprint(n.LocalUID)`, 1},
+		{"wrapped LocalUID", `fmt.Sprint(emptyDash(n.LocalUID))`, 1},
+		{"safe LocalUID", `fmt.Sprint(format.EventID(n.LocalUID))`, 0},
 		{"no id", `errors.New("apply " + name)`, 0},
 	}
 	for _, tt := range tests {
@@ -403,21 +412,40 @@ func rawEventIDUses(a ast.Expr, file, handlePkg string) []token.Pos {
 	ast.Inspect(a, func(n ast.Node) bool {
 		switch v := n.(type) {
 		case *ast.CallExpr:
-			if isFormatEventIDCall(v) || isQuoteToASCII(v) || isQuarantineHandleCall(v, handlePkg) {
-				return false
-			}
+			return !isSafeIDCall(v, handlePkg)
 		case *ast.SelectorExpr:
-			if strings.Contains(strings.ToLower(v.Sel.Name), "eventid") || (syncFile && (v.Sel.Name == "id" || v.Sel.Name == "HeldUID" || v.Sel.Name == "IncomingUID")) {
+			if isRawIDSelector(v, syncFile) {
 				out = append(out, v.Pos())
 			}
 		case *ast.Ident:
-			if eventIDNames[v.Name] || (syncFile && v.Name == "id") {
+			if isRawIDIdent(v, syncFile) {
 				out = append(out, v.Pos())
 			}
 		}
 		return true
 	})
 	return out
+}
+
+// isSafeIDCall reports whether call renders its arguments safely, so the
+// guard does not look inside it.
+func isSafeIDCall(call *ast.CallExpr, handlePkg string) bool {
+	return isFormatEventIDCall(call) || isQuoteToASCII(call) || isQuarantineHandleCall(call, handlePkg)
+}
+
+// isRawIDSelector reports whether sel names an event id or, in a sync file, an
+// id or a held or incoming uid.
+func isRawIDSelector(sel *ast.SelectorExpr, syncFile bool) bool {
+	if strings.Contains(strings.ToLower(sel.Sel.Name), "eventid") {
+		return true
+	}
+	return syncFile && (sel.Sel.Name == "id" || isTaskUIDField(sel.Sel.Name))
+}
+
+// isRawIDIdent reports whether id is a known event id name or, in a sync file,
+// the bare name id.
+func isRawIDIdent(id *ast.Ident, syncFile bool) bool {
+	return eventIDNames[id.Name] || (syncFile && id.Name == "id")
 }
 
 // hostileRaw is ackCLIRaw carrying hostileEventID as its event_id, so the
@@ -546,4 +574,15 @@ func TestCheckPulledEvent_HostileFutureStampedID_WarnsPrintableASCII(t *testing.
 		VectorClock: map[string]int64{}, Payload: json.RawMessage(`{"title":"t"}`)}
 	require.NoError(t, checkPulledEvent(in, future, 0))
 	requirePrintableASCII(t, warn.String(), hostileEventID)
+}
+
+// isTaskUIDField covers the task uids received from sync (the held and
+// incoming uid of a collision, the hub and local uid of a repair mismatch and a
+// node's uid), excluding host and account UIDs used by local operator commands.
+func isTaskUIDField(name string) bool {
+	switch name {
+	case "UID", "HeldUID", "IncomingUID", "HubUID", "LocalUID":
+		return true
+	}
+	return false
 }

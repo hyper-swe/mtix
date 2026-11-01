@@ -76,7 +76,7 @@ func TestDoctor_DiagnosticInit_PreservesMirrorAndParsedFlags(t *testing.T) {
 	assert.True(t, app.logger.Enabled(t.Context(), slog.LevelDebug), "parsed log level is captured at execution")
 	rows := doctorCLIRows(t, out.String())
 	for _, row := range rows {
-		if assertEmptyWakeDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) || assertWakeSettingsDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) {
+		if assertEmptyWakeDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) || assertWakeSettingsDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) || assertWakeListenerDoctorInfo(t, row["id"], row["status"], row["fix"]) || assertWakeScannerDoctorInfo(t, row["id"], row["status"], row["fix"]) {
 			continue
 		}
 		assert.Contains(t, []string{"platform.windows", "docs.stale", "export.schema"}, row["id"])

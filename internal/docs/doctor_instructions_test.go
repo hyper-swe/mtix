@@ -24,6 +24,12 @@ func doctorGuidanceSection(t *testing.T, path string) string {
 	return strings.TrimSpace(section)
 }
 
+// The relay is verified by sync doctor, so its agent guidance is pinned with
+// the doctor guidance: managed sections, skill runbook and mirrors agree.
+func TestDoctorGuidance_RelayRunbookMatchesBuild(t *testing.T) {
+	assertRelayGuidance(t)
+}
+
 func TestDoctorGuidance_ManualTemplatesAndMirrorsMatch(t *testing.T) {
 	root := filepath.Join("..", "..")
 	want := doctorGuidanceSection(t, filepath.Join(root, "USERMANUAL.md"))

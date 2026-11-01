@@ -15,13 +15,16 @@ func TestWakeBudgetGuidance_SettingRowsDescribeCurrentEnforcement(t *testing.T) 
 	for _, path := range []string{"internal/docs/templates/skills/admin.md.tmpl", ".claude-plugin/skills/mtix-admin.md", ".codex-plugin/skills/admin/SKILL.md", "USERMANUAL.md"} {
 		t.Run(path, func(t *testing.T) {
 			body := readAgentInstruction(t, filepath.Join("..", "..", path))
-			for _, key := range []string{"wake.wakes_per_hour", "wake.backoff_after_unacked"} {
+			for _, key := range []string{"wake.wakes_per_hour", "wake.backoff_after_unacked", "wake.per_sender_per_hour"} {
 				require.Contains(t, wakeBudgetSettingLine(t, body, key), "callable dispatcher")
 			}
-			for _, key := range []string{"wake.per_sender_per_hour", "wake.remote_awake_daily_cap", "wake.reply_extensions_per_hour"} {
+			for _, key := range []string{"wake.remote_awake_daily_cap", "wake.reply_extensions_per_hour"} {
 				require.Contains(t, wakeBudgetSettingLine(t, body, key), "stored, not yet enforced")
 			}
 			require.Contains(t, body, "budget.rewind")
+			for _, phrase := range []string{"claimed author", "name another sender and spend that sender's allowance", "longer than 256 bytes", "control characters", "Legacy or unexplained credits", "New events without an attributable sender", "combined credits of all senders", "payload author when it decodes", "otherwise the event envelope author", "Acknowledgements do not refund sender credits", "mtix config set wake.per_sender_per_hour <n> --agent <id>"} {
+				require.Contains(t, body, phrase)
+			}
 			require.NotContains(t, body, "Scanner discovery, budget and\nback-off enforcement")
 		})
 	}
@@ -45,7 +48,7 @@ func TestWakeBudgetGuidance_AckRoutineAndScannerBoundary(t *testing.T) {
 			for _, phrase := range []string{"callable dispatcher", "across boards", "new acknowledgement", "already acknowledged", "budget.rewind", "ack after handling"} {
 				require.Contains(t, body, phrase)
 			}
-			require.Contains(t, body, "when the wake scanner ships")
+			require.Contains(t, body, "The wake scanner is live in this build")
 			require.NotContains(t, body, "Scanner discovery, budget/back-off enforcement")
 		})
 	}

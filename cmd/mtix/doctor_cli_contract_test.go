@@ -137,6 +137,28 @@ func assertWakeSettingsDoctorInfo(t *testing.T, id, status, detail, fix string) 
 	return true
 }
 
+// assertWakeScannerDoctorInfo checks the wake.scanner row on an empty board: INFO, idle, with a runnable fix.
+func assertWakeScannerDoctorInfo(t *testing.T, id, status, fix string) bool {
+	t.Helper()
+	if id != "wake.scanner" {
+		return false
+	}
+	require.Equal(t, "info", status)
+	require.True(t, fix == "" || strings.HasPrefix(fix, "mtix "), "scanner fix must be empty or runnable: "+fix)
+	return true
+}
+
+// assertWakeListenerDoctorInfo checks one wake.listener row on an empty board: INFO with a runnable fix.
+func assertWakeListenerDoctorInfo(t *testing.T, id, status, fix string) bool {
+	t.Helper()
+	if !strings.HasPrefix(id, "wake.listener.") {
+		return false
+	}
+	require.Equal(t, "info", status, id)
+	require.True(t, strings.HasPrefix(fix, "mtix "), id+" must carry a runnable fix: "+fix)
+	return true
+}
+
 func TestDoctorCLI_Help_DocumentsJSONFixAndExitCodes(t *testing.T) {
 	root := doctorCLIBoard(t, "")
 	out := doctorCLIExecute(t, root, "", "doctor", "--help")
@@ -155,15 +177,15 @@ func TestDoctorCLI_Unconfigured_DocumentAndRetainedWakeInfoExitZero(t *testing.T
 			out := doctorCLIExecute(t, root, "", append([]string{"doctor"}, flags...)...)
 			assert.Equal(t, 0, out.exit, out.stderr)
 			rows := doctorCLIRows(t, out.stdout)
-			wantRows := 6
+			wantRows := 15 // docs, wake.scanner, 5 wake rows and the 8 wake.listener rows (7 plus hook-errors, MTIX-112.40.4)
 			if runtime.GOOS == "windows" {
 				wantRows++
 				assert.Equal(t, "platform.windows", rows[0]["id"])
 				assert.Equal(t, "info", rows[0]["status"])
 			}
 			require.Len(t, rows, wantRows)
-			assert.Equal(t, "docs.stale", rows[len(rows)-6]["id"])
-			assert.Equal(t, "warn", rows[len(rows)-6]["status"])
+			assert.Equal(t, "docs.stale", rows[len(rows)-15]["id"])
+			assert.Equal(t, "warn", rows[len(rows)-15]["status"])
 
 			wakeRows := 0
 			for _, row := range rows {
@@ -172,7 +194,14 @@ func TestDoctorCLI_Unconfigured_DocumentAndRetainedWakeInfoExitZero(t *testing.T
 				}
 			}
 			assert.Equal(t, 3, wakeRows)
-			assert.Equal(t, "wake.ledger", rows[len(rows)-1]["id"])
+			assert.Equal(t, "wake.ledger", rows[len(rows)-9]["id"])
+			listenerRows := 0
+			for _, row := range rows {
+				if assertWakeListenerDoctorInfo(t, row["id"], row["status"], row["fix"]) {
+					listenerRows++
+				}
+			}
+			assert.Equal(t, 8, listenerRows, "every documented wake.listener row is present with a fix")
 			assert.Empty(t, out.stderr)
 		})
 	}
@@ -189,6 +218,9 @@ func TestDoctorCLI_BrokenRelay_OnlyApplicableRowsExitTwo(t *testing.T) {
 			continue
 		}
 		if assertWakeSettingsDoctorInfo(t, row["id"], row["status"], row["detail"], row["fix"]) {
+			continue
+		}
+		if assertWakeListenerDoctorInfo(t, row["id"], row["status"], row["fix"]) || assertWakeScannerDoctorInfo(t, row["id"], row["status"], row["fix"]) {
 			continue
 		}
 		if runtime.GOOS == "windows" && row["id"] == "platform.windows" {

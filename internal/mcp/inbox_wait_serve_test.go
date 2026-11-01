@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -118,7 +119,12 @@ type serveInboxCall struct {
 	exited  chan struct{}
 }
 
-type serveInboxBackend struct{ started chan *serveInboxCall }
+type serveInboxBackend struct {
+	started chan *serveInboxCall
+	// gate, when non-nil, holds each wait back before it reports as started
+	// until the test closes it, which models workers reaching the backend late.
+	gate chan struct{}
+}
 
 func (*serveInboxBackend) InboxList(context.Context, string) ([]sqlite.InboxEvent, error) {
 	return []sqlite.InboxEvent{{Seq: 9, Body: "ordinary inbox response"}}, nil
@@ -127,6 +133,13 @@ func (*serveInboxBackend) InboxAck(context.Context, string, int64) error { retur
 func (b *serveInboxBackend) InboxWait(ctx context.Context, agent string, timeout time.Duration) ([]sqlite.InboxEvent, error) {
 	call := &serveInboxCall{agent: agent, timeout: timeout, ctx: ctx, event: make(chan struct{}), exited: make(chan struct{})}
 	defer close(call.exited)
+	if b.gate != nil {
+		select {
+		case <-b.gate:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	b.started <- call
 	select {
 	case <-ctx.Done():
@@ -154,8 +167,13 @@ func newServeInboxHarness(t *testing.T) *serveInboxHarness {
 
 func newServeInboxHarnessWithWriter(t *testing.T, writer io.Writer) *serveInboxHarness {
 	t.Helper()
+	return newServeInboxHarnessWith(t, writer, nil)
+}
+
+func newServeInboxHarnessWith(t *testing.T, writer io.Writer, gate chan struct{}) *serveInboxHarness {
+	t.Helper()
 	testutil.OperatorState(t)
-	h := &serveInboxHarness{in: newServeInboxInput(), out: &serveInboxOutput{frames: make(chan []byte, 1024)}, backend: &serveInboxBackend{started: make(chan *serveInboxCall, 256)}, done: make(chan error, 1)}
+	h := &serveInboxHarness{in: newServeInboxInput(), out: &serveInboxOutput{frames: make(chan []byte, 1024)}, backend: &serveInboxBackend{started: make(chan *serveInboxCall, 256), gate: gate}, done: make(chan error, 1)}
 	if writer == nil {
 		writer = h.out
 	}
@@ -169,8 +187,11 @@ func newServeInboxHarnessWithWriter(t *testing.T, writer io.Writer) *serveInboxH
 		assert.NoError(t, h.in.Close())
 		if !h.joined {
 			select {
-			case <-h.done:
+			case err := <-h.done:
 				h.joined = true
+				if err != nil && !errors.Is(err, context.Canceled) {
+					t.Errorf("Serve returned an unexpected error during cleanup: %v", err)
+				}
 			case <-time.After(inboxWaitCompletionHangBound):
 				t.Error("Serve goroutine did not join during cleanup")
 			}
@@ -454,26 +475,52 @@ func TestInboxWaitServe_FiniteDefaultAndCappedContracts(t *testing.T) {
 
 func serveInboxInt(n int) *int { return &n }
 
-func TestInboxWaitServe_AdmissionBoundKeepsPingResponsiveAndJoinsWorkers(t *testing.T) {
-	h := newServeInboxHarness(t)
-	// This is a resource ceiling rather than a prescribed internal pool size.
-	// A smaller limit is valid; accepting all 128 indefinite waits is not.
-	for id := 1; id <= 128; id++ {
-		h.in.send(t, id, MethodToolsCall, map[string]any{"name": "mtix_inbox_wait", "arguments": map[string]any{"agent": "worker", "timeout_seconds": 0}})
-	}
-	h.in.send(t, 129, MethodPing, nil)
-	h.requireAdmissionRefusals(t)
-	h.collectAdmitted()
-	require.NotEmpty(t, h.observed)
-	require.LessOrEqual(t, len(h.observed), 64, "indefinite wait resources must be bounded")
-	require.NoError(t, h.in.Close())
-	h.finish(t, nil)
-	for _, call := range h.observed {
-		requireServeInboxExited(t, call)
+const (
+	// admissionRequests is how many indefinite waits the test submits.
+	admissionRequests = 128
+	// admissionLimit is the production bound on concurrent waits
+	// (maxConcurrentInboxWaits), pinned here as a literal so a change to it
+	// is a deliberate test edit.
+	admissionLimit = 16
+)
+
+func TestInboxWaitServe_AdmissionBound_KeepsPingResponsiveAndJoinsWorkers(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		gated bool
+	}{
+		{"prompt_workers", false},
+		{"late_workers_behind_a_gate", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var gate chan struct{}
+			if tc.gated {
+				gate = make(chan struct{})
+			}
+			h := newServeInboxHarnessWith(t, nil, gate)
+			for id := 1; id <= admissionRequests; id++ {
+				h.in.send(t, id, MethodToolsCall, map[string]any{"name": "mtix_inbox_wait", "arguments": map[string]any{"agent": "worker", "timeout_seconds": 0}})
+			}
+			h.in.send(t, admissionRequests+1, MethodPing, nil)
+			refused := h.requireAdmissionRefusals(t)
+			assert.Equal(t, admissionRequests-admissionLimit, refused, "excess waits must be refused at the production limit")
+			if gate != nil {
+				close(gate)
+			}
+			h.collectAdmitted(t, admissionRequests-refused)
+			assert.Len(t, h.observed, admissionLimit, "exactly the production limit of waits must be admitted")
+			require.NoError(t, h.in.Close())
+			h.finish(t, nil)
+			for _, call := range h.observed {
+				requireServeInboxExited(t, call)
+			}
+		})
 	}
 }
 
-func (h *serveInboxHarness) requireAdmissionRefusals(t *testing.T) {
+// requireAdmissionRefusals reads responses until the ping answers and returns
+// how many waits were refused explicitly before it.
+func (h *serveInboxHarness) requireAdmissionRefusals(t *testing.T) int {
 	t.Helper()
 	deadline := time.NewTimer(inboxWaitCompletionHangBound)
 	defer deadline.Stop()
@@ -483,10 +530,9 @@ func (h *serveInboxHarness) requireAdmissionRefusals(t *testing.T) {
 		case frame := <-h.out.frames:
 			var resp Response
 			require.NoError(t, json.Unmarshal(frame, &resp))
-			if string(resp.ID) == "129" {
+			if string(resp.ID) == strconv.Itoa(admissionRequests+1) {
 				require.Nil(t, resp.Error)
-				require.GreaterOrEqual(t, refused, 64, "admission must bound indefinite workers to at most 64")
-				return
+				return refused
 			}
 			if resp.Error == nil {
 				var result ToolsCallResult
@@ -500,13 +546,19 @@ func (h *serveInboxHarness) requireAdmissionRefusals(t *testing.T) {
 	}
 }
 
-func (h *serveInboxHarness) collectAdmitted() {
-	for {
+// collectAdmitted waits for exactly want admitted waits to reach the backend.
+// Every request was either refused or admitted, so want is the request count
+// minus the refusals; the timer is only a hang guard, not completion evidence.
+func (h *serveInboxHarness) collectAdmitted(t *testing.T, want int) {
+	t.Helper()
+	deadline := time.NewTimer(inboxWaitCompletionHangBound)
+	defer deadline.Stop()
+	for len(h.observed) < want {
 		select {
 		case call := <-h.backend.started:
 			h.observed = append(h.observed, call)
-		default:
-			return
+		case <-deadline.C:
+			t.Fatalf("only %d of %d admitted waits reached the backend", len(h.observed), want)
 		}
 	}
 }

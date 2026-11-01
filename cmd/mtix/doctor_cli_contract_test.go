@@ -184,8 +184,8 @@ func TestDoctorCLI_Unconfigured_DocumentAndRetainedWakeInfoExitZero(t *testing.T
 				assert.Equal(t, "info", rows[0]["status"])
 			}
 			require.Len(t, rows, wantRows)
-			assert.Equal(t, "docs.stale", rows[len(rows)-14]["id"])
-			assert.Equal(t, "warn", rows[len(rows)-14]["status"])
+			assert.Equal(t, "docs.stale", rows[len(rows)-15]["id"])
+			assert.Equal(t, "warn", rows[len(rows)-15]["status"])
 
 			wakeRows := 0
 			for _, row := range rows {

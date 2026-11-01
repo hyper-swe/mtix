@@ -114,13 +114,28 @@ func runsDaemon(args []string) bool {
 	return false
 }
 
-// followedByServiceVerb reports whether a service verb follows the daemon token. Cobra skips
-// the flags (and their values) between daemon and its subcommand, and the daemon takes no
-// positional argument, so any later token that is a service verb is the subcommand.
+// daemonValueFlags are the value-taking flags that can stand between the daemon token and its
+// subcommand: the root persistent -C/--project-dir and --log-level, and --interval of the
+// daemon and its install verb. Every other flag in that range is a bool. The split form of one
+// of these (--log-level status) puts its value in the next token, which is not the subcommand.
+// TestDaemonValueFlags_MatchCommandTree keeps this set equal to the real command tree.
+var daemonValueFlags = map[string]bool{"-C": true, "--project-dir": true, "--log-level": true, "--interval": true}
+
+// followedByServiceVerb reports whether a service verb is the subcommand after the daemon
+// token. Cobra skips flags between daemon and its subcommand, and a value-taking flag in split
+// form takes the next token as its value, so that token is skipped. The first remaining
+// non-flag token is the subcommand (the daemon takes no positional argument). No such token
+// means the process runs the daemon itself, so an unknown shape reads as live.
 func followedByServiceVerb(rest []string) bool {
-	for _, tok := range rest {
-		if daemonServiceVerbs[tok] {
-			return true
+	for i := 0; i < len(rest); i++ {
+		tok := rest[i]
+		switch {
+		case strings.HasPrefix(tok, "-") && len(tok) > 1:
+			if daemonValueFlags[tok] {
+				i++ // the flag's value is the next token, whatever it is named
+			}
+		default:
+			return daemonServiceVerbs[tok]
 		}
 	}
 	return false

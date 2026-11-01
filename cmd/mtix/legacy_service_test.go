@@ -52,6 +52,7 @@ func TestLegacyServiceProbe_DaemonStartedSecond_DetectedThenReleased(t *testing.
 	require.NoError(t, err)
 	require.False(t, live, "no daemon yet")
 	cmd := exec.Command(os.Args[0], "-test.run=^TestLegacyDaemonHelperProcess$", "--", "-C", root, "daemon") // #nosec G204 -- the test binary re-executes itself
+	cmd.Dir = root                                                                                           // a daemon's working directory is its project
 	cmd.Env = append(os.Environ(), "MTIX_LEGACY_HELPER=1")
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
@@ -70,19 +71,19 @@ func TestLegacyUnitInstalled_UnitFilePresence(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux"} {
 		t.Run(goos, func(t *testing.T) {
 			home, root := t.TempDir(), t.TempDir()
-			installed, err := legacyUnitInstalled(goos, root, home)
+			installed, _, err := legacyUnitInstalled(goos, root, home)
 			require.NoError(t, err)
 			require.False(t, installed)
 			spec, err := buildServiceSpec(goos, "mtix", root, home, daemonDispatchDefaultIntervalSec)
 			require.NoError(t, err)
 			require.NoError(t, os.MkdirAll(filepath.Dir(spec.Path), 0o700))
 			require.NoError(t, os.WriteFile(spec.Path, []byte("unit"), 0o600))
-			installed, err = legacyUnitInstalled(goos, root, home)
+			installed, _, err = legacyUnitInstalled(goos, root, home)
 			require.NoError(t, err)
 			require.True(t, installed)
 		})
 	}
-	installed, err := legacyUnitInstalled("windows", t.TempDir(), t.TempDir())
+	installed, _, err := legacyUnitInstalled("windows", t.TempDir(), t.TempDir())
 	require.NoError(t, err)
 	require.False(t, installed, "Task Scheduler has no unit file; doctor relies on the PID file")
 }
@@ -106,30 +107,48 @@ func TestUninstallLegacyService_UnregistersThenRemovesUnit(t *testing.T) {
 	require.NoError(t, uninstallLegacyService(t.Context(), io.Discard, spec, run), "idempotent when the unit is already gone")
 }
 
-// runWith fakes the service runner: unregister fails, and the status command reports whether
-// the service is still loaded.
-func runWith(spec *serviceSpec, stillLoaded bool, statusRuns *int) func(context.Context, io.Writer, [][]string, bool) error {
+// exitErr is a service-manager failure carrying a process exit code.
+type exitErr struct{ code int }
+
+func (e exitErr) Error() string { return fmt.Sprintf("exit status %d", e.code) }
+func (e exitErr) ExitCode() int { return e.code }
+
+// runWith fakes the service runner: unregister fails, and the status command returns statusErr
+// (nil means the label is still loaded).
+func runWith(spec *serviceSpec, statusErr error, statusRuns *int) func(context.Context, io.Writer, [][]string, bool) error {
 	return func(_ context.Context, _ io.Writer, cmds [][]string, _ bool) error {
 		if fmt.Sprint(cmds) == fmt.Sprint(spec.Status) {
 			*statusRuns++
-			if stillLoaded {
-				return nil
-			}
-			return errors.New("not loaded")
+			return statusErr
 		}
 		return errors.New("service manager failed")
 	}
 }
 
-func TestUninstallLegacyService_UnregisterFails_StillLoadedKeepsError(t *testing.T) {
-	home, root := t.TempDir(), t.TempDir()
-	installUnit(t, "linux", root, home)
-	spec, err := buildServiceSpec("linux", "mtix", root, home, daemonDispatchDefaultIntervalSec)
-	require.NoError(t, err)
-	var statusRuns int
-	require.Error(t, uninstallLegacyService(t.Context(), io.Discard, spec, runWith(spec, true, &statusRuns)))
-	require.Equal(t, 1, statusRuns)
-	require.FileExists(t, spec.Path, "a unit whose service is still loaded is not removed")
+func TestUninstallLegacyService_StatusDoesNotProveNotLoaded_KeepsErrorAndUnit(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		probe, err := buildServiceSpec(goos, "mtix", t.TempDir(), t.TempDir(), daemonDispatchDefaultIntervalSec)
+		require.NoError(t, err)
+		for name, statusErr := range map[string]error{
+			"still-loaded":                nil,
+			"manager-unreachable":         errors.New("Failed to connect to bus"),
+			"exit-code-not-the-not-found": exitErr{code: 3},
+			"exit-code-one":               exitErr{code: 1},
+			"binary-missing":              &os.PathError{Op: "exec", Path: "systemctl", Err: os.ErrNotExist},
+		} {
+			t.Run(goos+"/"+name, func(t *testing.T) {
+				home, root := t.TempDir(), t.TempDir()
+				installUnit(t, goos, root, home)
+				spec, err := buildServiceSpec(goos, "mtix", root, home, daemonDispatchDefaultIntervalSec)
+				require.NoError(t, err)
+				var statusRuns int
+				require.Error(t, uninstallLegacyService(t.Context(), io.Discard, spec, runWith(spec, statusErr, &statusRuns)))
+				require.Equal(t, 1, statusRuns)
+				require.FileExists(t, spec.Path, "a unit whose service may still be registered is not removed")
+			})
+		}
+		require.NotZero(t, probe.NotLoadedExit, goos+" can prove a label is not loaded")
+	}
 }
 
 func TestUninstallLegacyService_AlreadyUnloaded_RerunConverges(t *testing.T) {
@@ -140,7 +159,8 @@ func TestUninstallLegacyService_AlreadyUnloaded_RerunConverges(t *testing.T) {
 			spec, err := buildServiceSpec(goos, "mtix", root, home, daemonDispatchDefaultIntervalSec)
 			require.NoError(t, err)
 			var statusRuns int
-			require.NoError(t, uninstallLegacyService(t.Context(), io.Discard, spec, runWith(spec, false, &statusRuns)),
+			notLoaded := exitErr{code: spec.NotLoadedExit}
+			require.NoError(t, uninstallLegacyService(t.Context(), io.Discard, spec, runWith(spec, notLoaded, &statusRuns)),
 				"the label is gone after the first run: the re-run still completes")
 			require.Equal(t, 1, statusRuns)
 			_, statErr := os.Stat(spec.Path)
@@ -305,6 +325,7 @@ func startLegacyDaemonHelper(t *testing.T, root string, args ...string) int {
 	}
 	argv = append(argv, args...)
 	cmd := exec.Command(os.Args[0], argv...) // #nosec G204 -- the test binary re-executes itself
+	cmd.Dir = root                           // a daemon's working directory is its project; "" keeps the test's own
 	cmd.Env = append(os.Environ(), "MTIX_LEGACY_HELPER=1")
 	require.NoError(t, cmd.Start())
 	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })

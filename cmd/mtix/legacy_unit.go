@@ -25,42 +25,51 @@ var (
 // legacyUnitInstalled reports whether the per-project unit for projectRoot exists on disk.
 // The unit name hashes the root as `mtix daemon install` saw it, so a project installed through
 // a symlink is not found under the canonical root's name; the lookup then reads the other
-// per-project units and compares the project directory each one runs.
+// per-project units and compares the project directory each one runs. A sibling it cannot read
+// (a dangling link, a directory, a file it may not open) is skipped and returned in skipped for
+// doctor to report: it never stops the answer for this board or any other. This board's own
+// unit, named by its hash, counts as installed whenever it can be seen, readable or not.
 // Platforms without a unit file (Task Scheduler) report false; doctor then relies on the PID file.
-func legacyUnitInstalled(goos, projectRoot, home string) (bool, error) {
+func legacyUnitInstalled(goos, projectRoot, home string) (installed bool, skipped []string, err error) {
 	spec, err := buildServiceSpec(goos, "mtix", projectRoot, home, daemonDispatchDefaultIntervalSec)
 	if err != nil || spec.Path == "" {
-		return false, err
+		return false, nil, err
 	}
-	_, statErr := os.Lstat(spec.Path)
-	if statErr == nil {
-		return true, nil
+	if _, statErr := os.Lstat(spec.Path); !errors.Is(statErr, os.ErrNotExist) {
+		return true, nil, nil // present, or not provably absent: the safe side
 	}
-	if !errors.Is(statErr, os.ErrNotExist) {
-		return false, fmt.Errorf("inspect legacy unit: %w", statErr)
-	}
-	return unitRunsProject(spec.Path, projectSlug(projectRoot), projectRoot)
+	installed, skipped = unitRunsProject(spec.Path, projectSlug(projectRoot), projectRoot)
+	return installed, skipped, nil
 }
 
 // unitRunsProject scans the sibling per-project units of namedPath (whose name embeds slug) for
 // one whose command line serves projectRoot, comparing directories after symlink resolution.
-func unitRunsProject(namedPath, slug, projectRoot string) (bool, error) {
-	base, ext := filepath.Base(namedPath), filepath.Ext(namedPath)
+// Entries it cannot read, and a unit directory it cannot list, are returned in skipped.
+func unitRunsProject(namedPath, slug, projectRoot string) (found bool, skipped []string) {
+	dir, base := filepath.Dir(namedPath), filepath.Base(namedPath)
+	ext := filepath.Ext(base)
 	prefix := strings.TrimSuffix(strings.TrimSuffix(base, ext), slug)
-	matches, err := filepath.Glob(filepath.Join(filepath.Dir(namedPath), prefix+"*"+ext))
-	if err != nil {
-		return false, fmt.Errorf("list legacy units: %w", err)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	for _, candidate := range matches {
+	if err != nil {
+		return false, []string{dir}
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, prefix) || !strings.HasSuffix(name, ext) {
+			continue
+		}
+		candidate := filepath.Join(dir, name)
 		root, readErr := unitProjectRoot(candidate)
 		if readErr != nil {
-			return false, readErr
-		}
-		if root != "" && sameDirectory(root, projectRoot) {
-			return true, nil
+			skipped = append(skipped, candidate)
+		} else if root != "" && sameDirectory(root, projectRoot) {
+			found = true
 		}
 	}
-	return false, nil
+	return found, skipped
 }
 
 // unitProjectRoot reads the -C project directory out of a launchd plist or systemd unit; ""

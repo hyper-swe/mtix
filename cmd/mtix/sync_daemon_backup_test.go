@@ -84,8 +84,11 @@ func TestDaemonPIDFile_GarbageContent(t *testing.T) {
 }
 
 func TestDaemonPIDFile_LiveSelf(t *testing.T) {
-	dir := t.TempDir()
-	helper := startLegacyDaemonHelper(t, filepath.Dir(dir))
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	require.NoError(t, err)
+	dir := filepath.Join(root, ".mtix")
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	helper := startLegacyDaemonHelper(t, root)
 	require.NoError(t, writeDaemonPID(dir, helper))
 	live, pid, err := daemonPIDFileLive(dir)
 	require.NoError(t, err)

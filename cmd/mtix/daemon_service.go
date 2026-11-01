@@ -47,6 +47,10 @@ type serviceSpec struct {
 	Start      [][]string
 	Stop       [][]string
 	Status     [][]string
+
+	// NotLoadedExit is the exit code of the Status command that proves the label is not
+	// loaded (launchctl print: 113, systemctl status: 4); 0 when none can be proven.
+	NotLoadedExit int
 }
 
 // buildServiceSpec assembles the platform service for the project rooted at
@@ -96,6 +100,8 @@ func buildServiceSpec(goos, exe, projectRoot, home string, intervalSec int) (*se
 			Start:      [][]string{{"launchctl", "kickstart", "-k", target}},
 			Stop:       [][]string{{"launchctl", "kill", "SIGTERM", target}},
 			Status:     [][]string{{"launchctl", "print", target}},
+
+			NotLoadedExit: 113,
 		}, nil
 
 	case "linux":
@@ -125,6 +131,8 @@ WantedBy=default.target
 			Start:  [][]string{{"systemctl", "--user", "start", name}},
 			Stop:   [][]string{{"systemctl", "--user", "stop", name}},
 			Status: [][]string{{"systemctl", "--user", "status", "--no-pager", name}},
+
+			NotLoadedExit: 4,
 		}, nil
 
 	case "windows":

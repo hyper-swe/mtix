@@ -2783,11 +2783,15 @@ never writes the daemon's PID file. A PID file whose pid now
 belongs to another program, including another mtix command (such as
 `mtix daemon status`) or another project's daemon, is stale and does not count:
 only this project's `mtix daemon` (or `mtix sync daemon`) counts. The project is
-read from the daemon's `-C` or `--project-dir` argument (a relative path is taken
-against the daemon's own working directory), else from that working directory. A
-daemon whose project cannot be determined (no such argument and an unreadable
-working directory, as on macOS) counts as live, the safe side. An installed per-project unit also keeps duty while its
-daemon is briefly down, so the host never fires in a supervisor restart gap. Both start orders are
+the one the daemon serves: the nearest directory holding `.mtix` at or above the
+daemon's working directory (a `-C` value has already moved the daemon there, so it
+is not read from the arguments), compared with this project after symlinks are
+resolved. A daemon whose working directory cannot be read (as on macOS)
+counts as live, the safe side. An installed per-project unit also keeps duty while its
+daemon is briefly down, so the host never fires in a supervisor restart gap. A unit
+entry that cannot be read (a dangling link, a directory, a file without read
+permission) is skipped and never stops any board; `mtix doctor` reports it as the
+`dispatcher.legacy-unit-scan` row (warn, `--json` data `unreadable_units`). Both start orders are
 safe: a daemon that starts after the dispatcher is seen on the next pass.
 `mtix doctor --json` reports `dispatcher.legacy-service` (warn) with
 `daemon_live`, `daemon_pid` and `unit_installed`; its fix is `mtix daemon uninstall`, run by the

@@ -52,6 +52,7 @@ type appContext struct {
 	syncSvc      *service.SyncService
 	syncOptions  syncServiceOptions // constructor dependencies for focused CLI tests
 	hooksDisp    *service.HooksDispatcher
+	wakeScanner  *service.WakeScanner // nil until this host has a registered identity (MTIX-112.17.37)
 	logger       *slog.Logger
 	jsonOutput   bool
 	staleReason  string         // command-local unverified auto-import freshness, reset on each pre-run

@@ -14,6 +14,9 @@ import (
 )
 
 func registerWakeSettingsDoctor(svc *service.DoctorService) error {
+	if err := registerWakeScannerDoctor(svc); err != nil {
+		return err
+	}
 	if app.configSvc == nil {
 		return nil
 	}
@@ -55,7 +58,7 @@ func wakeSettingsDoctorRow(cs *service.ConfigService) service.DoctorResult {
 		}
 	}
 	sort.Strings(descriptions)
-	return service.DoctorResult{Status: service.DoctorInfo, Detail: strings.Join(descriptions, "; "), Data: map[string]any{"host": host, "agents": agents}, Fix: "No routine tuning is needed. Store the off setting for when the wake scanner ships: mtix config set wake.live off"}
+	return service.DoctorResult{Status: service.DoctorInfo, Detail: strings.Join(descriptions, "; "), Data: map[string]any{"host": host, "agents": agents}, Fix: "No routine tuning is needed. To stop live wakes on this host: mtix config set wake.live off"}
 }
 
 func ignoredWorkspaceSettingsRow(cs *service.ConfigService) service.DoctorResult {

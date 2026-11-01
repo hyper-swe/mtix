@@ -38,7 +38,7 @@ func TestWakeSettingsGuidance_CurrentBuild_StatesScannerAvailability(t *testing.
 		t.Run(path, func(t *testing.T) {
 			body := readAgentInstruction(t, filepath.Join("..", "..", path))
 			require.Contains(t, body, "This build stores and reports")
-			require.Contains(t, body, "when the wake scanner ships")
+			require.Contains(t, body, "The wake scanner is live in this build")
 			require.Contains(t, body, "wake.live")
 			require.Contains(t, body, "wake.max_hop_depth")
 			require.Contains(t, body, "MTIX_WAKE_HOP")

@@ -223,13 +223,15 @@ JSON health report described below; doctor never grants enrollment.
 
 
 This build stores and reports `wake.live` and `wake.max_hop_depth`, and applies `wake.confirm_window` now in `mtix inbox status`.
-Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
-when the wake scanner ships. They do not control live delivery in this build.
+The wake scanner is live in this build: `wake.live` and the hop and back-off guards apply to every scan.
+No live delivery route is built yet, so a scan never wakes an agent live (`MTIX_WAKE_HOP` delivery begins with the first route); read your inbox.
 
-The wake scan core ships in this build, but nothing constructs or runs it yet:
-no delivery route exists before a later release. So in this build no scan runs,
-no registration is marked stale by a scan and no stale registration is expired by
-one, and no agent is woken live.
+The wake scan runs at the end of every mutation command and every dispatcher or daemon tick,
+starts no timer and contacts no hub. It marks a registration stale when its session is dead
+(the addressed events stay in the inbox) and deletes a registration unseen for 24 hours whose
+session is dead. No delivery route is built yet (MTIX-112.40.3, MTIX-112.40.4), so no agent is
+woken live. The `wake.scanner` doctor row reports active or idle, registration
+and stale counts, and the exact `mtix agent unregister <agent-id> --force` fix for a stale row.
 
 Store the host-local off setting with `mtix config set wake.live off`;
 append `--agent worker` for one agent. Limits default unlimited and the guards
@@ -247,7 +249,7 @@ remains separate; settings do not install a route.
 Wake status: `mtix comment --to <agent>` and `mtix inbox status --agent <agent> --json` show whether the addressee can be woken
 (`queued`, `nudged`, `unconfirmed`, `confirmed`, `held`, `undeliverable`, `off`, `no-live-session`, `no-dispatcher`, `unknown`) with a runnable
 fix; the message is always in the inbox. `wake.confirm_window` (default 30 seconds) sets when a nudge reads as `unconfirmed`. The doctor
-`wake.listener.*` rows give exact fixes. The ledger-backed states are seeded-only until the wake scanner ships; approving a held wake does not yet send
+`wake.listener.*` rows give exact fixes. The ledger-backed states are seeded-only until a delivery route is built; approving a held wake does not yet send
 a fresh nudge (MTIX-112.40.10). See the multi-agent skill.
 
 

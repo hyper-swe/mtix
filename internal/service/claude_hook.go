@@ -251,15 +251,15 @@ func (h *ClaudeHook) keepLease(ctx context.Context, cancel context.CancelFunc, h
 func (h *ClaudeHook) renewOnce(ctx context.Context, r *leaseRenewer, holder string, lastOK *time.Time) bool {
 	lease, err := h.d.Leases.Renew(ctx, h.d.Key, holder, h.d.LeaseTTL)
 	switch {
-	case ctx.Err() != nil:
-		return false
-	case err == nil && lease.Holder == holder:
-		*lastOK = h.d.Now()
-		return true
-	case err == nil:
+	case err == nil && lease.Holder != holder:
 		_, aerr := h.d.Leases.Abandon(context.WithoutCancel(ctx), h.d.Key, lease.Holder, h.d.LeaseTTL)
 		r.fail(errors.Join(fmt.Errorf("renew waiter lease: lease lost, renew returned a different holder: %w", model.ErrAlreadyClaimed), aerr), true)
 		return false
+	case ctx.Err() != nil:
+		return false
+	case err == nil:
+		*lastOK = h.d.Now()
+		return true
 	case errors.Is(err, model.ErrAlreadyClaimed):
 		r.fail(fmt.Errorf("renew waiter lease: lease lost: %w", err), true)
 		return false

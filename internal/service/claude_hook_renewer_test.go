@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/model"
+
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -226,6 +228,80 @@ func TestClaudeHook_DefaultRenewCadence_IsAThirdOfTheLeaseTTL(t *testing.T) {
 	NewClaudeHook(r.deps).Run(t.Context(), ClaudeHookStop)
 
 	got := r.leases.renewCount()
-	assert.GreaterOrEqual(t, got, 7, "TTL/3 renews about ten times in 1.05 s, not about three")
-	assert.LessOrEqual(t, got, 11)
+	assert.GreaterOrEqual(t, got, 9, "TTL/3 renews about ten times in 1.05 s; TTL/2 would give about seven")
+	assert.LessOrEqual(t, got, 12, "and TTL/4 would give about fourteen")
+}
+
+func TestClaudeHook_SuccessfulRenewal_RefreshesTheRetryWindow(t *testing.T) {
+	r := newHookRig(t)
+	r.deps.RenewEvery = 5 * time.Millisecond
+	r.deps.LeaseTTL = time.Minute
+	var mu sync.Mutex
+	cur := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	t0 := cur
+	r.deps.Now = func() time.Time { mu.Lock(); defer mu.Unlock(); return cur }
+	set := func(d time.Duration) { mu.Lock(); cur = t0.Add(d); mu.Unlock() }
+	calls := 0
+	r.leases.renewFn = func(_ context.Context, holder string) (WakeLease, error) {
+		calls++
+		switch calls {
+		case 1:
+			set(50 * time.Second) // a success late in the lease: the window restarts here
+			return WakeLease{Holder: holder}, nil
+		case 2:
+			set(80 * time.Second) // 80 s after the start but only 30 s after the last success
+			return WakeLease{}, errors.New("database is busy")
+		}
+		set(85 * time.Second)
+		return WakeLease{Holder: holder}, nil
+	}
+	var waitErr error
+	r.deps.Wait = func(ctx context.Context, _ func(int64) bool) ([]sqlite.InboxEvent, error) {
+		require.Eventually(t, func() bool { return r.leases.renewCount() >= 5 }, 5*time.Second, time.Millisecond)
+		waitErr = ctx.Err()
+		return nil, nil
+	}
+
+	NewClaudeHook(r.deps).Run(t.Context(), ClaudeHookStop)
+
+	assert.NoError(t, waitErr, "the busy error is retried because the window runs from the last success")
+	assert.Empty(t, hookFailureText(t, r))
+}
+
+func TestClaudeHook_CancelDuringARenewThatReCreatesTheLease_AbandonsTheFreshToken(t *testing.T) {
+	r := newHookRig(t)
+	r.deps.RenewEvery = 5 * time.Millisecond
+	entered := make(chan struct{})
+	var once sync.Once
+	r.leases.renewFn = func(ctx context.Context, _ string) (WakeLease, error) {
+		once.Do(func() { close(entered) })
+		<-ctx.Done() // the run ends while the Renew is in flight; the Renew still commits
+		return WakeLease{Holder: "fresh-token"}, nil
+	}
+	r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) { <-entered; return nil, nil }
+
+	NewClaudeHook(r.deps).Run(t.Context(), ClaudeHookStop)
+
+	r.leases.mu.Lock()
+	defer r.leases.mu.Unlock()
+	assert.Equal(t, []string{"fresh-token"}, r.leases.abandons, "the re-created lease is freed, not orphaned")
+}
+
+func TestClaudeHook_LeaseLostReportedAfterCancel_IsNotRecordedAsAFailure(t *testing.T) {
+	r := newHookRig(t)
+	r.deps.RenewEvery = 5 * time.Millisecond
+	entered := make(chan struct{})
+	var once sync.Once
+	r.leases.renewFn = func(ctx context.Context, _ string) (WakeLease, error) {
+		once.Do(func() { close(entered) })
+		<-ctx.Done()
+		return WakeLease{}, model.ErrAlreadyClaimed // the run is over: this is not a lost lease
+	}
+	r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) { <-entered; return nil, nil }
+
+	res := NewClaudeHook(r.deps).Run(t.Context(), ClaudeHookStop)
+
+	assert.Equal(t, ClaudeHookEmpty, res.Outcome)
+	assert.Empty(t, hookFailureText(t, r), "a Renew that finishes after the run ended is ignored")
+	assert.Equal(t, 1, r.leases.released, "the run still frees its own lease")
 }

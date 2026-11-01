@@ -397,22 +397,24 @@ and recorded; redirects to an origin that is not consented are not followed.
 ## Wake process context and host controls
 
 This build stores and reports `wake.live` and `wake.max_hop_depth`, and applies `wake.confirm_window` now in `mtix inbox status`.
-Live wake control, the agent hop limit and `MTIX_WAKE_HOP` delivery take effect
-when the wake scanner ships. They do not control live delivery in this build.
+The wake scanner is live in this build: `wake.live` and the hop and back-off guards apply to every scan.
+No live delivery route is built yet, so a scan never wakes an agent live (`MTIX_WAKE_HOP` delivery begins with the first route); read your inbox.
 
-The wake scan core ships in this build, but nothing constructs or runs it yet:
-no delivery route exists before a later release. So in this build no scan runs,
-no registration is marked stale by a scan and no stale registration is expired by
-one, and no agent is woken live.
+The wake scan runs at the end of every mutation command and every dispatcher or daemon tick,
+starts no timer and contacts no hub. It marks a registration stale when its session is dead
+(the addressed events stay in the inbox) and deletes a registration unseen for 24 hours whose
+session is dead. No delivery route is built yet (MTIX-112.40.3, MTIX-112.40.4), so no agent is
+woken live. The `wake.scanner` doctor row reports active or idle, registration
+and stale counts, and the exact `mtix agent unregister <agent-id> --force` fix for a stale row.
 
-Set `mtix config set wake.live off` for the future scanner, or append
+Set `mtix config set wake.live off` to stop live wakes on this host, or append
 `--agent worker` for one agent. `wake.settings` in `mtix doctor --json` shows
 effective policy and source; the admin skill lists every key and default.
 Wake and envelope budgets default unlimited. Hop depth defaults to 32 and the
 unacked threshold to 5; the guards are always on. Handle messages, reply, then
 ack after handling. You should not need to tune these settings.
 
-When the scanner ships, a wake exec child will carry `MTIX_WAKE_HOP`
+When a delivery route exists, a wake exec child will carry `MTIX_WAKE_HOP`
 (maximum covered-event hop) and
 `MTIX_WAKE_ATTEMPT` (audit only). Addressed replies increment the inherited
 hop; absent or malformed context starts at zero, with a warning for malformed
@@ -473,7 +475,7 @@ message is lost.
 `unconfirmed` is derived at read time from `wake.confirm_window` (default 30 seconds; set it with
 `mtix config set wake.confirm_window 60`, whole seconds 1 to 86400; it is an ordinary setting and needs no terminal). It is never written as an inbox event and no timer runs.
 In this build the states `nudged`, `unconfirmed`, `confirmed`, `held` and `undeliverable` come from wake ledger
-rows, and nothing writes ledger rows until the wake scanner ships, so they are seeded-only today. Approving a held
+rows, and nothing writes ledger rows until a delivery route is built, so they are seeded-only today. Approving a held
 wake does not yet send a fresh nudge (follow-up MTIX-112.40.10); read the inbox yourself.
 
 `mtix doctor --json` reports `wake.listener.routes`, `wake.listener.dispatcher` and `wake.listener.unconfirmed-rate`

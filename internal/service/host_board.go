@@ -81,6 +81,10 @@ func NewHostBoard(o HostBoardOptions) (*HostBoard, error) {
 	return b, nil
 }
 
+// WakeScanner returns the board's scanner so a CLI or daemon trigger can run the same
+// gated scan the host dispatcher runs (ADR-007 section 2.7, FR-20).
+func (b *HostBoard) WakeScanner() *WakeScanner { return b.scanner }
+
 func (b *HostBoard) identity(ctx context.Context) (oplocal.ListedBoard, error) {
 	var row oplocal.ListedBoard
 	row.Path = b.opts.Path

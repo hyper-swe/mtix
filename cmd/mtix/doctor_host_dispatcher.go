@@ -4,10 +4,10 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
@@ -89,7 +89,7 @@ func registerHostEnrollmentDoctor(svc *service.DoctorService, registry oplocal.D
 		return registerErr
 	}
 	if enrolled {
-		return nil
+		return registerLegacyDoctorForHost(svc)
 	}
 	return registerUnenrolledHostDoctor(svc, root)
 }
@@ -107,14 +107,16 @@ func registerUnenrolledHostDoctor(svc *service.DoctorService, root string) error
 			return err
 		}
 	}
-	if _, err := os.Lstat(filepath.Join(app.mtixDir, "sync.daemon.pid")); err == nil {
-		return svc.Register(service.DoctorCheck{ID: "dispatcher.legacy-service", Run: func(context.Context) service.DoctorResult {
-			return service.DoctorResult{Status: service.DoctorInfo, Detail: "per-project daemon ownership is retained until explicit setup migration"}
-		}})
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("inspect legacy daemon ownership: %w", err)
+	return registerLegacyDoctorForHost(svc)
+}
+
+// registerLegacyDoctorForHost wires dispatcher.legacy-service for enrolled and unenrolled boards.
+func registerLegacyDoctorForHost(svc *service.DoctorService) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return fmt.Errorf("resolve home for legacy service check: %w", err)
 	}
-	return nil
+	return registerLegacyServiceDoctor(svc, app.mtixDir, runtime.GOOS, home)
 }
 
 type hostServiceRecord struct {

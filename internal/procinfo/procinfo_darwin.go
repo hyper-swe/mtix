@@ -65,6 +65,9 @@ func Info(pid int) (Proc, error) {
 	// identity then stays unknown (fail safe).
 	if raw, rerr := unix.SysctlRaw("kern.procargs2", pid); rerr == nil {
 		p.Exe, p.Argv0, _ = ParseProcArgs2(raw)
+		if args, ok := ParseProcArgs2Args(raw); ok {
+			p.Args = args
+		}
 	}
 	return p, nil
 }

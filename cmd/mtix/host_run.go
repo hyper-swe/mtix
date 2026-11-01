@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -128,7 +129,7 @@ func openHostBoard(_ context.Context, row oplocal.ListedBoard, st *oplocal.State
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
-	board, err := service.NewHostBoard(service.HostBoardOptions{Store: store, State: st, Path: row.Path, Host: host, PID: int64(os.Getpid()), Clock: utcNow, Logger: slog.Default(), Close: store.Close, Contact: service.NewContactScheduler(utcNow, source.snapshot), Pull: func(ctx context.Context, dsn string) error { return pullHostCheckout(ctx, exe, row.Path, dsn) }})
+	board, err := service.NewHostBoard(service.HostBoardOptions{Store: store, State: st, Path: row.Path, Host: host, PID: int64(os.Getpid()), Clock: utcNow, Logger: slog.Default(), Close: store.Close, Contact: service.NewContactScheduler(utcNow, source.snapshot), Pull: func(ctx context.Context, dsn string) error { return pullHostCheckout(ctx, exe, row.Path, dsn) }, LegacyService: legacyServiceProbe(runtime.GOOS, os.UserHomeDir)})
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}

@@ -138,6 +138,32 @@ scanning continues. Keep the lock files intact. One protected operator-local
 lock keeps a single host process per OS user. Enrollment changes retain source
 and time operator-locally and publish only a neutral board activity line.
 
+A 0.5.x per-project service (the `mtix daemon` unit or a running per-project
+daemon) keeps pull and hook duty for its board until that board is migrated.
+While one is live the host dispatcher runs only the wake scanner for the board:
+it makes no hub pull and runs no hook pass, so nothing fires twice, and it
+never writes the daemon's PID file. A PID file whose pid now
+belongs to another program, including another mtix command (such as
+`mtix daemon status`) or another project's daemon, is stale and does not count:
+only this project's `mtix daemon` (or `mtix sync daemon`) counts. The project is
+the one the daemon serves: the nearest directory holding `.mtix` at or above the
+daemon's working directory (a `-C` value has already moved the daemon there, so it
+is not read from the arguments), compared with this project after symlinks are
+resolved. A daemon whose working directory cannot be read (as on macOS)
+counts as live, the safe side. An installed per-project unit also keeps duty while its
+daemon is briefly down, so the host never fires in a supervisor restart gap. A unit
+entry that cannot be read (a dangling link, a directory, a file without read
+permission) is skipped and never stops any board; `mtix doctor` reports it as the
+`dispatcher.legacy-unit-scan` row (warn, `--json` data `unreadable_units`; its fix is an `ls -l`
+of the listed paths, and repairing or removing an entry is the operator's decision). Both start orders are
+safe: a daemon that starts after the dispatcher is seen on the next pass.
+`mtix doctor --json` reports `dispatcher.legacy-service` (warn) with
+`daemon_live`, `daemon_pid` and `unit_installed`; its fix is `mtix daemon uninstall`, run by the
+operator inside that project; it unregisters the per-project service and removes
+its unit. Run it only on the operator's instruction, because this build has no
+migration command that enrolls the board afterwards (it ships in a later build).
+Do not stop, uninstall or migrate the service yourself.
+
 `mtix doctor --json` exposes `dispatcher.host`, `board.enrolled` and, for a hub
 worktree, `board.worktree-unenrolled`, including enrollment history. These checks
 never enroll a checkout, including with `--fix`; setup remedies await setup

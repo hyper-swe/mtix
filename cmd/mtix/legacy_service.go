@@ -10,47 +10,32 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path"
 	"path/filepath"
-	"strings"
 
-	"github.com/hyper-swe/mtix/internal/procinfo"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
-// legacyServiceFix is the one command that migrates a legacy service (run inside the project).
-const legacyServiceFix = "mtix setup"
+// legacyServiceFix is doctor's fix: the existing command, run inside the project, that
+// unregisters the per-project service and removes its unit. It names only commands this
+// build ships; the migration command that enrolls the board ships in a later build.
+const legacyServiceFix = "mtix daemon uninstall"
 
-// pidIsMtixProcess reports whether pid names an mtix executable. A pid file whose pid was
-// reused by an unrelated process is not a live legacy service. Identity that cannot be read
-// fails safe as "is mtix": skipping duty is recoverable, a double pull or hook firing is not.
-func pidIsMtixProcess(pid int) bool {
-	proc, err := procinfo.Info(pid)
-	if errors.Is(err, procinfo.ErrNoProcess) {
-		return false
-	}
-	if err != nil {
-		return true
-	}
-	known := false
-	for _, name := range []string{proc.Name, proc.Argv0, proc.Exe} {
-		if name == "" {
-			continue
+// legacyServiceProbe is the host dispatcher's read-only duty probe: a 0.5.x per-project
+// service owns pull and hook duty while its daemon is live OR its unit is installed, so the
+// crash-restart gap of a supervised unit never lets the host fire next to it. It never writes
+// the PID file and never takes the daemon's lifetime lock (D11, FR-20.4).
+func legacyServiceProbe(goos string, homeDir func() (string, error)) func(context.Context, string) (bool, error) {
+	return func(_ context.Context, mtixDir string) (bool, error) {
+		live, _, err := daemonPIDFileLive(mtixDir)
+		if err != nil || live {
+			return live, err
 		}
-		known = true
-		base := strings.ToLower(path.Base(strings.ReplaceAll(name, `\`, "/")))
-		if strings.HasPrefix(base, "mtix") {
-			return true
+		home, err := homeDir()
+		if err != nil {
+			return false, fmt.Errorf("resolve home for legacy unit check: %w", err)
 		}
+		return legacyUnitInstalled(goos, filepath.Dir(mtixDir), home)
 	}
-	return !known
-}
-
-// legacyServiceLive is the host dispatcher's probe: a read-only look at the PID file that
-// never writes it and never takes the daemon's lifetime lock (D11, FR-20.4).
-func legacyServiceLive(_ context.Context, mtixDir string) (bool, error) {
-	live, _, err := daemonPIDFileLive(mtixDir)
-	return live, err
 }
 
 // legacyUnitInstalled reports whether the per-project unit for projectRoot exists on disk.

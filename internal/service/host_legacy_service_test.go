@@ -17,6 +17,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/sync/pushlock"
 )
 
 type legacyProbe struct {
@@ -166,6 +167,83 @@ func TestMigrateLegacyService_RefusedMigration_LeavesBoardUnenrolled(t *testing.
 			}
 			rows, listErr := enroll.List(t.Context())
 			require.NoError(t, listErr)
+			require.Empty(t, rows)
+		})
+	}
+}
+
+// migrationRig records, in one ordered slice, every step a migration takes.
+type migrationRig struct {
+	calls       []string
+	uninstalled bool
+}
+
+func (f *hostFixture) migrationEnrollment(rig *migrationRig, observe func() (oplocal.HubIdentity, error)) *service.HostEnrollment {
+	f.t.Helper()
+	return service.NewHostEnrollment(service.HostEnrollmentOptions{State: f.state, Clock: func() time.Time { return f.now },
+		OpenBoard: func(context.Context, string) (*service.HostBoard, error) { return f.board(), nil },
+		ObserveHub: func(context.Context, string) (oplocal.HubIdentity, error) {
+			rig.calls = append(rig.calls, "observe")
+			return observe()
+		},
+		UninstallLegacy: func(context.Context, string) error {
+			rig.calls = append(rig.calls, "uninstall")
+			rig.uninstalled = true
+			return nil
+		},
+		LegacyLive: func(context.Context, string) (bool, error) {
+			rig.calls = append(rig.calls, "probe")
+			return !rig.uninstalled, nil // a daemon runs until its unit is uninstalled
+		}})
+}
+
+func observedHub() (oplocal.HubIdentity, error) {
+	return oplocal.HubIdentity{Kind: "postgres", ProjectPrefix: "TEST", FirstEventHash: "observed"}, nil
+}
+
+func TestMigrateLegacyService_StepOrder_ObserveUninstallProbeThenEnrol(t *testing.T) {
+	f := newHostFixture(t)
+	require.NoError(t, os.WriteFile(filepath.Join(f.root, ".mtix", "secrets"), []byte("checkout-secret"), 0600))
+	rig := &migrationRig{}
+	enroll := f.migrationEnrollment(rig, observedHub)
+	require.NoError(t, enroll.MigrateLegacyService(t.Context(), service.EnrollmentRequest{Path: f.root, Mode: "yes", Source: "test"}))
+	require.Equal(t, []string{"observe", "uninstall", "probe"}, rig.calls,
+		"preconditions first, then the uninstall, then the liveness check that must see the uninstalled state")
+	rows, err := enroll.List(t.Context())
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+}
+
+func TestMigrateLegacyService_PreconditionFails_LegacyServiceUntouched(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		secret os.FileMode
+		hubErr error
+		hold   bool
+	}{
+		{"hub-unreachable", 0600, errors.New("hub unreachable"), false},
+		{"secret-not-0600", 0644, nil, false},
+		{"dispatch-lock-held", 0600, nil, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newHostFixture(t)
+			secrets := filepath.Join(f.root, ".mtix", "secrets")
+			require.NoError(t, os.WriteFile(secrets, []byte("checkout-secret"), tc.secret))
+			require.NoError(t, os.Chmod(secrets, tc.secret))
+			if tc.hold {
+				lock, err := pushlock.AcquireNamed(filepath.Join(f.root, ".mtix"), "dispatch.lock")
+				require.NoError(t, err)
+				t.Cleanup(func() { require.NoError(t, lock.Release()) })
+			}
+			rig := &migrationRig{}
+			enroll := f.migrationEnrollment(rig, func() (oplocal.HubIdentity, error) { return oplocal.HubIdentity{}, tc.hubErr })
+			if tc.hubErr == nil {
+				enroll = f.migrationEnrollment(rig, observedHub)
+			}
+			require.Error(t, enroll.MigrateLegacyService(t.Context(), service.EnrollmentRequest{Path: f.root, Mode: "yes", Source: "test"}))
+			require.NotContains(t, rig.calls, "uninstall", "no failed precondition may remove the service that owns the board")
+			rows, err := enroll.List(t.Context())
+			require.NoError(t, err)
 			require.Empty(t, rows)
 		})
 	}

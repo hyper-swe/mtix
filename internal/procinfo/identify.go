@@ -4,6 +4,7 @@
 package procinfo
 
 import (
+	"encoding/binary"
 	"path"
 	"strings"
 )
@@ -83,4 +84,40 @@ func indexNUL(b []byte) int {
 		}
 	}
 	return -1
+}
+
+// maxProcArgs bounds the argument count read from the kernel buffer before it is converted to int.
+const maxProcArgs = 1 << 20
+
+// ParseProcArgs2Args extracts the full argument vector from a KERN_PROCARGS2
+// buffer (see ParseProcArgs2): the int32 count says how many NUL-separated
+// arguments follow the executable path. ok is false when the buffer is
+// malformed or holds fewer arguments than it declares.
+func ParseProcArgs2Args(raw []byte) (args []string, ok bool) {
+	if len(raw) <= 4 {
+		return nil, false
+	}
+	count := binary.LittleEndian.Uint32(raw[:4]) // the kernel writes native order; every darwin target is little-endian
+	if count == 0 || count > maxProcArgs {
+		return nil, false
+	}
+	argc := int(count)
+	rest := raw[4:]
+	end := indexNUL(rest)
+	if end < 0 {
+		return nil, false
+	}
+	rest = rest[end:]
+	for len(rest) > 0 && rest[0] == 0 {
+		rest = rest[1:]
+	}
+	for i := 0; i < argc; i++ {
+		end = indexNUL(rest)
+		if end < 0 {
+			return nil, false
+		}
+		args = append(args, string(rest[:end]))
+		rest = rest[end+1:]
+	}
+	return args, true
 }

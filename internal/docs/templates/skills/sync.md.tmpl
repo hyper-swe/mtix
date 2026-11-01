@@ -143,13 +143,17 @@ daemon) keeps pull and hook duty for its board until that board is migrated.
 While one is live the host dispatcher runs only the wake scanner for the board:
 it makes no hub pull and runs no hook pass, so nothing fires twice, and it
 never writes the daemon's PID file. A PID file whose pid now
-belongs to another program is stale and does not count. Both start orders are
+belongs to another program, including another mtix command or another project's
+daemon, is stale and does not count: only this project's `mtix daemon` (or
+`mtix sync daemon`) counts. An installed per-project unit also keeps duty while its
+daemon is briefly down, so the host never fires in a supervisor restart gap. Both start orders are
 safe: a daemon that starts after the dispatcher is seen on the next pass.
 `mtix doctor --json` reports `dispatcher.legacy-service` (warn) with
-`daemon_live`, `daemon_pid` and `unit_installed`; its fix reads mtix setup,
-run by the operator in that project once the setup command ships. This build has
-no setup command, so leave the service running and do not stop, uninstall or migrate
-it yourself.
+`daemon_live`, `daemon_pid` and `unit_installed`; its fix is `mtix daemon uninstall`, run by the
+operator inside that project; it unregisters the per-project service and removes
+its unit. Run it only on the operator's instruction, because this build has no
+migration command that enrolls the board afterwards (it ships in a later build).
+Do not stop, uninstall or migrate the service yourself.
 
 `mtix doctor --json` exposes `dispatcher.host`, `board.enrolled` and, for a hub
 worktree, `board.worktree-unenrolled`, including enrollment history. These checks

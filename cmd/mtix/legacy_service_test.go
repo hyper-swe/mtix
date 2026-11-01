@@ -33,7 +33,8 @@ func TestHostDispatcher_StalePIDReused_NotTreatedLive(t *testing.T) {
 	live, _, err := daemonPIDFileLive(dir)
 	require.NoError(t, err)
 	require.False(t, live, "a reused pid belonging to a non-mtix process is not a live legacy service")
-	liveProbe, err := legacyServiceLive(t.Context(), dir)
+	probe := legacyServiceProbe(runtime.GOOS, func() (string, error) { return t.TempDir(), nil })
+	liveProbe, err := probe(t.Context(), dir)
 	require.NoError(t, err)
 	require.False(t, liveProbe)
 	body, readErr := os.ReadFile(filepath.Join(dir, daemonPIDFilename))
@@ -41,25 +42,27 @@ func TestHostDispatcher_StalePIDReused_NotTreatedLive(t *testing.T) {
 	require.NotEmpty(t, body, "the probe never deletes the marker")
 }
 
-func TestLegacyServiceLive_RealOwnerStartedSecond_DetectedThenReleased(t *testing.T) {
-	dir := t.TempDir()
-	live, err := legacyServiceLive(t.Context(), dir)
+func TestLegacyServiceProbe_DaemonStartedSecond_DetectedThenReleased(t *testing.T) {
+	root := t.TempDir()
+	mtixDir := filepath.Join(root, ".mtix")
+	require.NoError(t, os.MkdirAll(mtixDir, 0o700))
+	probe := legacyServiceProbe(runtime.GOOS, func() (string, error) { return t.TempDir(), nil })
+	live, err := probe(t.Context(), mtixDir)
 	require.NoError(t, err)
 	require.False(t, live, "no daemon yet")
-	owner, err := acquireDaemonOwnership(dir)
-	require.NoError(t, err)
-	live, err = legacyServiceLive(t.Context(), dir)
+	cmd := exec.Command(os.Args[0], "-test.run=^TestLegacyDaemonHelperProcess$", "--", "-C", root, "daemon") // #nosec G204 -- the test binary re-executes itself
+	cmd.Env = append(os.Environ(), "MTIX_LEGACY_HELPER=1")
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	require.NoError(t, writeDaemonPID(mtixDir, cmd.Process.Pid))
+	live, err = probe(t.Context(), mtixDir)
 	require.NoError(t, err)
 	require.True(t, live, "a daemon that starts second is seen on the next pass")
-	require.NoError(t, owner.release())
-	live, err = legacyServiceLive(t.Context(), dir)
+	require.NoError(t, cmd.Process.Kill())
+	_ = cmd.Wait()
+	live, err = probe(t.Context(), mtixDir)
 	require.NoError(t, err)
-	require.False(t, live, "a released daemon no longer owns duty")
-}
-
-func TestPidIsMtixProcess_Table(t *testing.T) {
-	require.True(t, pidIsMtixProcess(os.Getpid()), "the test binary is an mtix executable")
-	require.False(t, pidIsMtixProcess(999999999), "an absent pid is not a daemon")
+	require.False(t, live, "an exited daemon no longer owns duty")
 }
 
 func TestLegacyUnitInstalled_UnitFilePresence(t *testing.T) {
@@ -118,8 +121,10 @@ func TestHostDispatcher_LegacyService_DoctorFlagsWithSetupFix(t *testing.T) {
 			if goos != "darwin" {
 				goos = "linux"
 			}
+			daemonPID := 0
 			if tc.daemon {
-				require.NoError(t, writeDaemonPID(app.mtixDir, os.Getpid()))
+				daemonPID = startLegacyDaemonHelper(t, filepath.Dir(app.mtixDir))
+				require.NoError(t, writeDaemonPID(app.mtixDir, daemonPID))
 			}
 			if tc.unit {
 				spec, err := buildServiceSpec(goos, "mtix", filepath.Dir(app.mtixDir), home, daemonDispatchDefaultIntervalSec)
@@ -143,8 +148,13 @@ func TestHostDispatcher_LegacyService_DoctorFlagsWithSetupFix(t *testing.T) {
 			}
 			require.NotNil(t, found)
 			require.Equal(t, service.DoctorWarn, found.Status)
-			require.Equal(t, "mtix setup", found.Fix)
+			require.Equal(t, legacyServiceFix, found.Fix)
+			require.Equal(t, "mtix daemon uninstall", found.Fix, "the fix is a command this build ships")
+			require.NotContains(t, found.Fix, "mtix setup")
 			require.Equal(t, tc.daemon, found.Data["daemon_live"])
+			if tc.daemon {
+				require.Equal(t, daemonPID, found.Data["daemon_pid"], "doctor reports the owning pid")
+			}
 			require.Equal(t, tc.unit, found.Data["unit_installed"])
 		})
 	}
@@ -155,7 +165,7 @@ func TestHostDispatcher_LegacyService_DoctorWiredForEnrolledAndUnenrolledBoards(
 		t.Run(map[bool]string{false: "unenrolled", true: "enrolled"}[enrolled], func(t *testing.T) {
 			initRegistrationApp(t)
 			require.NoError(t, runAgentRegister("legacy-worker", sessionOptions{}))
-			require.NoError(t, writeDaemonPID(app.mtixDir, os.Getpid()))
+			require.NoError(t, writeDaemonPID(app.mtixDir, startLegacyDaemonHelper(t, filepath.Dir(app.mtixDir))))
 			state, err := operatorState()
 			require.NoError(t, err)
 			if enrolled {
@@ -179,7 +189,90 @@ func TestHostDispatcher_LegacyService_DoctorWiredForEnrolledAndUnenrolledBoards(
 			}
 			require.NotNil(t, found)
 			require.Equal(t, service.DoctorWarn, found.Status)
-			require.Equal(t, "mtix setup", found.Fix)
+			require.NotContains(t, found.Fix, "mtix setup")
 		})
 	}
+}
+
+func TestLegacyServiceProbe_InstalledUnitOwnsDutyWhileDaemonDown(t *testing.T) {
+	for _, goos := range []string{"darwin", "linux"} {
+		t.Run(goos, func(t *testing.T) {
+			home, root := t.TempDir(), t.TempDir()
+			mtixDir := filepath.Join(root, ".mtix")
+			require.NoError(t, os.MkdirAll(mtixDir, 0o700))
+			probe := legacyServiceProbe(goos, func() (string, error) { return home, nil })
+			live, err := probe(t.Context(), mtixDir)
+			require.NoError(t, err)
+			require.False(t, live, "no daemon and no unit: the host owns duty")
+			spec, err := buildServiceSpec(goos, "mtix", root, home, daemonDispatchDefaultIntervalSec)
+			require.NoError(t, err)
+			require.NoError(t, os.MkdirAll(filepath.Dir(spec.Path), 0o700))
+			require.NoError(t, os.WriteFile(spec.Path, []byte("unit"), 0o600))
+			require.NoError(t, writeDaemonPID(mtixDir, 999999999)) // crash-restart gap: marker names a dead process
+			live, err = probe(t.Context(), mtixDir)
+			require.NoError(t, err)
+			require.True(t, live, "an installed unit keeps pull and hook duty while its daemon is down")
+		})
+	}
+}
+
+func TestLegacyServiceProbe_HomeUnresolvable_FailsClosed(t *testing.T) {
+	root := t.TempDir()
+	probe := legacyServiceProbe("linux", func() (string, error) { return "", errors.New("no home") })
+	_, err := probe(t.Context(), filepath.Join(root, ".mtix"))
+	require.Error(t, err, "the unit check cannot be skipped silently")
+}
+
+func TestLegacyServiceProbe_LiveDaemon_NeedsNoUnit(t *testing.T) {
+	root := t.TempDir()
+	mtixDir := filepath.Join(root, ".mtix")
+	require.NoError(t, os.MkdirAll(mtixDir, 0o700))
+	require.NoError(t, writeDaemonPID(mtixDir, startLegacyDaemonHelper(t, root)))
+	probe := legacyServiceProbe("linux", func() (string, error) { return "", errors.New("must not be asked") })
+	live, err := probe(t.Context(), mtixDir)
+	require.NoError(t, err)
+	require.True(t, live)
+}
+
+func TestDaemonPIDFile_OtherMtixProcessOnReusedPID_NotLive(t *testing.T) {
+	root := t.TempDir()
+	mtixDir := filepath.Join(root, ".mtix")
+	require.NoError(t, os.MkdirAll(mtixDir, 0o700))
+	for name, args := range map[string][]string{
+		"another-project-daemon": {"-C", t.TempDir(), "daemon"},
+		"mtix-mcp-server":        {"-C", root, "mcp"},
+		"mtix-without-daemon":    {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, writeDaemonPID(mtixDir, startLegacyDaemonHelper(t, "", args...)))
+			live, _, err := daemonPIDFileLive(mtixDir)
+			require.NoError(t, err)
+			require.False(t, live, "a reused pid held by another mtix process is stale")
+		})
+	}
+}
+
+// startLegacyDaemonHelper starts a real process that looks like a 0.5.x daemon in the process
+// table: this test binary (named mtix.test) re-executed with the argv mtix -C root daemon.
+// An empty root with explicit args starts the same binary with exactly those arguments.
+func startLegacyDaemonHelper(t *testing.T, root string, args ...string) int {
+	t.Helper()
+	argv := []string{"-test.run=^TestLegacyDaemonHelperProcess$", "--"}
+	if root != "" {
+		argv = append(argv, "-C", root, "daemon")
+	}
+	argv = append(argv, args...)
+	cmd := exec.Command(os.Args[0], argv...) // #nosec G204 -- the test binary re-executes itself
+	cmd.Env = append(os.Environ(), "MTIX_LEGACY_HELPER=1")
+	require.NoError(t, cmd.Start())
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	return cmd.Process.Pid
+}
+
+// TestLegacyDaemonHelperProcess is the body of the helper process; it does nothing in a normal run.
+func TestLegacyDaemonHelperProcess(t *testing.T) {
+	if os.Getenv("MTIX_LEGACY_HELPER") != "1" {
+		return
+	}
+	time.Sleep(time.Minute)
 }

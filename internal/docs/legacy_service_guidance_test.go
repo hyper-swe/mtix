@@ -15,17 +15,19 @@ func TestLegacyServiceGuidance_CoexistenceDoctorAndMigration(t *testing.T) {
 	for _, path := range full {
 		t.Run(path, func(t *testing.T) {
 			body := readAgentInstruction(t, filepath.Join("..", "..", path))
-			for _, phrase := range []string{"dispatcher.legacy-service", "daemon_live", "unit_installed", "keeps pull and hook duty", "only the wake scanner", "never writes the daemon's PID file", "belongs to another program", "mtix setup", "do not stop, uninstall or migrate"} {
+			for _, phrase := range []string{"dispatcher.legacy-service", "daemon_live", "unit_installed", "keeps pull and hook duty", "only the wake scanner", "never writes the daemon's PID file", "belongs to another program", "mtix daemon uninstall", "Do not stop, uninstall or migrate"} {
 				require.Contains(t, body, phrase)
 			}
+			require.NotContains(t, body, "mtix setup", "the setup command ships in a later build")
 		})
 	}
 	for _, path := range []string{"internal/docs/templates/claude.md.tmpl", "internal/docs/templates/agents.md.tmpl"} {
 		t.Run(path, func(t *testing.T) {
 			body := readAgentInstruction(t, filepath.Join("..", "..", path))
-			for _, phrase := range []string{"dispatcher.legacy-service", "keeps pull and hook duty", "do not stop, uninstall or migrate"} {
+			for _, phrase := range []string{"dispatcher.legacy-service", "keeps pull and hook duty", "mtix daemon uninstall", "do not stop, uninstall or migrate"} {
 				require.Contains(t, body, phrase)
 			}
+			require.NotContains(t, body, "mtix setup")
 		})
 	}
 }

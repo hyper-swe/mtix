@@ -68,7 +68,7 @@ func (s *HostEnrollment) Enroll(ctx context.Context, r EnrollmentRequest) error 
 	return s.change(ctx, r, true)
 }
 
-// MigrateLegacyService replaces a board's 0.5.x per-project service with enrolment (ADR-007 D11, FR-20.4).
+// MigrateLegacyService replaces a board's 0.5.x per-project service with enrollment (ADR-007 D11, FR-20.4).
 func (s *HostEnrollment) MigrateLegacyService(ctx context.Context, r EnrollmentRequest) error {
 	r.MigrateLegacy = true
 	return s.Enroll(ctx, r)
@@ -109,26 +109,50 @@ func (s *HostEnrollment) change(ctx context.Context, r EnrollmentRequest, enroll
 		return err
 	}
 	defer func() { retErr = errors.Join(retErr, lock.Release()) }()
-	if err := s.prepareChange(ctx, canonical, r, enroll); err != nil {
-		return err
-	}
-	return s.completeChange(ctx, b, row, r, enroll)
+	return s.apply(ctx, canonical, b, row, r, enroll)
 }
 
-// prepareChange runs the legacy-service migration step when an enrolment asks for it (D11).
-func (s *HostEnrollment) prepareChange(ctx context.Context, root string, r EnrollmentRequest, enroll bool) error {
-	if !enroll || !r.MigrateLegacy {
-		return nil
+// enrollmentPlan is what the preflight learned before any state is touched.
+type enrollmentPlan struct {
+	enroll bool
+	hub    oplocal.HubIdentity
+}
+
+// apply runs every fallible precondition (hub observation, checkout secret, migration hooks)
+// before the legacy service is removed, so a refusal never leaves the board without an owner
+// of pull and hook duty (ADR-007 D11). The dispatch lock is already held by the caller.
+func (s *HostEnrollment) apply(ctx context.Context, root string, b *HostBoard, row oplocal.ListedBoard, r EnrollmentRequest, enroll bool) error {
+	plan := enrollmentPlan{enroll: enroll}
+	migrate := enroll && r.MigrateLegacy
+	if migrate && (s.opts.UninstallLegacy == nil || s.opts.LegacyLive == nil) {
+		return fmt.Errorf("legacy service migration requires an uninstaller and a liveness probe: %w", model.ErrInvalidInput)
 	}
-	return s.migrateLegacy(ctx, root)
+	if enroll {
+		hub, err := s.observe(ctx, b)
+		if err != nil {
+			return err
+		}
+		plan.hub = hub
+	}
+	if migrate {
+		if err := s.migrateLegacy(ctx, root); err != nil {
+			return err
+		}
+	}
+	if err := s.completeChange(ctx, b, row, r, plan); err != nil {
+		if migrate {
+			// Only local state writes remain after the removal; name the residual so the operator re-runs.
+			return fmt.Errorf("legacy service removed but enrollment did not complete; re-run the migration: %w", err)
+		}
+		return err
+	}
+	return nil
 }
 
 // migrateLegacy removes the per-project service under the dispatch lock, so no host pass
-// overlaps it, and refuses to enroll while a legacy daemon still runs (D11).
+// overlaps it, and refuses to enroll while a legacy daemon still runs (D11). Callers run it
+// only after the enrollment preconditions passed.
 func (s *HostEnrollment) migrateLegacy(ctx context.Context, root string) error {
-	if s.opts.UninstallLegacy == nil || s.opts.LegacyLive == nil {
-		return fmt.Errorf("legacy service migration requires an uninstaller and a liveness probe: %w", model.ErrInvalidInput)
-	}
 	if err := s.opts.UninstallLegacy(ctx, root); err != nil {
 		return fmt.Errorf("uninstall legacy service: %w", err)
 	}
@@ -137,19 +161,16 @@ func (s *HostEnrollment) migrateLegacy(ctx context.Context, root string) error {
 		return fmt.Errorf("verify legacy service stopped: %w", err)
 	}
 	if live {
-		return fmt.Errorf("legacy daemon still running; stop it and re-run mtix setup: %w", model.ErrConflict)
+		return fmt.Errorf("legacy daemon still running; stop it and re-run the migration: %w", model.ErrConflict)
 	}
 	return nil
 }
 
-func (s *HostEnrollment) completeChange(ctx context.Context, b *HostBoard, row oplocal.ListedBoard, r EnrollmentRequest, enroll bool) error {
+func (s *HostEnrollment) completeChange(ctx context.Context, b *HostBoard, row oplocal.ListedBoard, r EnrollmentRequest, plan enrollmentPlan) error {
 	var entry *oplocal.EnrolledBoard
 	action := "unenroll"
-	if enroll {
-		hub, err := s.observe(ctx, b)
-		if err != nil {
-			return err
-		}
+	if plan.enroll {
+		hub := plan.hub
 		if err := s.opts.State.ListBoardInstance(ctx, row); err != nil {
 			return err
 		}

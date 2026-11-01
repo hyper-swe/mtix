@@ -85,11 +85,12 @@ func TestDaemonPIDFile_GarbageContent(t *testing.T) {
 
 func TestDaemonPIDFile_LiveSelf(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, writeDaemonPID(dir, os.Getpid()))
+	helper := startLegacyDaemonHelper(t, filepath.Dir(dir))
+	require.NoError(t, writeDaemonPID(dir, helper))
 	live, pid, err := daemonPIDFileLive(dir)
 	require.NoError(t, err)
-	require.True(t, live, "current process IS live")
-	require.Equal(t, os.Getpid(), pid)
+	require.True(t, live, "a live daemon of this project IS live")
+	require.Equal(t, helper, pid)
 }
 
 func TestDaemonPIDFile_AbsentIsNotLive(t *testing.T) {

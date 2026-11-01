@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/hyper-swe/mtix/internal/procinfo"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
@@ -171,6 +172,12 @@ func runOneDaemonPull(ctx context.Context, stderr io.Writer,
 // daemonPIDFileLive is a read-only diagnostic liveness probe. It grants no
 // singleton authority and never deletes stale or malformed markers.
 func daemonPIDFileLive(mtixDir string) (bool, int, error) {
+	return daemonPIDFileLiveWith(procinfo.Info, mtixDir)
+}
+
+// daemonPIDFileLiveWith is daemonPIDFileLive with an injected process lookup. The pid counts
+// as live only when it is this project's mtix daemon (D11); see pidIsLegacyDaemon.
+func daemonPIDFileLiveWith(lookup procLookup, mtixDir string) (bool, int, error) {
 	path := filepath.Join(mtixDir, daemonPIDFilename)
 	body, err := os.ReadFile(path) //nolint:gosec // path constructed from caller-supplied mtixDir
 	if errors.Is(err, os.ErrNotExist) {
@@ -184,8 +191,8 @@ func daemonPIDFileLive(mtixDir string) (bool, int, error) {
 		// Diagnostic only: never delete a marker without lifetime ownership.
 		return false, 0, nil
 	}
-	if !pidLive(pid) || !pidIsMtixProcess(pid) {
-		// A reused pid held by a non-mtix process is stale, not a live legacy service (D11).
+	if !pidLive(pid) || !pidIsLegacyDaemon(lookup, pid, filepath.Dir(mtixDir)) {
+		// A reused pid held by another program is stale, not a live legacy service (D11).
 		return false, 0, nil
 	}
 	return true, pid, nil

@@ -37,3 +37,15 @@ func TestStableExecutablePath_PassthroughOtherwise(t *testing.T) {
 	assert.Equal(t, "/x/Cellar/mtix/9.9/bin/mtix", stableExecutablePath("/x/Cellar/mtix/9.9/bin/mtix"),
 		"no real opt counterpart on disk -> keep what we were given")
 }
+
+func TestStableExecutablePath_RelativeOrEmpty_IsHandledWithoutMapping(t *testing.T) {
+	root := t.TempDir()
+	t.Chdir(root)
+	for _, dir := range []string{filepath.Join("brew", "Cellar", "mtix", "1", "bin"), filepath.Join("brew", "opt", "mtix", "bin")} {
+		require.NoError(t, os.MkdirAll(dir, 0700))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "mtix"), []byte("fixture"), 0700))
+	}
+	for _, input := range []string{"", filepath.Join("brew", "Cellar", "mtix", "1", "bin", "mtix")} {
+		t.Run(input, func(t *testing.T) { require.Equal(t, input, stableExecutablePath(input)) })
+	}
+}

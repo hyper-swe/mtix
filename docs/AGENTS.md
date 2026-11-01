@@ -29,6 +29,10 @@ mtix create "Cleanup after the migration" --description "..." --prompt "..." --a
 
 Use `--under <id>` to place the item under related work. Omit it for a new root ticket.
 
+## Sharing a ticket link
+
+To point a person at a ticket, run `mtix url <id>` (for example `mtix url MTIX-12.3`; add `--json` for `{"id", "url"}`). It prints the link that opens that ticket's full detail (prompt, annotations, acceptance) in the web UI, and the link survives reload and back/forward in the browser. It needs a running `mtix serve` for this project: with none running it prints nothing on stdout and exits non-zero naming `mtix serve`, so start the server (or ask the user to) and run it again; an unknown id fails with not found. The command contacts no remote service and never needs a credential. Never put a token in a URL.
+
 ## Overview
 
 This document is the primary operating guide for AI agents working on the **PROJ** project managed by mtix. Safety-critical operating procedures are the baseline standard — not optional, not domain-specific, always enforced.
@@ -152,7 +156,7 @@ Multiple values within one flag combine with OR; multiple flags combine with AND
 **Via MCP:** Call `mtix_briefing` instead of `mtix_list` to get briefing-formatted text directly. Accepts the same filter parameters (`under`, `status`, `type`, `assignee`, `priority`, `fields`, `limit`).
 
 ### 3. Read Context (MANDATORY)
-Call `mtix context <id>` or `mtix_context` — **this step is NON-NEGOTIABLE**. The assembled prompt is your complete briefing. Read it fully before proceeding.
+Call `mtix context <id>` or `mtix_context` — **this step is NON-NEGOTIABLE**. The assembled prompt is your complete briefing. Read it fully before proceeding. In `--json` and MCP output it is the `assembled_prompt` field; the `chain` array omits prompt, creator and annotations (they are in `assembled_prompt`) unless you pass `--chain` / `chain: true`.
 
 ### 4. Claim
 Call `mtix claim <id> --agent <agent_id>` or `mtix_claim`. This prevents other agents from working on the same node.
@@ -303,6 +307,15 @@ Foundational trust model for all of the above:
 <!-- AUTO-GENERATED: SYNC -->
 No sync hub is configured for this project. To share tasks between machines through a hub, or to fix a sync problem, follow the `mtix-sync` skill (`mtix plugin install --target claude-code` installs it).
 <!-- END AUTO-GENERATED -->
+
+## File relay (experimental, opt-in)
+
+The file relay carries sync events through a shared directory (a mounted folder, a network filer, removable media) for machines that cannot reach a database. It is **experimental**: supported for trial use, its behavior and on-disk format may change in 0.6.0, and it is not yet covered by the release gate. It is **opt-in**: nothing changes unless `sync.relay.dir` is set, and no relay command contacts a hub. The full runbook is the `mtix-sync` skill.
+
+- **Use it** only when the user has asked for a shared-directory transport. Never turn it on to fix an unrelated problem.
+- **Routine** on a relay peer: `mtix sync relay tick` publishes this peer's events and ingests the others' in one pass. Run it at session start and session end, and whenever you need to exchange work. `mtix daemon` runs the same pass every `sync.relay.poll_interval` seconds (default 5, `0` means tick-only).
+- **Verify** with `mtix sync doctor` (the `relay configured` row is the first check; a failing row prints a `fix:` line where one exists, otherwise the error alone, which you report to the user) and `mtix sync relay status --json`. The goal is a run with no FAIL.
+- **Never** read, print, paste or commit a relay key: the key files live under `.mtix/relay/keys/` with mode 0600, and the user copies them between peers out of band, never through the relay directory. **Never** edit, delete or hand-copy files inside the relay directory, share one `.mtix` between machines, or run `reset-peer`, `retire-peer`, `rotate-key` or `republish` unless the user asked for that recovery: the `mtix-sync` skill says when.
 
 ## Sync recovery (operator tasks — recognize, don't force)
 

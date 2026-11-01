@@ -142,7 +142,9 @@ func TestDoctor_RoutingAndAutoImport_ExplicitlyLocalDiagnostic(t *testing.T) {
 	for _, cmd := range root.Commands() {
 		names = append(names, cmd.Name())
 	}
-	assert.Len(t, names, 53, strings.Join(names, ",")) // 53 with the hidden attach group (MTIX-112.19.3)
+	assert.Len(t, names, 55, strings.Join(names, ",")) // 55: 53 with the hidden attach group (MTIX-112.19.3), plus url (MTIX-230) and the experimental dispatcher (MTIX-112.17.13)
+	assert.Contains(t, names, "dispatcher")
+	assert.Contains(t, names, "url")
 }
 
 func TestDoctor_JSONFlagErrorAndOutsideProject(t *testing.T) {

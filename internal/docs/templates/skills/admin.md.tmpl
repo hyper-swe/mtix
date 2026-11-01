@@ -37,7 +37,7 @@ Existing flat envelope and strict-identity settings remain readable.
 |---|---|---|
 | `wake.live` | `true` | Live wake on/off setting for the scanner |
 | `wake.wakes_per_hour` | unset, unlimited | Enforced by the callable dispatcher: recipient wakes across boards per rolling hour |
-| `wake.per_sender_per_hour` | unset, unlimited | stored, not yet enforced: sender events per hour |
+| `wake.per_sender_per_hour` | unset, unlimited | Enforced by the callable dispatcher: admitted events per claimed sender to this recipient across boards, rolling hour |
 | `wake.remote_awake_daily_cap` | unset, unlimited | stored, not yet enforced: remote-induced awake seconds per day |
 | `wake.reply_extensions_per_hour` | unset, unlimited | stored, not yet enforced: reply-window extensions per hour |
 | `wake.envelope_max_events` | unset, unlimited | Events in one pulled envelope |
@@ -77,10 +77,26 @@ not an adversarial control. The scanner's held diagnostic will name the depth an
 exact configuration command; changing a guard never acknowledges the event.
 
 These settings do not install a wake route. The callable dispatcher enforces
-recipient budgets and durable backoff; held wakes re-arm in the same dispatcher; scanner discovery remains
+recipient and per-sender budgets and durable backoff; held wakes re-arm in the same dispatcher; scanner discovery remains
 a separate feature. A configured limit of 12 holds the 13th attempt in a rolling
 hour, before claim or send, across boards for the same agent, host and user.
 Duplicate claims and held events spend no allowance; transport failures do.
+Sender limits use the wake event's claimed author and the recipient's
+effective setting, across boards for the same host and user. Addressed comments
+and hook deliveries use the payload author when it decodes and is nonempty,
+otherwise the event envelope author, matching inbox reads. The sender is not
+a verified principal: a writer can name another sender and spend that sender's allowance,
+which can hold the real sender's wakes. The per-sender limit is a courtesy bound;
+a recipient budget remains the bound across sender names. Selected authors
+longer than 256 bytes, with invalid UTF-8 or control characters are treated as
+unattributed before budget checks and charging, so they cannot block delivery
+by failing the protected credit codec.
+Legacy or unexplained credits without sender attribution count against every
+sender until those credits leave the rolling hour. New events without an attributable sender
+are checked against the combined credits of all senders; if admitted, their
+unattributed credits count against every sender until expiry. Held wakes stay pending;
+the alert names the exact `mtix config set wake.per_sender_per_hour <n> --agent <id>`
+command to raise that recipient's limit. Acknowledgements do not refund sender credits.
 
 After five consecutive wakes without a new acknowledgement, the next wake
 waits 1 minute; each further unacknowledged attempt doubles the delay up to
@@ -346,7 +362,7 @@ Key configuration options:
 - `session_timeout` — maximum session duration (default: 8h)
 - `data.soft_delete_retention` — how long to keep deleted data (default: 720h/30 days)
 - `sync.keep_roles` — comma-separated hub roles that `mtix sync harden` leaves with their access (default: none; see Hub Privileges). Setting it turns on strict mode for the doctor's `hub-privileges` check, which then fails whenever `mtix sync harden` would report a finding, or when the check cannot run
-- `history.export` — EXPERIMENTAL, default `false`. When `true`, `.mtix/tasks.json` is written in export format 2.1.0 with each task's change history; mtix 0.5.4 and earlier cannot read such a file (their import fails its checksum, and their automatic import loads nothing). Turn it on only when the user asks and every machine and daemon that touches the board runs this version or later; no doctor check verifies that yet, so ask the user. A running process follows `mtix config set history.export` without a restart
+- `history.export` — EXPERIMENTAL, default `false`. When `true`, `.mtix/tasks.json` is written in export format 2.1.0 with each task's change history; mtix 0.5.4 and earlier cannot read such a file (their import fails its checksum, and their automatic import loads nothing). Turn it on only when the user asks and every machine and daemon that touches the board runs this version or later; `mtix config set history.export true` is refused, with the fix, while a session registration or daemon heartbeat seen in the last 30 days lacks the task-history marker that every build from 0.6.0 writes, which means an older mtix (nothing is written; version strings are not judged). `mtix doctor` (text and `--json`) adds a `history.export.guard` row once the switch is on or an older build is detected: warn with the fix while the switch is off, fail while it is on, with the blockers and `min_version` in its `data` object; run doctor until it passes. The guard cannot see other machines, CI jobs or clones that read `.mtix/tasks.json` through git (mtix 0.5.4 records no registration and the file names no writer while the switch is off), so ask the user to confirm `mtix --version` on each of them before enabling. The switch lives in the tracked `.mtix/config.yaml`, so a clone that pulls `history: export: true` writes 2.1.0 without having run this guard: run `mtix doctor` in every clone after pulling the line; the `history.export.guard` row fails there when an older build is seen, and the fix is `mtix config set history.export false` until that machine is upgraded. A running process follows `mtix config set history.export` without a restart
 
 ## Hub Privileges (Sync Hub Owners)
 

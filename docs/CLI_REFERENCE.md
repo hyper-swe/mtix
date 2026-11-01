@@ -33,6 +33,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `defer <id>` — Defer a node until a specified time
 - `delete <id>` — Soft-delete a node
 - `dep` — Manage node dependencies
+- `dispatcher` — Experimental per-user host dispatcher
 - `docs` — Manage agent-facing documentation
 - `doctor` — Run registered checkout and host health checks
 - `done <id>` — Mark a node as done
@@ -69,6 +70,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `unclaim <id>` — Release a node assignment
 - `undelete <id>` — Restore a soft-deleted node
 - `update <id>` — Update a node's fields
+- `url <id>` — Print the web UI link for a ticket (needs a running mtix serve)
 - `verify [id]` — Verify content hash integrity
 ---
 
@@ -458,6 +460,7 @@ Show assembled context chain for a node
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
+| `--chain` |  | With --json, add prompt, creator and annotations to each structured chain entry (default: they appear once, in assembled_prompt) | false |
 | `--max-tokens` |  | Maximum token budget for assembled prompt (0 = unlimited) | 0 |
 ---
 
@@ -700,6 +703,105 @@ Remove a dependency between two nodes
 Show blockers for a node
 ---
 
+## dispatcher
+
+**Usage:** `dispatcher`
+
+Experimental per-user host dispatcher
+
+Experimental host dispatcher, disabled by default until setup integration ships.
+
+One process per OS user scans locally listed checkout stores. Registration lists
+a checkout without granting hub contact or user-hook execution. Only explicitly
+enrolled checkouts may contact their own hub under sync.hub_contact or dispatch
+user hooks. There is no public enrollment command in this build. Existing
+per-project daemons and listeners keep their current behavior.
+
+run and install require --experimental. All process-wide MTIX_SYNC_* overrides
+are removed before opening state and from each checkout pull child. Live harness adapters ship with
+their integrations; absent a route, messages remain available through mtix inbox.
+Task Scheduler and foreground runs do not exit to self-restart after upgrades.
+
+### Subcommands
+
+- `install` — install the per-user experimental dispatcher service
+- `run` — Run the experimental host dispatcher in the foreground
+- `start` — start the per-user experimental dispatcher service
+- `status` — status the per-user experimental dispatcher service
+- `stop` — stop the per-user experimental dispatcher service
+- `uninstall` — uninstall the per-user experimental dispatcher service
+---
+
+## install
+
+**Usage:** `install`
+
+install the per-user experimental dispatcher service
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--experimental` |  | Explicitly opt in to experimental host service installation | false |
+| `--interval` |  | Local scanner interval in seconds | 5 |
+---
+
+## run
+
+**Usage:** `run`
+
+Run the experimental host dispatcher in the foreground
+
+Experimental host dispatcher, disabled by default until setup integration ships.
+
+One process per OS user scans locally listed checkout stores. Registration lists
+a checkout without granting hub contact or user-hook execution. Only explicitly
+enrolled checkouts may contact their own hub under sync.hub_contact or dispatch
+user hooks. There is no public enrollment command in this build. Existing
+per-project daemons and listeners keep their current behavior.
+
+run and install require --experimental. All process-wide MTIX_SYNC_* overrides
+are removed before opening state and from each checkout pull child. Live harness adapters ship with
+their integrations; absent a route, messages remain available through mtix inbox.
+Task Scheduler and foreground runs do not exit to self-restart after upgrades.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--experimental` |  | Explicitly opt in to the unfinished host dispatcher integration | false |
+| `--interval` |  | Local scanner interval in seconds; hub contact follows sync.hub_contact | 5 |
+| `--supervisor` |  | Process supervision: foreground, launchd, systemd or task-scheduler | foreground |
+---
+
+## start
+
+**Usage:** `start`
+
+start the per-user experimental dispatcher service
+---
+
+## status
+
+**Usage:** `status`
+
+status the per-user experimental dispatcher service
+---
+
+## stop
+
+**Usage:** `stop`
+
+stop the per-user experimental dispatcher service
+---
+
+## uninstall
+
+**Usage:** `uninstall`
+
+uninstall the per-user experimental dispatcher service
+---
+
 ## docs
 
 **Usage:** `docs`
@@ -779,6 +881,10 @@ never prunes wake rows or lowers the protocol floor, including with --fix.
 The read-only export.schema check compares the schema_version .mtix/tasks.json
 declares with the one this binary writes. Every write re-exports the file in
 this binary's schema; sync.auto_sync does not stop that. WARN prints the fix.
+
+The read-only serve.record.ignore check appears only inside a git working tree.
+It WARNs when .mtix/serve.json (the record mtix serve publishes for mtix url) is
+not git-ignored and prints the fix; outside a git tree no row appears.
 
 wake.settings reports effective host/agent wake values and sources.
 settings.ignored-workspace-key reports authority keys ignored in config.yaml
@@ -2799,6 +2905,29 @@ Update a node's fields
 | `--prompt` |  | New prompt |  |
 | `--title` |  | New title |  |
 | `--type` |  | New work classification (bug, feature, task, chore, refactor, test, doc); empty clears, omission preserves; list --type filters hierarchy |  |
+---
+
+## url
+
+**Usage:** `url <id>`
+
+Print the web UI link for a ticket (needs a running mtix serve)
+
+Print the web UI link for a ticket.
+
+The link opens the ticket's full detail (prompt, annotations, acceptance) in
+the running web UI. It needs a running 'mtix serve' for this project; with no
+serve running the command prints nothing on stdout and exits non-zero.
+
+The id must be a display id such as MTIX-12.3. An unknown id fails with not
+found. With --json the output is {"id": ..., "url": ...}.
+
+The serve publishes .mtix/serve.json (pid, port, bound host) while
+it runs and removes it when it stops. The link uses the host the serve is bound
+to, or 127.0.0.1 when it is bound to a wildcard address. A stale record (dead
+process, or a port that does not answer as an mtix serve) counts as no running
+serve. 'mtix doctor' warns when a git project does not ignore the file and
+prints the fix. Use 'mtix -C <dir> url <id>' to target another project.
 ---
 
 ## verify

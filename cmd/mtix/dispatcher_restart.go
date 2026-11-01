@@ -72,8 +72,8 @@ func restartLine(d service.DispatcherStatus, outcome attach.Outcome, err error) 
 }
 
 // productionDispatcherRestart reads this host's dispatcher heartbeats after
-// a session registers and applies the restart rules. This build installs no
-// dispatcher service, so its service manager is attach.NoServiceManager.
+// a session registers and applies the restart rules. The installed experimental
+// host service is restarted only through the existing writable-state and harness gates.
 func productionDispatcherRestart(ctx context.Context, w io.Writer) {
 	if app.store == nil {
 		return
@@ -93,7 +93,7 @@ func productionDispatcherRestart(ctx context.Context, w io.Writer) {
 		return
 	}
 	restartOlderDispatchers(ctx, w, dispatcherRestartDeps{
-		statuses: statuses, manager: attach.NoServiceManager{}, state: st, marked: hooks.SessionMarked(),
+		statuses: statuses, manager: hostServiceManager{}, state: st, marked: hooks.SessionMarked(),
 		cliProtocol: attach.Protocol, clock: func() time.Time { return time.Now().UTC() },
 	})
 }

@@ -62,7 +62,7 @@ func wakeCommandLines(text string, document ...bool) []string {
 	if len(document) > 0 && document[0] {
 		return wakeDocumentCommands(text)
 	}
-	text = strings.ReplaceAll(text, "\\\n", " ")
+	text = strings.ReplaceAll(text, "\\\n", "")
 	var lines []string
 	for _, line := range strings.Split(text, "\n") {
 		plain := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "#"))

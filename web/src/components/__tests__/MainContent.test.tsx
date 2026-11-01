@@ -225,3 +225,19 @@ describe("MainContent routing", () => {
     expect(screen.getByText("Agent Activity")).toBeInTheDocument();
   });
 });
+
+describe("MainContent invalid ticket reference (MTIX-230)", () => {
+  it("shows the not-found state and never mounts the detail view for an invalid id", () => {
+    vi.mocked(useNavigation).mockReturnValue({
+      view: "node-detail",
+      selectedNodeId: null,
+      invalidTicketRef: true,
+      navigateTo: vi.fn(),
+      selectNode: vi.fn(),
+      goBack: vi.fn(),
+    });
+    render(<MainContent nodeStore={makeNodeStore() as never} />);
+    expect(screen.getByTestId("ticket-not-found")).toBeInTheDocument();
+    expect(screen.queryByTestId("node-detail-view")).toBeNull();
+  });
+});

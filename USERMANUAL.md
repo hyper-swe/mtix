@@ -189,8 +189,8 @@ approval or confirmation.
 ## Guarded wake ledger
 
 The local wake ledger and callable guarded wake service provide the foundation
-for host dispatch. Host-dispatcher discovery, enrollment and setup wiring are
-not supplied by this feature. The guarded service supports dispatch protocol 1
+for host dispatch. Experimental host dispatch is available but disabled by default; enrollment
+is service-only until setup integration ships. The guarded service supports dispatch protocol 1
 and reads the board's minimum protocol before every pass, even an empty pass.
 A newer floor stops the pass before any claim or send and raises an
 operator-local `wake.version-skew` alert. Follow the alert's compatible-binary
@@ -741,7 +741,15 @@ mtix context PROJ-1.1.1
 
 # Limit token budget
 mtix context PROJ-1.1.1 --max-tokens 4000
+
+# Machine-readable: ancestor content appears once, in assembled_prompt
+mtix context PROJ-1.1.1 --json
+
+# Also return each ancestor's prompt, creator and annotations as structured fields
+mtix context PROJ-1.1.1 --json --chain
 ```
+
+By default `--json` (and the MCP tool `mtix_context`) keeps ancestor prompts and unresolved annotations in `assembled_prompt` only; the `chain` array lists `id`, `depth`, `tier`, `title`, `status` and `description` (descriptions are not in `assembled_prompt`) and omits `prompt`, `creator` and `annotations`. `--chain` (MCP argument `chain: true`) restores the full structured chain; the prompts then appear twice, so the payload grows.
 
 The assembled context includes:
 1. **Ancestor chain** — from root story down to the target node, with prompts at each level
@@ -1313,7 +1321,7 @@ Existing flat envelope and strict-identity settings remain readable.
 |---|---|---|
 | `wake.live` | `true` | Live wake on/off setting for the scanner |
 | `wake.wakes_per_hour` | unset, unlimited | Enforced by the callable dispatcher: recipient wakes across boards per rolling hour |
-| `wake.per_sender_per_hour` | unset, unlimited | stored, not yet enforced: sender events per hour |
+| `wake.per_sender_per_hour` | unset, unlimited | Enforced by the callable dispatcher: admitted events per claimed sender to this recipient across boards, rolling hour |
 | `wake.remote_awake_daily_cap` | unset, unlimited | stored, not yet enforced: remote-induced awake seconds per day |
 | `wake.reply_extensions_per_hour` | unset, unlimited | stored, not yet enforced: reply-window extensions per hour |
 | `wake.envelope_max_events` | unset, unlimited | Events in one pulled envelope |
@@ -1386,10 +1394,26 @@ not an adversarial control. The scanner's held diagnostic will name the depth an
 exact configuration command; changing a guard never acknowledges the event.
 
 These settings do not install a wake route. The callable dispatcher enforces
-recipient budgets and durable backoff; held wakes re-arm in the same dispatcher; scanner discovery remains
+recipient and per-sender budgets and durable backoff; held wakes re-arm in the same dispatcher; scanner discovery remains
 a separate feature. A configured limit of 12 holds the 13th attempt in a rolling
 hour, before claim or send, across boards for the same agent, host and user.
 Duplicate claims and held events spend no allowance; transport failures do.
+Sender limits use the wake event's claimed author and the recipient's
+effective setting, across boards for the same host and user. Addressed comments
+and hook deliveries use the payload author when it decodes and is nonempty,
+otherwise the event envelope author, matching inbox reads. The sender is not
+a verified principal: a writer can name another sender and spend that sender's allowance,
+which can hold the real sender's wakes. The per-sender limit is a courtesy bound;
+a recipient budget remains the bound across sender names. Selected authors
+longer than 256 bytes, with invalid UTF-8 or control characters are treated as
+unattributed before budget checks and charging, so they cannot block delivery
+by failing the protected credit codec.
+Legacy or unexplained credits without sender attribution count against every
+sender until those credits leave the rolling hour. New events without an attributable sender
+are checked against the combined credits of all senders; if admitted, their
+unattributed credits count against every sender until expiry. Held wakes stay pending;
+the alert names the exact `mtix config set wake.per_sender_per_hour <n> --agent <id>`
+command to raise that recipient's limit. Acknowledgements do not refund sender credits.
 
 After five consecutive wakes without a new acknowledgement, the next wake
 waits 1 minute; each further unacknowledged attempt doubles the delay up to
@@ -1446,7 +1470,7 @@ these guards; an empty list is the normal state.
 | `sync.listen` | `live` (shipped default: `live`) | `live`: while a waiter (`mtix inbox --wait`) holds a lease and its board listener runs, the lease keeps the daemon contacting the hub every `sync.listen_interval`; `off`: strict activity-only contact. |
 | `sync.listen_interval` | `10s` | Hub contact period while the listen hold is armed (at least 1s). |
 | `sync.listen_max_idle` | `8h` | The hold ends this long after the last real activity (at most 72h). |
-| `history.export` | `false` | EXPERIMENTAL. `true` writes `.mtix/tasks.json` in export format 2.1.0 with each task's change history (see "Task history in tasks.json"); mtix 0.5.4 and earlier cannot read such a file, so turn it on only when every machine and daemon that touches the board runs this version or later. A running process follows a change without a restart. `mtix config set` accepts only true or false. |
+| `history.export` | `false` | EXPERIMENTAL. `true` writes `.mtix/tasks.json` in export format 2.1.0 with each task's change history (see "Task history in tasks.json"); mtix 0.5.4 and earlier cannot read such a file, so turn it on only when every machine and daemon that touches the board runs 0.6.0 or later; `mtix config set` refuses to turn it on while the guard detects an older build (see "Task history in tasks.json"). A running process follows a change without a restart. `mtix config set` accepts only true or false. |
 | `history.max_entries_per_task` | unset | EXPERIMENTAL. A positive whole number keeps at most that many change entries per task: when a task goes over, its next change trims the oldest down to 90% of the limit (at least one stays) and records one `retention_drop` marker. Unset keeps everything; `mtix config set history.max_entries_per_task ""` unsets it; 0, negative and non-integer values are refused. A running process (daemon, MCP server) picks up a changed limit when it restarts. See "Task history in tasks.json". |
 | `progress.weighted` | `false` | Use weight field in progress calculation |
 | `sync.auto_sync` | `true` | Automatic import of a changed `.mtix/tasks.json` (after `git pull`); `false` turns it off, except for a store that holds no tasks. `mtix config set` accepts only true or false. Tracked in git with `.mtix/config.yaml`, so it applies to every clone. Writes keep exporting, in this binary's export schema, but never over a pulled board that was not imported; this switch does not stop that re-export (see the `export.schema` doctor check). See "Automatic import of `.mtix/tasks.json`" |
@@ -1454,7 +1478,7 @@ these guards; an empty list is the normal state.
 
 ### Task history in tasks.json (experimental)
 
-mtix records a change log per task (field, old and new value for structured fields, actor, origin, time). By default `.mtix/tasks.json` omits it and stays readable by every released mtix. `mtix config set history.export true` writes the file in export format 2.1.0 with the log: each node carries a `history` list, and the history of tasks that no longer exist travels in an optional top-level `history` list; the checksum covers both (see `docs/EXPORT-FORMAT.md`). mtix 0.5.4 and earlier cannot read such a file: their import fails with `checksum verification failed`, and their automatic import loads nothing. Turn the switch on only when every machine and daemon that touches the board runs this version or later; no doctor check verifies that yet. `mtix config set history.export false` returns to 2.0.0 at the next write. `mtix import` (replace or merge) and the automatic import union the file's history into the store by entry id: a local entry is never dropped or changed, importing the same file twice adds nothing, an entry id the store holds with other content keeps the local entry and is reported as a conflict (count and first entry ids, no content), and entries keyed by an old dot id rather than a task uid are skipped and counted. `mtix import --json` reports `history_added`, `history_skipped`, `history_conflicts` and `history_skipped_legacy_key`. An entry id the file repeats with different content is stored in neither copy and counts as a conflict. The automatic import reports conflicts and skipped legacy-key entries once per imported file on stderr. While `history.export` is on, a file last written by an mtix older than the first mtix release that keeps task history (0.6.0 today), or by one that recorded no version, makes the import warn "history may be incomplete: board last written by mtix X; upgrade mtix on that machine" ("of an unrecorded version" in place of "X" when none was recorded); a writer at or above that release, a development build and a board with `history.export` off never warn. Upgrade that machine and let it write the board again. `history.max_entries_per_task` bounds the log: over the limit, the next change to a task trims its oldest change entries to 90% of the limit and writes a `retention_drop` marker (count dropped in `new`, cutoff time in `old`); markers and redactions are never trimmed, lowering the limit trims only at the next change, and an import or sync skips an incoming change entry at or before the cutoff this copy of the board recorded when it trimmed the task (a local record, never exported, imported or synced), so trimmed entries stay gone. The cutoff is local to each copy: trimming on one machine does not trim the others. An incoming entry dated more than 24 hours ahead of this machine's clock is skipped and counted, and a cutoff is never later than this machine's clock: a change entry dated ahead of the clock (inside the 24 hour allowance) is neither counted toward the limit nor trimmed until the clock passes it (`mtix doctor` reports how many in `ahead_of_clock`). A cutoff recorded while the clock ran ahead and now later than the clock counts as the clock on import (entries trimmed meanwhile may return from a peer); doctor warns and shows the fix, counting these in `cutoffs_ahead_of_clock`. A marker received from another machine is stored but is never a cutoff, and a marker with an unreadable cutoff or count is skipped with a warning. A long-running process reads the limit when it starts. `mtix doctor` adds a `history.size` row (rows, tasks, the largest tasks, the limit, tasks over it) once the board has history or a limit, and warns, naming the key and the exact fix, when a hand-edited limit is not a positive whole number (it is then read as unset); `--json` carries the numbers in the row's `data` object, which only some rows have (every other row keeps exactly `id`, `status`, `detail` and `fix`). `mtix show <id> --history` lists the history newest first (`--history-limit`, default 50) and `mtix show <id> --json` includes it as `history` (an empty list when the task has none); free-text fields list no text. The switch is experimental until a later release adds the doctor check.
+mtix records a change log per task (field, old and new value for structured fields, actor, origin, time). By default `.mtix/tasks.json` omits it and stays readable by every released mtix. `mtix config set history.export true` writes the file in export format 2.1.0 with the log: each node carries a `history` list, and the history of tasks that no longer exist travels in an optional top-level `history` list; the checksum covers both (see `docs/EXPORT-FORMAT.md`). mtix 0.5.4 and earlier cannot read such a file: their import fails with `checksum verification failed`, and their automatic import loads nothing. Turn the switch on only when every machine and daemon that touches the board runs 0.6.0 or later. mtix 0.5.4 exits 1 with `import failed: checksum verification failed: invalid input` and stores nothing; its automatic import loads nothing. `mtix config set history.export true` is refused, with the fix, while a session registration or daemon heartbeat seen in the last 30 days lacks the task-history marker that every build from 0.6.0 writes, which means an older mtix (nothing is written; version strings are not judged). `mtix doctor` (text and `--json`) adds a `history.export.guard` row once the switch is on or an older build is detected: warn with the fix while the switch is off, fail while it is on, with the blockers and `min_version` in its `data` object; run doctor until it passes. The guard cannot see other machines, CI jobs or clones that read `.mtix/tasks.json` through git (mtix 0.5.4 records no registration and the file names no writer while the switch is off), so ask the user to confirm `mtix --version` on each of them before enabling. The switch lives in the tracked `.mtix/config.yaml`, so a clone that pulls `history: export: true` writes 2.1.0 without having run this guard: run `mtix doctor` in every clone after pulling the line; the `history.export.guard` row fails there when an older build is seen, and the fix is `mtix config set history.export false` until that machine is upgraded. `mtix config set history.export false` returns to 2.0.0 at the next write. `mtix import` (replace or merge) and the automatic import union the file's history into the store by entry id: a local entry is never dropped or changed, importing the same file twice adds nothing, an entry id the store holds with other content keeps the local entry and is reported as a conflict (count and first entry ids, no content), and entries keyed by an old dot id rather than a task uid are skipped and counted. `mtix import --json` reports `history_added`, `history_skipped`, `history_conflicts` and `history_skipped_legacy_key`. An entry id the file repeats with different content is stored in neither copy and counts as a conflict. The automatic import reports conflicts and skipped legacy-key entries once per imported file on stderr. While `history.export` is on, a file last written by an mtix older than the first mtix release that keeps task history (0.6.0 today), or by one that recorded no version, makes the import warn "history may be incomplete: board last written by mtix X; upgrade mtix on that machine" ("of an unrecorded version" in place of "X" when none was recorded); a writer at or above that release, a development build and a board with `history.export` off never warn. Upgrade that machine and let it write the board again. `history.max_entries_per_task` bounds the log: over the limit, the next change to a task trims its oldest change entries to 90% of the limit and writes a `retention_drop` marker (count dropped in `new`, cutoff time in `old`); markers and redactions are never trimmed, lowering the limit trims only at the next change, and an import or sync skips an incoming change entry at or before the cutoff this copy of the board recorded when it trimmed the task (a local record, never exported, imported or synced), so trimmed entries stay gone. The cutoff is local to each copy: trimming on one machine does not trim the others. An incoming entry dated more than 24 hours ahead of this machine's clock is skipped and counted, and a cutoff is never later than this machine's clock: a change entry dated ahead of the clock (inside the 24 hour allowance) is neither counted toward the limit nor trimmed until the clock passes it (`mtix doctor` reports how many in `ahead_of_clock`). A cutoff recorded while the clock ran ahead and now later than the clock counts as the clock on import (entries trimmed meanwhile may return from a peer); doctor warns and shows the fix, counting these in `cutoffs_ahead_of_clock`. A marker received from another machine is stored but is never a cutoff, and a marker with an unreadable cutoff or count is skipped with a warning. A long-running process reads the limit when it starts. `mtix doctor` adds a `history.size` row (rows, tasks, the largest tasks, the limit, tasks over it) once the board has history or a limit, and warns, naming the key and the exact fix, when a hand-edited limit is not a positive whole number (it is then read as unset); `--json` carries the numbers in the row's `data` object, which only some rows have (every other row keeps exactly `id`, `status`, `detail` and `fix`). `mtix show <id> --history` lists the history newest first (`--history-limit`, default 50) and `mtix show <id> --json` includes it as `history` (an empty list when the task has none); free-text fields list no text.
 
 #### Removing sensitive text (0.6.0)
 
@@ -1518,6 +1542,12 @@ mtix serve --port 8377
 ```
 
 Open `http://127.0.0.1:8377` in your browser.
+
+### Sharing a ticket link
+
+Each ticket has its own address, `http://127.0.0.1:8377/ticket/<id>` (for example `/ticket/MTIX-12.3`). Opening it shows that ticket's detail (prompt, annotations, acceptance) on first load. Selecting a ticket in the UI updates the address and keeps any query string already on it. Choosing the same ticket again adds no history entry, and the browser's back and forward buttons move between selections without a reload. `?node=<id>` on any web UI address is accepted and rewritten to the canonical path. The id in the address is treated as untrusted input: it is checked against the node id format before anything is fetched or shown. An id that fails the check shows "Ticket not found". A well-formed id that names no ticket shows the detail view's own message (the server's error text, or "Node not found") with a "Go back" button, which returns to the list at `/`. The list filters are not written to the address in this release.
+
+`mtix url <id>` prints this link for the serve running in the current project (`--json` prints `{"id", "url"}`). With no serve running it prints nothing on stdout and exits non-zero with a message naming `mtix serve`. `mtix serve` publishes `.mtix/serve.json` (pid, port and bound host; written atomically with owner-only permissions, git-ignored, never part of `tasks.json`, sync export or backups) while it runs and removes it on exit, including SIGINT and SIGTERM. The command reads that file, not the PID lock `mtix.pid` that routes other commands, so a running serve does not change how any command routes. The link uses the host the serve is bound to, or `127.0.0.1` when it is bound to a wildcard address; a record whose process is dead, or whose port does not answer as an mtix serve (checked with a short `/health` request to the recorded address), counts as no running serve. `mtix -C <dir> url <id>` targets another project from any directory. New projects get `.mtix/serve.json` in `.gitignore` from `mtix init`. For a project created earlier, `mtix doctor` has a `serve.record.ignore` row: it warns when the project is a git repository that does not ignore the file and prints the exact fix, `printf '\n.mtix/serve.json\n' >> .gitignore` (run it in the project root; `mtix doctor --json` carries the same row with a `fix` field). Outside a git working tree the row does not appear. If git cannot decide inside a `.git` tree (for example it refuses the repository), the row is `info` and carries git's reason. The printed command starts with a newline, so it also works when `.gitignore` has no final newline. The server answers `/ticket/<id>` with the web UI page; it does not return the ticket itself, so use `mtix show <id>` or the REST API for data.
 
 ### Web UI security
 
@@ -2721,6 +2751,58 @@ auto-sync. (`mtix sync daemon` remains as a deprecated alias for one
 release.)
 
 ### Event dispatch & the daemon (FR-20)
+
+#### Experimental host dispatcher
+
+The host dispatcher is experimental and disabled by default. An operator can
+opt in with `mtix dispatcher run --experimental`, or explicitly install its
+per-user service with `mtix dispatcher install --experimental`. Use
+`mtix dispatcher status`, `mtix dispatcher stop`, `mtix dispatcher start` and
+`mtix dispatcher uninstall` to inspect and manage that service. On macOS stop
+unloads the launchd job and start reloads its installed plist, so KeepAlive does
+not restart a stopped service. These commands
+work outside a project. Agents should retain their normal inbox routine and
+must not install or migrate services on their own.
+
+Registration records a checkout as listed-only routing, bound to its local
+store instance. Routing metadata errors produce a warning after the session
+commits; registration, listing and unregistering remain available. Resolve the
+checkout error shown by doctor, then register again to retry routing. A listed-only board receives the local wake scanner;
+it makes no hub connection and runs no user-hook pass. Enrollment is an
+explicit, checkout-scoped service API for later setup integration: there is
+no public enrollment command in this build. Listing, a board identity copied
+into a worktree, an agent confirmation and a manual pull never enroll a
+checkout. Existing per-project daemons and listeners retain their duty until
+explicit migration; do not remove them as part of trying the experiment.
+
+Only enrolled checkouts contact the hub under `sync.hub_contact`: activity,
+interval or manual. Activity lets an idle scale-to-zero database sleep; interval
+keeps it awake, and manual makes no automatic hub contact. Contact costs apply
+per enrolled checkout; see the `sync.hub_contact` policy for activity windows
+and interval settings. The scanner itself adds no hub contact. Each enrolled
+checkout uses that checkout's own real 0600 `.mtix/secrets` file; inherited
+`MTIX_SYNC_*` variables are removed at host startup and from pull children;
+only the checkout DSN is supplied to that checkout's pull.
+Never print, copy between checkouts, or commit that file. An unenrolled hub
+worktree is not pulled, and a manual pull into it does not enable a live wake.
+Without an installed harness route, events remain in the durable inbox.
+
+Each pass revalidates store identity and worktree metadata. Pull and user hooks
+share `dispatch.lock`; contention leaves them for the next pass while local
+scanning continues. Keep the lock files intact. One protected operator-local
+lock keeps a single host process per OS user. Enrollment changes retain source
+and time operator-locally and publish only a neutral board activity line.
+
+`mtix doctor --json` exposes `dispatcher.host`, `board.enrolled` and, for a hub
+worktree, `board.worktree-unenrolled`, including enrollment history. These checks
+never enroll a checkout, including with `--fix`; setup remedies await setup
+integration. `skew.dispatchers` reports incompatible dispatcher heartbeats.
+launchd KeepAlive and systemd Restart=always can restart an idle dispatcher
+after a validated executable change. Foreground and Task Scheduler runs keep
+running and record a skew alert; stop and start the service explicitly.
+
+#### Existing per-project dispatch
+
 
 `mtix daemon` and `mtix sync daemon` share a lifetime OS lock at `.mtix/data/sync.daemon.lock` (flock on Unix, LockFileEx on Windows). A concurrent start exits cleanly while the owner keeps running. `.mtix/sync.daemon.pid` is diagnostic: stale or missing PID content cannot grant ownership. The PID is published only after acquiring the lock and removed only by its matching owner while the lock is held. Normal exit and process crash release the OS lock; the lock file stays in place so existing descriptors keep using the same inode. Other filesystem or OS errors are reported. Do not delete daemon lock files to force a second instance.
 
@@ -4326,7 +4408,7 @@ change the node's status with the normal commands instead.
 | `mtix sync init`, or a `mtix sync harden --apply` that would restore or replace a TRUNCATE guard, fails with `the sync tables are in schema …, but the first schema on the search_path is …` (and `mtix sync doctor`'s `hub-triggers` says so) | The session's search_path puts another schema before the one holding the sync tables, so new objects would land away from them; nothing was changed. The usual cause is a schema named after the connecting role, which the default search_path (`"$user", public`) puts first | Set the search_path so the sync tables' schema comes first: `ALTER ROLE <owner> SET search_path = public` when the tables are in `public`, else `ALTER ROLE <owner> SET search_path = <schema>, public` (or `options=-c search_path=...` in the DSN); then run the command again. To keep a separate hub in the first schema instead (one hub per search_path), put that schema alone on the search_path (`ALTER ROLE <owner> SET search_path = <first schema>`). A `mtix sync harden --apply` that only changes privileges is not affected |
 | `mtix sync backup` fails with `already exists` | The output path exists (a file or a symlink); backup never overwrites | Choose a new path, for example one with the date in its name |
 | `mtix sync backup` fails with `a hub table was not found` (`pg_dump` names the table above it) | `pg_dump` found no table of that name through the search_path of the role the DSN names; no file was left. The hub has not been initialized since an upgrade added the table; or the hub's schema is named only in the DSN, which `pg_dump` does not receive; or the DSN's role lacks USAGE on the hub's schema, which leaves that schema off its search_path | Run `mtix sync init` with the DSN naming the table owner, then back up again; for a hub whose schema only the DSN names, first run the printed `ALTER ROLE <the DSN's role> IN DATABASE <the DSN's database> SET search_path = <schema>, public`, which takes precedence over a role-wide `ALTER ROLE <the DSN's role> SET search_path = <schema>, public`; for a DSN role without USAGE, run the GRANT statements the backup prints: the schema's owner grants USAGE on the schema (find it with `SELECT nspowner::regrole FROM pg_catalog.pg_namespace WHERE nspname = '<schema>';`; for `public` in a database created on PostgreSQL 15 or later it is `pg_database_owner`, that is, the database's owner), and the table owner grants SELECT on each sync table and sync-table sequence by name (`GRANT SELECT ON TABLE <schema>.applied_events, <schema>.audit_log, ... TO <the DSN's role>;`), so the role gets nothing else in the schema; then keep that role with `--keep-role` so `mtix sync harden --apply` leaves its access |
-| An id in mtix text looks like `"evt\u00e9"` or `"a\nb"`, with quotes and backslash escapes | mtix prints a sync event id, and the ids that come from sync (a task uid, an annotation id), in plain text output as double-quoted, printable-ASCII text, so a control character, bidirectional mark or non-ASCII letter in a stored id cannot alter a terminal or log. The stored id is unchanged; `mtix sync collisions list` shows both held and incoming task uids in full with the same quoting and escaping, without truncation; its `--json` output preserves the exact uids. REST, MCP and gRPC do the same in their text and error messages; their JSON and protobuf fields carry the exact id. Validator refusals, local store and apply-path errors, and hub push and collision errors name the event id the same way; only rows recorded by older versions, in validator refusal reasons or local store error text, can still hold the raw id. An id or text a caller sends that a server repeats in an error or result message is escaped in the message (control, invisible and invalid bytes appear as `\n`, `\r`, `\t`, `\xNN`, `\uNNNN` or `\UNNNNNNNN`; printable text stays readable; a literal backslash is not escaped, so read the escapes as a hint); the JSON fields still carry what was sent. The exact id is in the quarantine `event_id` column and in `--json` output, not in a log field or error text | Read the escapes as the id (`\n` is a newline, `\u00e9` is é). Use the JSON output for the exact value, and give the quoted form to whoever runs the hub; never edit or rename the stored id |
+| An id in mtix text looks like `"evt\u00e9"` or `"a\nb"`, with quotes and backslash escapes | mtix prints a sync event id, and the ids that come from sync (a task uid, an annotation id), in plain text output as double-quoted, printable-ASCII text, so a control character, bidirectional mark or non-ASCII letter in a stored id cannot alter a terminal or log. The stored id is unchanged; `mtix sync collisions list` shows both held and incoming task uids in full with the same quoting and escaping, without truncation; its `--json` output preserves the exact uids. The task uids that `mtix sync doctor` names in its invalid-node-id detail and that `mtix sync repair-uids` prints for a hub/local mismatch are quoted and escaped the same way in text; their `--json` output carries the exact uids. REST, MCP and gRPC do the same in their text and error messages; their JSON and protobuf fields carry the exact id. Validator refusals, local store and apply-path errors, and hub push and collision errors name the event id the same way; only rows recorded by older versions, in validator refusal reasons or local store error text, can still hold the raw id. An id or text a caller sends that a server repeats in an error or result message is escaped in the message (control, invisible and invalid bytes appear as `\n`, `\r`, `\t`, `\xNN`, `\uNNNN` or `\UNNNNNNNN`; printable text stays readable; a literal backslash is not escaped, so read the escapes as a hint); the JSON fields still carry what was sent. The exact id is in the quarantine `event_id` column and in `--json` output, not in a log field or error text | Read the escapes as the id (`\n` is a newline, `\u00e9` is é). Use the JSON output for the exact value, and give the quoted form to whoever runs the hub; never edit or rename the stored id |
 | `mtix sync status` counts conflicts after an upgrade from 0.5.3 or earlier although one machine wrote | Rows from the pre-0.5.4 replay of own events | None needed: they are not counted. `mtix sync conflicts list --all` shows them as `self_replay=true` |
 | `mtix sync conflicts resolve` fails with `is a manual resolution` | The id is a recorded decision, not a conflict | Run `mtix sync conflicts list --all` and resolve the conflict it answers |
 | `mtix sync conflicts resolve` fails with `has a later conflict` or `is already resolved` | A later conflict or a later decision exists for the same node and field | Resolve the newest conflict the error names; if it says that one is resolved too, the decision already stands |

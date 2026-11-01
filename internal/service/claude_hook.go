@@ -67,6 +67,11 @@ type ClaudeHookDeps struct {
 	RenewEvery time.Duration // how often a long wait renews the lease; 0 = LeaseTTL/3
 	ClaimLease time.Duration
 	Now        func() time.Time // the clock; nil = time.Now
+
+	// NewTicker builds the renewer's ticker for an interval and returns its
+	// channel and stop func; nil = time.NewTicker. A test seam that lets the
+	// cadence be pinned without wall-clock timing.
+	NewTicker func(d time.Duration) (<-chan time.Time, func())
 }
 
 // ClaudeHookResult is what the command prints and exits with.
@@ -229,14 +234,14 @@ func (h *ClaudeHook) keepLease(ctx context.Context, cancel context.CancelFunc, h
 				cancel()
 			}
 		}()
-		t := time.NewTicker(every)
-		defer t.Stop()
+		tick, stopTick := h.newTicker(every)
+		defer stopTick()
 		lastOK := h.d.Now()
 		for {
 			select {
 			case <-ctx.Done():
 				return
-			case <-t.C:
+			case <-tick:
 				if !h.renewOnce(ctx, r, holder, &lastOK) {
 					cancel()
 					return
@@ -245,6 +250,15 @@ func (h *ClaudeHook) keepLease(ctx context.Context, cancel context.CancelFunc, h
 		}
 	}()
 	return r
+}
+
+// newTicker builds the renewer ticker, through the NewTicker seam when set.
+func (h *ClaudeHook) newTicker(d time.Duration) (<-chan time.Time, func()) {
+	if h.d.NewTicker != nil {
+		return h.d.NewTicker(d)
+	}
+	t := time.NewTicker(d)
+	return t.C, t.Stop
 }
 
 // renewOnce renews once and reports whether the renewer should go on.

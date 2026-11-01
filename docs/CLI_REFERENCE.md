@@ -882,6 +882,10 @@ The read-only export.schema check compares the schema_version .mtix/tasks.json
 declares with the one this binary writes. Every write re-exports the file in
 this binary's schema; sync.auto_sync does not stop that. WARN prints the fix.
 
+The read-only serve.record.ignore check appears only inside a git working tree.
+It WARNs when .mtix/serve.json (the record mtix serve publishes for mtix url) is
+not git-ignored and prints the fix; outside a git tree no row appears.
+
 wake.settings reports effective host/agent wake values and sources.
 settings.ignored-workspace-key reports authority keys ignored in config.yaml
 and prints exact host-local config commands. These checks never change settings.
@@ -2918,9 +2922,12 @@ serve running the command prints nothing on stdout and exits non-zero.
 The id must be a display id such as MTIX-12.3. An unknown id fails with not
 found. With --json the output is {"id": ..., "url": ...}.
 
-The link always uses the loopback address 127.0.0.1 and the serve's port. A serve
-bound to another address with --insecure-bind is not reachable at that link:
-replace the host by hand.
+The serve publishes .mtix/serve.json (pid, port, bound host) while
+it runs and removes it when it stops. The link uses the host the serve is bound
+to, or 127.0.0.1 when it is bound to a wildcard address. A stale record (dead
+process, or a port that does not answer as an mtix serve) counts as no running
+serve. 'mtix doctor' warns when a git project does not ignore the file and
+prints the fix. Use 'mtix -C <dir> url <id>' to target another project.
 ---
 
 ## verify

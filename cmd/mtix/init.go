@@ -73,6 +73,10 @@ func runInit(prefix string) error {
 		return fmt.Errorf("initialize exclusion: %w", ignoreErr)
 	}
 
+	if ignoreErr := addToGitignore(cwd, ".mtix/serve.json"); ignoreErr != nil {
+		return fmt.Errorf("initialize exclusion: %w", ignoreErr)
+	}
+
 	// Create config service and initialize directory structure.
 	configSvc, configErr := service.NewConfigService("")
 	if configErr != nil {

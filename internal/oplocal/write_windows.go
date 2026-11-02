@@ -16,7 +16,13 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func writeData(dir *os.File, name string, data []byte, exclusive bool, before func() error, _ func(*os.File) error) (err error) {
+// writeData retains existing typed callers and tests while they migrate to
+// writeDataMode options. Retire this compatibility signature in MTIX-112.22.1.
+func writeData(dir *os.File, name string, data []byte, exclusive bool, before func() error, _ func(*os.File) error) error {
+	return writeDataMode(dir, name, data, writeOptions{exclusive: exclusive, before: before, mode: recordMode})
+}
+
+func writeDataMode(dir *os.File, name string, data []byte, opts writeOptions) (err error) {
 	_, err = readData(dir, name)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -41,18 +47,22 @@ func writeData(dir *os.File, name string, data []byte, exclusive bool, before fu
 		_, err = f.Write(data)
 	}
 	if err == nil {
-		err = f.Sync()
+		err = flushStateFile(f, opts.flushNative)
 	}
-	if err == nil && before != nil {
-		err = before()
+	if err == nil && opts.before != nil {
+		err = opts.before()
 	}
 	if err == nil {
-		err = renameFile(dir, f, name, exclusive)
+		err = renameFile(dir, f, name, opts.exclusive)
 	}
 	if err != nil {
-		return fmt.Errorf("write state: %w: %w", err, invalid("write failed"))
+		return writeStateError(err)
 	}
+	// Publication has completed; a subsequent flush failure must keep the record.
 	committed = true
+	if err = flushStateFile(f, opts.flushNative); err != nil {
+		return writeStateError(err)
+	}
 	return nil
 }
 

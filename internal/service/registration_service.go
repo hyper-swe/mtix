@@ -11,7 +11,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -21,10 +20,9 @@ import (
 // noticeWindow, and at most takeOverLimit take-overs per id per takeOverWindow
 // before a terminal is required.
 const (
-	noticeWindow    = 10 * time.Minute
-	takeOverWindow  = time.Hour
-	takeOverLimit   = 3
-	maxHandleLength = 256
+	noticeWindow   = 10 * time.Minute
+	takeOverWindow = time.Hour
+	takeOverLimit  = 3
 )
 
 // Registration outcomes reported to the caller.
@@ -169,13 +167,8 @@ func validateRegisterRequest(r *RegisterSessionRequest) error {
 	if !harnessPattern.MatchString(r.Harness) {
 		return fmt.Errorf("harness %q must be lower-case letters, digits, '.', '_' or '-': %w", r.Harness, model.ErrInvalidInput)
 	}
-	if len(r.SessionHandle) > maxHandleLength {
-		return fmt.Errorf("session handle exceeds %d bytes: %w", maxHandleLength, model.ErrInvalidInput)
-	}
-	for _, c := range r.SessionHandle {
-		if unicode.IsControl(c) {
-			return fmt.Errorf("session handle contains a control character: %w", model.ErrInvalidInput)
-		}
+	if err := model.ValidateSessionHandle(r.SessionHandle); err != nil {
+		return err
 	}
 	if r.Origin == "mcp" { // I30: an MCP origin has no handle and no live route
 		r.SessionHandle, r.PID, r.PIDStartTime = "", 0, ""

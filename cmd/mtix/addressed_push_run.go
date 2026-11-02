@@ -82,8 +82,11 @@ func runAddressedSendPush(ctx context.Context, stderr io.Writer, o addressedRunO
 	var pushErr error
 	if hubConfigured(app.mtixDir) {
 		pushErr = pushWaitingForLock(ctx, stderr, o)
-		if pushErr == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			pushErr = ctx.Err() // the deadline cut the run short: record a timeout, not a success
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) && !errors.Is(pushErr, context.DeadlineExceeded) {
+			// The deadline cut the run short: record a timeout, not a success.
+			// Join it even when the push failed, because the transport layer
+			// rebuilds its errors and loses the deadline from the chain.
+			pushErr = errors.Join(pushErr, ctx.Err())
 		}
 	}
 	// An addressed send publishes even when sync.relay.poll_interval is 0:
@@ -179,16 +182,26 @@ func (r *coalescingRunner) loop() {
 	}
 }
 
+// inProcessPushJob wraps one in-process push so it always runs under a bound:
+// a hung hub then ends the job at the deadline instead of holding the
+// coalescing runner, and every later send in the process, without limit. The
+// bound is a parameter so a test can observe it (ADR-007 D21, MTIX-112.20.2).
+func inProcessPushJob(bound time.Duration, run func(context.Context)) func() {
+	return func() {
+		ctx, cancel := context.WithTimeout(context.Background(), bound)
+		defer cancel()
+		run(ctx)
+	}
+}
+
 // inProcessAddressedSendHook is the executor of a long-lived process (the MCP
 // server, mtix serve): it pushes in-process (ADR-007 D21 executor order, first
 // step) and returns before the network work finishes. It returns the state
 // word for the caller to show.
 func inProcessAddressedSendHook() func(context.Context, string) string {
-	runner := &coalescingRunner{job: func() {
-		ctx, cancel := context.WithTimeout(context.Background(), addressedPushTimeout)
-		defer cancel()
+	runner := &coalescingRunner{job: inProcessPushJob(addressedPushTimeout, func(ctx context.Context) {
 		_ = runAddressedSendPush(ctx, io.Discard, defaultAddressedRun()) // the outcome is persisted inside
-	}}
+	})}
 	return func(ctx context.Context, _ string) string {
 		res := requestAddressedPush(addressedPushDeps{
 			inputs:    func() (addressedPushInputs, error) { return productionAddressedPushInputs(ctx) },

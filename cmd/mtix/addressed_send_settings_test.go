@@ -155,10 +155,13 @@ func TestAfterPushPass_ClearsOnlyWhenDrained(t *testing.T) {
 		drained bool
 		err     error
 		wantOK  bool
+		// wantUndrained: the pass ended without error and without draining.
+		wantUndrained bool
 	}{
-		{"drained", true, nil, true},
-		{"undrained", false, nil, false},
-		{"failed", true, errors.New("boom"), false},
+		{"drained", true, nil, true, false},
+		{"undrained", false, nil, false, true},
+		{"failed", true, errors.New("boom"), false, false},
+		{"failed and undrained", false, errors.New("boom"), false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -167,10 +170,13 @@ func TestAfterPushPass_ClearsOnlyWhenDrained(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, src.state.RecordAddressedPush(src.key(),
 				oplocal.AddressedPush{At: fixedPushClock(), ErrorClass: "push_failed"}))
-			afterPushPass(context.Background(), io.Discard, tt.drained, tt.err)
+			probe := &pushProbe{}
+			ctx := context.WithValue(context.Background(), pushProbeKey{}, probe)
+			afterPushPass(ctx, io.Discard, tt.drained, tt.err)
 			rec, _, err := src.state.ReadAddressedPush(src.key())
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantOK, rec.OK)
+			assert.Equal(t, tt.wantUndrained, probe.undrained.Load(), "the probe tells the send whether the pass drained")
 		})
 	}
 }

@@ -117,7 +117,8 @@ func TestStripControlChars_DirectionalMarks_Kept(t *testing.T) {
 	for _, r := range []rune{'\u200e', '\u200f', '\u061c'} {
 		in := "a" + string(r) + "b"
 		assert.Equal(t, in, StripControlChars(in))
-		assert.Equal(t, in, sanitizeControlChars(in))
+		// Agent-facing text drops them: it has no right-to-left reader (MTIX-100.8).
+		assert.Equal(t, "a\uFFFDb", sanitizeControlChars(in))
 	}
 }
 

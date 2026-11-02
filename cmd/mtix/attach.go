@@ -58,7 +58,7 @@ type attachDeps struct {
 func productionAttachDeps() attachDeps {
 	return attachDeps{
 		current:    attach.Protocol,
-		adapters:   map[string]attach.Adapter{}, // harness adapters ship with their harness integrations
+		adapters:   productionAttachAdapters(), // other harness adapters ship with their harness integrations
 		state:      operatorState,
 		clock:      func() time.Time { return time.Now().UTC() },
 		glueWriter: productionGlueWriter,
@@ -141,7 +141,7 @@ func newAttachCommand(deps attachDeps) *cobra.Command {
 }
 
 func newAttachVerbCmd(deps attachDeps, verb string) *cobra.Command {
-	var harness, protocol string
+	var harness, protocol, session string
 	cmd := &cobra.Command{
 		Use:   verb + " --harness <harness> --protocol <n>",
 		Short: "Attach verb " + verb + " (internal)",
@@ -155,13 +155,14 @@ func newAttachVerbCmd(deps attachDeps, verb string) *cobra.Command {
 				return nil // the pre-run already printed the line and raised the alert
 			}
 			runAttachVerb(cmd.Context(), deps, attach.VerbRequest{
-				Verb: verb, Harness: harness, Stdin: cmd.InOrStdin(), Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr(),
+				Verb: verb, Harness: harness, Session: session, Stdin: cmd.InOrStdin(), Stdout: cmd.OutOrStdout(), Stderr: cmd.ErrOrStderr(),
 			}, protocol)
 			return nil
 		},
 	}
 	cmd.Flags().StringVar(&harness, "harness", "", "Harness the glue belongs to: claude-code, codex or pi")
 	cmd.Flags().StringVar(&protocol, "protocol", "", "Attach protocol the glue was written for")
+	cmd.Flags().StringVar(&session, "session", "", "Harness session handle (validated; never passed to a shell)")
 	return cmd
 }
 

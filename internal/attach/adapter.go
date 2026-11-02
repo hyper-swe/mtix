@@ -14,9 +14,11 @@ type VerbRequest struct {
 	Verb     string
 	Harness  string
 	Protocol int
-	Stdin    io.Reader
-	Stdout   io.Writer
-	Stderr   io.Writer
+	// Session is the harness session handle from --session; empty when the glue passed none.
+	Session string
+	Stdin   io.Reader
+	Stdout  io.Writer
+	Stderr  io.Writer
 }
 
 // Adapter performs the attach verbs for one harness. Adapters ship with their

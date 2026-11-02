@@ -6,7 +6,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -15,9 +18,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/mcp"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // policyAgent is the registered fixture id; policyBody must never reach stdout
@@ -70,7 +75,7 @@ func TestInboxWait_HubBoardUnconfirmedID_ReturnsNothingHeldOnStderr(t *testing.T
 	require.ErrorIs(t, err, errInboxWaitEmpty, "a wait with every event held times out empty")
 	assert.Empty(t, strings.TrimSpace(strings.ReplaceAll(stdout, "(inbox empty)", "")), "stdout carries no event")
 	assert.NotContains(t, stdout, policyBody)
-	assert.Equal(t, "2 held: ask your operator to run `mtix setup`\n", stderr)
+	assert.Equal(t, "2 held: ask your operator to run `mtix doctor` and follow its inbox.held fix\n", stderr)
 	assert.NotContains(t, stderr, policyBody)
 }
 
@@ -92,7 +97,7 @@ func TestInboxPromptFormat_HeldOnly_StdoutEmpty(t *testing.T) {
 		stdout, stderr, err := runPolicyInbox(t, inboxOptions{Format: format})
 		require.NoError(t, err, format)
 		assert.Empty(t, stdout, format)
-		assert.Equal(t, "3 held: ask your operator to run `mtix setup`\n", stderr, format)
+		assert.Equal(t, "3 held: ask your operator to run `mtix doctor` and follow its inbox.held fix\n", stderr, format)
 	}
 }
 
@@ -109,10 +114,15 @@ func TestInboxPull_AndPriming_HubBoardUnconfirmedID_SameHeldCount(t *testing.T) 
 	require.NoError(t, err)
 	assert.Equal(t, 2, res.Held.Count)
 
-	events, err := claudeHookWait(context.Background(), policyAgent, 300*time.Millisecond,
-		func(int64) bool { return false }, func(string, io.Writer) func() { return func() {} })
-	require.NoError(t, err)
+	var events []sqlite.InboxEvent
+	primingErr := captureStderr(t, func() {
+		var waitErr error
+		events, waitErr = claudeHookWait(context.Background(), policyAgent, 300*time.Millisecond,
+			func(int64) bool { return false }, func(string, io.Writer) func() { return func() {} })
+		require.NoError(t, waitErr)
+	})
 	assert.Empty(t, events, "priming returns no held event")
+	assert.Contains(t, primingErr, "2 held", "priming prints the same held count")
 }
 
 func TestInboxIncludeHeld_HarnessMarker_Refused(t *testing.T) {
@@ -248,4 +258,93 @@ func TestInboxHeldCheck_NothingHeld_Passes(t *testing.T) {
 	require.NoError(t, err)
 	res := inboxHeldCheck(context.Background(), perms, board)
 	assert.Equal(t, service.DoctorPass, res.Status)
+}
+
+// The serve wiring: the MCP tools and the channel source are built from the
+// policy-applying service (ADR-007 A12), not from the bare store.
+func TestMCPServe_InboxTools_HubBoardUnconfirmedID_HoldsBody(t *testing.T) {
+	heldBoard(t, 1)
+	reg := mcp.NewToolRegistry()
+	registerMCPTools(reg)
+	for _, tool := range []string{"mtix_inbox", "mtix_inbox_wait"} {
+		res, err := reg.Call(context.Background(), tool, json.RawMessage(`{"agent":"`+policyAgent+`","timeout_seconds":1}`))
+		require.NoError(t, err, tool)
+		require.Len(t, res.Content, 2, tool)
+		assert.NotContains(t, res.Content[0].Text+res.Content[1].Text, policyBody, tool)
+		assert.Contains(t, res.Content[1].Text, `"count":1`, tool)
+	}
+}
+
+func TestChannelSource_HubBoardUnconfirmedID_PushesNothing(t *testing.T) {
+	heldBoard(t, 2)
+	events, err := newChannelInboxSource(policyAgent).Next(context.Background(), 400*time.Millisecond)
+	require.NoError(t, err)
+	assert.Empty(t, events, "a held event is never pushed into a session")
+}
+
+// Unreadable operator state on a hub-marked board fails closed (every event
+// held); on a board never connected it applies no policy.
+func TestInboxRead_UnreadableStateOnHubBoard_HoldsEverything(t *testing.T) {
+	heldBoard(t, 2)
+	ids := "11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n"
+	require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, "board-id"), []byte(ids), 0o600))
+	_, _, err := configuredPermissions()
+	require.Error(t, err, "fixture: the permission state must be unreadable")
+	stdout, stderr, runErr := runPolicyInbox(t, inboxOptions{})
+	require.NoError(t, runErr)
+	assert.NotContains(t, stdout, policyBody)
+	assert.Contains(t, stderr, "2 held")
+	res, err := newPolicyInboxService().InboxRead(context.Background(), policyAgent, service.InboxReadOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"operator state unreadable"}, res.Held.Reasons)
+}
+
+func TestInboxRead_UnreadableStateOnLocalBoard_AppliesNoPolicy(t *testing.T) {
+	permissionRegisterCurrentHost(t)
+	addInboxEvent(t, policyAgent, 0)
+	ids := "11111111-1111-4111-8111-111111111111\n22222222-2222-4222-8222-222222222222\n"
+	require.NoError(t, os.WriteFile(filepath.Join(app.mtixDir, "board-id"), []byte(ids), 0o600))
+	stdout, stderr, err := runPolicyInbox(t, inboxOptions{})
+	require.NoError(t, err)
+	assert.Contains(t, stdout, policyBody)
+	assert.Empty(t, stderr)
+}
+
+// A confirmed id on a hub board is budgeted: a configured limit caps it and the
+// returned mark keeps a second read from charging again.
+func TestInboxRead_HubBoardConfirmedID_BudgetCapsAndChargesOnce(t *testing.T) {
+	heldBoard(t, 3)
+	require.NoError(t, runAgentPermission(policyAgent, "allow", true))
+	policySetLimit(t, "2")
+	stdout, stderr, err := runPolicyInbox(t, inboxOptions{})
+	require.NoError(t, err)
+	assert.Contains(t, stdout, policyBody+"-1")
+	assert.NotContains(t, stdout, policyBody+"-2")
+	assert.Contains(t, stderr, "1 held")
+	assert.Equal(t, int64(2), policyCredits(t, policyAgent))
+	_, _, err = runPolicyInbox(t, inboxOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), policyCredits(t, policyAgent), "a second read charges nothing new")
+}
+
+func TestInboxCount_HubBoardHeldID_ReportsZeroPendingAndNotice(t *testing.T) {
+	heldBoard(t, 2)
+	var errBuf bytes.Buffer
+	cmd := newInboxCmd()
+	cmd.SetArgs([]string{"--agent", policyAgent, "--count"})
+	cmd.SetErr(&errBuf)
+	out, err := cliBehaviorOutput(t, cmd.Execute)
+	require.NoError(t, err)
+	assert.Equal(t, "0", strings.TrimSpace(out))
+	assert.Contains(t, errBuf.String(), "2 held")
+}
+
+func TestInboxHeldCheck_SingleHeldEvent_ListsEveryFix(t *testing.T) {
+	heldBoard(t, 1)
+	perms, board, err := configuredPermissions()
+	require.NoError(t, err)
+	res := inboxHeldCheck(context.Background(), perms, board)
+	assert.Equal(t, service.DoctorFail, res.Status, "one held event is enough")
+	assert.Contains(t, res.Detail, policyAgent+" (1 held)")
+	assert.Equal(t, "mtix agent allow "+policyAgent, res.Fix)
 }

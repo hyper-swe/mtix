@@ -63,3 +63,37 @@ func TestInboxReturnedMark_CorruptMetaAndClosedStore_Error(t *testing.T) {
 	require.Error(t, err)
 	require.Error(t, s.AdvanceInboxReturnedMark(t.Context(), "any", 1))
 }
+
+func TestInboxReturnedMark_SurvivesUnregisterAndReRegister(t *testing.T) {
+	s, path := newSignalsStore(t)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	db := newTestDB(t, path)
+	insert := "INSERT INTO agent_registrations(agent_id,harness,uid,host_id,origin,registered_at,last_seen,registrar_version,attach_protocol,returned_seq_mark) VALUES('reg','local','u1','hostA','manual','t0','t0','0.6.0',1,0)"
+	_, err := db.Exec(insert)
+	require.NoError(t, err)
+	require.NoError(t, s.AdvanceInboxReturnedMark(t.Context(), "reg", 9))
+	_, err = db.Exec("DELETE FROM agent_registrations WHERE agent_id='reg'")
+	require.NoError(t, err)
+	_, err = db.Exec(insert)
+	require.NoError(t, err)
+	mark, err := s.InboxReturnedMark(t.Context(), "reg")
+	require.NoError(t, err)
+	require.Equal(t, int64(9), mark, "a fresh registration row must not reset the mark")
+}
+
+func TestWakeChargedAfter_ReportsLedgerRowsAboveTheMark(t *testing.T) {
+	s, path := newSignalsStore(t)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	db := newTestDB(t, path)
+	for _, seq := range []int{3, 5, 8} {
+		_, err := db.Exec("INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome) VALUES('w','h','u',?,1,'2026-01-01T00:00:00Z','sent')", seq)
+		require.NoError(t, err)
+	}
+	_, err := db.Exec("INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome) VALUES('other','h','u',9,1,'2026-01-01T00:00:00Z','sent')")
+	require.NoError(t, err)
+	got, err := s.WakeChargedAfter(t.Context(), "w", 3)
+	require.NoError(t, err)
+	require.Equal(t, map[int64]bool{5: true, 8: true}, got)
+	_, err = s.WakeChargedAfter(t.Context(), "", 0)
+	require.Error(t, err)
+}

@@ -209,6 +209,7 @@ func claudeHookWait(ctx context.Context, agent string, timeout time.Duration, sk
 			}
 		}
 		if len(fresh) > 0 {
+			writeInboxHeldNotice(os.Stderr, service.InboxHeld{Count: held})
 			return fresh, nil
 		}
 		select {

@@ -18,7 +18,12 @@ import (
 // policyBackend is an inbox read backend with a returned-seq mark store.
 type policyBackend struct {
 	inboxReadBackend
-	mark int64
+	mark    int64
+	charged map[int64]bool
+}
+
+func (b *policyBackend) WakeChargedAfter(context.Context, string, int64) (map[int64]bool, error) {
+	return b.charged, nil
 }
 
 func (b *policyBackend) InboxReturnedMark(context.Context, string) (int64, error) { return b.mark, nil }
@@ -33,11 +38,13 @@ type countingBudget struct {
 	charges     []int64
 }
 
-func (c *countingBudget) Admit(_ context.Context, _ string, want int64) (int64, error) {
-	granted := min(want, c.limit-c.used)
-	c.used += granted
-	c.charges = append(c.charges, want)
-	return granted, nil
+func (c *countingBudget) Locked(_ context.Context, _ string, fn func(AdmitFunc) error) error {
+	return fn(func(want int64) (int64, error) {
+		granted := min(want, c.limit-c.used)
+		c.used += granted
+		c.charges = append(c.charges, want)
+		return granted, nil
+	})
 }
 
 func eligible(budgeted bool) func(context.Context, string) (InboxEligibility, error) {
@@ -182,4 +189,46 @@ func TestPolicyInboxReader_DropsHeldEvents(t *testing.T) {
 	got, err := NewPolicyInboxReader(svc).InboxWait(t.Context(), "w", 300*time.Millisecond)
 	require.NoError(t, err)
 	assert.Empty(t, got)
+}
+
+// Events the wake dispatcher already charged are returned without a read charge,
+// and the mark stops before the first held event.
+func TestInboxRead_DispatcherChargedEvents_FreeAndMarkStopsAtHeld(t *testing.T) {
+	events := []sqlite.InboxEvent{{Seq: 1}, {Seq: 2}, {Seq: 3}, {Seq: 4}}
+	backend := &policyBackend{inboxReadBackend: inboxReadBackend{events: events}, charged: map[int64]bool{2: true, 4: true}}
+	budget := &countingBudget{limit: 1}
+	svc := NewInboxService(backend).WithInboxPolicy(InboxPolicy{Eligibility: eligible(true), Budget: budget})
+	res, err := svc.InboxRead(t.Context(), "w", InboxReadOptions{IncludeHeld: true})
+	require.NoError(t, err)
+	var got []int64
+	for _, e := range res.Events {
+		got = append(got, e.Seq)
+	}
+	assert.Equal(t, []int64{1, 2, 4}, got, "charged 2 and 4 are free; the one budget unit goes to 1")
+	require.Len(t, res.HeldEvents, 1)
+	assert.Equal(t, int64(3), res.HeldEvents[0].Seq)
+	assert.Equal(t, []int64{2}, budget.charges, "only events 1 and 3 needed a charge")
+	assert.Equal(t, int64(2), backend.mark, "the mark stops before the first held event")
+}
+
+type countBackend struct {
+	inboxAckBackend
+	pending, total int64
+}
+
+func (c *countBackend) InboxCount(context.Context, string) (int64, int64, error) {
+	return c.pending, c.total, nil
+}
+
+func TestInboxCountPolicy_HeldIDReportsZeroPending(t *testing.T) {
+	backend := &countBackend{pending: 3, total: 5}
+	held := NewInboxService(backend).WithInboxPolicy(InboxPolicy{
+		Eligibility: func(context.Context, string) (InboxEligibility, error) { return InboxEligibility{Reason: "x"}, nil }})
+	pending, total, heldCount, err := held.InboxCountPolicy(t.Context(), "w")
+	require.NoError(t, err)
+	assert.Equal(t, []int64{0, 5, 3}, []int64{pending, total, heldCount})
+	open := NewInboxService(backend).WithInboxPolicy(InboxPolicy{Eligibility: eligible(false)})
+	pending, _, heldCount, err = open.InboxCountPolicy(t.Context(), "w")
+	require.NoError(t, err)
+	assert.Equal(t, []int64{3, 0}, []int64{pending, heldCount})
 }

@@ -47,10 +47,11 @@ func runInboxCount(cmd *cobra.Command, agent string, all bool) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project (run 'mtix init' first)")
 	}
-	pending, total, err := service.NewInboxService(app.store).InboxCount(cmd.Context(), agent)
+	pending, total, held, err := newPolicyInboxService().InboxCountPolicy(cmd.Context(), agent)
 	if err != nil {
 		return fmt.Errorf("inbox count: %w", err)
 	}
+	writeInboxHeldNotice(cmd.ErrOrStderr(), service.InboxHeld{Count: int(held)})
 	if app.jsonOutput {
 		err = json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
 			Agent   string `json:"agent"`

@@ -23,11 +23,23 @@ type InboxEligibility struct {
 	Budgeted bool
 }
 
+// AdmitFunc charges up to want events to the budget and returns how many were
+// granted. It is only valid inside InboxBudget.Locked.
+type AdmitFunc func(want int64) (int64, error)
+
 // InboxBudget charges a configured budget for events returned to an agent id.
+// Locked runs fn inside the budget's critical section, the same one the wake
+// dispatcher charges in, so a read and a wake for one event never both charge
+// it and two concurrent reads never charge it twice (ADR-007 A12).
+// With no budget configured fn runs without a lock and admit grants all.
 type InboxBudget interface {
-	// Admit atomically charges up to want events and returns how many were
-	// granted. With no budget configured it grants all of them (D4).
-	Admit(ctx context.Context, agent string, want int64) (int64, error)
+	Locked(ctx context.Context, agent string, fn func(admit AdmitFunc) error) error
+}
+
+// InboxChargeStore reports the events the wake dispatcher already charged for
+// an agent id (rows in the wake ledger), so a read does not charge them again.
+type InboxChargeStore interface {
+	WakeChargedAfter(ctx context.Context, agent string, after int64) (map[int64]bool, error)
 }
 
 // InboxMarkStore keeps the returned-seq mark that makes a budget charge only
@@ -122,45 +134,118 @@ func (s *InboxService) holdAll(res InboxResult, events []InboxEvent, reason stri
 	return res
 }
 
-// chargeNew returns events already returned before at no charge, charges the
-// budget once for the rest and holds what the budget refuses (A12).
+// chargeNew runs the charge inside the budget's critical section (A12).
 func (s *InboxService) chargeNew(ctx context.Context, agent string, events []InboxEvent, res InboxResult, opt InboxReadOptions) (InboxResult, error) {
 	marks, ok := s.reader.(InboxMarkStore)
 	if !ok {
 		res.Events = events
 		return res, nil
 	}
+	err := s.policy.Budget.Locked(ctx, agent, func(admit AdmitFunc) error {
+		var chargeErr error
+		res, chargeErr = s.chargeLocked(ctx, agent, events, res, opt, marks, admit)
+		return chargeErr
+	})
+	if err != nil {
+		return res, fmt.Errorf("charge inbox budget: %w", err)
+	}
+	return res, nil
+}
+
+// chargeLocked returns events already returned before, and events the wake
+// dispatcher already charged, at no charge; it charges the budget once for the
+// rest, holds what the budget refuses and advances the returned mark up to the
+// first held event (A12).
+func (s *InboxService) chargeLocked(ctx context.Context, agent string, events []InboxEvent, res InboxResult, opt InboxReadOptions, marks InboxMarkStore, admit AdmitFunc) (InboxResult, error) {
 	mark, err := marks.InboxReturnedMark(ctx, agent)
 	if err != nil {
 		return res, fmt.Errorf("read returned mark: %w", err)
 	}
-	var fresh []InboxEvent
-	for _, e := range events {
-		if e.Seq <= mark {
-			res.Events = append(res.Events, e)
-			continue
-		}
-		fresh = append(fresh, e)
-	}
+	returned, fresh := splitReturned(events, mark)
+	res.Events = append(res.Events, returned...)
 	if len(fresh) == 0 {
 		return res, nil
 	}
-	granted, err := s.policy.Budget.Admit(ctx, agent, int64(len(fresh)))
-	if err != nil {
-		return res, fmt.Errorf("charge inbox budget: %w", err)
+	charged := map[int64]bool{}
+	if cs, ok := s.reader.(InboxChargeStore); ok {
+		if charged, err = cs.WakeChargedAfter(ctx, agent, mark); err != nil {
+			return res, fmt.Errorf("read dispatcher charges: %w", err)
+		}
 	}
-	granted = max(0, min(granted, int64(len(fresh))))
-	if granted > 0 {
-		res.Events = append(res.Events, fresh[:granted]...)
-		if err := marks.AdvanceInboxReturnedMark(ctx, agent, fresh[granted-1].Seq); err != nil {
+	granted, err := admit(neededCharges(fresh, charged))
+	if err != nil {
+		return res, fmt.Errorf("admit inbox events: %w", err)
+	}
+	give, held := allocate(fresh, charged, granted)
+	res.Events = append(res.Events, give...)
+	next := fresh[len(fresh)-1].Seq
+	if len(held) > 0 {
+		next = held[0].Seq - 1
+		res.Held = InboxHeld{Count: len(held), Reasons: []string{HeldReasonBudget}}
+		if opt.IncludeHeld {
+			res.HeldEvents = held
+		}
+	}
+	if next > mark {
+		if err := marks.AdvanceInboxReturnedMark(ctx, agent, next); err != nil {
 			return res, fmt.Errorf("advance returned mark: %w", err)
 		}
 	}
-	if rest := fresh[granted:]; len(rest) > 0 {
-		res.Held = InboxHeld{Count: len(rest), Reasons: []string{HeldReasonBudget}}
-		if opt.IncludeHeld {
-			res.HeldEvents = rest
+	return res, nil
+}
+
+// InboxCountPolicy is InboxCount restricted to what a read would return: an id
+// the policy holds reports 0 pending and the count it held (A12). It reads only.
+func (s *InboxService) InboxCountPolicy(ctx context.Context, agent string) (pending, total, held int64, err error) {
+	pending, total, err = s.InboxCount(ctx, agent)
+	if err != nil || pending == 0 || s.policy.Eligibility == nil {
+		return pending, total, 0, err
+	}
+	el, eligErr := s.policy.Eligibility(ctx, agent)
+	if eligErr == nil && el.Eligible {
+		return pending, total, 0, nil
+	}
+	return 0, total, pending, nil
+}
+
+// splitReturned separates events already returned before (seq at or below the
+// mark) from fresh ones.
+func splitReturned(events []InboxEvent, mark int64) (returned, fresh []InboxEvent) {
+	for _, e := range events {
+		if e.Seq <= mark {
+			returned = append(returned, e)
+		} else {
+			fresh = append(fresh, e)
 		}
 	}
-	return res, nil
+	return returned, fresh
+}
+
+// neededCharges counts the fresh events the dispatcher has not already charged.
+func neededCharges(fresh []InboxEvent, charged map[int64]bool) int64 {
+	var need int64
+	for _, e := range fresh {
+		if !charged[e.Seq] {
+			need++
+		}
+	}
+	return need
+}
+
+// allocate gives every dispatcher-charged event, and as many others as the
+// budget granted, in order; the rest are held.
+func allocate(fresh []InboxEvent, charged map[int64]bool, granted int64) (give, held []InboxEvent) {
+	granted = max(0, granted)
+	for _, e := range fresh {
+		switch {
+		case charged[e.Seq]:
+			give = append(give, e)
+		case granted > 0:
+			granted--
+			give = append(give, e)
+		default:
+			held = append(held, e)
+		}
+	}
+	return give, held
 }

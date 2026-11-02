@@ -46,13 +46,15 @@ func inboxHeldCheck(ctx context.Context, perms *service.WakePermissions, board s
 	}
 	sort.Strings(ids)
 	parts := make([]string, len(ids))
+	fixes := make([]string, len(ids))
 	for i, id := range ids {
 		parts[i] = fmt.Sprintf("%s (%d held)", id, counts[id])
+		fixes[i] = "mtix agent allow " + id
 	}
 	return service.DoctorResult{
 		Status: service.DoctorFail,
 		Detail: "inbox events held by the wake policy: " + strings.Join(parts, ", "),
-		Fix:    "mtix agent allow " + ids[0],
+		Fix:    strings.Join(fixes, "; "),
 		Data:   map[string]any{"held": counts},
 	}
 }

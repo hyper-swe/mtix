@@ -10,13 +10,14 @@ import (
 	"io"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/channel"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
 // inboxHeldNotice is the only text a held count adds: on stderr, never in the
 // payload a script or a model reads from stdout (ADR-007 A12).
-const inboxHeldNotice = "%d held: ask your operator to run `mtix setup`\n"
+const inboxHeldNotice = "%d held: ask your operator to run `mtix doctor` and follow its inbox.held fix\n"
 
 // errIncludeHeldRefused is returned when held bodies are requested from inside
 // an agent harness session (ADR-007 A12).
@@ -61,4 +62,10 @@ func checkIncludeHeld(includeHeld bool, env []string) error {
 		return errIncludeHeldRefused
 	}
 	return nil
+}
+
+// newChannelInboxSource is the channel push source over the policy-applying
+// inbox, so a held event is never pushed into a session (ADR-007 A12).
+func newChannelInboxSource(agent string) *channel.InboxSource {
+	return channel.NewInboxSource(service.NewPolicyInboxReader(newPolicyInboxService()), agent)
 }

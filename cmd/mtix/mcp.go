@@ -211,7 +211,7 @@ func runMCP(channelAgent string, readOnly bool) error {
 				}()
 			}
 		}
-		go channel.Pump(ctx, channel.NewInboxSource(service.NewPolicyInboxReader(newPolicyInboxService()), channelAgent),
+		go channel.Pump(ctx, newChannelInboxSource(channelAgent),
 			channel.NewClaudeCode(srv.SendNotification), logger)
 		logger.Info("channel mode enabled", "agent", channelAgent)
 	}

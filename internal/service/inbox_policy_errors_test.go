@@ -37,8 +37,8 @@ func (f *failingMarks) AdvanceInboxReturnedMark(ctx context.Context, a string, s
 
 type errBudget struct{}
 
-func (errBudget) Admit(context.Context, string, int64) (int64, error) {
-	return 0, errors.New("budget down")
+func (errBudget) Locked(context.Context, string, func(AdmitFunc) error) error {
+	return errors.New("budget down")
 }
 
 func TestInboxRead_PolicyDependencyFailures_ReturnWrappedErrors(t *testing.T) {

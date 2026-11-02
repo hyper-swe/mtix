@@ -41,7 +41,11 @@ func NewInboxServiceWithWakeAcks(st InboxAckStore, reader InboxReadStore, publis
 	if !ok {
 		counter, _ = st.(InboxCountStore)
 	}
-	return &InboxService{store: st, reader: reader, counter: counter, wakeAcks: publisher}
+	history, ok := reader.(InboxHistoryStore)
+	if !ok {
+		history, _ = st.(InboxHistoryStore)
+	}
+	return &InboxService{store: st, reader: reader, counter: counter, history: history, wakeAcks: publisher}
 }
 
 // InboxAckThrough explicitly acknowledges the cumulative prefix (FR-19.5).

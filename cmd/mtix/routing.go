@@ -77,7 +77,7 @@ func shouldRouteToServer(cmd *cobra.Command) int {
 
 // isExemptCommand checks if a command should bypass auto-routing per FR-14.1b.
 func isExemptCommand(cmd *cobra.Command) bool {
-	if isInboxCountCommand(cmd) {
+	if isInboxCountCommand(cmd) || isInboxHistoryCommand(cmd) {
 		return true
 	}
 	name := cmd.Name()

@@ -122,7 +122,9 @@ func pruneExtensions(times []time.Time, now time.Time) []time.Time {
 // Scan examines journal events that arrived since the last scan: it closes
 // sender windows whose awaited reply arrived, and turns events that carry
 // reply_by, are addressed to an agent registered on this host and were not
-// authored by that agent into holds (C2: any sender).
+// authored by an agent registered on this host into holds (C2: any sender).
+// A send between two agents of the same host needs no hub contact, so it never
+// holds.
 func (p *ReplyProcessor) Scan(ctx context.Context) error {
 	pol, err := ReadReplyPolicy(p.Settings)
 	if err != nil {
@@ -149,9 +151,12 @@ func (p *ReplyProcessor) Scan(ctx context.Context) error {
 		settleReplyState(cur, pol, now)
 		closeAnswered(cur, answered)
 		for _, ev := range events {
-			if ev.Seq > cur.Cursor {
-				cur.Cursor = ev.Seq
+			// The cursor is re-read under the lock: a concurrent scan that
+			// already examined this event moved it past, so apply it once.
+			if ev.Seq <= cur.Cursor {
+				continue
 			}
+			cur.Cursor = ev.Seq
 			applyReplyEvent(cur, pol, registered, ev, now)
 		}
 		return nil
@@ -213,11 +218,12 @@ func closeAnswered(st *oplocal.ReplyState, answered map[string]bool) {
 }
 
 // applyReplyEvent turns one journal event into a hold when every rule holds:
-// To is registered on this host, the author is not To, the deadline is in the
+// To is registered on this host, the author is not (a same-host send needs no
+// hub contact and an author cannot hold on its own message), the deadline is in the
 // future, the sender is within the extension limit and the day's cap is not
 // spent. The hold lasts until min(reply_by, now + 8h).
 func applyReplyEvent(st *oplocal.ReplyState, pol ReplyPolicy, registered map[string]bool, ev sqlite.ReplyByEvent, now time.Time) {
-	if !registered[ev.To] || ev.Author == ev.To {
+	if !registered[ev.To] || registered[ev.Author] || ev.Author == ev.To {
 		return
 	}
 	replyBy := parseReplyBy(ev.ReplyBy)

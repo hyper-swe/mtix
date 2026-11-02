@@ -397,8 +397,9 @@ ruling without a manual relay (FR-19.1).
 Use --await-reply [<duration>] with --to when you need an answer: this host
 then keeps contacting the hub every 60 seconds until that agent replies or the
 duration passes (default 1h, at most 8h; for example --await-reply=30m). The
-event carries the deadline, so a recipient host holds its pulls for the reply
-too. A reply window keeps a scale-to-zero hub awake for up to 8 h.
+event carries the deadline, so a recipient host (daemon or host dispatcher)
+holds its pulls for the reply too, unless sender and recipient share a host.
+A reply window keeps a scale-to-zero hub awake for up to 8 h.
 
 ### Flags
 

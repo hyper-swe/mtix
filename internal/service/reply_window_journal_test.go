@@ -99,21 +99,20 @@ func TestReplyJournal_ReplyArrived_DirectionAndWatermark(t *testing.T) {
 		want     bool
 	}{
 		"the awaited reply":          {"peer", "me", mark, true},
-		"wrong direction":            {"me", "peer", mark, true}, // my own question is after seq 0 only
+		"the wrong direction":        {"me", "peer", mark, false}, // my own question predates the watermark
 		"reply before the watermark": {"peer", "me", mark + 5, false},
 		"someone else's reply":       {"stranger", "me", mark, false},
 		"reply addressed to a third": {"peer", "other", mark, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			after := tt.after
-			if name == "wrong direction" {
-				after = 0
-			}
-			ok, err := f.store.ReplyArrived(t.Context(), tt.from, tt.to, after)
+			ok, err := f.store.ReplyArrived(t.Context(), tt.from, tt.to, tt.after)
 			require.NoError(t, err)
 			require.Equal(t, tt.want, ok)
 		})
 	}
+	early, err := f.store.ReplyArrived(t.Context(), "me", "peer", 0)
+	require.NoError(t, err)
+	require.True(t, early, "with no watermark the question itself is an event from me to peer")
 	_, err = f.store.ReplyArrived(t.Context(), "", "me", 0)
 	require.ErrorIs(t, err, model.ErrInvalidInput)
 	_, err = f.store.ReplyByEvents(t.Context(), 0, 0)

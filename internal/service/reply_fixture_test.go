@@ -5,6 +5,7 @@ package service_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +21,7 @@ const replyBoardKey = "0123456789abcdef"
 
 // fakeJournal is the local journal the reply scan reads.
 type fakeJournal struct {
+	mu       sync.Mutex // overlapping scans share one journal
 	events   []sqlite.ReplyByEvent
 	answered map[string]bool
 	regs     map[string][]string // host id -> agents registered there
@@ -41,7 +43,9 @@ func (j *fakeJournal) ReplyArrived(_ context.Context, from, to string, _ int64) 
 }
 
 func (j *fakeJournal) ListRegistrations(_ context.Context, hostID, _ string) ([]sqlite.Registration, error) {
+	j.mu.Lock()
 	j.regCalls++
+	j.mu.Unlock()
 	var out []sqlite.Registration
 	for _, a := range j.regs[hostID] {
 		out = append(out, sqlite.Registration{AgentID: a, HostID: hostID})

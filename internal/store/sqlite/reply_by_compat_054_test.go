@@ -16,7 +16,13 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
+
+// envReplyByTestDSN names the isolated hub the hosted cmd matrix hands to the
+// released-binary pull check; without it the pull check logs that it did not run.
+const envReplyByTestDSN = "MTIX_REPLYBY_TEST_DSN"
 
 func TestReplyBy_054BinarySyncsBoard(t *testing.T) {
 	binary := compat054Binary(t)
@@ -70,4 +76,50 @@ func TestReplyBy_054BinarySyncsBoard(t *testing.T) {
 	inbox, err := target.InboxList(t.Context(), "test-agent")
 	require.NoError(t, err)
 	require.NotEmpty(t, inbox)
+	if dsn := os.Getenv(envReplyByTestDSN); dsn != "" {
+		replyByReleasedPull(t, binary, events, carrying, dsn)
+	} else {
+		t.Log("PostgreSQL pull compatibility not run locally; the hosted cmd matrix runs it with an isolated hub")
+	}
+}
+
+// replyByReleasedPull publishes the reply_by event to an isolated hub and has
+// the real 0.5.4 binary pull it into a store it owns: the pulled event must be
+// ingested, stay addressed and readable, and keep its payload byte for byte.
+func replyByReleasedPull(t *testing.T, binary string, events []*model.SyncEvent, carrying *model.SyncEvent, dsn string) {
+	t.Helper()
+	pool, err := transport.New(t.Context(), dsn, transport.Options{InsecureTLS: true})
+	require.NoError(t, err)
+	t.Cleanup(pool.Close)
+	require.NoError(t, pool.Migrate(t.Context()))
+	accepted, conflicts, err := pool.PushEvents(t.Context(), events)
+	require.NoError(t, err)
+	require.Empty(t, conflicts)
+	require.Len(t, accepted, len(events))
+
+	project := t.TempDir()
+	dir := filepath.Join(project, ".mtix")
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, "data"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("prefix: TEST\nsync:\n  auto_sync: false\n"), 0o600))
+	path := filepath.Join(dir, "data", "mtix.db")
+	seed, err := sqlite.New(path, nil)
+	require.NoError(t, err)
+	require.NoError(t, seed.Close())
+
+	attachReaderCommand(t, binary, project, dsn, "sync", "pull", "--insecure-tls")
+	out := attachReaderCommand(t, binary, project, dsn, "inbox", "--agent", "test-agent", "--json")
+	require.Contains(t, string(out), "answer within the hour", "the released binary ingested the pulled reply_by event")
+
+	target, err := sqlite.New(path, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, target.Close()) })
+	var payload string
+	require.NoError(t, target.ReadDB().QueryRowContext(t.Context(),
+		"SELECT payload FROM sync_events WHERE event_id=?", carrying.EventID).Scan(&payload))
+	require.JSONEq(t, string(carrying.Payload), payload)
+	var applied int
+	require.NoError(t, target.ReadDB().QueryRowContext(t.Context(),
+		"SELECT count(*) FROM applied_events WHERE event_id=?", carrying.EventID).Scan(&applied))
+	require.Equal(t, 1, applied, "the released binary applied the event")
+	t.Log("REPLY_BY_COMPAT_REAL_PG_PULL")
 }

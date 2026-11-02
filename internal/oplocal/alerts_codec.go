@@ -164,7 +164,7 @@ func (s *State) commitAlertData(dir *os.File, name string, data []byte, stage st
 			return err
 		}
 	}
-	if err := writeData(dir, name, data, false, s.beforeCommit, s.syncDirectory); err != nil {
+	if err := s.writeData(dir, name, data, false); err != nil {
 		return err
 	}
 	if s.alertStage != nil {

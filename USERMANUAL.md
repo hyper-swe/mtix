@@ -1077,9 +1077,21 @@ Each node block is separated by `=` characters. Single-line fields use
 `LABEL: value`. Multi-line fields use `LABEL:\n  indented body`. Control
 characters, bidirectional embedding, override and isolate controls,
 zero-width characters, tag characters and the line and paragraph
-separators (U+2028, U+2029) are sanitized (each replaced with U+FFFD). The
-directional marks (U+200E, U+200F, U+061C) and other format characters,
-such as variation selectors, are kept. Fields containing
+separators (U+2028, U+2029) are sanitized (each replaced with U+FFFD), and
+so is every other Unicode format character (including the directional marks
+U+200E, U+200F and U+061C), every variation selector (including the
+selectors that can hide data after an emoji, and the Mongolian free
+variation selectors), the combining grapheme joiner, the Khmer inherent
+vowels, the Hangul fillers, every unassigned code point and the Unicode
+noncharacters. The one exception is a single U+FE0F directly after a
+symbol character such as an emoji, which is kept so emoji still display
+as emoji; a second selector, a U+FE0F after any other character and
+U+FE0E are replaced. The braille blank U+2800 is also kept, because it is
+an assigned symbol. The inbox envelope drops the same characters. Unassigned
+means unassigned in the Unicode tables of the Go release mtix was built
+with. A person reading `mtix show` is not affected: show
+keeps the directional marks and variation selectors, and `--json` always
+returns the stored text exactly. Fields containing
 newlines in normally single-line positions are auto-promoted to multi-line
 to prevent label injection.
 
@@ -1349,6 +1361,24 @@ source under `wake.settings`, including configured agent overrides.
 `mtix config set` remedies. Remove those keys from `.mtix/config.yaml` and
 configure desired values operator-locally. Doctor is read-only, including
 with `--fix`; it never changes these settings or grants permission.
+
+### pi sessions (experimental)
+
+A pi session is woken by a wait child started by the pi extension, not by the host
+scanner (which skips pi registrations). The wait verb claims each addressed event once
+through the same wake ledger, records it as sent, prints one wake line and exits 0 only
+after that claim; an event that was claimed but not acknowledged never wakes the session
+again. The session handle follows the same rule as agent registration (non-empty, at most
+256 bytes, no control characters), so every session that can register can wait, and it is
+passed to the child as one argument, never through a shell. The wait child ends when its
+parent process changes, so it never outlives pi, and the extension retries a failed child
+a few times with a growing delay before giving up; messages stay in the inbox either way.
+
+This is experimental and off by default: this build embeds the extension file but no
+setup, refresh or doctor command installs it, and the live pi leg (the interactive
+extension trust prompt and a real end-to-end wake) is unproven. A pi session reads its
+messages with `mtix inbox`. The wait child reads only the local board, so it never
+contacts a hub.
 
 ### Wake delivery status
 
@@ -4908,6 +4938,14 @@ Other reference files remain in `.mtix/docs/`: auto-generated files always refre
 Filesystem checks cannot detect sandbox write access granted to an operator-owned directory. Keep operator state outside every sandbox-writable root; the operator must choose that placement. `mtix hooks status` and `mtix sync doctor` report this limitation in text and JSON. On Unix, every ancestor must be owned by root or the operator and must not be writable by a group or other users; a sticky directory is not an exception. On Windows, ancestor owners are limited to the operator, SYSTEM, Administrators and TrustedInstaller. Rights to delete entries, change access rules or ownership, or generic write/full access are limited to those principals; creating files or subdirectories in an ancestor is allowed. The state directory and files still require protected user-only access. Unix refuses group-writable homes and network or directory-service-owned parents that do not meet these ownership rules. Set `XDG_CONFIG_HOME` to an operator-owned directory with root- or operator-owned ancestors and no group or other write access; `mtix hooks status --json` reports the concrete cause and validates the new placement, and `mtix sync doctor` names these placement constraints and the remedy. Atomic replacement does not establish power-loss durability. Filesystems without the required hard-link support are refused with the cause reported.
 
 This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage API validates records; hook approval and legacy conversion follow the operator workflow. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.
+
+### Write durability
+
+Atomic record publication uses complete private temporary bytes and retains the existing access checks. On macOS, writes request `F_FULLFSYNC` for the file and parent directory; `ENOTSUP` produces a warning and an `fsync` fallback. Other flush errors fail the write. Linux and other Unix targets retain file and directory `Sync` calls.
+
+On Windows, verified write-through file handles use `FlushFileBuffers` before and after handle-relative publication. These request Windows and filesystem cache handling; the read-only parent handle is not separately flushed. Successful calls acknowledge OS requests, not a power-loss guarantee: filesystem and device behavior still matter.
+
+A failure before publication preserves the previous record. A flush failure after publication can leave complete new content visible, including after create-once publication. Always preserve these files and surface the I/O error to the operator; do not assume rollback or delete and recreate grants or the host identifier. `mtix hooks status --json` checks placement and access without writing state; it does not prove physical durability. Follow the existing operator workflow to reconcile the intended state after the storage error is resolved.
 
 ### Recent operator alerts
 

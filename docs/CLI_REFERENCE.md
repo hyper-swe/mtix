@@ -1884,9 +1884,14 @@ Before it writes anything, clone runs on every hub event the checks that
 'mtix sync pull' runs (the Lamport clock: below 2^53 and at most
 sync.max_lamport_jump above the local clock; the FR-18.7 envelope caps;
 a hub row that decodes), and refuses the whole clone when any event
-fails, naming the event and the reason. Clone has no quarantine: on the
-fresh store, run 'mtix sync pull' instead, which quarantines such an
-event and applies the rest. Only on a store that already holds sync state
+fails, naming the event and the reason. For those, clone has no quarantine:
+on the fresh store, run 'mtix sync pull' instead, which quarantines such an
+event and applies the rest. One case does not stop the clone: an event for a
+task the clone never creates (a claim or child create that a client before
+0.5.4 pushed under a number the hub renumbered, MTIX-95.37.1) is quarantined
+with a reason starting 'clone origin: orphaned dependent event', as is an
+event held behind a quarantined creation of its task; the clone prints how many, and 'mtix sync doctor' names them and prints the
+'mtix sync quarantine acknowledge' command. Only on a store that already holds sync state
 does 'mtix sync reconcile --discard-local' come first. It deletes local
 tasks and unpushed changes, so first run 'mtix sync push' and check that
 'mtix sync status' shows pending 0. It then asks for the ticket count,
@@ -2462,6 +2467,7 @@ so git pre-push hooks never block code pushes.
 |------|-------|-------------|---------|
 | `--force` |  | Bypass the singleton pusher lock (debugging only) | false |
 | `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
+| `--on-addressed-send` |  | Internal: the push an addressed send starts; records its outcome for doctor | false |
 ---
 
 ## quarantine
@@ -2495,7 +2501,9 @@ pulled event, with a required reason; it stays retained and unapplied.
 
 Record a local receipt accepting an invalid-id pulled event as unapplied
 
-Acknowledge one retained pull or sweep event refused for an invalid node id.
+Acknowledge one retained pull or sweep event refused for an invalid node id,
+or one orphaned dependent event 'mtix sync clone' quarantined (reason starting
+'clone origin: orphaned dependent event').
 The required reason and resolved author, UTC time and exact raw-event SHA256
 are recorded in an immutable local receipt. Repeating the command returns
 the first receipt, marking already_acknowledged in JSON or explaining that

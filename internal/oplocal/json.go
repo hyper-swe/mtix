@@ -100,6 +100,9 @@ func (s *State) CreateJSON(name string, v any) (bool, error) {
 	if err == nil {
 		return true, nil
 	}
+	if isNativeFlushFailure(err) {
+		return false, err
+	}
 	var existing json.RawMessage
 	reports, readErr := s.ReadJSON(name, &existing)
 	if readErr == nil && len(reports) == 0 && existing != nil {
@@ -133,5 +136,5 @@ func (s *State) writeJSON(name string, v any, exclusive bool) (err error) {
 	if len(data) > maxRecordSize {
 		return invalid("record is too large")
 	}
-	return writeData(dir, file, data, exclusive, s.beforeCommit, s.syncDirectory)
+	return s.writeData(dir, file, data, exclusive)
 }

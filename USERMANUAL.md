@@ -1530,7 +1530,7 @@ runs this program for you. Whether a Stop hook re-arms the waiter after a wake-d
 | `data.soft_delete_retention` | `720h` (30 days) | Time before soft-deleted nodes are purged |
 | `sync.keep_roles` | (none) | Comma-separated hub roles that `mtix sync harden` leaves with their access (see "Hub privileges"); PUBLIC, data-API and `pg_` roles are refused. Setting it turns on strict mode: the doctor's `hub-privileges` check then fails, instead of warning, whenever `mtix sync harden` would report a finding, or when the check cannot run |
 | `sync.hub_contact` | `activity` | When `mtix daemon` contacts the hub: `activity`, `interval:<duration>` (at least 1s) or `manual`. A board created before this key keeps contacting the hub at the daemon's own `--interval` until you set it; `mtix config get sync.hub_contact` shows that. |
-| `sync.push_on_addressed_send` | `true` | Reserved: it has no effect in this build (the auto-push of an addressed send arrives with a later change). |
+| `sync.push_on_addressed_send` | `true` | Pushes the board's pending events (whole prefix, in order) to the hub right after an addressed `mtix comment --to` or MCP `mtix_annotate` commits. Off under `sync.hub_contact` `manual`, off when `false`, never on a board the host only lists, and only where the checkout has its own hub or relay. A detached child (CLI), or the MCP server or `mtix serve` in-process, does it; the command returns first, and a child that finds the push lock held waits about 20 seconds for it before recording `push_held`. `comment --to` prints a `push:` line (`--json`: `push.state`, `push.reason`); a failure is shown by the next command and by `mtix doctor` row `sync.push-on-send`. |
 | `sync.listen` | `live` (shipped default: `live`) | `live`: while a waiter (`mtix inbox --wait`) holds a lease and its board listener runs, the lease keeps the daemon contacting the hub every `sync.listen_interval`; `off`: strict activity-only contact. |
 | `sync.listen_interval` | `10s` | Hub contact period while the listen hold is armed (at least 1s). |
 | `sync.listen_max_idle` | `8h` | The hold ends this long after the last real activity (at most 72h). |
@@ -2535,7 +2535,7 @@ pull's position either, so later changes keep arriving.
   whoever runs the hub, then run
   `mtix sync quarantine acknowledge --handle <handle> --reason <text>` on this replica (`<event-id>` also works for an ordinary id).
   Doctor's Fix names the event by its handle: the first 12 hex characters of the SHA-256 of the exact event id bytes, which `mtix sync quarantine list` also prints in a HANDLE column (`handle` and `event_id_sha256` in `--json`). The handle is always printable and typeable, even when the id holds NUL, invalid UTF-8 or shell metacharacters, so the printed command can be copied as it is: `mtix sync quarantine acknowledge --handle <handle> --reason '<your explanation>'`. Replace `<your explanation>` with why this event is safe to accept as unapplied; without `--reason` the command is refused. A handle may be shortened to 8 hex characters; one that matches more than one event is refused with the length that separates them. Use the positional `<event-id>` form only for an ordinary id. Then run doctor again after each acknowledgement. Use `mtix sync quarantine list --json` to report the original id to the operator; JSON keeps NUL and escapable bytes in the id exactly but shows invalid UTF-8 bytes as U+FFFD; `event_id_sha256` and the handle always name the exact stored bytes. A printed handle may be longer than 12 characters when two retained events share a shorter prefix.
-  Only invalid-node-id pull/sweep events are eligible; push holds, unrelated
+  Only invalid-node-id pull/sweep events, and the orphaned dependent events a clone quarantined, are eligible; push holds, unrelated
   failures, malformed raw events and missing or blank reasons are refused.
   No terminal or hub connection is required. An immutable local receipt records
   the resolved author, required reason, UTC time and exact raw-event SHA256;
@@ -2597,7 +2597,24 @@ pull's position either, so later changes keep arriving.
   Never raise `sync.max_lamport_jump` for a row the hub has repaired: the
   bound is not what holds it, and it protects this replica's clock from an
   extreme event.
-- **Clone refuses such events.** `mtix sync clone` has no quarantine: it
+- **Clone quarantines orphaned dependent events.** A hub that holds events
+  for a task the clone never creates (a claim or child create that a client
+  from before 0.5.4 pushed under a number the hub had renumbered) no longer
+  stops `mtix sync clone`: it applies the rest, stores each such event with
+  source `pull` and a reason starting `clone origin: orphaned dependent
+  event`, and prints `N orphaned events quarantined`. An event about a task
+  whose creation is itself quarantined (a delete, claim, update or link behind
+  a child create whose parent is missing) is held the same way, with a reason
+  ending `held behind a quarantined creation`; the clone prints `held behind
+  a quarantined creation; it applies after the creation`, and the retry
+  applies it after the creation, so a teammate's delete is not lost.
+  Every pull retries them, and one applies if its task's creation arrives.
+  `mtix sync doctor` names them (`N of them clone orphans`) and prints the
+  acknowledge command (also in `--json`); after reviewing them with `mtix
+  sync quarantine list --json`, accept each with `mtix sync quarantine
+  acknowledge --handle <handle> --reason <text>`. An interrupted clone
+  resumed with `--resume` records each orphan once.
+- **Clone refuses other failing events.** For every other failure `mtix sync clone` has no quarantine: it
   runs the same checks on every hub event before it writes anything, and
   refuses the whole clone, naming the event and the reason, when any
   event fails. On the fresh store, run `mtix sync pull` alone: it
@@ -4641,10 +4658,10 @@ After a push that prints `<n> renumbered`, look your node up by title (the
 number changed) and fix any commit or PR text that names the old number.
 Check with `mtix sync push`, `mtix sync pull`, `mtix sync status` (pending 0)
 and `mtix sync doctor`. Events a client from before this fix pushed under
-an old number stay on the hub; a fresh clone of such a hub can fail with
-`node <id> (uid=""): not found`. No recovery exists in this version (a
-clone applies a batch in one transaction and does not quarantine); it is
-tracked as MTIX-95.37.1, so report the error to the person who runs the hub. The sync protocol 2 design (ADR-006) changes how this is done (a rebind
+an old number stay on the hub; a fresh clone of such a hub completes and
+quarantines them as orphaned dependent events (see "Clone quarantines
+orphaned dependent events" under Quarantined events): `mtix sync doctor`
+names them and prints the `mtix sync quarantine acknowledge` command. The sync protocol 2 design (ADR-006) changes how this is done (a rebind
 event, uid-keyed links) and not what you see.
 
 ### New sync commands
@@ -4944,6 +4961,14 @@ Other reference files remain in `.mtix/docs/`: auto-generated files always refre
 Filesystem checks cannot detect sandbox write access granted to an operator-owned directory. Keep operator state outside every sandbox-writable root; the operator must choose that placement. `mtix hooks status` and `mtix sync doctor` report this limitation in text and JSON. On Unix, every ancestor must be owned by root or the operator and must not be writable by a group or other users; a sticky directory is not an exception. On Windows, ancestor owners are limited to the operator, SYSTEM, Administrators and TrustedInstaller. Rights to delete entries, change access rules or ownership, or generic write/full access are limited to those principals; creating files or subdirectories in an ancestor is allowed. The state directory and files still require protected user-only access. Unix refuses group-writable homes and network or directory-service-owned parents that do not meet these ownership rules. Set `XDG_CONFIG_HOME` to an operator-owned directory with root- or operator-owned ancestors and no group or other write access; `mtix hooks status --json` reports the concrete cause and validates the new placement, and `mtix sync doctor` names these placement constraints and the remedy. Atomic replacement does not establish power-loss durability. Filesystems without the required hard-link support are refused with the cause reported.
 
 This directory holds a persistent host identifier and host-specific state records. Other-host records are ignored and reported. Missing records are empty; invalid or inaccessible state is refused. This storage API validates records; hook approval and legacy conversion follow the operator workflow. To recover, correct the reported path, ownership or access rules manually, then repeat `mtix hooks status --json`; preserve existing state records while correcting permissions.
+
+### Write durability
+
+Atomic record publication uses complete private temporary bytes and retains the existing access checks. On macOS, writes request `F_FULLFSYNC` for the file and parent directory; `ENOTSUP` produces a warning and an `fsync` fallback. Other flush errors fail the write. Linux and other Unix targets retain file and directory `Sync` calls.
+
+On Windows, verified write-through file handles use `FlushFileBuffers` before and after handle-relative publication. These request Windows and filesystem cache handling; the read-only parent handle is not separately flushed. Successful calls acknowledge OS requests, not a power-loss guarantee: filesystem and device behavior still matter.
+
+A failure before publication preserves the previous record. A flush failure after publication can leave complete new content visible, including after create-once publication. Always preserve these files and surface the I/O error to the operator; do not assume rollback or delete and recreate grants or the host identifier. `mtix hooks status --json` checks placement and access without writing state; it does not prove physical durability. Follow the existing operator workflow to reconcile the intended state after the storage error is resolved.
 
 ### Recent operator alerts
 

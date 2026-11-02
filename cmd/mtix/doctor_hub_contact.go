@@ -60,6 +60,7 @@ func appendHubContactChecks(report DoctorReport) DoctorReport {
 		report = appendDoctorCheck(report, c)
 	}
 	report = appendDoctorCheck(report, listenerDoctorRow(src, hubConfigured(app.mtixDir), relayDir() != "", daemonLockHeld)) // MTIX-112.20.4
+	report = appendDoctorCheck(report, addressedPushDoctorRow(src))                                                          // MTIX-112.20.2
 	return report
 }
 

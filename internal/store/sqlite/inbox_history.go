@@ -8,6 +8,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -145,13 +147,43 @@ func (s *Store) UnackedInboxEvents(ctx context.Context) (int64, error) {
 
 // CountUnackedInboxFile is UnackedInboxEvents for a database file opened
 // read-only, for recover, which must not open the damaged store as a Store.
+// The file: scheme is what makes mode=ro count: a plain path with a query
+// string is opened read-write and created when missing. A missing or empty
+// file is an error, never a new database (MTIX-65, MTIX-112.2).
 func CountUnackedInboxFile(ctx context.Context, dbPath string) (int64, error) {
-	db, err := sql.Open("sqlite", dbPath+"?mode=ro")
+	info, err := os.Stat(dbPath)
 	if err != nil {
-		return 0, fmt.Errorf("open %s read-only: %w", dbPath, err)
+		return 0, fmt.Errorf("count unacknowledged inbox events: %w", err)
+	}
+	if info.Size() == 0 {
+		return 0, fmt.Errorf("count unacknowledged inbox events: %s is 0 bytes, not a database", dbPath)
+	}
+	n, err := countUnackedRO(ctx, "file:"+fileURIPath(dbPath)+"?mode=ro")
+	if err != nil {
+		// A WAL database needs a writable -shm to be read normally. When the
+		// file or its directory is read-only, read the main file as it is
+		// (immutable ignores an unmerged -wal, so the count can be low).
+		var immErr error
+		if n, immErr = countUnackedRO(ctx, "file:"+fileURIPath(dbPath)+"?mode=ro&immutable=1"); immErr != nil {
+			return 0, err
+		}
+	}
+	return n, nil
+}
+
+// countUnackedRO opens uri and counts; it never writes.
+func countUnackedRO(ctx context.Context, uri string) (int64, error) {
+	db, err := sql.Open("sqlite", uri)
+	if err != nil {
+		return 0, fmt.Errorf("open read-only: %w", err)
 	}
 	defer func() { _ = db.Close() }()
 	return countUnackedInbox(ctx, db)
+}
+
+// fileURIPath escapes the characters that end a file: URI path.
+func fileURIPath(path string) string {
+	return strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
 }
 
 func countUnackedInbox(ctx context.Context, db *sql.DB) (int64, error) {

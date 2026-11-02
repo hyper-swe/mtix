@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -57,7 +58,7 @@ func TestInboxHistoryCLI_TextAndJSON_ListsStatesAndAckTimes(t *testing.T) {
 }
 
 func TestInboxHistoryCLI_ConflictingFlags_Refused(t *testing.T) {
-	for _, extra := range []string{"--wait", "--format=prompt", "--count"} {
+	for _, extra := range []string{"--wait", "--format=prompt", "--count", "--all", "--all=false"} {
 		t.Run(extra, func(t *testing.T) {
 			initTestApp(t)
 			cmd := newInboxCmd()
@@ -187,4 +188,135 @@ func TestInboxHistoryStartup_ChangedBoard_SkipsOnlyHistoryImport(t *testing.T) {
 	require.NoError(t, persistentPreRun(ordinary, nil, ""))
 	_, err = app.store.GetNode(t.Context(), "TEST-2")
 	require.NoError(t, err)
+}
+
+// captureStderrOf runs call with os.Stderr redirected to a file and returns it.
+func captureStderrOf(t *testing.T, call func() error) (string, error) {
+	t.Helper()
+	f, err := os.CreateTemp(t.TempDir(), "stderr-")
+	require.NoError(t, err)
+	old := os.Stderr
+	os.Stderr = f
+	callErr := call()
+	os.Stderr = old
+	require.NoError(t, f.Close())
+	data, err := os.ReadFile(f.Name())
+	require.NoError(t, err)
+	return string(data), callErr
+}
+
+// The export command, end to end: the JSON stays alone on stdout, the note
+// with the count goes to stderr, and a failed count never fails the export.
+func TestExportCommand_UnackedInbox_NoteOnStderrJSONOnStdout(t *testing.T) {
+	initTestApp(t)
+	envelopeCLIEvents(t, "mail one", "mail two")
+	var stdout string
+	stderr, err := captureStderrOf(t, func() error {
+		var runErr error
+		stdout, runErr = cliBehaviorOutput(t, func() error { return runExport("json") })
+		return runErr
+	})
+	require.NoError(t, err)
+	assert.Contains(t, stderr, "2 unacknowledged inbox event(s)")
+	assert.NotContains(t, stdout, "unacknowledged")
+	var data sqlite.ExportData
+	require.NoError(t, json.Unmarshal([]byte(stdout), &data), "stdout is the export document alone")
+}
+
+func TestExportCommand_NoUnackedInbox_PrintsNoNote(t *testing.T) {
+	initTestApp(t)
+	events := envelopeCLIEvents(t, "mail")
+	require.NoError(t, app.store.InboxAck(t.Context(), "worker", events[0].Seq))
+	stderr, err := captureStderrOf(t, func() error {
+		_, runErr := cliBehaviorOutput(t, func() error { return runExport("json") })
+		return runErr
+	})
+	require.NoError(t, err)
+	assert.NotContains(t, stderr, "unacknowledged")
+}
+
+func TestExportCommand_CountFails_ExportStillSucceedsWithWarning(t *testing.T) {
+	initTestApp(t)
+	envelopeCLIEvents(t, "mail")
+	_, err := app.store.WriteDB().ExecContext(t.Context(), `DROP TABLE agent_inbox_ack`)
+	require.NoError(t, err)
+	var stdout string
+	stderr, err := captureStderrOf(t, func() error {
+		var runErr error
+		stdout, runErr = cliBehaviorOutput(t, func() error { return runExport("json") })
+		return runErr
+	})
+	require.NoError(t, err, "a finished export must not fail because the note could not be counted")
+	assert.Contains(t, stderr, "could not count unacknowledged inbox events")
+	assert.Contains(t, stdout, `"nodes"`)
+}
+
+// The recover command, end to end: it names the unread mail of the damaged
+// database, and says nothing when there is none.
+func TestRecoverCommand_UnackedInbox_NamesCountAfterReport(t *testing.T) {
+	initTestApp(t)
+	events := envelopeCLIEvents(t, "mail one", "mail two")
+	out, err := cliBehaviorOutput(t, func() error { _, runErr := runRecover(); return runErr })
+	require.NoError(t, err)
+	assert.Contains(t, out, "the damaged database holds 2 unacknowledged inbox event(s)")
+	assert.Contains(t, out, "Salvage complete")
+
+	for _, e := range events {
+		require.NoError(t, app.store.InboxAck(t.Context(), "worker", e.Seq))
+	}
+	out, err = cliBehaviorOutput(t, func() error { _, runErr := runRecover(); return runErr })
+	require.NoError(t, err)
+	assert.NotContains(t, out, "unacknowledged")
+}
+
+func TestRecoverCommand_UnreadableCount_SaysCouldNotCount(t *testing.T) {
+	var w bytes.Buffer
+	path := filepath.Join(t.TempDir(), "never-created.db")
+	writeRecoverInboxNote(t.Context(), &w, path)
+	assert.Contains(t, w.String(), "could not be counted")
+	assert.NoFileExists(t, path)
+}
+
+// History stays local where a plain inbox read may route to a live server;
+// that is the difference between the two paths.
+func TestInboxHistoryStartup_LiveServer_StaysLocal(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, writePIDLock(app.mtixDir, 6849))
+	for _, tt := range []struct {
+		args []string
+		want int
+	}{{nil, 6849}, {[]string{"--history"}, 0}, {[]string{"--history=false"}, 6849}} {
+		cmd := newInboxCmd()
+		require.NoError(t, cmd.Flags().Parse(tt.args))
+		require.Equal(t, tt.want, shouldRouteToServer(cmd), tt.args)
+	}
+	cmd := newInboxCmd()
+	require.NoError(t, cmd.Flags().Parse([]string{"--history"}))
+	assert.True(t, isExemptCommand(cmd))
+	plain := newInboxCmd()
+	require.NoError(t, plain.Flags().Parse(nil))
+	assert.False(t, isExemptCommand(plain))
+}
+
+// The required name: discard-local warns of the unread mail with a count, and
+// the manual states the loss.
+func TestInboxRetention_DiscardLocal_WarnsAndDocumented(t *testing.T) {
+	manualPath, err := filepath.Abs(filepath.Join("..", "..", "USERMANUAL.md")) // before the fixture changes directory
+	require.NoError(t, err)
+	initTestApp(t)
+	envelopeCLIEvents(t, "mail one", "mail two")
+	op, err := discardLocalOp(t.Context())
+	require.NoError(t, err)
+	var w bytes.Buffer
+	answerDestructive(t, "wrong", true)
+	require.ErrorIs(t, confirmDestructive(&w, op), errDestructiveRefused)
+	assert.Contains(t, w.String(), "2 "+unackedInboxLabel, "the warning printed before the prompt carries the count")
+
+	manual, err := os.ReadFile(manualPath)
+	require.NoError(t, err)
+	_, section, ok := strings.Cut(string(manual), "## Inbox retention guarantee\n")
+	require.True(t, ok)
+	section, _, _ = strings.Cut(section, "\n## ")
+	assert.Contains(t, section, "--discard-local")
+	assert.Contains(t, section, "lists the unacknowledged inbox events first")
 }

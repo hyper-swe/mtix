@@ -164,7 +164,11 @@ func runExport(format string) error {
 		return fmt.Errorf("marshal export: %w", err)
 	}
 	fmt.Println(string(data))
-	return exportInboxNoteTo(ctx, os.Stderr)
+	// The export is complete and written: a failed count only costs the note.
+	if noteErr := exportInboxNoteTo(ctx, os.Stderr); noteErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not count unacknowledged inbox events (%v); the export does not carry the inbox\n", noteErr)
+	}
+	return nil
 }
 
 // importFlags collects the import command's options (FR-6.3, FR-7.8;

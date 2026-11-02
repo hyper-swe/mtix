@@ -64,9 +64,22 @@ func runServeWith(cfg mtixhttp.ServerConfig) error {
 
 	clock := func() time.Time { return time.Now().UTC() }
 
+	services := serveServices()
+	srv := newServeServer(services, cfg, clock)
+
+	// MTIX-232: make this serve discoverable by mtix url; removed on return,
+	// which covers clean exit and SIGINT/SIGTERM shutdown.
+	defer announceServe(serveAnnounceConfig{host: cfg.Bind, port: cfg.Port, now: clock, logger: app.logger})()
+
+	fmt.Printf("Starting mtix server at %s:%s\n", cfg.Bind, cfg.Port)
+	return srv.ListenAndServeWithGracefulShutdown()
+}
+
+// serveServices builds the services the REST server runs on from the app.
+func serveServices() mtixhttp.Services {
 	dependencies := service.NewDependencyServiceFromNodeService(app.nodeSvc)
 	admin := service.NewAdminService(app.store)
-	services := mtixhttp.Services{
+	return mtixhttp.Services{
 		Read: mtixhttp.ReadServices{
 			Nodes: app.nodeSvc, Background: app.bgSvc, Sessions: app.sessionSvc,
 			Agents: app.agentSvc, Config: app.configSvc, Dependencies: dependencies, Admin: admin,
@@ -76,16 +89,15 @@ func runServeWith(cfg mtixhttp.ServerConfig) error {
 			Agents: app.agentSvc, Config: app.configSvc, Dependencies: dependencies, Admin: admin,
 		},
 	}
+}
+
+// newServeServer builds the REST server of `mtix serve` and wires the
+// addressed-send push into it: an addressed comment through serve pushes in
+// this long-lived process (ADR-007 D21, MTIX-112.20.2).
+func newServeServer(services mtixhttp.Services, cfg mtixhttp.ServerConfig, clock func() time.Time) *mtixhttp.Server {
 	srv := mtixhttp.NewServer(services, app.logger, cfg, clock)
-	// MTIX-112.20.2: an addressed comment through serve pushes in this long-lived process.
 	srv.SetAddressedSendHook(inProcessAddressedSendHook())
-
-	// MTIX-232: make this serve discoverable by mtix url; removed on return,
-	// which covers clean exit and SIGINT/SIGTERM shutdown.
-	defer announceServe(serveAnnounceConfig{host: cfg.Bind, port: cfg.Port, now: clock, logger: app.logger})()
-
-	fmt.Printf("Starting mtix server at %s:%s\n", cfg.Bind, cfg.Port)
-	return srv.ListenAndServeWithGracefulShutdown()
+	return srv
 }
 
 // serveConfig builds the HTTP server configuration for `mtix serve`,

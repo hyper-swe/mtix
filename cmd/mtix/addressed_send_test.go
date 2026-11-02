@@ -235,6 +235,7 @@ func TestCoalescingRunner_BurstNeverRunsTwoAtOnce(t *testing.T) {
 func TestAddressedSend_PushFailure_PersistedAndShown(t *testing.T) {
 	t.Setenv(transport.EnvDSN, fakeEnrolledDSN) // nothing listens there: the push fails
 	initTestApp(t)
+	_ = seedOneNode(t) // a pending event, so the send has something to push
 	var stderr bytes.Buffer
 	err := runAddressedSendPush(context.Background(), &stderr, testRun(transport.Options{InsecureTLS: true}))
 	require.Error(t, err)

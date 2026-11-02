@@ -31,9 +31,20 @@ const (
 // lock for the whole wait: the message is pending, not pushed.
 var errPushHeld = errors.New("push lock held")
 
-// pushHeldKey carries a flag that pushWithHandoff sets when it skipped its
-// pass because the push lock was held.
-type pushHeldKey struct{}
+// errPushIncomplete marks a push that ran but did not drain the queue (a batch
+// that made no headway, or events waiting on a held creation): the message may
+// still be pending, so it is not a success.
+var errPushIncomplete = errors.New("push did not drain the queue")
+
+// pushProbeKey carries a pushProbe through a push, so an addressed send can
+// tell held from pushed and drained from undrained.
+type pushProbeKey struct{}
+
+// pushProbe is what a push reports to the addressed send that started it.
+type pushProbe struct {
+	held      atomic.Bool // pushWithHandoff skipped its pass: the push lock was held
+	undrained atomic.Bool // the last pass that ran ended without draining the queue
+}
 
 // addressedRunOptions are the knobs of one addressed-send push run.
 type addressedRunOptions struct {
@@ -42,6 +53,15 @@ type addressedRunOptions struct {
 	HeldTries int
 	HeldWait  time.Duration
 	Wait      func(time.Duration) // injected pause between lock probes; nil means time.Sleep
+	// Push runs one push; nil means runSyncPush. Tests inject it.
+	Push func(ctx context.Context, stderr io.Writer, opts transport.Options) error
+}
+
+func (o addressedRunOptions) push(ctx context.Context, stderr io.Writer) error {
+	if o.Push != nil {
+		return o.Push(ctx, stderr, o.Transport)
+	}
+	return runSyncPush(ctx, io.Discard, stderr, nil, o.Transport, false)
 }
 
 func (o addressedRunOptions) pause() {
@@ -62,13 +82,16 @@ func runAddressedSendPush(ctx context.Context, stderr io.Writer, o addressedRunO
 	var pushErr error
 	if hubConfigured(app.mtixDir) {
 		pushErr = pushWaitingForLock(ctx, stderr, o)
+		if pushErr == nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			pushErr = ctx.Err() // the deadline cut the run short: record a timeout, not a success
+		}
 	}
 	// An addressed send publishes even when sync.relay.poll_interval is 0:
 	// that setting only stops the daemon polling. A relay failure is part of
 	// the outcome, so neither half can hide the other's failure.
 	relayErr := runRelayPhase(ctx, stderr)
 	outcome := errors.Join(pushErr, relayErr)
-	if ctx.Err() != nil {
+	if errors.Is(ctx.Err(), context.Canceled) {
 		return outcome // shutting down: an interrupted run records nothing
 	}
 	if err := recordAddressedPushOutcome(app.mtixDir, o.Now, pushErr, relayErr); err != nil {
@@ -83,21 +106,33 @@ func runAddressedSendPush(ctx context.Context, stderr io.Writer, o addressedRunO
 // lock is free. A lock held for the whole wait is reported as errPushHeld,
 // never as success.
 func pushWaitingForLock(ctx context.Context, stderr io.Writer, o addressedRunOptions) error {
-	var held atomic.Bool
-	ctx = context.WithValue(ctx, pushHeldKey{}, &held)
+	probe := &pushProbe{}
+	ctx = context.WithValue(ctx, pushProbeKey{}, probe)
 	for try := 0; ; try++ {
-		held.Store(false)
-		err := runSyncPush(ctx, io.Discard, stderr, nil, o.Transport, false)
-		if err != nil {
-			return err
+		// Nothing pending (an earlier push already sent it): no lock, no hub contact.
+		pending, readErr := readPendingBatch(ctx, app.store, 1)
+		if readErr != nil {
+			return fmt.Errorf("read pending events: %w", readErr)
 		}
-		if !held.Load() {
+		if len(pending) == 0 {
 			return nil
 		}
-		if try >= o.HeldTries || ctx.Err() != nil {
-			return errPushHeld
+		probe.held.Store(false)
+		probe.undrained.Store(false)
+		if err := o.push(ctx, stderr); err != nil {
+			return err
 		}
-		o.pause()
+		if probe.held.Load() {
+			if try >= o.HeldTries || ctx.Err() != nil {
+				return errPushHeld
+			}
+			o.pause()
+			continue
+		}
+		if probe.undrained.Load() {
+			return errPushIncomplete
+		}
+		return nil
 	}
 }
 

@@ -110,11 +110,25 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 		pool.SetClientIdentity(clientMachineHash(), version)
 
 		drained, pushErr := pushAndReportState(ctx, stdout, stderr, pool, app.store)
-		if pushErr == nil {
-			resolveAddressedPush(app.mtixDir, utcNow, false) // MTIX-112.20.2: a completed push clears a recorded push failure
-		}
+		afterPushPass(ctx, stderr, drained, pushErr)
 		return drained, pushErr
 	})
+}
+
+// afterPushPass tells an addressed send whether the pass drained the queue and,
+// when it did, clears a recorded push failure: a push that stopped short
+// (conflicts, events waiting on a held creation) neither counts as success nor
+// clears anything (ADR-007 D21, MTIX-112.20.2).
+func afterPushPass(ctx context.Context, stderr io.Writer, drained bool, pushErr error) {
+	if probe, ok := ctx.Value(pushProbeKey{}).(*pushProbe); ok {
+		probe.undrained.Store(pushErr == nil && !drained)
+	}
+	if pushErr != nil || !drained {
+		return
+	}
+	if err := resolveAddressedPush(app.mtixDir, utcNow, false); err != nil {
+		fmt.Fprintf(stderr, "warning: could not clear the recorded push failure: %v\n", err)
+	}
 }
 
 // pushAndReport runs pushLoop against pool, records the outcome for the

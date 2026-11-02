@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	fixAddressedPush  = "mtix sync push"
-	fixAddressedRelay = "mtix doctor"
-	fixPushOnSend     = "mtix config set " + service.PushOnAddressedSendKey + " true"
+	fixAddressedPush       = "mtix sync push"
+	fixAddressedRelay      = "mtix doctor"
+	fixAddressedIncomplete = "mtix sync doctor"
+	fixPushOnSend          = "mtix config set " + service.PushOnAddressedSendKey + " true"
 )
 
 // addressedPushFailureText describes a failed requested push and what to run.
@@ -29,8 +30,11 @@ func addressedPushFailureText(rec oplocal.AddressedPush) string {
 // addressedPushFix names the next step for a failure class: a relay failure
 // is diagnosed by doctor's relay rows, anything else by running the push.
 func addressedPushFix(rec oplocal.AddressedPush) string {
-	if rec.ErrorClass == relayFailedClass {
+	switch rec.ErrorClass {
+	case relayFailedClass:
 		return fixAddressedRelay
+	case "push_incomplete":
+		return fixAddressedIncomplete
 	}
 	return fixAddressedPush
 }
@@ -57,7 +61,9 @@ func showAddressedPushFailure(stderr io.Writer, mtixDir string) {
 	}
 	fmt.Fprintf(stderr, "warning: %s\n", addressedPushFailureText(rec))
 	rec.Shown = true
-	_ = src.state.RecordAddressedPush(src.key(), rec) // best effort: it only stops a repeat of the warning
+	if err := src.state.RecordAddressedPush(src.key(), rec); err != nil {
+		fmt.Fprintf(stderr, "warning: could not record that this warning was shown (%v); it may repeat\n", err)
+	}
 }
 
 // addressedPushDoctorRow is the sync.push-on-send row (text and --json): the

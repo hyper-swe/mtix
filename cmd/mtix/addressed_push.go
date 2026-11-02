@@ -97,14 +97,20 @@ func childPushArgv() []string { return []string{"sync", "push", "--on-addressed-
 // productionAddressedPushInputs reads the decision facts of the current board.
 func productionAddressedPushInputs(ctx context.Context) (addressedPushInputs, error) {
 	var in addressedPushInputs
-	if app.configSvc == nil || app.mtixDir == "" {
+	if app.mtixDir == "" {
 		return in, fmt.Errorf("not in an mtix project")
 	}
-	var err error
-	if in.Enabled, err = app.configSvc.PushOnAddressedSend(); err != nil {
+	// Read the board config fresh for each decision: a long-lived MCP server
+	// or serve process must honor a later `mtix config set sync.hub_contact
+	// manual` (or the switch set to false) made by another process.
+	cfg, err := service.NewConfigService(filepath.Join(app.mtixDir, "config.yaml"))
+	if err != nil {
 		return in, err
 	}
-	if in.Mode, _, err = app.configSvc.HubContact(service.GrandfatherInterval); err != nil {
+	if in.Enabled, err = cfg.PushOnAddressedSend(); err != nil {
+		return in, err
+	}
+	if in.Mode, _, err = cfg.HubContact(service.GrandfatherInterval); err != nil {
 		return in, err
 	}
 	in.Enrolled = hubConfigured(app.mtixDir) || relayDir() != ""
@@ -176,6 +182,8 @@ func pushErrorClass(err error) string {
 		return "timeout"
 	case errors.Is(err, errPushHeld):
 		return "push_held"
+	case errors.Is(err, errPushIncomplete):
+		return "push_incomplete"
 	}
 	return "push_failed"
 }
@@ -213,14 +221,17 @@ func recordAddressedPushOutcome(mtixDir string, now func() time.Time, hubErr, re
 // the doctor row turns green after the fix it printed (MTIX-112.20.2). A
 // record that held both classes keeps the other one. Best effort: unreadable
 // operator state is doctor's to report, never this command's.
-func resolveAddressedPush(mtixDir string, now func() time.Time, relay bool) {
+func resolveAddressedPush(mtixDir string, now func() time.Time, relay bool) error {
 	src, err := newHubContactSource(mtixDir)
 	if err != nil {
-		return
+		return err
 	}
 	rec, present, err := src.state.ReadAddressedPush(src.key())
-	if err != nil || !present || rec.OK {
-		return
+	if err != nil {
+		return fmt.Errorf("read addressed push record: %w", err)
+	}
+	if !present || rec.OK {
+		return nil
 	}
 	var kept []string
 	for _, part := range strings.Split(rec.ErrorClass, ",") {
@@ -229,12 +240,15 @@ func resolveAddressedPush(mtixDir string, now func() time.Time, relay bool) {
 		}
 	}
 	if len(kept) == len(strings.Split(rec.ErrorClass, ",")) {
-		return // nothing of this kind was recorded
+		return nil // nothing of this kind was recorded
 	}
 	if len(kept) == 0 {
 		rec = oplocal.AddressedPush{At: now(), OK: true}
 	} else {
 		rec.ErrorClass, rec.Shown = strings.Join(kept, ","), false
 	}
-	_ = src.state.RecordAddressedPush(src.key(), rec) // best effort, see above
+	if err := src.state.RecordAddressedPush(src.key(), rec); err != nil {
+		return fmt.Errorf("record addressed push resolution: %w", err)
+	}
+	return nil
 }

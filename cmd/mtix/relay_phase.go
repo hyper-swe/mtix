@@ -9,7 +9,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+
+	"github.com/hyper-swe/mtix/internal/relay/tick"
 )
+
+// relayStack is the part of a relay stack one pass needs.
+type relayStack interface {
+	Pass(ctx context.Context) (tick.Result, error)
+}
 
 // runRelayPhase runs one relay pass inside a daemon tick, if a relay is
 // configured (FR-21 §6.6).
@@ -31,7 +38,17 @@ func runRelayPhase(ctx context.Context, stderr io.Writer) error {
 	if relayDir() == "" {
 		return nil
 	}
-	stack, err := openRelayStack()
+	open := func() (relayStack, error) {
+		opened, openErr := openRelayStack()
+		if openErr != nil {
+			return nil, openErr
+		}
+		return opened, nil
+	}
+	if app.relayOpen != nil {
+		open = app.relayOpen // tests inject a stack whose pass fails after it opened
+	}
+	stack, err := open()
 	if err != nil {
 		fmt.Fprintf(stderr, "mtix daemon: relay unavailable: %s\n", err)
 		return fmt.Errorf("%w: open: %w", errRelayPass, err)
@@ -59,7 +76,10 @@ func runRelayPhase(ctx context.Context, stderr io.Writer) error {
 	if passErr != nil {
 		return fmt.Errorf("%w: %w", errRelayPass, passErr)
 	}
-	resolveAddressedPush(app.mtixDir, utcNow, true) // MTIX-112.20.2: a working relay clears a recorded relay failure
+	// MTIX-112.20.2: a working relay clears a recorded relay failure.
+	if err := resolveAddressedPush(app.mtixDir, utcNow, true); err != nil {
+		fmt.Fprintf(stderr, "mtix daemon: could not clear the recorded relay failure: %s\n", err)
+	}
 	return nil
 }
 

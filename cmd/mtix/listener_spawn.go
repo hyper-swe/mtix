@@ -60,11 +60,8 @@ func spawnDetached(exe, projectDir string, argv []string) error {
 	if err != nil {
 		return fmt.Errorf("open %s: %w", os.DevNull, err)
 	}
-	defer func() { _ = null.Close() }()                            // best effort: the child holds its own descriptor
-	cmd := exec.CommandContext(context.Background(), exe, argv...) //nolint:gosec // exe is this process's own binary (os.Executable)
-	cmd.Dir = projectDir
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = null, null, null
-	cmd.SysProcAttr = listenerSysProcAttr()
+	defer func() { _ = null.Close() }() // best effort: the child holds its own descriptor
+	cmd := newDetachedCmd(exe, projectDir, argv, null)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start %s %s: %w", exe, strings.Join(argv, " "), err)
 	}
@@ -72,4 +69,15 @@ func spawnDetached(exe, projectDir string, argv []string) error {
 		return fmt.Errorf("release the detached process: %w", err)
 	}
 	return nil
+}
+
+// newDetachedCmd builds the command spawnDetached starts: own session or
+// process group, no terminal, all three streams on null. It is separate so a
+// test can assert the detachment without starting a process.
+func newDetachedCmd(exe, projectDir string, argv []string, null *os.File) *exec.Cmd {
+	cmd := exec.CommandContext(context.Background(), exe, argv...) //nolint:gosec // exe is this process's own binary (os.Executable)
+	cmd.Dir = projectDir
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = null, null, null
+	cmd.SysProcAttr = listenerSysProcAttr()
+	return cmd
 }

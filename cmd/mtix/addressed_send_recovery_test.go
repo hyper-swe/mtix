@@ -62,6 +62,7 @@ func TestAddressedSend_InvalidHubContact_FailsClosed(t *testing.T) {
 func TestAddressedSend_LockHeldThroughoutWait_RecordsPushHeld(t *testing.T) {
 	t.Setenv(transport.EnvDSN, fakeEnrolledDSN)
 	initTestApp(t)
+	_ = seedOneNode(t) // a pending event, so the send has something to push
 	lock, err := pushlock.Acquire(app.mtixDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = lock.Release() })
@@ -85,6 +86,7 @@ func TestAddressedSend_LockHeldThroughoutWait_RecordsPushHeld(t *testing.T) {
 func TestAddressedSend_LockReleasedDuringWait_ChildPushes(t *testing.T) {
 	t.Setenv(transport.EnvDSN, fakeEnrolledDSN) // nothing listens: the push itself then fails
 	initTestApp(t)
+	_ = seedOneNode(t) // a pending event, so the send has something to push
 	lock, err := pushlock.Acquire(app.mtixDir)
 	require.NoError(t, err)
 	o := testRun(transport.Options{InsecureTLS: true})
@@ -121,12 +123,15 @@ func TestResolveAddressedPush_ClearsOnlyTheFixedPart(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, src.state.RecordAddressedPush(src.key(),
 				oplocal.AddressedPush{At: fixedPushClock().Add(-time.Hour), ErrorClass: tt.class, Shown: true}))
-			resolveAddressedPush(app.mtixDir, fixedPushClock, tt.relay)
+			require.NoError(t, resolveAddressedPush(app.mtixDir, fixedPushClock, tt.relay))
 			rec, present, err := src.state.ReadAddressedPush(src.key())
 			require.NoError(t, err)
 			require.True(t, present)
 			assert.Equal(t, tt.wantOK, rec.OK)
 			assert.Equal(t, tt.wantClass, rec.ErrorClass)
+			if tt.wantClass != tt.class {
+				assert.False(t, rec.Shown, "a changed record is shown again")
+			}
 			assert.Equal(t, tt.wantOK, addressedPushDoctorRow(src).Pass)
 		})
 	}
@@ -167,5 +172,25 @@ func TestPushStatusLine_Table(t *testing.T) {
 	}
 	for _, tt := range tests {
 		assert.Equal(t, tt.want, pushStatusLine(tt.in))
+	}
+}
+
+// The failure text says what turns the row green, per class.
+func TestAddressedPushFailureText_NamesFixAndClearing(t *testing.T) {
+	tests := []struct {
+		class, wantFix, wantClears string
+	}{
+		{"push_failed", fixAddressedPush, "clears when a push completes"},
+		{relayFailedClass, fixAddressedRelay, "next successful relay pass"},
+		{"push_incomplete", fixAddressedIncomplete, "clears when a push completes"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.class, func(t *testing.T) {
+			rec := oplocal.AddressedPush{At: fixedPushClock(), ErrorClass: tt.class}
+			text := addressedPushFailureText(rec)
+			assert.Contains(t, text, tt.wantFix)
+			assert.Contains(t, text, tt.wantClears)
+			assert.Equal(t, tt.wantFix, addressedPushFix(rec))
+		})
 	}
 }

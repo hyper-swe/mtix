@@ -42,6 +42,7 @@ func waitAddressedPushRecord(t *testing.T) (ok bool, class string) {
 func TestAddressedSend_MCPExecutor_PushesInProcessAndRecords(t *testing.T) {
 	t.Setenv(transport.EnvDSN, fakeEnrolledDSN) // nothing listens there: the push fails
 	initTestApp(t)
+	_ = seedOneNode(t) // a pending event, so the send has something to push
 	hook := mcpAddressedSendHook()
 	got := hook(context.Background(), "agent-b")
 	assert.Equal(t, pushStateQueued, got)
@@ -136,6 +137,7 @@ func TestAddressedSend_HubAndRelay_FailuresNeverMask(t *testing.T) {
 			} else {
 				initCommandRelay(t, false)
 			}
+			_ = seedOneNode(t) // a pending event for the hub push to carry
 			err := runAddressedSendPush(context.Background(), &bytes.Buffer{},
 				testRun(transport.Options{InsecureTLS: true}))
 			require.Error(t, err)

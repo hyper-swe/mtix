@@ -277,9 +277,14 @@ The file relay (`sync.relay.dir`) is experimental and opt-in. Run `mtix sync doc
 - `sync.auto_sync`
 - `sync.enabled`
 - `sync.endpoint`
+- `sync.hub_contact`
 - `sync.interval`
 - `sync.keep_roles`
+- `sync.listen`
+- `sync.listen_interval`
+- `sync.listen_max_idle`
 - `sync.max_lamport_jump`
+- `sync.push_on_addressed_send`
 - `sync.relay.dir`
 - `sync.relay.max_segment_bytes`
 - `sync.relay.peer_id`
@@ -292,6 +297,7 @@ The file relay (`sync.relay.dir`) is experimental and opt-in. Run `mtix sync doc
 - `ui.default_depth`
 - `ui.theme`
 - `wake.backoff_after_unacked`
+- `wake.confirm_window`
 - `wake.envelope_max_body_bytes`
 - `wake.envelope_max_events`
 - `wake.envelope_max_total_bytes`

@@ -81,15 +81,18 @@ func TestInboxReturnedMark_SurvivesUnregisterAndReRegister(t *testing.T) {
 	require.Equal(t, int64(9), mark, "a fresh registration row must not reset the mark")
 }
 
-func TestWakeChargedAfter_ReportsLedgerRowsAboveTheMark(t *testing.T) {
+func TestWakeChargedAfter_ReportsChargedLedgerRowsAboveTheMark(t *testing.T) {
 	s, path := newSignalsStore(t)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
 	db := newTestDB(t, path)
 	for _, seq := range []int{3, 5, 8} {
-		_, err := db.Exec("INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome) VALUES('w','h','u',?,1,'2026-01-01T00:00:00Z','sent')", seq)
+		_, err := db.Exec("INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome,charged) VALUES('w','h','u',?,1,'2026-01-01T00:00:00Z','sent',1)", seq)
 		require.NoError(t, err)
 	}
-	_, err := db.Exec("INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome) VALUES('other','h','u',9,1,'2026-01-01T00:00:00Z','sent')")
+	_, err := db.Exec("INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome,charged) VALUES('other','h','u',9,1,'2026-01-01T00:00:00Z','sent',1)")
+	require.NoError(t, err)
+	// F16: an unbudgeted claim (ClaimWake) writes a row that charged nothing.
+	_, err = db.Exec("INSERT INTO wake_ledger(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome) VALUES('w','h','u',6,1,'2026-01-01T00:00:00Z','sent')")
 	require.NoError(t, err)
 	got, err := s.WakeChargedAfter(t.Context(), "w", 3)
 	require.NoError(t, err)

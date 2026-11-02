@@ -34,7 +34,7 @@ func TestWakeInboxBudget_Limit_SharesRollingAllowance(t *testing.T) {
 		{"hour rolls", 61 * time.Minute, 5, 5},
 	} {
 		f.now = time.Date(2026, 10, 27, 12, 0, 0, 0, time.UTC).Add(tt.at)
-		got, err := b.Admit(t.Context(), "w", tt.want)
+		got, err := b.Admit(t.Context(), "w", make([]string, tt.want))
 		require.NoError(t, err, tt.name)
 		assert.Equal(t, tt.got, got, tt.name)
 	}
@@ -47,10 +47,10 @@ func TestWakeInboxBudget_Limit_SharesRollingAllowance(t *testing.T) {
 func TestWakeInboxBudget_NoLimit_GrantsAllAndRecordsNothing(t *testing.T) {
 	f := newWakeBudgetFixture(t, "")
 	b := service.WakeInboxBudget{State: f.state, HostID: f.host, UID: f.uid, Clock: func() time.Time { return f.now }}
-	got, err := b.Admit(t.Context(), "w", 500)
+	got, err := b.Admit(t.Context(), "w", make([]string, 500))
 	require.NoError(t, err)
 	assert.Equal(t, int64(500), got)
-	got, err = b.Admit(t.Context(), "w", 0)
+	got, err = b.Admit(t.Context(), "w", nil)
 	require.NoError(t, err)
 	assert.Zero(t, got)
 	_, present, err := f.state.ReadWakeBudget(model.WakeRecipient{AgentID: "w", HostID: f.host, UID: f.uid})
@@ -63,6 +63,6 @@ func TestWakeInboxBudget_InvalidLimit_Refused(t *testing.T) {
 	b := service.WakeInboxBudget{State: f.state, HostID: f.host, UID: f.uid, Clock: func() time.Time { return time.Time{} }}
 	limit := "3"
 	require.NoError(t, f.state.UpdateWakeSetting(t.Context(), oplocal.WakeSettingUpdate{Key: "wake.wakes_per_hour", Value: &limit}, nil))
-	_, err := b.Admit(t.Context(), "w", 1)
+	_, err := b.Admit(t.Context(), "w", []string{""})
 	require.Error(t, err, "an invalid accounting clock is refused, never silently uncapped")
 }

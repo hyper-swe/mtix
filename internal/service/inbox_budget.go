@@ -24,12 +24,12 @@ type WakeInboxBudget struct {
 	Clock  func() time.Time
 }
 
-// Admit charges up to want events in one protected update and returns the
+// Admit charges one credit per sender entry in one protected update and returns the
 // number granted; it is Locked with a single admit call.
-func (b WakeInboxBudget) Admit(ctx context.Context, agent string, want int64) (int64, error) {
+func (b WakeInboxBudget) Admit(ctx context.Context, agent string, senders []string) (int64, error) {
 	var granted int64
 	err := b.Locked(ctx, agent, func(admit AdmitFunc) (admitErr error) {
-		granted, admitErr = admit(want)
+		granted, admitErr = admit(senders)
 		return admitErr
 	})
 	return granted, err
@@ -44,7 +44,7 @@ func (b WakeInboxBudget) Locked(ctx context.Context, agent string, fn func(admit
 		return err
 	}
 	if limit == 0 { // D4: no budget configured, nothing is capped
-		return fn(func(want int64) (int64, error) { return max(0, want), nil })
+		return fn(func(senders []string) (int64, error) { return int64(len(senders)), nil })
 	}
 	recipient := model.WakeRecipient{AgentID: agent, HostID: b.HostID, UID: b.UID}
 	err = b.State.UpdateWakeBudget(ctx, recipient, func(m *oplocal.WakeBudgetMirror, save func() error) error {
@@ -53,12 +53,14 @@ func (b WakeInboxBudget) Locked(ctx context.Context, agent string, fn func(admit
 			return nowErr
 		}
 		trimWakeBudgetCredits(m, now)
-		return fn(func(want int64) (int64, error) {
-			granted := min(max(0, want), max(0, limit-wakeBudgetUsed(m)))
+		return fn(func(senders []string) (int64, error) {
+			granted := min(int64(len(senders)), max(0, limit-wakeBudgetUsed(m)))
 			if granted == 0 {
 				return 0, nil
 			}
-			m.Credits = append(m.Credits, oplocal.WakeBudgetCredit{At: now, Count: granted})
+			for _, sender := range senders[:granted] {
+				m.Credits = append(m.Credits, oplocal.WakeBudgetCredit{At: now, Count: 1, Sender: sender})
+			}
 			return granted, save()
 		})
 	})

@@ -75,15 +75,16 @@ func (s *Store) AdvanceInboxReturnedMark(ctx context.Context, agentID string, se
 }
 
 // WakeChargedAfter returns the event seqs above after that the wake dispatcher
-// already charged for agentID: those with a wake ledger row (ADR-007 A12).
+// already charged for agentID: those with a charged wake ledger row (ADR-007 A12).
 func (s *Store) WakeChargedAfter(ctx context.Context, agentID string, after int64) (map[int64]bool, error) {
 	if agentID == "" {
 		return nil, fmt.Errorf("wake charged: agent id required: %w", model.ErrInvalidInput)
 	}
-	// A ledger row exists only for an admitted (charged) wake claim; a wake the
-	// budget held writes none.
+	// Only rows ClaimWakeBudget wrote (charged = 1) paid the budget; a wake the
+	// budget held writes none, and an unbudgeted ClaimWake row (pi wait, Claude
+	// hook) charged nothing, so the read that returns its event charges it.
 	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT DISTINCT event_seq FROM wake_ledger WHERE agent_id = ? AND event_seq > ?`, agentID, after)
+		`SELECT DISTINCT event_seq FROM wake_ledger WHERE agent_id = ? AND event_seq > ? AND charged = 1`, agentID, after)
 	if err != nil {
 		return nil, fmt.Errorf("read wake charges %q: %w", agentID, err)
 	}

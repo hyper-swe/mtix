@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/oplocal"
 )
 
 // HeldReasonBudget is the reason recorded when a configured budget refuses
@@ -23,9 +24,11 @@ type InboxEligibility struct {
 	Budgeted bool
 }
 
-// AdmitFunc charges up to want events to the budget and returns how many were
-// granted. It is only valid inside InboxBudget.Locked.
-type AdmitFunc func(want int64) (int64, error)
+// AdmitFunc charges the budget for events from the given senders (one entry per
+// event, in order) and returns how many were granted, always a prefix. Each
+// credit carries its event's sender so wake.per_sender_per_hour counts it only
+// against that sender (A12). It is only valid inside InboxBudget.Locked.
+type AdmitFunc func(senders []string) (int64, error)
 
 // InboxBudget charges a configured budget for events returned to an agent id.
 // Locked runs fn inside the budget's critical section, the same one the wake
@@ -172,7 +175,7 @@ func (s *InboxService) chargeLocked(ctx context.Context, agent string, events []
 			return res, fmt.Errorf("read dispatcher charges: %w", err)
 		}
 	}
-	granted, err := admit(neededCharges(fresh, charged))
+	granted, err := admit(neededSenders(fresh, charged))
 	if err != nil {
 		return res, fmt.Errorf("admit inbox events: %w", err)
 	}
@@ -221,15 +224,16 @@ func splitReturned(events []InboxEvent, mark int64) (returned, fresh []InboxEven
 	return returned, fresh
 }
 
-// neededCharges counts the fresh events the dispatcher has not already charged.
-func neededCharges(fresh []InboxEvent, charged map[int64]bool) int64 {
-	var need int64
+// neededSenders lists, in order, the normalized sender of each fresh event the
+// dispatcher has not already charged; the read charges one credit per entry.
+func neededSenders(fresh []InboxEvent, charged map[int64]bool) []string {
+	var senders []string
 	for _, e := range fresh {
 		if !charged[e.Seq] {
-			need++
+			senders = append(senders, oplocal.NormalizeWakeBudgetSender(e.Author))
 		}
 	}
-	return need
+	return senders
 }
 
 // allocate gives every dispatcher-charged event, and as many others as the

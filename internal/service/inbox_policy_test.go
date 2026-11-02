@@ -39,7 +39,8 @@ type countingBudget struct {
 }
 
 func (c *countingBudget) Locked(_ context.Context, _ string, fn func(AdmitFunc) error) error {
-	return fn(func(want int64) (int64, error) {
+	return fn(func(senders []string) (int64, error) {
+		want := int64(len(senders))
 		granted := min(want, c.limit-c.used)
 		c.used += granted
 		c.charges = append(c.charges, want)

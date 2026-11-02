@@ -40,6 +40,7 @@ func newInboxCmd() *cobra.Command {
 		agent   string
 		wait    bool
 		count   bool
+		history bool
 		all     bool
 		timeout int
 		format  string
@@ -53,6 +54,9 @@ func newInboxCmd() *cobra.Command {
 			if err := validateInboxCountFlags(cmd); err != nil {
 				return err
 			}
+			if history {
+				return runInboxHistory(cmd, agent)
+			}
 			if count {
 				return runInboxCount(cmd, agent, all)
 			}
@@ -61,6 +65,7 @@ func newInboxCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent id whose inbox to read (required)")
 	cmd.Flags().BoolVar(&count, "count", false, "Print pending count without acknowledging or touching sessions")
+	cmd.Flags().BoolVar(&history, "history", false, "List every event ever addressed to the agent with its ack state and time (read-only, local, no hub contact)")
 	cmd.Flags().BoolVar(&all, "all", false, "With --count, print total retained events including acknowledged events")
 	cmd.Flags().BoolVar(&wait, "wait", false, "Long-poll: block until an event arrives or --timeout")
 	cmd.Flags().IntVar(&timeout, "timeout", 300, "Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused)")

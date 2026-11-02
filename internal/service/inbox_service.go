@@ -24,6 +24,7 @@ type InboxService struct {
 	store    InboxAckStore
 	reader   InboxReadStore
 	counter  InboxCountStore
+	history  InboxHistoryStore
 	wakeAcks WakeAckPublisher
 	reeval   WakeReevaluator
 }

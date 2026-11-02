@@ -30,7 +30,8 @@ Use --await-reply [<duration>] with --to when you need an answer: this host
 then keeps contacting the hub every 60 seconds until that agent replies or the
 duration passes (default 1h, at most 8h; for example --await-reply=30m). The
 event carries the deadline, so a recipient host (daemon or host dispatcher)
-holds its pulls for the reply too, unless sender and recipient share a host.
+holds its pulls for the reply too. A send to an agent registered on this host
+needs no hub contact: it opens no window and holds nothing.
 A reply window keeps a scale-to-zero hub awake for up to 8 h.`,
 		Args: cobra.RangeArgs(2, 3),
 		RunE: withAutoExport(func(cmd *cobra.Command, args []string) error {

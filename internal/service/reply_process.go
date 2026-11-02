@@ -121,10 +121,11 @@ func pruneExtensions(times []time.Time, now time.Time) []time.Time {
 
 // Scan examines journal events that arrived since the last scan: it closes
 // sender windows whose awaited reply arrived, and turns events that carry
-// reply_by, are addressed to an agent registered on this host and were not
-// authored by an agent registered on this host into holds (C2: any sender).
-// A send between two agents of the same host needs no hub contact, so it never
-// holds.
+// reply_by, are addressed to an agent registered on this host and were pulled
+// from the hub into holds (C2: any sender). The decision follows the event's
+// origin, not its author: an event written on this machine needs no hub
+// contact so it never holds, and a pulled event whose author id equals a local
+// agent id still holds.
 func (p *ReplyProcessor) Scan(ctx context.Context) error {
 	pol, err := ReadReplyPolicy(p.Settings)
 	if err != nil {
@@ -218,12 +219,13 @@ func closeAnswered(st *oplocal.ReplyState, answered map[string]bool) {
 }
 
 // applyReplyEvent turns one journal event into a hold when every rule holds:
-// To is registered on this host, the author is not (a same-host send needs no
-// hub contact and an author cannot hold on its own message), the deadline is in the
+// the event was pulled from the hub (one this machine wrote itself needs no hub
+// contact, whoever its author), To is registered on this host and is not the
+// author (an agent cannot hold on its own message), the deadline is in the
 // future, the sender is within the extension limit and the day's cap is not
 // spent. The hold lasts until min(reply_by, now + 8h).
 func applyReplyEvent(st *oplocal.ReplyState, pol ReplyPolicy, registered map[string]bool, ev sqlite.ReplyByEvent, now time.Time) {
-	if !registered[ev.To] || registered[ev.Author] || ev.Author == ev.To {
+	if ev.Local || !registered[ev.To] || ev.Author == ev.To {
 		return
 	}
 	replyBy := parseReplyBy(ev.ReplyBy)

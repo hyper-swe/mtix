@@ -21,10 +21,14 @@ type ReplyByEvent struct {
 	Author  string
 	To      string
 	ReplyBy string
+	// Local is true for an event this machine wrote itself (not pulled from
+	// the hub): delivering it to a local agent needs no hub contact.
+	Local bool
 }
 
 // ReplyByEvents returns addressed comment events past afterSeq that carry a
-// reply_by payload key, oldest first, at most limit. It is a local read over
+// reply_by payload key, oldest first, at most limit. Local marks an event this
+// machine wrote (sync_status other than applied). It is a local read over
 // the journal: it never touches the hub.
 func (s *Store) ReplyByEvents(ctx context.Context, afterSeq int64, limit int) ([]ReplyByEvent, error) {
 	if limit <= 0 {
@@ -33,7 +37,7 @@ func (s *Store) ReplyByEvents(ctx context.Context, afterSeq int64, limit int) ([
 	// Addressed comments with a reply deadline, in arrival order (rowid).
 	// json_valid guards a hand-damaged payload; the index-free scan is bounded by limit.
 	rows, err := s.readDB.QueryContext(ctx, `
-		SELECT e.rowid, e.event_id, e.author_id, e.payload
+		SELECT e.rowid, e.event_id, e.author_id, e.payload, e.sync_status
 		  FROM sync_events e
 		 WHERE e.op_type = 'comment'
 		   AND e.rowid > ?
@@ -49,8 +53,8 @@ func (s *Store) ReplyByEvents(ctx context.Context, afterSeq int64, limit int) ([
 	var out []ReplyByEvent
 	for rows.Next() {
 		var ev ReplyByEvent
-		var payload string
-		if scanErr := rows.Scan(&ev.Seq, &ev.EventID, &ev.Author, &payload); scanErr != nil {
+		var payload, status string
+		if scanErr := rows.Scan(&ev.Seq, &ev.EventID, &ev.Author, &payload, &status); scanErr != nil {
 			return nil, fmt.Errorf("reply events scan: %w", scanErr)
 		}
 		var p model.CommentPayload
@@ -61,6 +65,9 @@ func (s *Store) ReplyByEvents(ctx context.Context, afterSeq int64, limit int) ([
 			ev.Author = p.AuthorID
 		}
 		ev.To, ev.ReplyBy = p.To, p.ReplyBy
+		// Events applied from the hub carry 'applied'; this machine's own
+		// writes are pending or pushed (or conflicted) and needed no pull.
+		ev.Local = status != string(model.SyncStatusApplied)
 		out = append(out, ev)
 	}
 	if err := rows.Err(); err != nil {

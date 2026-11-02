@@ -30,7 +30,7 @@ func TestContactCadence_ReplyWindowInsideFastPhase_KeepsFiveSecondCadence(t *tes
 func TestRecipientHold_SameHostSend_DoesNotHold(t *testing.T) {
 	f := activeAt(t)
 	f.j.regs["host-a"] = append(f.j.regs["host-a"], "sibling-agent")
-	f.j.deliver("sibling-agent", "local-agent", t0.Add(2*time.Hour)) // both agents live on this host
+	f.j.deliverLocal("sibling-agent", "local-agent", t0.Add(2*time.Hour)) // written here: both agents live on this host
 	f.run(time.Minute)
 	require.Empty(t, f.replyState().Holds, "a send between two agents of one host needs no hub contact")
 	require.Empty(t, f.replyState().Extensions, "and is not counted as a remote extension")

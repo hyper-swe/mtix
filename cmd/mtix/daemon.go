@@ -120,13 +120,11 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 	// between the hub pull and dispatch so a single tick can carry an
 	// event from another machine all the way to a local wake — and
 	// dispatch needs no knowledge that a relay exists.
-	sched, onContact, replies, err := newDaemonScheduler(stdout, stderr, hub, intervalSec)
+	plan, err := newDaemonPlan(ctx, daemonPlanSpec{stdout: stdout, stderr: stderr, hub: hub, intervalSec: intervalSec, control: control,
+		pull: func() { runOneDaemonPull(ctx, stderr, args, opts) }})
 	if err != nil {
 		return err
 	}
-	pass := daemonPassFor(ctx, stderr, hub, replies, func() { runOneDaemonPull(ctx, stderr, args, opts) })
-
-	plan := daemonLoopPlan{label: "mtix daemon", interval: intervalSec, pass: pass, controls: control, sched: sched, onContact: onContact, replies: replies}
 	if listen {
 		l, err := newDaemonListener(hub, intervalSec)
 		if err != nil {
@@ -135,6 +133,27 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 		plan.done = l.Done
 	}
 	return runDaemonPassLoop(ctx, stdout, stderr, plan)
+}
+
+// daemonPlanSpec is what the daemon's pass loop is built from.
+type daemonPlanSpec struct {
+	stdout, stderr io.Writer
+	hub            bool
+	intervalSec    int
+	control        []daemonPassControl
+	pull           func() // the hub pull; a test stands in for the hub
+}
+
+// newDaemonPlan builds the daemon's loop plan: the scheduler, the shared reply
+// processor and the pass body that scans after each pull (MTIX-112.20.3). It
+// is one function so a test can pin that the real daemon wires the processor.
+func newDaemonPlan(ctx context.Context, spec daemonPlanSpec) (daemonLoopPlan, error) {
+	sched, onContact, replies, err := newDaemonScheduler(spec.stdout, spec.stderr, spec.hub, spec.intervalSec)
+	if err != nil {
+		return daemonLoopPlan{}, err
+	}
+	pass := daemonPassFor(ctx, spec.stderr, spec.hub, replies, spec.pull)
+	return daemonLoopPlan{label: "mtix daemon", interval: spec.intervalSec, pass: pass, controls: spec.control, sched: sched, onContact: onContact, replies: replies}, nil
 }
 
 // daemonPassFor wires the daemon's real pass body: mirror drain, the hub pull

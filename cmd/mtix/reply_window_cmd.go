@@ -5,17 +5,46 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/mcp"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
-// seqSource reads the local journal's high-water mark.
+// seqSource reads the local journal's high-water mark and the agents
+// registered on this host.
 type seqSource interface {
 	LatestSyncSeq(ctx context.Context) (int64, error)
+	ListRegistrations(ctx context.Context, hostID, uid string) ([]sqlite.Registration, error)
+}
+
+// errAddresseeLocal marks a send whose addressee is registered on this host:
+// the reply arrives through the local journal, so no window (and no hub
+// contact) is needed.
+var errAddresseeLocal = errors.New("addressee is registered on this host, no hub contact needed")
+
+// addresseeOnThisHost reports whether the addressee is registered on this
+// host. An unreadable host identity or registry means unknown, which keeps
+// the window open (never a silently missing window).
+func addresseeOnThisHost(ctx context.Context, journal seqSource, addressee string) bool {
+	host, uid, err := registrationHostIdentity()
+	if err != nil {
+		return false
+	}
+	regs, err := journal.ListRegistrations(ctx, host, uid)
+	if err != nil {
+		return false
+	}
+	for _, r := range regs {
+		if r.AgentID == addressee {
+			return true
+		}
+	}
+	return false
 }
 
 // openSenderWindow records the sender's reply window after an annotation sent
@@ -26,6 +55,9 @@ type seqSource interface {
 func openSenderWindow(ctx context.Context, mtixDir string, journal seqSource, now func() time.Time, author, node string, res service.AnnotationResult) error {
 	if res.ReplyBy.IsZero() {
 		return nil
+	}
+	if addresseeOnThisHost(ctx, journal, res.Addressee) {
+		return errAddresseeLocal
 	}
 	src, err := newHubContactSource(mtixDir)
 	if err != nil {
@@ -49,6 +81,9 @@ func mcpReplyWindowHook() mcp.ReplyWindowHook {
 			return "no board store"
 		}
 		if err := openSenderWindow(ctx, app.mtixDir, app.store, utcNow, author, node, res); err != nil {
+			if errors.Is(err, errAddresseeLocal) {
+				return replyWindowLine(res, err)
+			}
 			return err.Error()
 		}
 		return ""
@@ -57,6 +92,9 @@ func mcpReplyWindowHook() mcp.ReplyWindowHook {
 
 // replyWindowLine is the one status line a send prints for its window.
 func replyWindowLine(res service.AnnotationResult, err error) string {
+	if errors.Is(err, errAddresseeLocal) {
+		return "not needed (" + res.Addressee + " is registered on this host: no hub contact needed)"
+	}
 	if err != nil {
 		return "not recorded (" + err.Error() + "): the hub is contacted on the normal schedule"
 	}

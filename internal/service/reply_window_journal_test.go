@@ -58,6 +58,18 @@ func TestAddAnnotationRequest_AwaitReply_CarriesReplyByInPayload(t *testing.T) {
 	require.Equal(t, "me", evs[0].Author)
 	require.Equal(t, "peer", evs[0].To)
 	require.Equal(t, model.FormatReplyBy(res.ReplyBy), evs[0].ReplyBy)
+	require.True(t, evs[0].Local, "an event this machine wrote is local")
+}
+
+func TestReplyByEvents_AppliedFromHub_IsNotLocal(t *testing.T) {
+	f := newJournalFixture(t)
+	f.send(t, "me", "peer", 30*time.Minute)
+	_, err := f.store.WriteDB().ExecContext(t.Context(), `UPDATE sync_events SET sync_status = 'applied'`)
+	require.NoError(t, err)
+	evs, err := f.store.ReplyByEvents(t.Context(), 0, 10)
+	require.NoError(t, err)
+	require.Len(t, evs, 1)
+	require.False(t, evs[0].Local, "an event applied from the hub is pulled, not local")
 }
 
 func TestAddAnnotationRequest_NoAwait_NoReplyByEvent(t *testing.T) {

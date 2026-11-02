@@ -59,6 +59,12 @@ func (j *fakeJournal) deliver(author, to string, replyBy time.Time) {
 		Author: author, To: to, ReplyBy: model.FormatReplyBy(replyBy)})
 }
 
+// deliverLocal is an event written on this machine (not pulled from the hub).
+func (j *fakeJournal) deliverLocal(author, to string, replyBy time.Time) {
+	j.deliver(author, to, replyBy)
+	j.events[len(j.events)-1].Local = true
+}
+
 // replyFixture drives the real scheduler and processor with a fake clock and a
 // dial counter: a dial is a pass the scheduler allowed to contact the hub.
 type replyFixture struct {

@@ -115,7 +115,7 @@ func registerMCPTools(reg *mcp.ToolRegistry) string {
 		Context:    app.ctxSvc,
 		Prompt:     app.promptSvc,
 		Dependency: service.NewDependencyServiceFromNodeService(app.nodeSvc),
-		Inbox:      service.NewInboxService(app.store),
+		Inbox:      newPolicyInboxService(),
 		Session:    app.sessionSvc,
 		Agent:      app.agentSvc,
 		Config:     app.configSvc,
@@ -211,7 +211,7 @@ func runMCP(channelAgent string, readOnly bool) error {
 				}()
 			}
 		}
-		go channel.Pump(ctx, channel.NewInboxSource(app.store, channelAgent),
+		go channel.Pump(ctx, channel.NewInboxSource(service.NewPolicyInboxReader(newPolicyInboxService()), channelAgent),
 			channel.NewClaudeCode(srv.SendNotification), logger)
 		logger.Info("channel mode enabled", "agent", channelAgent)
 	}

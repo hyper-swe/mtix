@@ -3298,6 +3298,12 @@ query and releases database connections between queries; events arriving from a
 sync pull or a hook are found on the next poll. Closing the store or a migration
 that makes the journal unavailable is reported as an error. Reads never ack.
 
+### Held events and the wake policy
+
+On a board that syncs through a hub or relay, every agent-facing inbox read applies the wake policy: `mtix inbox` (list, `--wait`, `--format prompt|context`), the Claude session hook's priming, the channel source and the MCP tools `mtix_inbox` and `mtix_inbox_wait` return only events for agent ids the operator confirmed on this host (no principal filter in the beta). Held events appear only as a count: a line `N held: ask your operator ...` on stderr (stdout is untouched, so `--format prompt` stays empty for wake-script checks) and, over MCP, a second content block `{"events":n,"held":{"count":N,"reasons":[...]}}`. `mtix inbox --agent <id> --include-held` shows held bodies; it is for the operator and is refused when a harness session marker is in the environment. A board never connected to a hub or relay holds nothing.
+
+Output shape changed: the default `mtix inbox` output is now the quoted envelope; `--format plain` keeps the previous listing, and `--json` is unchanged. An empty `--wait` timeout exits 5, also when every event was held. A configured `wake.wakes_per_hour` budget is charged once per event newly returned (tracked by a returned-seq mark per agent id), shared with the wake dispatcher; with no budget set nothing is capped. `mtix doctor` row `inbox.held` fails when a registered id has held events and prints `mtix agent allow <agent-id>` (`--json` carries the per-id counts).
+
 ### Inbox envelopes and replies
 
 The plain `mtix inbox --agent <agent-id>` listing prints each author and node id on one line and each body with its lines kept and indented, after removing control characters, escapes, bidirectional overrides and isolates, zero-width and other invisible format characters (the directional marks U+200E, U+200F and U+061C are kept), so a stored body cannot forge another entry or the ack line. Use `--json` for the exact stored text. In the `mtix context` Assembled Prompt block, titles, annotation authors and dependency ids fold onto one line and every line of prompts and annotation text is indented, so a stored value cannot start a heading line; `--json` has the exact text.

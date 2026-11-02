@@ -372,6 +372,8 @@ These are **operator/admin** actions, not part of the normal agent loop. Recogni
 
 Operator-local state: `mtix hooks status --json` validates its path and access rules without creating state or granting approval. Follow the admin skill for recovery; never commit or dotfile-sync operator-local state.
 
+pi sessions (experimental): a pi session can be woken by a wait child that claims through the same wake ledger as the host scanner, which skips pi registrations. This build ships the wait verb and the pi extension file, but nothing installs the extension for you, and the live pi leg (extension trust prompt and a real wake end to end) is unproven. Treat the inbox (`mtix inbox`) as the delivery path for pi sessions; a wake is a bonus, never the guarantee.
+
 Operator alerts: inspect `alerts.recent` with `mtix sync doctor --json`, follow its exact fix and surface the diagnostic to the operator. Alerts never wake anyone and never address the concerned agent; do not repost them to that agent. The admin skill describes protected storage and recovery.
 
 <!-- AUTO-GENERATED: WAKE_ROUTINE -->

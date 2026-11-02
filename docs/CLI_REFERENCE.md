@@ -281,6 +281,7 @@ Attach verb prompt-submit (internal)
 |------|-------|-------------|---------|
 | `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
 | `--protocol` |  | Attach protocol the glue was written for |  |
+| `--session` |  | Harness session handle (validated; never passed to a shell) |  |
 ---
 
 ## session-end
@@ -295,6 +296,7 @@ Attach verb session-end (internal)
 |------|-------|-------------|---------|
 | `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
 | `--protocol` |  | Attach protocol the glue was written for |  |
+| `--session` |  | Harness session handle (validated; never passed to a shell) |  |
 ---
 
 ## session-start
@@ -309,6 +311,7 @@ Attach verb session-start (internal)
 |------|-------|-------------|---------|
 | `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
 | `--protocol` |  | Attach protocol the glue was written for |  |
+| `--session` |  | Harness session handle (validated; never passed to a shell) |  |
 ---
 
 ## wait
@@ -323,6 +326,7 @@ Attach verb wait (internal)
 |------|-------|-------------|---------|
 | `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
 | `--protocol` |  | Attach protocol the glue was written for |  |
+| `--session` |  | Harness session handle (validated; never passed to a shell) |  |
 ---
 
 ## backup

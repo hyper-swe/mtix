@@ -21,7 +21,7 @@ import (
 // maxQuarantineAcknowledgementReasonBytes bounds immutable operator input (MTIX-187.2).
 const maxQuarantineAcknowledgementReasonBytes = 500
 
-// AcknowledgeQuarantine accepts one invalid-node-id pull/sweep as unapplied on
+// AcknowledgeQuarantine accepts one invalid-node-id pull/sweep, or one orphaned dependent the clone quarantined (MTIX-95.37.1), as unapplied on
 // this replica. It preserves the raw quarantine, retries and every sync clock
 // and reports valid repeats without replacing the first receipt (MTIX-187.2).
 func (s *SyncService) AcknowledgeQuarantine(ctx context.Context, eventID, actor, reason string) (QuarantineAcknowledgementResult, error) {
@@ -72,7 +72,13 @@ func validateQuarantineAcknowledgement(q sqlite.QuarantinedEvent) error {
 	}
 	// Ingest rejects malformed envelopes before its PR153 node-id check.
 	// Nil observations make the reference time irrelevant to this classification.
-	if !errors.Is(validator.ValidateIngest(&event, time.Time{}, nil), validator.ErrInvalidNodeID) {
+	ingestErr := validator.ValidateIngest(&event, time.Time{}, nil)
+	// An orphaned dependent the clone quarantined (MTIX-95.37.1): the clone
+	// wrote the marker reason, and the retained envelope is itself valid.
+	if ingestErr == nil && strings.HasPrefix(q.Reason, sqlite.CloneOrphanReason) {
+		return nil
+	}
+	if !errors.Is(ingestErr, validator.ErrInvalidNodeID) {
 		return fmt.Errorf("retained event is not refused for an invalid node id: %w", model.ErrInvalidInput)
 	}
 	return nil

@@ -21,7 +21,9 @@ func newSyncQuarantineAcknowledgeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "acknowledge (<event-id> | --handle <handle>) --reason <text>",
 		Short: "Record a local receipt accepting an invalid-id pulled event as unapplied",
-		Long: `Acknowledge one retained pull or sweep event refused for an invalid node id.
+		Long: `Acknowledge one retained pull or sweep event refused for an invalid node id,
+or one orphaned dependent event 'mtix sync clone' quarantined (reason starting
+'clone origin: orphaned dependent event').
 The required reason and resolved author, UTC time and exact raw-event SHA256
 are recorded in an immutable local receipt. Repeating the command returns
 the first receipt, marking already_acknowledged in JSON or explaining that

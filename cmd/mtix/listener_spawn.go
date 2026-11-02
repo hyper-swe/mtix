@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // daemonLockHeld reports whether a daemon or listener holds the board's
@@ -47,20 +48,36 @@ func listenerArgv() []string { return []string{"daemon", "--listen"} }
 // wake.listener.no-hub-listener); a journal record of its exit reason is a
 // follow-up (MTIX-112.20.4 review, S3).
 func spawnListener(exe, projectDir string) error {
+	return spawnDetached(exe, projectDir, listenerArgv())
+}
+
+// spawnDetached starts exe with argv detached (own session or process group,
+// no terminal, output discarded) in projectDir, and does not wait for it. The
+// environment is inherited unchanged and argv never carries a credential
+// (MTIX-112.20.2 reuses it for the push child of an addressed send).
+func spawnDetached(exe, projectDir string, argv []string) error {
 	null, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
 	if err != nil {
 		return fmt.Errorf("open %s: %w", os.DevNull, err)
 	}
-	defer func() { _ = null.Close() }()                                      // best effort: the child holds its own descriptor
-	cmd := exec.CommandContext(context.Background(), exe, listenerArgv()...) //nolint:gosec // exe is this process's own binary (os.Executable)
+	defer func() { _ = null.Close() }() // best effort: the child holds its own descriptor
+	cmd := newDetachedCmd(exe, projectDir, argv, null)
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start %s %s: %w", exe, strings.Join(argv, " "), err)
+	}
+	if err := cmd.Process.Release(); err != nil {
+		return fmt.Errorf("release the detached process: %w", err)
+	}
+	return nil
+}
+
+// newDetachedCmd builds the command spawnDetached starts: own session or
+// process group, no terminal, all three streams on null. It is separate so a
+// test can assert the detachment without starting a process.
+func newDetachedCmd(exe, projectDir string, argv []string, null *os.File) *exec.Cmd {
+	cmd := exec.CommandContext(context.Background(), exe, argv...) //nolint:gosec // exe is this process's own binary (os.Executable)
 	cmd.Dir = projectDir
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = null, null, null
 	cmd.SysProcAttr = listenerSysProcAttr()
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start %s daemon --listen: %w", exe, err)
-	}
-	if err := cmd.Process.Release(); err != nil {
-		return fmt.Errorf("release the listener process: %w", err)
-	}
-	return nil
+	return cmd
 }

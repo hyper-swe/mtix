@@ -34,6 +34,7 @@ func newSyncPushCmd() *cobra.Command {
 	var (
 		insecureTLS bool
 		force       bool
+		onSend      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "push",
@@ -52,6 +53,11 @@ Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors
 so git pre-push hooks never block code pushes.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if onSend {
+				// MTIX-112.20.2: the detached child of an addressed send.
+				return runAddressedSendPush(cmd.Context(), cmd.ErrOrStderr(), addressedRunOptions{
+					Transport: transport.Options{InsecureTLS: insecureTLS}, Now: utcNow, HeldTries: heldPushTries, HeldWait: heldPushWait})
+			}
 			return runSyncPush(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, force)
 		},
@@ -60,6 +66,9 @@ so git pre-push hooks never block code pushes.`,
 		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"Bypass the singleton pusher lock (debugging only)")
+	cmd.Flags().BoolVar(&onSend, "on-addressed-send", false,
+		"Internal: the push an addressed send starts; records its outcome for doctor")
+	_ = cmd.Flags().MarkHidden("on-addressed-send")
 	return cmd
 }
 
@@ -100,8 +109,26 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 		// be computed (treated as "no identity"; the gate stays closed).
 		pool.SetClientIdentity(clientMachineHash(), version)
 
-		return pushAndReportState(ctx, stdout, stderr, pool, app.store)
+		drained, pushErr := pushAndReportState(ctx, stdout, stderr, pool, app.store)
+		afterPushPass(ctx, stderr, drained, pushErr)
+		return drained, pushErr
 	})
+}
+
+// afterPushPass tells an addressed send whether the pass drained the queue and,
+// when it did, clears a recorded push failure: a push that stopped short
+// (conflicts, events waiting on a held creation) neither counts as success nor
+// clears anything (ADR-007 D21, MTIX-112.20.2).
+func afterPushPass(ctx context.Context, stderr io.Writer, drained bool, pushErr error) {
+	if probe, ok := ctx.Value(pushProbeKey{}).(*pushProbe); ok {
+		probe.undrained.Store(pushErr == nil && !drained)
+	}
+	if pushErr != nil || !drained {
+		return
+	}
+	if err := resolveAddressedPush(app.mtixDir, utcNow, false); err != nil {
+		fmt.Fprintf(stderr, "warning: could not clear the recorded push failure: %v\n", err)
+	}
 }
 
 // pushAndReport runs pushLoop against pool, records the outcome for the

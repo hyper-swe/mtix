@@ -281,6 +281,7 @@ Attach verb prompt-submit (internal)
 |------|-------|-------------|---------|
 | `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
 | `--protocol` |  | Attach protocol the glue was written for |  |
+| `--session` |  | Harness session handle (validated; never passed to a shell) |  |
 ---
 
 ## session-end
@@ -295,6 +296,7 @@ Attach verb session-end (internal)
 |------|-------|-------------|---------|
 | `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
 | `--protocol` |  | Attach protocol the glue was written for |  |
+| `--session` |  | Harness session handle (validated; never passed to a shell) |  |
 ---
 
 ## session-start
@@ -309,6 +311,7 @@ Attach verb session-start (internal)
 |------|-------|-------------|---------|
 | `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
 | `--protocol` |  | Attach protocol the glue was written for |  |
+| `--session` |  | Harness session handle (validated; never passed to a shell) |  |
 ---
 
 ## wait
@@ -323,6 +326,7 @@ Attach verb wait (internal)
 |------|-------|-------------|---------|
 | `--harness` |  | Harness the glue belongs to: claude-code, codex or pi |  |
 | `--protocol` |  | Attach protocol the glue was written for |  |
+| `--session` |  | Harness session handle (validated; never passed to a shell) |  |
 ---
 
 ## backup
@@ -1158,7 +1162,8 @@ the body.
 | `--agent` |  | Agent id whose inbox to read (required) |  |
 | `--all` |  | With --count, print total retained events including acknowledged events | false |
 | `--count` |  | Print pending count without acknowledging or touching sessions | false |
-| `--format` |  | Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection) |  |
+| `--format` |  | Output: default is the quoted envelope; 'plain' is the old listing; 'prompt' (wake payload) or 'context' (hook injection) |  |
+| `--include-held` |  | Also show events the wake policy holds (refused inside an agent harness session) | false |
 | `--timeout` |  | Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused) | 300 |
 | `--wait` |  | Long-poll: block until an event arrives or --timeout | false |
 

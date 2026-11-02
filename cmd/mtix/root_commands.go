@@ -27,6 +27,10 @@ func rootPostRun(cmd *cobra.Command, _ []string) error {
 	if kind, ok := commandActivity(cmd); ok && app.mtixDir != "" {
 		recordHubActivity(kind)
 	}
+	// MTIX-112.20.2: a failed automatic push of an addressed send is shown once.
+	if app.mtixDir != "" {
+		showAddressedPushFailure(cmd.ErrOrStderr(), app.mtixDir)
+	}
 	// Auto-export after mutation commands per FR-15.3, with the
 	// interval-gated rolling backup riding the same trigger
 	// (FR-26.6).

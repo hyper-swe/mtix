@@ -34,6 +34,7 @@ func newSyncPushCmd() *cobra.Command {
 	var (
 		insecureTLS bool
 		force       bool
+		onSend      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "push",
@@ -52,6 +53,10 @@ Hook mode (MTIX_SYNC_HOOK=1) warn-and-skips on transient PG errors
 so git pre-push hooks never block code pushes.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if onSend {
+				// MTIX-112.20.2: the detached child of an addressed send.
+				return runAddressedSendPush(cmd.Context(), cmd.ErrOrStderr(), transport.Options{InsecureTLS: insecureTLS}, utcNow)
+			}
 			return runSyncPush(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, force)
 		},
@@ -60,6 +65,9 @@ so git pre-push hooks never block code pushes.`,
 		"Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only)")
 	cmd.Flags().BoolVar(&force, "force", false,
 		"Bypass the singleton pusher lock (debugging only)")
+	cmd.Flags().BoolVar(&onSend, "on-addressed-send", false,
+		"Internal: the push an addressed send starts; records its outcome for doctor")
+	_ = cmd.Flags().MarkHidden("on-addressed-send")
 	return cmd
 }
 

@@ -13,10 +13,14 @@ import (
 )
 
 // RegisterContextTools registers context and prompt MCP tools per MTIX-6.2.3.
-func RegisterContextTools(reg *ToolRegistry, ctxSvc *service.ContextService, promptSvc *service.PromptService) {
+func RegisterContextTools(reg *ToolRegistry, ctxSvc *service.ContextService, promptSvc *service.PromptService, opts ...ContextOption) {
+	var cfg contextConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	registerContextTool(reg, ctxSvc)
 	registerPromptTool(reg, promptSvc)
-	registerAnnotateTool(reg, promptSvc)
+	registerAnnotateTool(reg, promptSvc, cfg.onAddressedSend)
 	registerResolveAnnotationTool(reg, promptSvc)
 }
 
@@ -90,7 +94,7 @@ func registerPromptTool(reg *ToolRegistry, svc *service.PromptService) {
 	})
 }
 
-func registerAnnotateTool(reg *ToolRegistry, svc *service.PromptService) {
+func registerAnnotateTool(reg *ToolRegistry, svc *service.PromptService, onSend AddressedSendHook) {
 	reg.Register(ToolDef{
 		Name:        "mtix_annotate",
 		Description: "Add a comment annotation to a node's prompt. Set 'to' to address it at an agent, which delivers it to that agent's inbox (see mtix_inbox).",
@@ -119,7 +123,14 @@ func registerAnnotateTool(reg *ToolRegistry, svc *service.PromptService) {
 			return nil, err
 		}
 
-		return SuccessResult(textAnnotationAdded(p.ID, p.To)), nil
+		text := textAnnotationAdded(p.ID, p.To)
+		if p.To != "" && onSend != nil {
+			// MTIX-112.20.2: an addressed send requests a push of the pending prefix.
+			if state := onSend(ctx, p.To); state != "" {
+				text += "; push: " + format.SafeText(state)
+			}
+		}
+		return SuccessResult(text), nil
 	})
 }
 

@@ -65,6 +65,9 @@ type appContext struct {
 	// payloadWarnings collects mutation-time wire-cap warnings when a hub is
 	// configured; nil otherwise (MTIX-95.12, sync_payload_warning.go).
 	payloadWarnings *sqlite.PayloadWarnings
+	// detachedSpawn starts the push child of an addressed send (MTIX-112.20.2);
+	// nil means spawnDetached. Tests inject it so no process is started.
+	detachedSpawn func(exe, projectDir string, argv []string) error
 }
 
 // global app context set during PersistentPreRunE.

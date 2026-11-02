@@ -87,17 +87,9 @@ func runCommentWith(id, text string, opt commentOptions) error {
 	// displayed author is what the addressee's inbox shows as the sender, so
 	// hardcoding made every agent's addressed comment unattributable and
 	// broke reply-routing (relay-epic prerequisite fix; see FR-21 §12.4).
-	req := service.AnnotationRequest{NodeID: id, Text: text, Author: app.authorID, Addressee: to}
-	if opt.AwaitSet {
-		wait := opt.Await
-		if wait == awaitReplyDefault {
-			wait = ""
-		}
-		d, err := model.ParseAwaitReply(wait)
-		if err != nil {
-			return err
-		}
-		req.AwaitReply = d
+	req, err := commentRequest(id, text, opt)
+	if err != nil {
+		return err
 	}
 	res, err := app.promptSvc.AddAnnotationRequest(ctx, req)
 	if err != nil {
@@ -119,6 +111,32 @@ func runCommentWith(id, text string, opt commentOptions) error {
 	if to != "" {
 		push = cliAddressedPush(ctx)
 	}
+	printCommentResult(id, to, res, windowErr, wake, push)
+	return nil
+}
+
+// commentRequest builds the annotation request of one comment, resolving the
+// --await-reply duration when the flag was given.
+func commentRequest(id, text string, opt commentOptions) (service.AnnotationRequest, error) {
+	// Use the process's resolved identity (MTIX-24), not a hardcoded "cli".
+	req := service.AnnotationRequest{NodeID: id, Text: text, Author: app.authorID, Addressee: opt.To}
+	if !opt.AwaitSet {
+		return req, nil
+	}
+	wait := opt.Await
+	if wait == awaitReplyDefault {
+		wait = ""
+	}
+	d, err := model.ParseAwaitReply(wait)
+	if err != nil {
+		return req, err
+	}
+	req.AwaitReply = d
+	return req, nil
+}
+
+// printCommentResult reports one sent comment as JSON or text.
+func printCommentResult(id, to string, res service.AnnotationResult, windowErr error, wake service.WakeStatus, push addressedPush) {
 	switch {
 	case app.jsonOutput:
 		out := map[string]any{"id": id, "status": "annotation_added"}
@@ -146,7 +164,6 @@ func runCommentWith(id, text string, opt commentOptions) error {
 	default:
 		fmt.Printf("Added annotation to %s\n", id)
 	}
-	return nil
 }
 
 // pushStatusLine renders the push state of an addressed send.

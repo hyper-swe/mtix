@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/oplocal"
@@ -160,6 +161,9 @@ func cliAddressedPush(ctx context.Context) addressedPush {
 	})
 }
 
+// relayFailedClass is the persisted class of a relay open or pass failure.
+const relayFailedClass = "relay_failed"
+
 // pushErrorClass reduces a push error to a short class that is safe to keep:
 // the error text itself can name a host, so it is never persisted.
 func pushErrorClass(err error) string {
@@ -170,20 +174,67 @@ func pushErrorClass(err error) string {
 		return "no_hub_configured"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "timeout"
+	case errors.Is(err, errPushHeld):
+		return "push_held"
 	}
 	return "push_failed"
 }
 
+// addressedPushClass is the persisted class of one outcome: the hub push
+// class, the relay class, or both joined with a comma so neither half masks
+// the other.
+func addressedPushClass(hubErr, relayErr error) string {
+	switch {
+	case hubErr != nil && relayErr != nil:
+		return pushErrorClass(hubErr) + "," + relayFailedClass
+	case relayErr != nil:
+		return relayFailedClass
+	}
+	return pushErrorClass(hubErr)
+}
+
 // recordAddressedPushOutcome persists the child's outcome operator-locally
 // (never synced) so the next command and doctor can show a failure.
-func recordAddressedPushOutcome(mtixDir string, now func() time.Time, runErr error) error {
+func recordAddressedPushOutcome(mtixDir string, now func() time.Time, hubErr, relayErr error) error {
 	src, err := newHubContactSource(mtixDir)
 	if err != nil {
 		return err
 	}
-	rec := oplocal.AddressedPush{At: now(), OK: runErr == nil, ErrorClass: pushErrorClass(runErr)}
+	ok := hubErr == nil && relayErr == nil
+	rec := oplocal.AddressedPush{At: now(), OK: ok, ErrorClass: addressedPushClass(hubErr, relayErr)}
 	if err := src.state.RecordAddressedPush(src.key(), rec); err != nil {
 		return fmt.Errorf("record addressed push outcome: %w", err)
 	}
 	return nil
+}
+
+// resolveAddressedPush clears the part of a recorded failure that a completed
+// push (relay false) or a completed relay pass (relay true) has now fixed, so
+// the doctor row turns green after the fix it printed (MTIX-112.20.2). A
+// record that held both classes keeps the other one. Best effort: unreadable
+// operator state is doctor's to report, never this command's.
+func resolveAddressedPush(mtixDir string, now func() time.Time, relay bool) {
+	src, err := newHubContactSource(mtixDir)
+	if err != nil {
+		return
+	}
+	rec, present, err := src.state.ReadAddressedPush(src.key())
+	if err != nil || !present || rec.OK {
+		return
+	}
+	var kept []string
+	for _, part := range strings.Split(rec.ErrorClass, ",") {
+		if (part == relayFailedClass) != relay {
+			kept = append(kept, part)
+		}
+	}
+	if len(kept) == len(strings.Split(rec.ErrorClass, ",")) {
+		return // nothing of this kind was recorded
+	}
+	if len(kept) == 0 {
+		rec = oplocal.AddressedPush{At: now(), OK: true}
+	} else {
+		rec.ErrorClass, rec.Shown = strings.Join(kept, ","), false
+	}
+	_ = src.state.RecordAddressedPush(src.key(), rec) // best effort, see above
 }

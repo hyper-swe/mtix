@@ -13,16 +13,34 @@ import (
 )
 
 const (
-	fixAddressedPush = "mtix sync push"
-	fixPushOnSend    = "mtix config set " + service.PushOnAddressedSendKey + " true"
+	fixAddressedPush  = "mtix sync push"
+	fixAddressedRelay = "mtix doctor"
+	fixPushOnSend     = "mtix config set " + service.PushOnAddressedSendKey + " true"
 )
 
 // addressedPushFailureText describes a failed requested push and what to run.
 // The message itself is safe: a failed push never loses it, the event stays
 // pending and goes with the next push.
 func addressedPushFailureText(rec oplocal.AddressedPush) string {
-	return fmt.Sprintf("the automatic push of an addressed send failed at %s (%s); the message is still pending. Fix: %s",
-		rec.At.UTC().Format(time.RFC3339), rec.ErrorClass, fixAddressedPush)
+	return fmt.Sprintf("the automatic push of an addressed send failed at %s (%s); the message is still pending. Fix: %s; %s",
+		rec.At.UTC().Format(time.RFC3339), rec.ErrorClass, addressedPushFix(rec), addressedPushClears(rec))
+}
+
+// addressedPushFix names the next step for a failure class: a relay failure
+// is diagnosed by doctor's relay rows, anything else by running the push.
+func addressedPushFix(rec oplocal.AddressedPush) string {
+	if rec.ErrorClass == relayFailedClass {
+		return fixAddressedRelay
+	}
+	return fixAddressedPush
+}
+
+// addressedPushClears says what turns the failure green again.
+func addressedPushClears(rec oplocal.AddressedPush) string {
+	if rec.ErrorClass == relayFailedClass {
+		return "it clears at the next successful relay pass (the daemon, or your next addressed send)"
+	}
+	return "it clears when a push completes"
 }
 
 // showAddressedPushFailure prints a persisted push failure once, on the next
@@ -70,7 +88,7 @@ func addressedPushDoctorRow(src *hubContactSource) DoctorCheck {
 	case rec.OK:
 		row.Detail = "last automatic push of an addressed send succeeded at " + rec.At.UTC().Format(time.RFC3339)
 	default:
-		row.Pass, row.Detail, row.Fix = false, addressedPushFailureText(rec), fixAddressedPush
+		row.Pass, row.Detail, row.Fix = false, addressedPushFailureText(rec), addressedPushFix(rec)
 	}
 	return row
 }

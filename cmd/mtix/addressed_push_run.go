@@ -5,9 +5,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/mcp"
@@ -17,24 +19,86 @@ import (
 // addressedPushTimeout bounds one in-process push of an addressed send.
 const addressedPushTimeout = 5 * time.Minute
 
+// Defaults for waiting out a push that holds the push lock: the child retries
+// a lock probe locally (no hub contact) for about this long before it records
+// that the message is still pending.
+const (
+	heldPushTries = 20
+	heldPushWait  = time.Second
+)
+
+// errPushHeld marks a send whose push never ran because another push held the
+// lock for the whole wait: the message is pending, not pushed.
+var errPushHeld = errors.New("push lock held")
+
+// pushHeldKey carries a flag that pushWithHandoff sets when it skipped its
+// pass because the push lock was held.
+type pushHeldKey struct{}
+
+// addressedRunOptions are the knobs of one addressed-send push run.
+type addressedRunOptions struct {
+	Transport transport.Options
+	Now       func() time.Time
+	HeldTries int
+	HeldWait  time.Duration
+	Wait      func(time.Duration) // injected pause between lock probes; nil means time.Sleep
+}
+
+func (o addressedRunOptions) pause() {
+	if o.Wait != nil {
+		o.Wait(o.HeldWait)
+		return
+	}
+	time.Sleep(o.HeldWait)
+}
+
 // runAddressedSendPush is the body of `mtix sync push --on-addressed-send`
-// and of the MCP executor: push the board's whole pending prefix (the same
-// Lamport-ordered pass as mtix sync push, so a comment never overtakes its
-// node's create), run one relay pass on a relay board, then persist the
+// and of the in-process executors: push the board's whole pending prefix (the
+// same Lamport-ordered pass as mtix sync push, so a comment never overtakes
+// its node's create), run one relay pass on a relay board, then persist the
 // outcome operator-locally. Output goes to stderr only; the outcome is what a
 // later command and doctor show (ADR-007 D21, MTIX-112.20.2).
-func runAddressedSendPush(ctx context.Context, stderr io.Writer, opts transport.Options, now func() time.Time) error {
+func runAddressedSendPush(ctx context.Context, stderr io.Writer, o addressedRunOptions) error {
 	var pushErr error
 	if hubConfigured(app.mtixDir) {
-		pushErr = runSyncPush(ctx, io.Discard, stderr, nil, opts, false)
+		pushErr = pushWaitingForLock(ctx, stderr, o)
 	}
-	if relayDir() != "" {
-		runRelayPhase(ctx, stderr)
+	// An addressed send publishes even when sync.relay.poll_interval is 0:
+	// that setting only stops the daemon polling. A relay failure is part of
+	// the outcome, so neither half can hide the other's failure.
+	relayErr := runRelayPhase(ctx, stderr)
+	outcome := errors.Join(pushErr, relayErr)
+	if ctx.Err() != nil {
+		return outcome // shutting down: an interrupted run records nothing
 	}
-	if err := recordAddressedPushOutcome(app.mtixDir, now, pushErr); err != nil {
+	if err := recordAddressedPushOutcome(app.mtixDir, o.Now, pushErr, relayErr); err != nil {
 		fmt.Fprintf(stderr, "mtix: could not record the addressed push outcome: %v\n", err)
 	}
-	return pushErr
+	return outcome
+}
+
+// pushWaitingForLock runs the push, and when another push holds the lock it
+// probes again for a bounded time: the holder drains arrivals only within its
+// own pass budget, so a send that lands at its cap must push itself once the
+// lock is free. A lock held for the whole wait is reported as errPushHeld,
+// never as success.
+func pushWaitingForLock(ctx context.Context, stderr io.Writer, o addressedRunOptions) error {
+	var held atomic.Bool
+	ctx = context.WithValue(ctx, pushHeldKey{}, &held)
+	for try := 0; ; try++ {
+		held.Store(false)
+		err := runSyncPush(ctx, io.Discard, stderr, nil, o.Transport, false)
+		if err != nil {
+			return err
+		}
+		if !held.Load() {
+			return nil
+		}
+		if try >= o.HeldTries || ctx.Err() != nil {
+			return errPushHeld
+		}
+		o.pause()
+	}
 }
 
 // coalescingRunner runs a job on a background goroutine so that a burst of
@@ -80,14 +144,15 @@ func (r *coalescingRunner) loop() {
 	}
 }
 
-// mcpAddressedSendHook is the executor of an addressed mtix_annotate: the MCP
-// server is long-lived, so it pushes in-process (ADR-007 D21 executor order,
-// first step) and returns before the network work finishes.
-func mcpAddressedSendHook() mcp.AddressedSendHook {
+// inProcessAddressedSendHook is the executor of a long-lived process (the MCP
+// server, mtix serve): it pushes in-process (ADR-007 D21 executor order, first
+// step) and returns before the network work finishes. It returns the state
+// word for the caller to show.
+func inProcessAddressedSendHook() func(context.Context, string) string {
 	runner := &coalescingRunner{job: func() {
 		ctx, cancel := context.WithTimeout(context.Background(), addressedPushTimeout)
 		defer cancel()
-		_ = runAddressedSendPush(ctx, io.Discard, transport.Options{}, utcNow) // the outcome is persisted inside
+		_ = runAddressedSendPush(ctx, io.Discard, defaultAddressedRun()) // the outcome is persisted inside
 	}}
 	return func(ctx context.Context, _ string) string {
 		res := requestAddressedPush(addressedPushDeps{
@@ -99,4 +164,14 @@ func mcpAddressedSendHook() mcp.AddressedSendHook {
 		}
 		return res.State
 	}
+}
+
+// mcpAddressedSendHook adapts the in-process executor to the MCP tool.
+func mcpAddressedSendHook() mcp.AddressedSendHook {
+	return mcp.AddressedSendHook(inProcessAddressedSendHook())
+}
+
+// defaultAddressedRun is the production run configuration.
+func defaultAddressedRun() addressedRunOptions {
+	return addressedRunOptions{Now: utcNow, HeldTries: heldPushTries, HeldWait: heldPushWait}
 }

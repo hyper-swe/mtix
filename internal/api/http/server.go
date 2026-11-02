@@ -63,6 +63,9 @@ type Server struct {
 	adminWriter   AdminWriter
 	readOnly      bool
 	warnOut       io.Writer // Destination of the network-exposure warning.
+	// onAddressedSend requests a push after an addressed comment commits
+	// (MTIX-112.20.2); nil means the comment route stays silent about pushing.
+	onAddressedSend AddressedSendHook
 }
 
 // NewServer creates a new HTTP server with all middleware configured.
@@ -305,3 +308,13 @@ func (s *Server) handleHealth(c *gin.Context) {
 		"uptime_seconds": int(uptime),
 	})
 }
+
+// AddressedSendHook runs after an addressed comment has committed (ADR-007
+// D21, MTIX-112.20.2). It requests a push of the board's pending events and
+// returns a short state word for the response, or "" to say nothing. It must
+// return before any network work finishes.
+type AddressedSendHook func(ctx context.Context, to string) string
+
+// SetAddressedSendHook wires the post-commit push request of an addressed
+// comment. Call it before serving.
+func (s *Server) SetAddressedSendHook(h AddressedSendHook) { s.onAddressedSend = h }

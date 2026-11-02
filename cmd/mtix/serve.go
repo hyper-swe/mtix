@@ -77,6 +77,8 @@ func runServeWith(cfg mtixhttp.ServerConfig) error {
 		},
 	}
 	srv := mtixhttp.NewServer(services, app.logger, cfg, clock)
+	// MTIX-112.20.2: an addressed comment through serve pushes in this long-lived process.
+	srv.SetAddressedSendHook(inProcessAddressedSendHook())
 
 	// MTIX-232: make this serve discoverable by mtix url; removed on return,
 	// which covers clean exit and SIGINT/SIGTERM shutdown.

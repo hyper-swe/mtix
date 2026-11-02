@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
@@ -22,7 +23,7 @@ func inProcessChild(t *testing.T) func(string, string, []string) error {
 	return func(_, _ string, argv []string) error {
 		require.Equal(t, childPushArgv(), argv)
 		return runAddressedSendPush(context.Background(), io.Discard,
-			transport.Options{InsecureTLS: true}, utcNow)
+			addressedRunOptions{Transport: transport.Options{InsecureTLS: true}, Now: utcNow, HeldTries: 5, HeldWait: 50 * time.Millisecond})
 	}
 }
 
@@ -41,7 +42,7 @@ func TestAddressedSend_EnrolledActivityBoard_PushesPendingPrefix_PG(t *testing.T
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	rows, err := pool.Inner().Query(ctx,
-		`SELECT node_id, op_type FROM sync_events ORDER BY lamport_clock, event_id`)
+		`SELECT node_id, op_type FROM sync_events ORDER BY ctid`) // ctid: the hub's own insertion order, not the event's Lamport stamp
 	require.NoError(t, err)
 	defer rows.Close()
 	order := map[string][]string{}
@@ -77,4 +78,21 @@ func TestAddressedSend_RoundTrip_SecondCheckoutPullsIt_PG(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1, "the addressed comment arrived in the addressee's inbox")
 	assert.Contains(t, got[0].Body, "round trip ping")
+}
+
+// The printed fix works: a plain mtix sync push that completes clears a
+// recorded push failure, so the doctor row turns green (MTIX-112.20.2).
+func TestAddressedPushDoctorRow_ManualPushClearsFailure_PG(t *testing.T) {
+	openCmdHub(t)
+	initTestApp(t)
+	src, err := newHubContactSource(app.mtixDir)
+	require.NoError(t, err)
+	require.NoError(t, src.state.RecordAddressedPush(src.key(),
+		oplocal.AddressedPush{At: time.Now().UTC(), ErrorClass: "push_failed"}))
+	require.False(t, addressedPushDoctorRow(src).Pass)
+
+	var out, diagnostic bytes.Buffer
+	require.NoError(t, runSyncPush(context.Background(), &out, &diagnostic, nil,
+		transport.Options{InsecureTLS: true}, false), diagnostic.String())
+	assert.True(t, addressedPushDoctorRow(src).Pass, "a completed push clears the failure")
 }

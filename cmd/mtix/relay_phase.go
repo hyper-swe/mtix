@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,22 +21,24 @@ import (
 // folder. That last step needs no knowledge of the relay at all, which
 // is the point.
 //
-// Nothing here can fail a tick. A relay problem is transport-degraded
+// Nothing here can fail a tick: the daemon ignores the returned error, which
+// exists for the addressed-send push (MTIX-112.20.2) to record a relay failure.
+// A relay problem is transport-degraded
 // by construction (§6.2): it is reported, counted, and retried next
 // tick, and it must never stop the hub pull or hook dispatch that share
 // the pass.
-func runRelayPhase(ctx context.Context, stderr io.Writer) {
+func runRelayPhase(ctx context.Context, stderr io.Writer) error {
 	if relayDir() == "" {
-		return
+		return nil
 	}
 	stack, err := openRelayStack()
 	if err != nil {
 		fmt.Fprintf(stderr, "mtix daemon: relay unavailable: %s\n", err)
-		return
+		return fmt.Errorf("%w: open: %w", errRelayPass, err)
 	}
-	res, err := stack.Pass(ctx)
-	if err != nil {
-		fmt.Fprintf(stderr, "mtix daemon: relay pass: %s\n", err)
+	res, passErr := stack.Pass(ctx)
+	if passErr != nil {
+		fmt.Fprintf(stderr, "mtix daemon: relay pass: %s\n", passErr)
 	}
 	if app.logger != nil && (res.Published > 0 || res.Ingest.Applied > 0) {
 		app.logger.Info("relay pass",
@@ -53,7 +56,15 @@ func runRelayPhase(ctx context.Context, stderr io.Writer) {
 	if err := reconcileHubMarkMirror(); err != nil {
 		fmt.Fprintf(stderr, "mtix daemon: could not mirror the hub-connected mark: %s\n", err)
 	}
+	if passErr != nil {
+		return fmt.Errorf("%w: %w", errRelayPass, passErr)
+	}
+	resolveAddressedPush(app.mtixDir, utcNow, true) // MTIX-112.20.2: a working relay clears a recorded relay failure
+	return nil
 }
+
+// errRelayPass marks a relay publish or open failure (MTIX-112.20.2).
+var errRelayPass = errors.New("relay pass failed")
 
 // relayPollDisabled reports whether this peer has declared itself
 // tick-only (D-R12). Such a peer converges on its next manual pass; the
@@ -68,5 +79,9 @@ func maybeRunRelayPhase(ctx context.Context, stderr io.Writer) {
 	if relayPollDisabled() {
 		return
 	}
-	runRelayPhase(ctx, stderr)
+	// runRelayPhase has already reported any error on stderr, and a daemon
+	// tick must go on regardless, so the error is only logged.
+	if err := runRelayPhase(ctx, stderr); err != nil && app.logger != nil {
+		app.logger.Debug("relay pass failed", "error", err)
+	}
 }

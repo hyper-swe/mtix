@@ -6,10 +6,13 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/service"
 )
 
 // An addressed mtix_annotate requests the push after its commit and reports
@@ -44,10 +47,12 @@ func TestAnnotateTool_AddressedSend_RequestsPush(t *testing.T) {
 func TestAnnotateTool_AddressedSendRefused_NoHookCall(t *testing.T) {
 	called := false
 	reg := NewToolRegistry()
-	RegisterContextTools(reg, newTestContextService(), newTestPromptService(),
+	RegisterContextTools(reg, newTestContextService(),
+		service.NewPromptService(newInboxTestStore(t), nil, slog.Default(), fixedClock),
 		WithAddressedSendHook(func(context.Context, string) string { called = true; return "queued" }))
-	_, err := reg.Call(context.Background(), "mtix_annotate", json.RawMessage(`{"id":"TEST-1","text":"","author":""}`))
-	if err != nil {
-		assert.False(t, called, "a failed commit requests no push")
-	}
+	// An unknown node id makes the commit fail: the hook must not run.
+	_, err := reg.Call(context.Background(), "mtix_annotate",
+		json.RawMessage(`{"id":"NO-SUCH-1","text":"n","author":"a","to":"agent-b"}`))
+	require.Error(t, err, "the annotation must be refused")
+	assert.False(t, called, "a failed commit requests no push")
 }

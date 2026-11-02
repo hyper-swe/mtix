@@ -236,8 +236,7 @@ func TestAddressedSend_PushFailure_PersistedAndShown(t *testing.T) {
 	t.Setenv(transport.EnvDSN, fakeEnrolledDSN) // nothing listens there: the push fails
 	initTestApp(t)
 	var stderr bytes.Buffer
-	err := runAddressedSendPush(context.Background(), &stderr, transport.Options{InsecureTLS: true},
-		func() time.Time { return time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC) })
+	err := runAddressedSendPush(context.Background(), &stderr, testRun(transport.Options{InsecureTLS: true}))
 	require.Error(t, err)
 
 	src, err := newHubContactSource(app.mtixDir)

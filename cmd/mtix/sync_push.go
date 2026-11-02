@@ -55,7 +55,8 @@ so git pre-push hooks never block code pushes.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if onSend {
 				// MTIX-112.20.2: the detached child of an addressed send.
-				return runAddressedSendPush(cmd.Context(), cmd.ErrOrStderr(), transport.Options{InsecureTLS: insecureTLS}, utcNow)
+				return runAddressedSendPush(cmd.Context(), cmd.ErrOrStderr(), addressedRunOptions{
+					Transport: transport.Options{InsecureTLS: insecureTLS}, Now: utcNow, HeldTries: heldPushTries, HeldWait: heldPushWait})
 			}
 			return runSyncPush(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, force)
@@ -108,7 +109,11 @@ func runSyncPush(ctx context.Context, stdout, stderr io.Writer,
 		// be computed (treated as "no identity"; the gate stays closed).
 		pool.SetClientIdentity(clientMachineHash(), version)
 
-		return pushAndReportState(ctx, stdout, stderr, pool, app.store)
+		drained, pushErr := pushAndReportState(ctx, stdout, stderr, pool, app.store)
+		if pushErr == nil {
+			resolveAddressedPush(app.mtixDir, utcNow, false) // MTIX-112.20.2: a completed push clears a recorded push failure
+		}
+		return drained, pushErr
 	})
 }
 

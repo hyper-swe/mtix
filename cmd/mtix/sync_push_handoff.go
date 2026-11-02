@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync/atomic"
 
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/pushlock"
@@ -36,6 +37,9 @@ func pushWithHandoff(ctx context.Context, stderr io.Writer, store *sqlite.Store,
 	for n := 0; n < pushHandoffPassLimit; n++ {
 		lock, err := pushlock.Acquire(opts.mtixDir)
 		if errors.Is(err, pushlock.ErrLockHeld) {
+			if flag, ok := ctx.Value(pushHeldKey{}).(*atomic.Bool); ok {
+				flag.Store(true) // MTIX-112.20.2: an addressed send tells held from pushed
+			}
 			fmt.Fprintln(stderr, "mtix sync push: push lock is held; skipping (queued work remains pending; retry the next mtix sync push)")
 			return nil
 		}

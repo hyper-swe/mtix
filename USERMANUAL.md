@@ -2572,7 +2572,12 @@ pull's position either, so later changes keep arriving.
   from before 0.5.4 pushed under a number the hub had renumbered) no longer
   stops `mtix sync clone`: it applies the rest, stores each such event with
   source `pull` and a reason starting `clone origin: orphaned dependent
-  event, node not found`, and prints `N orphaned events quarantined`.
+  event`, and prints `N orphaned events quarantined`. An event about a task
+  whose creation is itself quarantined (a delete, claim, update or link behind
+  a child create whose parent is missing) is held the same way, with a reason
+  ending `held behind a quarantined creation`; the clone prints `held behind
+  a quarantined creation; it applies after the creation`, and the retry
+  applies it after the creation, so a teammate's delete is not lost.
   Every pull retries them, and one applies if its task's creation arrives.
   `mtix sync doctor` names them (`N of them clone orphans`) and prints the
   acknowledge command (also in `--json`); after reviewing them with `mtix

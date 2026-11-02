@@ -69,8 +69,8 @@ on the fresh store, run 'mtix sync pull' instead, which quarantines such an
 event and applies the rest. One case does not stop the clone: an event for a
 task the clone never creates (a claim or child create that a client before
 0.5.4 pushed under a number the hub renumbered, MTIX-95.37.1) is quarantined
-with a reason starting 'clone origin: orphaned dependent event', the clone
-prints how many, and 'mtix sync doctor' names them and prints the
+with a reason starting 'clone origin: orphaned dependent event', as is an
+event held behind a quarantined creation of its task; the clone prints how many, and 'mtix sync doctor' names them and prints the
 'mtix sync quarantine acknowledge' command. Only on a store that already holds sync state
 does 'mtix sync reconcile --discard-local' come first. It deletes local
 tasks and unpushed changes, so first run 'mtix sync push' and check that
@@ -237,14 +237,14 @@ func applyBatch(ctx context.Context, in pullIngest, store *sqlite.Store, events 
 // applyBatchReport is applyBatch that also returns the events this batch
 // newly quarantined as orphans (not ones already quarantined by an earlier,
 // interrupted run), so the caller reports them after the commit.
-func applyBatchReport(ctx context.Context, in pullIngest, store *sqlite.Store, events []*model.SyncEvent) ([]*model.SyncEvent, error) {
+func applyBatchReport(ctx context.Context, in pullIngest, store *sqlite.Store, events []*model.SyncEvent) ([]cloneHeld, error) {
 	if err := requireEvents(events); err != nil {
 		return nil, err
 	}
 	if in.apply == nil {
 		in.apply = store.IdempotentApply
 	}
-	var orphans []*model.SyncEvent
+	var orphans []cloneHeld
 	err := store.WithTx(ctx, func(tx *sql.Tx) error {
 		orphans = nil
 		for _, e := range events {
@@ -255,12 +255,12 @@ func applyBatchReport(ctx context.Context, in pullIngest, store *sqlite.Store, e
 			if refused := checkPulledEvent(in, e, local); refused != nil {
 				return cloneRefusal(e, refused, true)
 			}
-			held, err := applyCloneEvent(ctx, tx, in, e)
+			kind, err := applyCloneEvent(ctx, tx, in, e)
 			if err != nil {
 				return err
 			}
-			if held {
-				orphans = append(orphans, e)
+			if kind != holdNone {
+				orphans = append(orphans, cloneHeld{event: e, behind: kind == holdBehind})
 			}
 		}
 		return nil

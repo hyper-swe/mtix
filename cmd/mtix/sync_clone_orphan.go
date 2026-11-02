@@ -27,51 +27,71 @@ import (
 // sqlite.CloneOrphanReason) and is retried by every pull. Every other apply
 // failure still fails the clone.
 
-// applyCloneEvent applies e in its own savepoint. newlyQuarantined reports
-// that this call stored e in the quarantine as an orphan: its apply failed
-// with ErrNotFound, it is a creation whose parent task is absent, or it
-// waits behind a quarantined creation of its task. An
-// event already quarantined (an interrupted clone resumed) is left as it is
-// and is not reported again. Any other apply failure is returned.
-func applyCloneEvent(ctx context.Context, tx *sql.Tx, in pullIngest, e *model.SyncEvent) (newlyQuarantined bool, err error) {
+// cloneHold says why applyCloneEvent quarantined an event.
+type cloneHold int
+
+const (
+	// holdNone: the event applied, or was already quarantined (not reported again).
+	holdNone cloneHold = iota
+	// holdMissing: its task, or the parent of a creation, does not exist in this clone.
+	holdMissing
+	// holdBehind: its task exists or may exist, but a creation it depends on is
+	// quarantined; it waits behind it and applies after it.
+	holdBehind
+)
+
+// cloneHeld is an event a committed batch newly quarantined, for the report.
+type cloneHeld struct {
+	event  *model.SyncEvent
+	behind bool
+}
+
+// applyCloneEvent applies e in its own savepoint and returns why this call
+// stored e in the quarantine, or holdNone: holdMissing when its apply failed
+// with ErrNotFound or it is a creation whose parent task is absent,
+// holdBehind when it waits behind a quarantined creation. An event already
+// quarantined (an interrupted clone resumed) is left as it is and is not
+// reported again. Any other apply failure is returned.
+func applyCloneEvent(ctx context.Context, tx *sql.Tx, in pullIngest, e *model.SyncEvent) (hold cloneHold, err error) {
 	already, err := sqlite.IsQuarantined(ctx, tx, e.EventID)
 	if err != nil {
-		return false, fmt.Errorf("check quarantine %s: %w", format.EventID(e.EventID), err)
+		return holdNone, fmt.Errorf("check quarantine %s: %w", format.EventID(e.EventID), err)
 	}
 	if already {
-		return false, nil
+		return holdNone, nil
 	}
 	// An event about a task whose creation is quarantined waits behind it,
 	// as in a pull: applied first it could be a no-op (a delete) that the
 	// retry of the creation would later undo (MTIX-95.37).
 	behind, err := refuseBehindQuarantinedCreate(ctx, tx, e)
 	if err != nil {
-		return false, err
+		return holdNone, err
 	}
 	if behind != nil {
-		return true, quarantineCloneOrphan(ctx, tx, in, e, behind)
+		return holdBehind, quarantineCloneOrphan(ctx, tx, in, e, sqlite.CloneHeldBehindReason, behind)
 	}
 	rejected, err := applyPulledEvent(ctx, tx, e, in.apply)
 	if err != nil {
-		return false, err
+		return holdNone, err
 	}
 	if rejected == nil {
-		return false, nil
+		return holdNone, nil
 	}
 	orphan, err := isOrphanFailure(ctx, tx, e, rejected)
 	if err != nil {
-		return false, err
+		return holdNone, err
 	}
 	if !orphan {
-		return false, fmt.Errorf("apply %s: %w", format.EventID(e.EventID), rejected)
+		return holdNone, fmt.Errorf("apply %s: %w", format.EventID(e.EventID), rejected)
 	}
-	return true, quarantineCloneOrphan(ctx, tx, in, e, rejected)
+	return holdMissing, quarantineCloneOrphan(ctx, tx, in, e, sqlite.CloneNotFoundReason, rejected)
 }
 
 // quarantineCloneOrphan stores e in the quarantine as source pull with a
-// reason that starts with sqlite.CloneOrphanReason, the clone-origin marker.
-func quarantineCloneOrphan(ctx context.Context, tx *sql.Tx, in pullIngest, e *model.SyncEvent, cause error) error {
-	reason := fmt.Errorf("%s: %w", sqlite.CloneOrphanReason, cause)
+// reason that starts with sqlite.CloneOrphanReason, the clone-origin marker,
+// then detail (why it is held) and the cause.
+func quarantineCloneOrphan(ctx context.Context, tx *sql.Tx, in pullIngest, e *model.SyncEvent, detail string, cause error) error {
+	reason := fmt.Errorf("%s%s: %w", sqlite.CloneOrphanReason, detail, cause)
 	return quarantinePulledEvent(ctx, tx, in, quarantineSourcePull, e, reason)
 }
 
@@ -99,11 +119,17 @@ func isOrphanFailure(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, reject
 	return n == 0, nil
 }
 
-// reportCloneOrphans names, on w, each event a committed batch quarantined.
-func reportCloneOrphans(w io.Writer, orphans []*model.SyncEvent) {
-	for _, e := range orphans {
-		fmt.Fprintf(w, "clone: quarantined event %s (%s on %s): its task does not exist in this clone; see 'mtix sync quarantine list'\n",
-			format.EventID(e.EventID), e.OpType, format.EventID(e.NodeID))
+// reportCloneOrphans names, on w, each event a committed batch quarantined,
+// and says whether its task does not exist here or it waits behind a
+// quarantined creation.
+func reportCloneOrphans(w io.Writer, held []cloneHeld) {
+	for _, h := range held {
+		why := "its task does not exist in this clone"
+		if h.behind {
+			why = "held behind a quarantined creation; it applies after the creation"
+		}
+		fmt.Fprintf(w, "clone: quarantined event %s (%s on %s): %s; see 'mtix sync quarantine list'\n",
+			format.EventID(h.event.EventID), h.event.OpType, format.EventID(h.event.NodeID), why)
 	}
 }
 

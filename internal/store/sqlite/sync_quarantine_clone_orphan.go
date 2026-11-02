@@ -14,7 +14,15 @@ import (
 // task this clone never created, such as the claim or child create a client
 // before 0.5.4 pushed under a number the hub had renumbered. The source stays
 // "pull"; this prefix records the clone origin.
-const CloneOrphanReason = "clone origin: orphaned dependent event, node not found"
+const CloneOrphanReason = "clone origin: orphaned dependent event"
+
+// The two details that follow CloneOrphanReason in a stored reason: the
+// event's task does not exist in the clone, or the event is held behind a
+// quarantined creation it depends on.
+const (
+	CloneNotFoundReason   = ", node not found"
+	CloneHeldBehindReason = ", held behind a quarantined creation"
+)
 
 // CountQuarantinedCloneOrphans returns how many pulled events the clone
 // quarantined as orphaned dependents (MTIX-95.37.1). They are also counted by

@@ -9,10 +9,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
@@ -74,6 +76,9 @@ func TestApplyBatch_DeleteBehindQuarantinedChildCreate_QuarantinedNotApplied(t *
 	require.Len(t, rows, 2)
 	require.Contains(t, rows[del.EventID].Reason, sqlite.CloneOrphanReason)
 	require.Contains(t, rows[del.EventID].Reason, "depends on a quarantined create")
+	require.Contains(t, rows[del.EventID].Reason, sqlite.CloneHeldBehindReason)
+	require.NotContains(t, rows[del.EventID].Reason, sqlite.CloneNotFoundReason)
+	require.Contains(t, rows[child.EventID].Reason, sqlite.CloneNotFoundReason)
 	require.True(t, service.QuarantineAcknowledgementEligible(rows[del.EventID]))
 }
 
@@ -197,4 +202,31 @@ func TestCloneLoop_EndRetryFails_SavesNoPullCursor(t *testing.T) {
 	cursor, readErr := readLastPulledClock(ctx, app.store)
 	require.NoError(t, readErr)
 	require.Equal(t, transport.PullCursor{}, cursor, "no pull cursor was saved")
+}
+
+// TestCloneLoop_HeldBehindCreate_ReportSaysHeldNotMissing: the report names a
+// delete held behind a quarantined creation as held, not as a missing task,
+// and a link from an existing task the same way.
+func TestCloneLoop_HeldBehindCreate_ReportSaysHeldNotMissing(t *testing.T) {
+	initTestApp(t)
+	child := childCreate(t, "TEST-9.1", "TEST-9", 2)
+	del := orphanDelete(t, "TEST-9.1", 3)
+	var stderr bytes.Buffer
+	hub := &fakeLateHub{pullEvents: []*model.SyncEvent{child, del}}
+
+	_, _, err := cloneLoop(context.Background(), &stderr, hub, app.store, transport.PullCursor{}, 10)
+
+	require.NoError(t, err)
+	var childLine, delLine string
+	for _, line := range strings.Split(stderr.String(), "\n") {
+		switch {
+		case strings.Contains(line, format.EventID(child.EventID)):
+			childLine = line
+		case strings.Contains(line, format.EventID(del.EventID)):
+			delLine = line
+		}
+	}
+	require.Contains(t, childLine, "its task does not exist in this clone")
+	require.Contains(t, delLine, "held behind a quarantined creation")
+	require.NotContains(t, delLine, "does not exist")
 }

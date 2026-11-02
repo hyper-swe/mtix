@@ -1884,8 +1884,8 @@ on the fresh store, run 'mtix sync pull' instead, which quarantines such an
 event and applies the rest. One case does not stop the clone: an event for a
 task the clone never creates (a claim or child create that a client before
 0.5.4 pushed under a number the hub renumbered, MTIX-95.37.1) is quarantined
-with a reason starting 'clone origin: orphaned dependent event', the clone
-prints how many, and 'mtix sync doctor' names them and prints the
+with a reason starting 'clone origin: orphaned dependent event', as is an
+event held behind a quarantined creation of its task; the clone prints how many, and 'mtix sync doctor' names them and prints the
 'mtix sync quarantine acknowledge' command. Only on a store that already holds sync state
 does 'mtix sync reconcile --discard-local' come first. It deletes local
 tasks and unpushed changes, so first run 'mtix sync push' and check that

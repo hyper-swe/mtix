@@ -1264,8 +1264,14 @@ number stay on the hub (the log is append-only). A fresh `mtix sync clone`
 of such a hub applies each event in its own savepoint
 (`applyCloneEvent`, `cmd/mtix/sync_clone_orphan.go`) and quarantines an event
 whose apply fails with not found, or a creation whose parent task is absent
-(`source` pull, reason starting `clone origin: orphaned dependent event, node
-not found`), in the batch's transaction; any other apply failure still fails
+(`source` pull, reason starting `clone origin: orphaned dependent event`,
+then `, node not found`), in the batch's transaction. Before each apply the
+clone runs the pull's rule for events behind a quarantined creation
+(`refuseBehindQuarantinedCreate`): an event about a task whose creation is
+quarantined is held with the same marker and a reason ending `, held behind a
+quarantined creation`, never applied as a no-op, and applies after the
+creation on retry in Lamport order (a delete is not lost, the task is not
+resurrected); any other apply failure still fails
 the clone. A resumed clone (`--resume`) keeps the orphans earlier batches
 quarantined (`resetCloneState`); a fresh clone clears the quarantine first.
 Before it ends the clone retries the quarantine once, so an orphan whose

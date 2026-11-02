@@ -87,8 +87,8 @@ func quarantineFailureDetail(ctx context.Context, st *sqlite.Store, counts sqlit
 }
 
 // cloneOrphanAction is the doctor's next step for events 'mtix sync clone'
-// quarantined with the reason 'clone origin: orphaned dependent event, node not
-// found' (MTIX-95.37.1): the hub holds events for a task this clone never
+// quarantined with the reason 'clone origin: orphaned dependent event' (node not found, or held
+// behind a quarantined creation) (MTIX-95.37.1): the hub holds events for a task this clone never
 // created, such as the claim or child create a client before 0.5.4 pushed
 // under a number the hub had renumbered. Retrying cannot apply them while the
 // task is absent; pull retries them and applies one if its create arrives.

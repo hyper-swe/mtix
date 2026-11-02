@@ -190,15 +190,16 @@ func cloneLoop(ctx context.Context, stderr io.Writer,
 			return totalPulled, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
 		}
 		// The check before the clone already warned about its events.
-		ingest := newPullIngest(io.Discard)
-		ingest.report = stderr
-		if err := applyBatch(ctx, ingest, store, events); err != nil {
-			return totalPulled, batches, fmt.Errorf("apply batch %d: %w", batches+1, err)
+		orphans, applyErr := applyBatchReport(ctx, newPullIngest(io.Discard), store, events)
+		if applyErr != nil {
+			return totalPulled, batches, fmt.Errorf("apply batch %d: %w", batches+1, applyErr)
 		}
+		// Reported only after the batch committed: no line names a row that was rolled back.
+		reportCloneOrphans(stderr, orphans)
 		if err := writeCloneCheckpoint(ctx, store, page.at); err != nil {
 			return totalPulled, batches, fmt.Errorf("checkpoint write: %w", err)
 		}
-		totalPulled += len(events)
+		totalPulled += len(events) - len(orphans)
 		batches++
 		fmt.Fprintf(stderr, "clone progress: batch %d (%d events; through lamport %d)\n",
 			batches, len(events), page.at.Lamport)
@@ -206,6 +207,13 @@ func cloneLoop(ctx context.Context, stderr io.Writer,
 			break
 		}
 	}
+	// An event quarantined as an orphan whose task's creation came later in
+	// this clone applies now and leaves the quarantine (MTIX-95.37.1).
+	retried, err := retryQuarantinedEvents(ctx, newPullIngest(io.Discard), store, batchSize)
+	if err != nil {
+		return totalPulled, batches, fmt.Errorf("quarantine retry: %w", err)
+	}
+	totalPulled += retried.applied
 	if err := store.WithTx(ctx, func(tx *sql.Tx) error { return writePullCursor(ctx, tx, page.at) }); err != nil {
 		return totalPulled, batches, fmt.Errorf("pull cursor write: %w", err)
 	}
@@ -222,13 +230,23 @@ func cloneLoop(ctx context.Context, stderr io.Writer,
 // every event before it began (preflightClone), so this refuses only an
 // event pushed to the hub since, with an error wrapping errCloneRefused.
 func applyBatch(ctx context.Context, in pullIngest, store *sqlite.Store, events []*model.SyncEvent) error {
+	_, err := applyBatchReport(ctx, in, store, events)
+	return err
+}
+
+// applyBatchReport is applyBatch that also returns the events this batch
+// newly quarantined as orphans (not ones already quarantined by an earlier,
+// interrupted run), so the caller reports them after the commit.
+func applyBatchReport(ctx context.Context, in pullIngest, store *sqlite.Store, events []*model.SyncEvent) ([]*model.SyncEvent, error) {
 	if err := requireEvents(events); err != nil {
-		return err
+		return nil, err
 	}
 	if in.apply == nil {
 		in.apply = store.IdempotentApply
 	}
-	return store.WithTx(ctx, func(tx *sql.Tx) error {
+	var orphans []*model.SyncEvent
+	err := store.WithTx(ctx, func(tx *sql.Tx) error {
+		orphans = nil
 		for _, e := range events {
 			local, err := sqlite.LocalLamport(ctx, tx)
 			if err != nil {
@@ -237,12 +255,20 @@ func applyBatch(ctx context.Context, in pullIngest, store *sqlite.Store, events 
 			if refused := checkPulledEvent(in, e, local); refused != nil {
 				return cloneRefusal(e, refused, true)
 			}
-			if _, err := applyCloneEvent(ctx, tx, in, e); err != nil {
+			held, err := applyCloneEvent(ctx, tx, in, e)
+			if err != nil {
 				return err
+			}
+			if held {
+				orphans = append(orphans, e)
 			}
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return orphans, nil
 }
 
 // localHasEvents returns true if sync_events has at least one row.

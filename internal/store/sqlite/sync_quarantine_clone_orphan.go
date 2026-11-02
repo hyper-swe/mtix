@@ -5,6 +5,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -27,4 +28,20 @@ func (s *Store) CountQuarantinedCloneOrphans(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("count quarantined clone orphans: %w", err)
 	}
 	return n, nil
+}
+
+// ClearQuarantineExceptCloneOrphans drops every quarantined pulled event
+// except the orphans `mtix sync clone` quarantined (reason starting with
+// CloneOrphanReason), and never a held push event (MTIX-95.37.1). A resumed
+// clone calls it: it does not read those events again.
+func (s *Store) ClearQuarantineExceptCloneOrphans(ctx context.Context) error {
+	return s.WithTx(ctx, func(tx *sql.Tx) error {
+		// Pulled events whose reason does not start with the clone-orphan marker.
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM sync_quarantine WHERE source <> 'push' AND instr(reason, ?) <> 1`,
+			CloneOrphanReason); err != nil {
+			return fmt.Errorf("clear quarantine except clone orphans: %w", err)
+		}
+		return nil
+	})
 }

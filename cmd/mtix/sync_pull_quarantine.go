@@ -75,9 +75,6 @@ type pullIngest struct {
 	maxJump    int64
 	cliVersion string
 	apply      func(context.Context, *sql.Tx, *model.SyncEvent) error
-	// report, when set, receives one line per event the clone quarantines
-	// as an orphaned dependent (MTIX-95.37.1).
-	report io.Writer
 }
 
 // newPullIngest wires a pull's ingest settings for production: this

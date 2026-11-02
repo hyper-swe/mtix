@@ -114,7 +114,9 @@ func checkThenClone(ctx context.Context, stderr io.Writer, pool cursorPuller,
 	}
 	// A clone rebuilds the store from the hub: the next pull's late-event
 	// sweep diffs the full hub history (MTIX-95.5); no quarantine (MTIX-95.11).
-	if resetErr := resetPullState(ctx, app.store); resetErr != nil {
+	// A resumed clone (a saved keyset position) keeps the orphans earlier
+	// batches quarantined: it never reads those events again (MTIX-95.37.1).
+	if resetErr := resetCloneState(ctx, app.store, since); resetErr != nil {
 		return 0, 0, "reset pull state", resetErr
 	}
 	pulled, batches, err = cloneLoop(ctx, stderr, pool, app.store, since, batchSize)

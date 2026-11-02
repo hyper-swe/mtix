@@ -13,11 +13,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/clock"
+	"github.com/hyper-swe/mtix/internal/sync/validator"
 )
 
 // Orphaned dependent events in a clone (MTIX-95.37.1): the hub holds events
@@ -26,6 +28,8 @@ import (
 
 // orphanClaim is a claim of nodeID by a teammate, as a client before 0.5.4
 // pushed it: no uid, so apply resolves it by node id.
+func validatorMaxClock() int64 { return validator.MaxLamportClock }
+
 func orphanClaim(t *testing.T, nodeID string, lamport int64) *model.SyncEvent {
 	t.Helper()
 	eid, err := clock.NewEventID()
@@ -55,7 +59,7 @@ func TestCheckThenClone_OrphanDependentEvent_QuarantinedAndRestApplied(t *testin
 	pulled, batches, stage, err := checkThenClone(context.Background(), &stderr, hub, transport.PullCursor{}, 10)
 
 	require.NoError(t, err, stage)
-	require.Equal(t, 3, pulled)
+	require.Equal(t, 2, pulled, "three events read, one quarantined: two applied")
 	require.Equal(t, 1, batches)
 	requireAppliedOnce(t, first)
 	requireAppliedOnce(t, last)
@@ -63,8 +67,8 @@ func TestCheckThenClone_OrphanDependentEvent_QuarantinedAndRestApplied(t *testin
 	q := quarantined(t)[orphan.EventID]
 	require.Equal(t, quarantineSourcePull, q.Source)
 	require.Contains(t, q.Reason, sqlite.CloneOrphanReason, "the row records the clone origin")
-	require.Equal(t, 1, q.Attempts)
-	require.Contains(t, stderr.String(), orphan.EventID, "the clone names the quarantined event")
+	require.Len(t, quarantined(t), 1, "one row, not one per attempt")
+	require.Contains(t, stderr.String(), format.EventID(orphan.EventID), "the clone names the quarantined event")
 	n, err := countCloneOrphans(context.Background(), app.store)
 	require.NoError(t, err)
 	require.Equal(t, 1, n)
@@ -105,21 +109,6 @@ func TestApplyBatch_NotFoundApply_RollsBackItsPartialWrites(t *testing.T) {
 	require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM meta WHERE key = 'partial.write'`),
 		"the event's savepoint undoes its writes")
 	requireQuarantinedAs(t, orphan, quarantineSourcePull, sqlite.CloneOrphanReason)
-}
-
-func TestApplyBatch_RerunAfterInterruption_RecordsEachOrphanOnce(t *testing.T) {
-	initTestApp(t)
-	first, orphan, last := orphanHistory(t)
-	events := []*model.SyncEvent{first, orphan, last}
-
-	require.NoError(t, applyBatch(context.Background(), testIngest(nil), app.store, events))
-	require.NoError(t, applyBatch(context.Background(), testIngest(nil), app.store, events))
-
-	require.Len(t, quarantined(t), 1)
-	require.Equal(t, 1, quarantined(t)[orphan.EventID].Attempts, "a rerun leaves the row as it is")
-	requireAppliedOnce(t, first)
-	requireAppliedOnce(t, last)
-	requireNotApplied(t, orphan)
 }
 
 func TestRetryQuarantinedEvents_OrphanWhoseCreateArrives_AppliesAndLeavesQuarantine(t *testing.T) {
@@ -176,4 +165,152 @@ func TestDoctorQuarantine_CloneOrphans_NamesThemAndFixAcknowledgesToGreen(t *tes
 	ok, detail = checkQuarantinedEvents(ctx, app.store)
 	require.True(t, ok, detail)
 	require.Len(t, quarantined(t), 1, "acknowledged events stay retained")
+}
+
+// failNthPullHub serves its events like fakeLateHub and fails PullEvents call
+// number failCall once, as an interruption of the clone.
+type failNthPullHub struct {
+	fakeLateHub
+	failCall, calls int
+}
+
+func (h *failNthPullHub) PullEvents(ctx context.Context, since transport.PullCursor, limit int) ([]*model.SyncEvent, bool, error) {
+	h.calls++
+	if h.calls == h.failCall {
+		return nil, false, errors.New("hub connection lost")
+	}
+	return h.fakeLateHub.PullEvents(ctx, since, limit)
+}
+
+// TestCheckThenClone_ResumeAfterInterruption_KeepsOrphansOfCommittedBatches
+// goes through the real resume: batch one (a create and an orphan claim)
+// commits and saves the checkpoint, the fetch of batch two fails, and the
+// resume reads the checkpoint and runs checkThenClone again. The resume never
+// reads the orphan again and must not lose it: one row, the clone-origin
+// marker, counted, acknowledgeable, and recorded exactly once.
+func TestCheckThenClone_ResumeAfterInterruption_KeepsOrphansOfCommittedBatches(t *testing.T) {
+	initTestApp(t)
+	ctx := context.Background()
+	first := remoteCreateAt(t, "TEST-1", 1)
+	orphan := orphanClaim(t, "TEST-9.1", 2)
+	third := remoteCreateAt(t, "TEST-2", 3)
+	fourth := remoteCreateAt(t, "TEST-3", 4)
+	events := []*model.SyncEvent{first, orphan, third, fourth}
+	// Calls 1-2 are the check, call 3 is batch one, call 4 (batch two) fails.
+	hub := &failNthPullHub{fakeLateHub: fakeLateHub{pullEvents: events}, failCall: 4}
+
+	_, _, stage, err := checkThenClone(ctx, &bytes.Buffer{}, hub, transport.PullCursor{}, 2)
+	require.ErrorContains(t, err, "hub connection lost")
+	require.Equal(t, "clone loop", stage)
+	require.Len(t, quarantined(t), 1, "precondition: batch one committed its orphan")
+
+	since, err := readCloneCheckpoint(ctx, app.store, true)
+	require.NoError(t, err)
+	resumeHub := &fakeLateHub{pullEvents: events}
+	pulled, _, stage, err := checkThenClone(ctx, &bytes.Buffer{}, resumeHub, since, 2)
+
+	require.NoError(t, err, stage)
+	require.Equal(t, 2, pulled, "the resume reads only the two events after the checkpoint")
+	rows := quarantined(t)
+	require.Len(t, rows, 1)
+	require.Contains(t, rows[orphan.EventID].Reason, sqlite.CloneOrphanReason)
+	n, err := countCloneOrphans(ctx, app.store)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	requireAppliedOnce(t, third)
+	requireAppliedOnce(t, fourth)
+	_, err = app.syncSvc.AcknowledgeQuarantine(ctx, orphan.EventID, "op-a", "task lives under its renumbered id")
+	require.NoError(t, err)
+}
+
+// TestApplyBatch_CreateUnderMissingParent_QuarantinedAsOrphan: a child create
+// pushed under an old number names a parent the clone never creates; the
+// insert fails its foreign key, not ErrNotFound, and is quarantined too.
+func TestApplyBatch_CreateUnderMissingParent_QuarantinedAsOrphan(t *testing.T) {
+	initTestApp(t)
+	child := childCreate(t, "TEST-9.1", "TEST-9", 2)
+
+	require.NoError(t, applyBatch(context.Background(), testIngest(nil), app.store, []*model.SyncEvent{child}))
+
+	requireNotApplied(t, child)
+	require.Contains(t, quarantined(t)[child.EventID].Reason, sqlite.CloneOrphanReason)
+}
+
+// TestApplyBatch_CreateFaultWithParentPresent_FailsBatch: a create whose
+// parent exists and whose apply fails for another reason is no orphan.
+func TestApplyBatch_CreateFaultWithParentPresent_FailsBatch(t *testing.T) {
+	initTestApp(t)
+	ctx := context.Background()
+	parent := remoteCreateAt(t, "TEST-9", 1)
+	require.NoError(t, applyBatch(ctx, testIngest(nil), app.store, []*model.SyncEvent{parent}))
+	child := childCreate(t, "TEST-9.1", "TEST-9", 2)
+	in := testIngest(nil)
+	in.apply = func(context.Context, *sql.Tx, *model.SyncEvent) error { return errors.New("disk exploded") }
+
+	err := applyBatch(ctx, in, app.store, []*model.SyncEvent{child})
+
+	require.ErrorContains(t, err, "disk exploded")
+	require.Empty(t, quarantined(t))
+}
+
+func childCreate(t *testing.T, nodeID, parentID string, lamport int64) *model.SyncEvent {
+	t.Helper()
+	e := remoteCreateAt(t, nodeID, lamport)
+	payload, err := model.EncodePayload(model.CreateNodePayload{
+		Title: "child " + nodeID, ParentID: parentID, NodeType: model.NodeTypeForDepth(1),
+		Priority: model.PriorityMedium, Creator: "remote-author",
+	})
+	require.NoError(t, err)
+	e.Payload = payload
+	return e
+}
+
+// TestCloneLoop_BatchRolledBack_ReportsNoQuarantine: the orphan lines are
+// printed only after a batch commits; a batch that fails after quarantining
+// an orphan rolls it back and announces nothing.
+func TestCloneLoop_BatchRolledBack_ReportsNoQuarantine(t *testing.T) {
+	initTestApp(t)
+	orphan := orphanClaim(t, "TEST-9.1", 2)
+	extreme := remoteCreateAt(t, "TEST-2", validatorMaxClock()-2)
+	var stderr bytes.Buffer
+	hub := &fakeLateHub{pullEvents: []*model.SyncEvent{orphan, extreme}}
+
+	_, _, err := cloneLoop(context.Background(), &stderr, hub, app.store, transport.PullCursor{}, 10)
+
+	require.ErrorIs(t, err, errCloneRefused)
+	require.NotContains(t, stderr.String(), format.EventID(orphan.EventID))
+	require.Empty(t, quarantined(t))
+}
+
+// TestCloneLoop_OrphansCommitted_ReportedAfterCommit names each quarantined
+// event on stderr.
+func TestCloneLoop_OrphanCommitted_NamedOnStderr(t *testing.T) {
+	initTestApp(t)
+	orphan := orphanClaim(t, "TEST-9.1", 2)
+	var stderr bytes.Buffer
+	hub := &fakeLateHub{pullEvents: []*model.SyncEvent{orphan}}
+
+	pulled, _, err := cloneLoop(context.Background(), &stderr, hub, app.store, transport.PullCursor{}, 10)
+
+	require.NoError(t, err)
+	require.Zero(t, pulled, "a quarantined event is not counted as applied")
+	require.Contains(t, stderr.String(), "quarantined event "+format.EventID(orphan.EventID))
+}
+
+// TestCloneLoop_OrphanWhoseCreateComesLater_AppliedByEndRetry: the claim
+// precedes its task's creation in Lamport order, so it is quarantined when
+// read; the end-of-clone retry applies it and it leaves the quarantine.
+func TestCloneLoop_OrphanWhoseCreateComesLater_AppliedByEndRetry(t *testing.T) {
+	initTestApp(t)
+	ctx := context.Background()
+	claim := orphanClaim(t, "TEST-5", 1)
+	create := remoteCreateAt(t, "TEST-5", 2)
+	hub := &fakeLateHub{pullEvents: []*model.SyncEvent{claim, create}}
+
+	pulled, _, err := cloneLoop(ctx, &bytes.Buffer{}, hub, app.store, transport.PullCursor{}, 1)
+
+	require.NoError(t, err)
+	require.Equal(t, 2, pulled, "the create, then the retried claim")
+	require.Empty(t, quarantined(t))
+	require.Equal(t, 1, countTestRows(t, `SELECT COUNT(*) FROM applied_events WHERE event_id = ?`, claim.EventID))
 }

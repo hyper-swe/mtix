@@ -4617,10 +4617,10 @@ After a push that prints `<n> renumbered`, look your node up by title (the
 number changed) and fix any commit or PR text that names the old number.
 Check with `mtix sync push`, `mtix sync pull`, `mtix sync status` (pending 0)
 and `mtix sync doctor`. Events a client from before this fix pushed under
-an old number stay on the hub; a fresh clone of such a hub can fail with
-`node <id> (uid=""): not found`. No recovery exists in this version (a
-clone applies a batch in one transaction and does not quarantine); it is
-tracked as MTIX-95.37.1, so report the error to the person who runs the hub. The sync protocol 2 design (ADR-006) changes how this is done (a rebind
+an old number stay on the hub; a fresh clone of such a hub completes and
+quarantines them as orphaned dependent events (see "Clone quarantines
+orphaned dependent events" under Quarantined events): `mtix sync doctor`
+names them and prints the `mtix sync quarantine acknowledge` command. The sync protocol 2 design (ADR-006) changes how this is done (a rebind
 event, uid-keyed links) and not what you see.
 
 ### New sync commands

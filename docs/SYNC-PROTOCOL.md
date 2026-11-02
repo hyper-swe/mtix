@@ -1263,9 +1263,13 @@ Limit: events a client from before MTIX-95.37 already pushed under an old
 number stay on the hub (the log is append-only). A fresh `mtix sync clone`
 of such a hub applies each event in its own savepoint
 (`applyCloneEvent`, `cmd/mtix/sync_clone_orphan.go`) and quarantines an event
-whose apply fails with not found (`source` pull, reason starting `clone origin:
-orphaned dependent event, node not found`) in the batch's transaction; any
-other apply failure still fails the clone. The clone prints the orphan count,
+whose apply fails with not found, or a creation whose parent task is absent
+(`source` pull, reason starting `clone origin: orphaned dependent event, node
+not found`), in the batch's transaction; any other apply failure still fails
+the clone. A resumed clone (`--resume`) keeps the orphans earlier batches
+quarantined (`resetCloneState`); a fresh clone clears the quarantine first.
+Before it ends the clone retries the quarantine once, so an orphan whose
+creation came later in the log is applied. The clone prints the orphan count,
 every pull retries the events, `mtix sync doctor` names them and prints the
 acknowledge command, and a resumed clone records each orphan once
 (MTIX-95.37.1).

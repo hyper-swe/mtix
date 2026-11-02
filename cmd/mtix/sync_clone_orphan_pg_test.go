@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
@@ -19,9 +20,10 @@ import (
 
 // TestRunSyncClone_HubHoldsOldNumberDependents_SucceedsAndQuarantinesThem:
 // the hub holds a creation and, as a client before 0.5.4 pushed them, a
-// claim and a child create of a task the hub renumbered, under the old
-// number. The clone succeeds, applies the creation, quarantines both
-// dependents (source pull, clone origin), names them, and doctor then fails
+// claim of a task and a child create under it (its parent never created),
+// both under the number the hub had renumbered, as a hand-built uid-less
+// events (the pre-fix client's shape). The clone succeeds, applies the
+// creation, quarantines both dependents (source pull, clone origin), names them, and doctor then fails
 // with the acknowledge command and passes once they are acknowledged.
 func TestRunSyncClone_HubHoldsOldNumberDependents_SucceedsAndQuarantinesThem(t *testing.T) {
 	f := newSweepFixture(t)
@@ -31,7 +33,7 @@ func TestRunSyncClone_HubHoldsOldNumberDependents_SucceedsAndQuarantinesThem(t *
 	require.NoError(t, err)
 	require.Len(t, pending, 1)
 	claim := orphanClaim(t, "TEST-9.1", pending[0].LamportClock+1)
-	child := orphanClaim(t, "TEST-9.1.1", pending[0].LamportClock+2)
+	child := childCreate(t, "TEST-9.1.1", "TEST-9.1", pending[0].LamportClock+2)
 	accepted, _, _, err := f.pool.PushEventsWithRenumbers(ctx, []*model.SyncEvent{pending[0], claim, child})
 	require.NoError(t, err)
 	require.Len(t, accepted, 3, "precondition: the hub holds the old-number events")
@@ -41,7 +43,7 @@ func TestRunSyncClone_HubHoldsOldNumberDependents_SucceedsAndQuarantinesThem(t *
 
 	require.NoError(t, err, stderr.String())
 	require.Contains(t, stdout.String(), "2 orphaned events quarantined")
-	require.Contains(t, stderr.String(), claim.EventID)
+	require.Contains(t, stderr.String(), format.EventID(claim.EventID))
 	require.True(t, f.appliedOnPeer(t, pending[0].EventID))
 	require.False(t, f.appliedOnPeer(t, claim.EventID))
 	require.Len(t, quarantined(t), 2)

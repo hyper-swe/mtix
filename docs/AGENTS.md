@@ -14,7 +14,6 @@ Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whit
 Terminal output (`show`, `list`, `ready`, `search`, `tree`, `progress`, `context`, `create`, `decompose --dry-run`) prints titles and assignees on one line: control characters, escapes, bidirectional overrides and isolates, zero-width and other invisible format characters are removed, line breaks become spaces, and the directional marks (U+200E, U+200F, U+061C) are kept. Use `--json` for the exact stored text, for example when quoting a title. The plain `mtix inbox` listing and error lines are stripped the same way, but an inbox body and an error keep their line breaks (the body is indented). The `mtix context` Assembled Prompt block folds titles, annotation authors and dependency ids onto one line and indents every line of prompts and annotation text.
 
 
-
 ## Every action item becomes a ticket
 
 When you find or promise an action item (a follow-up, cleanup, promised check or open question), file an mtix ticket right away. Do not leave it in chat, notes or a state file. A ticket keeps the item traceable, findable later and auditable.
@@ -342,6 +341,10 @@ Count makes no hub contact, never acknowledges or refreshes session `last_seen`,
 and skips automatic board import. It is not a heartbeat. Do not combine count
 with explicitly supplied wait/format flags; `--all` requires active count.
 See the multi-agent skill for the complete polling contract and startup limits.
+
+## Inbox retention
+
+An event addressed to an agent stays in that agent's inbox until the agent acks it (the exceptions are listed here): no TTL, no expiry. The journal is per store and reaches another checkout only through sync; acks are not synced, so a new checkout (`mtix sync clone`) shows acked events again (handle work idempotently). `tasks.json`, `mtix export` and `mtix recover` do not carry the journal. `mtix import --mode replace` on a never-synced store and `mtix sync reconcile --discard-local` remove unread events: each asks for the ticket count, typed at a terminal, and prints the unread-event count first; discard-local deletes the journal, so run `mtix sync push` first and check pending 0. Audit with `mtix inbox --agent <agent-id> --history` (read-only, no hub contact). Full boundaries: the multi-agent skill and USERMANUAL.
 
 ## Reference Wake Routine
 

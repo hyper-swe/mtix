@@ -185,7 +185,7 @@ func persistentPreRun(cmd *cobra.Command, args []string, logLevel string) error 
 func autoImportForCommand(cmd *cobra.Command) {
 	// Auto-import tasks.json if hash changed (FR-15.2).
 	// Skip for excluded commands per FR-15.2c.
-	if app.syncSvc != nil && app.mtixDir != "" && !shouldSkipAutoImport(autoImportCommandPath(cmd)) && !isInboxCountCommand(cmd) {
+	if app.syncSvc != nil && app.mtixDir != "" && !shouldSkipAutoImport(autoImportCommandPath(cmd)) && !isInboxCountCommand(cmd) && !isInboxHistoryCommand(cmd) {
 		runCommandAutoImport(cmd)
 	}
 }

@@ -88,6 +88,7 @@ func runRecover() (string, error) {
 	}
 
 	printRecoverReport(res, outPath)
+	writeRecoverInboxNote(context.Background(), os.Stdout, dbPath)
 	return outPath, nil
 }
 

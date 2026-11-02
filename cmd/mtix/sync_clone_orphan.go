@@ -29,7 +29,8 @@ import (
 
 // applyCloneEvent applies e in its own savepoint. newlyQuarantined reports
 // that this call stored e in the quarantine as an orphan: its apply failed
-// with ErrNotFound, or it is a creation whose parent task is absent. An
+// with ErrNotFound, it is a creation whose parent task is absent, or it
+// waits behind a quarantined creation of its task. An
 // event already quarantined (an interrupted clone resumed) is left as it is
 // and is not reported again. Any other apply failure is returned.
 func applyCloneEvent(ctx context.Context, tx *sql.Tx, in pullIngest, e *model.SyncEvent) (newlyQuarantined bool, err error) {
@@ -39,6 +40,16 @@ func applyCloneEvent(ctx context.Context, tx *sql.Tx, in pullIngest, e *model.Sy
 	}
 	if already {
 		return false, nil
+	}
+	// An event about a task whose creation is quarantined waits behind it,
+	// as in a pull: applied first it could be a no-op (a delete) that the
+	// retry of the creation would later undo (MTIX-95.37).
+	behind, err := refuseBehindQuarantinedCreate(ctx, tx, e)
+	if err != nil {
+		return false, err
+	}
+	if behind != nil {
+		return true, quarantineCloneOrphan(ctx, tx, in, e, behind)
 	}
 	rejected, err := applyPulledEvent(ctx, tx, e, in.apply)
 	if err != nil {
@@ -54,11 +65,14 @@ func applyCloneEvent(ctx context.Context, tx *sql.Tx, in pullIngest, e *model.Sy
 	if !orphan {
 		return false, fmt.Errorf("apply %s: %w", format.EventID(e.EventID), rejected)
 	}
-	reason := fmt.Errorf("%s: %w", sqlite.CloneOrphanReason, rejected)
-	if err := quarantinePulledEvent(ctx, tx, in, quarantineSourcePull, e, reason); err != nil {
-		return false, err
-	}
-	return true, nil
+	return true, quarantineCloneOrphan(ctx, tx, in, e, rejected)
+}
+
+// quarantineCloneOrphan stores e in the quarantine as source pull with a
+// reason that starts with sqlite.CloneOrphanReason, the clone-origin marker.
+func quarantineCloneOrphan(ctx context.Context, tx *sql.Tx, in pullIngest, e *model.SyncEvent, cause error) error {
+	reason := fmt.Errorf("%s: %w", sqlite.CloneOrphanReason, cause)
+	return quarantinePulledEvent(ctx, tx, in, quarantineSourcePull, e, reason)
 }
 
 // isOrphanFailure reports whether rejected, the failed apply of e, means the

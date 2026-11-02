@@ -19,12 +19,12 @@ import (
 // old number (MTIX-95.37.1). Gated on MTIX_PG_TEST_DSN.
 
 // TestRunSyncClone_HubHoldsOldNumberDependents_SucceedsAndQuarantinesThem:
-// the hub holds a creation and, as a client before 0.5.4 pushed them, a
-// claim of a task and a child create under it (its parent never created),
-// both under the number the hub had renumbered, as a hand-built uid-less
-// events (the pre-fix client's shape). The clone succeeds, applies the
-// creation, quarantines both dependents (source pull, clone origin), names them, and doctor then fails
-// with the acknowledge command and passes once they are acknowledged.
+// the hub holds a creation and, hand-built as a client before 0.5.4 left
+// them, a claim of a task and a child create under it (its parent never
+// created), both under the number the hub had renumbered. The clone
+// succeeds, applies the creation, quarantines both dependents (source pull,
+// clone origin), names them, and doctor fails with the count of clone
+// orphans (the unit tests cover the acknowledge path to a passing doctor).
 func TestRunSyncClone_HubHoldsOldNumberDependents_SucceedsAndQuarantinesThem(t *testing.T) {
 	f := newSweepFixture(t)
 	ctx := context.Background()

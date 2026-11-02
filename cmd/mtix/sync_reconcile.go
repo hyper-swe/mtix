@@ -230,12 +230,17 @@ func discardLocalOp(ctx context.Context) (destructiveOp, error) {
 	if err != nil {
 		return destructiveOp{}, err
 	}
+	unread, err := unackedInboxCount(ctx)
+	if err != nil {
+		return destructiveOp{}, err
+	}
 	return destructiveOp{
 		Command: "mtix sync reconcile --discard-local",
 		Scope:   localScope(ctx),
 		Destroys: []destroyCount{
 			{Label: "tickets (every node, every project, including soft-deleted)", N: nodes},
 			{Label: "journal events", N: events},
+			unread,
 		},
 		Consequence: "the local store holds no tickets; the next 'mtix sync clone' adopts hub state. " +
 			"Tickets that never reached the hub are gone for good",

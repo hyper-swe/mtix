@@ -20,6 +20,35 @@ var untrackedGeneratedDocs = map[string]string{
 	"CLAUDE.md": "rendered per project by mtix docs generate; claude.md.tmpl output is not tracked in docs/",
 }
 
+// docs/codex/AGENTS.md is tracked but is not a generated document: it is
+// hand maintained, holds no AUTO-GENERATED markers and has no template.
+// Sections that depend on the command tree, config keys, error codes or MCP
+// registry are compared by the production-data guard in cmd/mtix.
+
+// TestTemplates_ClaudeAndAgentsSharedManagedSections_RenderIdentically covers
+// claude.md.tmpl, whose output is not tracked: the managed sections it shares
+// with agents.md.tmpl must render the same body, so the tracked AGENTS.md
+// comparison guards both.
+func TestTemplates_ClaudeAndAgentsSharedManagedSections_RenderIdentically(t *testing.T) {
+	out := renderAllDocs(t, minimalTemplateData())
+	read := func(name string) map[string]string {
+		b, err := os.ReadFile(filepath.Join(out, name))
+		require.NoError(t, err)
+		return extractSections(string(b))
+	}
+	agents, claude := read("AGENTS.md"), read("CLAUDE.md")
+	shared := 0
+	for name, body := range claude {
+		other, ok := agents[name]
+		if !ok {
+			continue
+		}
+		shared++
+		assert.Equal(t, other, body, "managed section %s differs between claude.md.tmpl and agents.md.tmpl", name)
+	}
+	require.NotZero(t, shared, "claude.md.tmpl and agents.md.tmpl share no managed sections")
+}
+
 // TestTrackedDocs_ManagedSections_MatchTemplates guards MTIX-235: every
 // AUTO-GENERATED section that a template renders must equal the same section
 // of the tracked copy under docs/, so a template change cannot ship without

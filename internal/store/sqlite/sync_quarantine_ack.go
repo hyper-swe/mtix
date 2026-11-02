@@ -33,7 +33,7 @@ type QuarantineAcknowledgementResult struct {
 // QuarantineForAcknowledgement reads the snapshot the service must validate.
 func (s *Store) QuarantineForAcknowledgement(ctx context.Context, eventID string) (QuarantinedEvent, error) {
 	q := QuarantinedEvent{EventID: eventID}
-	err := s.QueryRow(ctx, `SELECT source, raw_event FROM sync_quarantine WHERE event_id = ?`, eventID).Scan(&q.Source, &q.RawEvent)
+	err := s.QueryRow(ctx, `SELECT source, raw_event, reason FROM sync_quarantine WHERE event_id = ?`, eventID).Scan(&q.Source, &q.RawEvent, &q.Reason)
 	if errors.Is(err, sql.ErrNoRows) {
 		return q, fmt.Errorf("quarantined event: %w", model.ErrNotFound)
 	}

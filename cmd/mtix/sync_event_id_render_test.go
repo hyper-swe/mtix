@@ -500,7 +500,9 @@ func TestApplyBatch_HostileEventIDOnApplyFailure_RendersPrintableASCII(t *testin
 	initTestApp(t)
 	events := offlineEvents(t)
 	events[1].EventID = hostileEventID
-	err := applyBatch(t.Context(), testIngest(nil), app.store, events[1:2])
+	in := testIngest(nil)
+	in.apply = func(context.Context, *sql.Tx, *model.SyncEvent) error { return errors.New("apply fault") }
+	err := applyBatch(t.Context(), in, app.store, events[1:2])
 	require.Error(t, err)
 	require.NotErrorIs(t, err, errCloneRefused, "this must be the apply failure, not the clock refusal")
 	require.Contains(t, err.Error(), "apply ")

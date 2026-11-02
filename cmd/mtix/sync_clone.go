@@ -64,9 +64,14 @@ Before it writes anything, clone runs on every hub event the checks that
 'mtix sync pull' runs (the Lamport clock: below 2^53 and at most
 sync.max_lamport_jump above the local clock; the FR-18.7 envelope caps;
 a hub row that decodes), and refuses the whole clone when any event
-fails, naming the event and the reason. Clone has no quarantine: on the
-fresh store, run 'mtix sync pull' instead, which quarantines such an
-event and applies the rest. Only on a store that already holds sync state
+fails, naming the event and the reason. For those, clone has no quarantine:
+on the fresh store, run 'mtix sync pull' instead, which quarantines such an
+event and applies the rest. One case does not stop the clone: an event for a
+task the clone never creates (a claim or child create that a client before
+0.5.4 pushed under a number the hub renumbered, MTIX-95.37.1) is quarantined
+with a reason starting 'clone origin: orphaned dependent event', as is an
+event held behind a quarantined creation of its task; the clone prints how many, and 'mtix sync doctor' names them and prints the
+'mtix sync quarantine acknowledge' command. Only on a store that already holds sync state
 does 'mtix sync reconcile --discard-local' come first. It deletes local
 tasks and unpushed changes, so first run 'mtix sync push' and check that
 'mtix sync status' shows pending 0. It then asks for the ticket count,
@@ -150,9 +155,7 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 		warnSync(stderr, "mtix sync clone: hook floor init", err)
 	}
 
-	fmt.Fprintf(stdout,
-		"clone complete: %d events applied across %d batches\n", pulled, batches)
-	return nil
+	return finishClone(ctx, stdout, stderr, pulled, batches)
 }
 
 // cloneLoop drives the pull-and-apply iteration from the keyset position
@@ -187,13 +190,16 @@ func cloneLoop(ctx context.Context, stderr io.Writer,
 			return totalPulled, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
 		}
 		// The check before the clone already warned about its events.
-		if err := applyBatch(ctx, newPullIngest(io.Discard), store, events); err != nil {
-			return totalPulled, batches, fmt.Errorf("apply batch %d: %w", batches+1, err)
+		orphans, applyErr := applyBatchReport(ctx, newPullIngest(io.Discard), store, events)
+		if applyErr != nil {
+			return totalPulled, batches, fmt.Errorf("apply batch %d: %w", batches+1, applyErr)
 		}
+		// Reported only after the batch committed: no line names a row that was rolled back.
+		reportCloneOrphans(stderr, orphans)
 		if err := writeCloneCheckpoint(ctx, store, page.at); err != nil {
 			return totalPulled, batches, fmt.Errorf("checkpoint write: %w", err)
 		}
-		totalPulled += len(events)
+		totalPulled += len(events) - len(orphans)
 		batches++
 		fmt.Fprintf(stderr, "clone progress: batch %d (%d events; through lamport %d)\n",
 			batches, len(events), page.at.Lamport)
@@ -201,24 +207,46 @@ func cloneLoop(ctx context.Context, stderr io.Writer,
 			break
 		}
 	}
+	// An event quarantined as an orphan whose task's creation came later in
+	// this clone applies now and leaves the quarantine (MTIX-95.37.1).
+	retried, err := retryQuarantinedEvents(ctx, newPullIngest(io.Discard), store, batchSize)
+	if err != nil {
+		return totalPulled, batches, fmt.Errorf("quarantine retry: %w", err)
+	}
+	totalPulled += retried.applied
 	if err := store.WithTx(ctx, func(tx *sql.Tx) error { return writePullCursor(ctx, tx, page.at) }); err != nil {
 		return totalPulled, batches, fmt.Errorf("pull cursor write: %w", err)
 	}
 	return totalPulled, batches, nil
 }
 
-// applyBatch wraps IdempotentApply for every event in the batch
-// inside a single tx for performance. A failure on any event rolls
+// applyBatch applies every event in the batch inside a single tx for
+// performance, each in its own savepoint (applyCloneEvent): an event whose
+// task was never created here (ErrNotFound) is quarantined, not fatal
+// (MTIX-95.37.1). Any other failure on any event rolls
 // back the entire batch — the caller's --resume picks up from the
 // last successful checkpoint. Each event first gets the pull's checks
 // against the local clock (checkPulledEvent, MTIX-95.11): the clone checked
 // every event before it began (preflightClone), so this refuses only an
 // event pushed to the hub since, with an error wrapping errCloneRefused.
 func applyBatch(ctx context.Context, in pullIngest, store *sqlite.Store, events []*model.SyncEvent) error {
+	_, err := applyBatchReport(ctx, in, store, events)
+	return err
+}
+
+// applyBatchReport is applyBatch that also returns the events this batch
+// newly quarantined as orphans (not ones already quarantined by an earlier,
+// interrupted run), so the caller reports them after the commit.
+func applyBatchReport(ctx context.Context, in pullIngest, store *sqlite.Store, events []*model.SyncEvent) ([]cloneHeld, error) {
 	if err := requireEvents(events); err != nil {
-		return err
+		return nil, err
 	}
-	return store.WithTx(ctx, func(tx *sql.Tx) error {
+	if in.apply == nil {
+		in.apply = store.IdempotentApply
+	}
+	var orphans []cloneHeld
+	err := store.WithTx(ctx, func(tx *sql.Tx) error {
+		orphans = nil
 		for _, e := range events {
 			local, err := sqlite.LocalLamport(ctx, tx)
 			if err != nil {
@@ -227,12 +255,20 @@ func applyBatch(ctx context.Context, in pullIngest, store *sqlite.Store, events 
 			if refused := checkPulledEvent(in, e, local); refused != nil {
 				return cloneRefusal(e, refused, true)
 			}
-			if err := store.IdempotentApply(ctx, tx, e); err != nil {
-				return fmt.Errorf("apply %s: %w", format.EventID(e.EventID), err)
+			kind, err := applyCloneEvent(ctx, tx, in, e)
+			if err != nil {
+				return err
+			}
+			if kind != holdNone {
+				orphans = append(orphans, cloneHeld{event: e, behind: kind == holdBehind})
 			}
 		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return orphans, nil
 }
 
 // localHasEvents returns true if sync_events has at least one row.

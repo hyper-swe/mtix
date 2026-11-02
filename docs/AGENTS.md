@@ -333,6 +333,8 @@ These are **operator/admin** actions, not part of the normal agent loop. Recogni
 - **Hub privileges.** `mtix sync doctor` shows a `hub-privileges` check. A **WARN** (exit 0) means roles other than the owner can use the sync tables, or a TRUNCATE guard is missing or disabled; that can be fine when the database is reachable only from a private network, and it never blocks sync. It is a **FAIL** only in strict mode (`sync.keep_roles` set). To restrict access the table owner runs `mtix sync harden` (a dry run that lists every role it would change), and only after the user approves that role list, `mtix sync harden --apply --keep-role <role>`. **Never** pass `--apply` without that approval, and never run `mtix sync harden` from a hook, a push or the daemon.
 
 <!-- AUTO-GENERATED: WAKE_ROUTINE -->
+Held inbox events: on a hub or relay board, inbox reads (CLI, session hook, MCP) return only events for ids your operator confirmed and report the rest as a count on stderr (`N held: ask your operator ...`). Tell your operator; never try to read held bodies. A wait that returns nothing exits 5: re-arm it. `mtix doctor` row `inbox.held` prints the fix.
+
 ## Read-only inbox counts
 
 Use `mtix inbox --agent <agent-id> --count` for pending work, or

@@ -34,8 +34,8 @@ func (s *State) hostID(dir *os.File, create bool) (string, error) {
 			return "", failure("host identifier generation failed", err)
 		}
 		id := hex.EncodeToString(b)
-		err = writeData(dir, "host-id", []byte(id+"\n"), true, nil, nil)
-		if err != nil && !errors.Is(err, os.ErrExist) {
+		err = writeDataMode(dir, "host-id", []byte(id+"\n"), writeOptions{exclusive: true, mode: recordMode, flushNative: s.flushNative})
+		if err != nil && (isNativeFlushFailure(err) || !errors.Is(err, os.ErrExist)) {
 			return "", err
 		}
 		data, err = readData(dir, "host-id")

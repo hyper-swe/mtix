@@ -123,6 +123,8 @@ func registerMCPTools(reg *mcp.ToolRegistry) string {
 		MtixDir:    app.mtixDir,
 		Primary:    primary,
 		Author:     mcpToolAuthor(),
+		// MTIX-112.20.2: an addressed send pushes in this long-lived process.
+		OnAddressedSend: mcpAddressedSendHook(),
 	})
 	// MTIX-95.12: warn in the tool result when a mutation's sync event is
 	// over the wire cap and a hub is configured.

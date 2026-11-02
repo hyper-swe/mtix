@@ -52,17 +52,25 @@ func runComment(id, text, to string) error {
 	if to != "" {
 		wake = newCLIWakeStatusService().Current(ctx, to)
 	}
+	// ADR-007 D21 (MTIX-112.20.2): an addressed send requests a push of the
+	// board's pending events; the command returns before any network work.
+	var push addressedPush
+	if to != "" {
+		push = cliAddressedPush(ctx)
+	}
 	switch {
 	case app.jsonOutput:
 		out := map[string]any{"id": id, "status": "annotation_added"}
 		if to != "" {
 			out["to"] = to
 			out["wake"] = wake
+			out["push"] = push
 		}
 		data, _ := json.Marshal(out)
 		fmt.Println(string(data))
 	case to != "":
 		fmt.Printf("Added annotation to %s (→ %s inbox)\n", id, to)
+		fmt.Printf("  push: %s\n", pushStatusLine(push))
 		fmt.Printf("  wake: %s\n", wakeStatusLine(wake))
 		if wake.Fix != "" {
 			fmt.Printf("  fix: %s\n", wake.Fix)
@@ -71,4 +79,15 @@ func runComment(id, text, to string) error {
 		fmt.Printf("Added annotation to %s\n", id)
 	}
 	return nil
+}
+
+// pushStatusLine renders the push state of an addressed send.
+func pushStatusLine(p addressedPush) string {
+	switch p.State {
+	case pushStateQueued:
+		return "queued for hub push"
+	case pushStateDeferred:
+		return "deferred (" + p.Reason + ")"
+	}
+	return "off (" + p.Reason + ")"
 }

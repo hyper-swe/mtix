@@ -298,5 +298,12 @@ func (s *Server) commentNode(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusCreated, gin.H{"id": nodeID, "annotation": ann})
+	resp := gin.H{"id": nodeID, "annotation": ann}
+	if addressee != "" && s.onAddressedSend != nil {
+		// MTIX-112.20.2: an addressed comment requests a push of the pending events.
+		if state := s.onAddressedSend(c.Request.Context(), addressee); state != "" {
+			resp["push"] = state
+		}
+	}
+	c.JSON(http.StatusCreated, resp)
 }

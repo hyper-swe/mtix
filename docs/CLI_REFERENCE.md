@@ -2477,6 +2477,7 @@ so git pre-push hooks never block code pushes.
 |------|-------|-------------|---------|
 | `--force` |  | Bypass the singleton pusher lock (debugging only) | false |
 | `--insecure-tls` |  | Allow weaker TLS modes only when every host the connection may use is loopback or a local socket (development only) | false |
+| `--on-addressed-send` |  | Internal: the push an addressed send starts; records its outcome for doctor | false |
 ---
 
 ## quarantine

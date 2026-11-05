@@ -270,5 +270,5 @@ func TestHooksReplace_InFlightInboxDeliveryCannotAttachToFreshEvent(t *testing.T
 		assert.NotEqual(t, sqlite.OutcomeDelivered, entry.Outcome, "a discarded inbox delivery must not be audited as delivered")
 		assert.NotEqual(t, sqlite.OutcomeError, entry.Outcome, "a replaced delivery is a quiet miss, not an error")
 	}
-	assert.Equal(t, uint64(3), d.HookIdentityFenceMisses(), "inbox, outcome and floor misses are counted")
+	assert.Equal(t, uint64(2), d.HookIdentityFenceMisses(), "inbox and floor misses count; the private skip makes no outcome write")
 }

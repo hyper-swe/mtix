@@ -27,7 +27,6 @@ const (
 	OutcomeError            = "error"
 	OutcomeSkippedUntrusted = "skipped-untrusted"
 	OutcomeSkippedPolicy    = "skipped-policy"
-	OutcomeSkippedReplaced  = "skipped-replaced"
 	OutcomeRateLimited      = "rate-limited"
 )
 
@@ -140,11 +139,19 @@ func (s *Store) JournalTail(ctx context.Context) (int64, error) {
 // (FR-20 §8). Monotonic like every floor advance; a no-op on a live store
 // whose floor already tracks the tail.
 func (s *Store) InitHookScanFloorAtTail(ctx context.Context) error {
-	tail, err := s.JournalTail(ctx)
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		var tail int64
+		// Read the tail under the same writer transaction as the floor write,
+		// so replace cannot rewind the journal between the two (FR-20 §8).
+		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(rowid),0) FROM sync_events`).Scan(&tail); err != nil {
+			return err
+		}
+		return advanceHookScanFloorTx(ctx, tx, tail)
+	})
 	if err != nil {
-		return err
+		return fmt.Errorf("initialize hook scan floor: %w", err)
 	}
-	return s.AdvanceHookScanFloorClamped(ctx, tail)
+	return nil
 }
 
 // ReadJournalEventAt returns the single journal event at seq (ok=false when it

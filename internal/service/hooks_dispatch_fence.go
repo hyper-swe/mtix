@@ -13,6 +13,10 @@ import (
 
 var errHookDeliveryReplaced = errors.New("hook delivery journal identity changed")
 
+// outcomeHookDeliveryReplaced is a private adapter aggregate, never a ledger
+// outcome. The adapter already counted the quiet identity miss (FR-20).
+const outcomeHookDeliveryReplaced = "skipped-replaced"
+
 // HookIdentityFenceMisses counts writes suppressed because replace changed a
 // journal identity during this dispatcher's lifetime (MTIX-112.2.2). These
 // misses are expected concurrency outcomes, not failed delivery attempts.
@@ -30,6 +34,11 @@ func (d *HooksDispatcher) advanceHookSnapshot(ctx context.Context, floor int64, 
 }
 
 func (d *HooksDispatcher) recordOutcome(ctx context.Context, hook string, event sqlite.JournalEvent, outcome string) {
+	// A replacement-only aggregate makes no outcome write; it is not a new
+	// terminal state and the adapter already counted its identity miss.
+	if outcome == outcomeHookDeliveryReplaced {
+		return
+	}
 	matched, err := d.store.RecordHookDispatchEventOutcome(ctx, hook, event, outcome)
 	if err != nil {
 		d.logger.Error("hook dispatch: record outcome", "hook", hook, "seq", event.Seq, "error", err)
@@ -51,7 +60,7 @@ func hookDeliveryOutcome(failed, untrusted, policy, replaced bool) string {
 	case policy:
 		return sqlite.OutcomeSkippedPolicy
 	case replaced:
-		return sqlite.OutcomeSkippedReplaced
+		return outcomeHookDeliveryReplaced
 	default:
 		return sqlite.OutcomeDelivered
 	}
@@ -60,7 +69,7 @@ func hookDeliveryOutcome(failed, untrusted, policy, replaced bool) string {
 // adapterFailureOutcome separates a quiet identity miss from delivery failures.
 func (d *HooksDispatcher) adapterFailureOutcome(ctx context.Context, h hooks.Hook, event hooks.Event, name string, err error) string {
 	if errors.Is(err, errHookDeliveryReplaced) {
-		return sqlite.OutcomeSkippedReplaced
+		return outcomeHookDeliveryReplaced
 	}
 	if d.recordAdapterFailure(ctx, h, event, name, err) {
 		return sqlite.OutcomeSkippedUntrusted

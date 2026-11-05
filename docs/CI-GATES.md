@@ -1,21 +1,51 @@
 # CI and release gates
 
-Every pull request and push to `main` runs **29 CI checks**. Merge only the
-reviewed commit with every check successful; a skipped or cancelled check is
-not a passing check.
+Pull requests run **23 CI checks**: the full Linux matrix plus exactly one
+macOS job (`test-go-shard (macos-latest, other)`). Every push to `main` and the
+nightly schedule (03:17 UTC, default branch) run **29 CI checks**, which adds
+the six macOS SQLite and `cmd/mtix` shard legs. Merge only the reviewed commit
+with every check successful; a skipped or cancelled check is not a passing
+check. `test-go` is the required status check on `main` and keeps that exact
+name; it is the only required check.
 
 | Checks | Count | Purpose |
 | --- | ---: | --- |
 | `test-go-shard (OS, other)` | 2 | The other-package shard on each of `ubuntu-22.04` and `macos-latest` |
-| `test-go-sqlite (OS, shard N)` | 6 | Three SQLite test shards on each OS |
-| `test-go-cmd (OS, shard N)` | 6 | Three `cmd/mtix` test shards on each OS |
-| `test-go` | 1 | Require all fourteen Go shard jobs from the three matrices to succeed |
+| `test-go-sqlite (OS, shard N)` | 6 (PR: 3) | Three SQLite test shards; macOS legs run on push and nightly only |
+| `test-go-cmd (OS, shard N)` | 6 (PR: 3) | Three `cmd/mtix` test shards; macOS legs run on push and nightly only |
+| `test-go` | 1 | Require every Go shard job the event generates (fourteen on push and nightly, eight on a PR) to succeed; on a PR also run the main macOS health check |
 | `test-web` | 1 | Web tests |
 | `lint` | 1 | Pinned Go lint |
 | `pg-16 package`, `pg-17 package` | 4 | Transport and end-to-end suites against each PostgreSQL version |
 | `pg-16 cmd/mtix shard N`, `pg-17 cmd/mtix shard N` | 6 | The `cmd/mtix` tests in three shards per PostgreSQL version |
 | `test-fault-injection` | 1 | Disk-full and crash durability conformance |
 | `build` | 1 | Check the quiet relay reference and both relay benchmarks, then build and verify the binary |
+
+## Per-event macOS coverage and the red-main rule (MTIX-112.17.42)
+
+Hosted macOS capacity is limited, so a pull request runs one macOS job and the
+rest of the macOS matrix runs on `main`. The `os` axis of `test-go-sqlite` and
+`test-go-cmd` is chosen by event; on a PR the macOS legs are never generated,
+so the `test-go` aggregate stays strict: a skipped, cancelled or failed need
+still fails it on every event.
+
+To keep macOS regressions from slipping past PRs, the `test-go` job on
+`pull_request` runs `scripts/main-macos-health.sh`. It judges the newest
+completed `ci.yml` run on `main` (event push or schedule) and fails the PR when
+any macOS job in it did not succeed. Policy:
+
+- Fail closed: an API error, unreadable data, no usable run, or a run with no
+  macOS jobs fails the check.
+- A newer run still in progress is ignored: it neither clears nor causes a
+  block; the last completed run decides.
+- A run whose overall conclusion is cancelled is skipped for the next older run.
+- Override: a maintainer labels the PR that repairs `main` with
+  `main-macos-fix`; the check then passes with a notice. Remove the label once
+  `main` is green. Anyone with triage rights can set a label, so treat it as a
+  maintainer action.
+- Permissions: only the `test-go` job gains `actions: read` (to list runs and
+  jobs); no other job is widened.
+- Re-running a failed PR check after a main fix re-reads the latest state.
 
 ## Go race shards
 
@@ -77,7 +107,7 @@ or timeout is weakened, and no skip flag is added.
 
 The two old SQLite job names are replaced by six `test-go-sqlite` checks.
 Together with the four CLI/other jobs, the aggregate and the remaining checks,
-this changes the merge requirement from 21 successful checks to **25 of 25**; the `cmd/mtix` split below makes it **29 of 29**.
+this changes the merge requirement from 21 successful checks to **25 of 25**; the `cmd/mtix` split below makes it **29 of 29**; from MTIX-112.17.42 a PR needs **23 of 23** (the macOS SQLite and `cmd/mtix` legs run on main only).
 
 Before the split, the last five completed main CI runs measured these SQLite
 package times (seconds from the original Go output; setup is excluded):
@@ -311,7 +341,7 @@ that a changed remote-bar workflow ran.
 ## Release gates
 
 Run [the release checklist](RELEASE-CHECKLIST.md) on the exact CI-green commit
-before tagging. All 29 ordinary CI checks, including the fourteen race shards and
+before tagging. All 29 ordinary CI checks of the main push run (the full matrix), including the fourteen race shards and
 `test-go` aggregate, must pass alongside independent review and the other
 documented quality gates.
 

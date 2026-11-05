@@ -395,8 +395,10 @@ provider-specific quirks.
 
 ### CI
 
-Every PR and main push must pass all 29 checks, including fourteen Go race shards
-and the strict `test-go` aggregate. See [CI and release gates](docs/CI-GATES.md)
+Every PR must pass all 23 of its checks (full Linux matrix plus one macOS job) and
+every main push and nightly run all 29 (fourteen Go race shards and the strict
+`test-go` aggregate). A red macOS run on main blocks PR merges until it is fixed
+(label the repairing PR `main-macos-fix`). See [CI and release gates](docs/CI-GATES.md)
 for package coverage, failure handling, merge checks and release gates.
 
 To run the full bar on hosted runners instead of your machine, use

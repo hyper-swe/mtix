@@ -25,6 +25,12 @@ func validateInboxCountFlags(cmd *cobra.Command) error {
 	if autoImportCommandPath(cmd) != "inbox" {
 		return nil
 	}
+	if err := validateInboxHistoryFlags(cmd); err != nil {
+		return err
+	}
+	if isInboxHistoryCommand(cmd) {
+		return nil
+	}
 	if cmd.Flags().Changed("all") && !isInboxCountCommand(cmd) {
 		return fmt.Errorf("--all requires --count: %w", model.ErrInvalidInput)
 	}

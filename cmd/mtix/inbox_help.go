@@ -18,6 +18,16 @@ including --wait=false or --format=. Any --all flag requires active --count;
 --count=false alone keeps listing behavior. Count flags apply only to inbox,
 not its ack or lease subcommands.
 
+--history lists every event ever addressed to the agent, oldest first, with its
+state: unacked, acked at <time>, or acked through a watermark (ack --through
+removes the per-event rows at or below the watermark, so those keep no time).
+It is read-only: it never acknowledges, moves the cursor or refreshes session
+last_seen, skips automatic board import and makes no hub contact. It cannot be
+combined with --wait, --format, --count or --all. An event addressed to an agent
+stays in its inbox until the agent acks it; see the inbox retention guarantee in
+the user manual for the exceptions (per store, export/import, replace,
+discard-local).
+
 With --wait, return already pending events even if the initial database lookup
 outlasts --timeout. That lookup remains interruptible by SIGINT or SIGTERM.
 After an empty lookup, wait for new addressed events using only the remaining

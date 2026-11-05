@@ -164,6 +164,10 @@ func runExport(format string) error {
 		return fmt.Errorf("marshal export: %w", err)
 	}
 	fmt.Println(string(data))
+	// The export is complete and written: a failed count only costs the note.
+	if noteErr := exportInboxNoteTo(ctx, os.Stderr); noteErr != nil {
+		fmt.Fprintf(os.Stderr, "warning: could not count unacknowledged inbox events (%v); the export does not carry the inbox\n", noteErr)
+	}
 	return nil
 }
 
@@ -390,14 +394,20 @@ func importReplaceOp(ctx context.Context, incoming int) (destructiveOp, error) {
 	if err != nil {
 		return destructiveOp{}, err
 	}
+	unread, err := unackedInboxCount(ctx)
+	if err != nil {
+		return destructiveOp{}, err
+	}
 	return destructiveOp{
 		Command: "mtix import --mode replace",
 		Scope:   localScope(ctx),
 		Destroys: []destroyCount{
 			{Label: "existing tickets (every node, every project, including soft-deleted)", N: nodes},
+			unread,
 		},
 		Consequence: fmt.Sprintf("the store holds exactly the %d node(s) in the import file; "+
-			"any ticket not in that file is gone", incoming),
+			"any ticket not in that file is gone. On a store that never synced, the unacknowledged inbox events "+
+			"of every ticket the file lacks go with it (the count above is the most that can be lost)", incoming),
 		SnapshotTag: "import-replace",
 	}, nil
 }

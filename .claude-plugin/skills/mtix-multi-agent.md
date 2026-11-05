@@ -207,6 +207,23 @@ Do not combine active `--count` with an explicitly supplied `--wait` or
 requires active count, even `--all=false`. `--count=false` alone keeps ordinary
 listing behavior; count flags cannot be used on inbox ack or lease subcommands.
 
+## Inbox retention guarantee
+
+An event addressed to an agent (`mtix comment --to <agent-id>`, or a hook delivery to that agent) is written to this store's event journal, and it stays in that agent's inbox until that agent acknowledges it. Nothing expires or compacts it: there is no TTL, no size limit and no timer, so an agent that is down for days or years still finds every unacknowledged event in `mtix inbox --agent <agent-id>`. Apart from the exceptions below, only the agent's own acknowledgement (`mtix inbox ack`) removes an event from its inbox.
+
+The guarantee covers the journal of one store (`.mtix/data/mtix.db`). Its exact boundaries:
+
+- **Per store.** The journal and the acknowledgements live in one store. An event reaches another checkout only through sync. Acknowledgements are not synced: a new checkout made with `mtix sync clone` lists every addressed event as unacknowledged, including events the first checkout already acknowledged. Delivery is at least once, so handle inbox work idempotently. Carrying acknowledgements to a new checkout is planned work (MTIX-112.17.16).
+- **Export, import and recover.** `tasks.json`, `mtix export` and `mtix recover` carry tickets and annotations, not the journal. Importing them into another store starts with an empty inbox there. `mtix export` prints how many unacknowledged events the store holds; `mtix recover` prints the count it can read from the damaged database, or says it could not count. A journal transport is a separate ticket (MTIX-112.2.1).
+- **`mtix import --mode replace`.** On a store that never synced, a replace removes the events of every ticket the file lacks. It asks for the ticket count, typed at a terminal, and lists the number of unacknowledged inbox events first; that number is the most the replace can remove. A store that has synced refuses a replace that would drop a task its sync log holds; a replace that keeps every task proceeds and removes no event. When a replace does remove events, the acknowledgement and delivery rows for event numbers above the newest surviving event are removed in the same step, and any agent cursor above that event is lowered to it (cursors are lowered, not removed; an agent whose cursor is already at or below it keeps it), so mail addressed afterwards shows as unread. A merge import never removes events.
+- **`mtix sync reconcile --discard-local`.** It deletes the whole journal and the acknowledgements, with the local tasks and unpushed changes. Run `mtix sync push` first and check that `mtix sync status` shows pending 0. It asks for the ticket count, typed at a terminal, lists the unacknowledged inbox events first, and saves a snapshot of the database before the delete.
+- **Backups.** A backup copy of the database keeps the journal and the acknowledgements together, with the same event numbers. Restoring an older copy brings back its older state: events acknowledged after the copy was made are unacknowledged again, and events addressed after it are not in it.
+- **Deleting the database** (or the `.mtix` directory) deletes the inbox.
+
+To audit what was addressed to an agent and when it was acknowledged, run `mtix inbox --agent <agent-id> --history` (add `--json` for machine output). It lists every event ever addressed to the agent, oldest first, as `unacked`, `acked at <time>`, or `acked through a watermark (time not kept)`: `mtix inbox ack --through` removes the per-event acknowledgement rows at or below the watermark, so those events keep no individual time. History is read-only: it acknowledges nothing, moves no cursor, skips automatic board import and makes no hub contact. It cannot be combined with `--wait`, `--format`, `--count` or `--all`.
+
+For a raw read-only query, the same facts are in `sync_events` (`op_type = 'comment'` and `json_extract(payload, '$.to') = '<agent-id>'`), `inbox_deliveries`, `agent_inbox_ack` (`acked_at`) and `agent_inbox_cursor`; prefer the command.
+
 ## Inbox envelopes and replies
 
 The plain `mtix inbox --agent <agent-id>` listing prints each author and node id on one line and each body with its lines kept and indented, after removing control characters, escapes, bidirectional overrides and isolates, zero-width and other invisible format characters (the directional marks U+200E, U+200F and U+061C are kept), so a stored body cannot forge another entry or the ack line. Use `--json` for the exact stored text.

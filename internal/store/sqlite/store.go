@@ -181,21 +181,26 @@ func openDB(ctx context.Context, path string, isWriter, readOnly bool) (*sql.DB,
 // file to WAL needs a lock that concurrent first opens contend for, so each
 // pragma runs under retryTransient (MTIX-147).
 func openDBWith(ctx context.Context, path string, isWriter, readOnly bool, rt openRetry) (*sql.DB, error) {
-	dsn := path
+	var params []string
 	switch {
 	case readOnly:
 		// MTIX-58: read-only open for the unsafe-FS store. query_only(1) is applied
 		// to EVERY pooled connection by modernc, so any write on this handle is
 		// rejected ("attempt to write a readonly database") — the belt-and-suspenders
 		// under preflightWrite's refusal, covering direct writeDB.Exec paths too.
-		dsn = path + "?_pragma=query_only(1)"
+		// A read-only open never creates its subject: refuse a missing file
+		// before the driver can make an empty one (MTIX-112.2.4).
+		if _, statErr := os.Stat(path); statErr != nil {
+			return nil, fmt.Errorf("open read-only: %w", statErr)
+		}
+		params = []string{"_pragma=query_only(1)"}
 	case isWriter:
-		dsn = path + "?_txlock=immediate" + writerConnPragmas
+		params = []string{"_txlock=immediate" + writerConnPragmas}
 	}
 
-	db, err := sql.Open("sqlite", dsn)
+	db, err := openSQLite(path, params...)
 	if err != nil {
-		return nil, fmt.Errorf("sql.Open: %w", err)
+		return nil, err
 	}
 
 	// PRAGMA foreign_keys = ON and busy_timeout on ALL connections

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -158,22 +159,23 @@ func CountUnackedInboxFile(ctx context.Context, dbPath string) (int64, error) {
 	if info.Size() == 0 {
 		return 0, fmt.Errorf("count unacknowledged inbox events: %s is 0 bytes, not a database", dbPath)
 	}
-	n, err := countUnackedRO(ctx, "file:"+fileURIPath(dbPath)+"?mode=ro")
+	n, err := countUnackedRO(ctx, dbPath, "mode=ro")
 	if err != nil {
 		// A WAL database needs a writable -shm to be read normally. When the
 		// file or its directory is read-only, read the main file as it is
 		// (immutable ignores an unmerged -wal, so the count can be low).
 		var immErr error
-		if n, immErr = countUnackedRO(ctx, "file:"+fileURIPath(dbPath)+"?mode=ro&immutable=1"); immErr != nil {
+		if n, immErr = countUnackedRO(ctx, dbPath, "mode=ro", "immutable=1"); immErr != nil {
 			return 0, err
 		}
 	}
 	return n, nil
 }
 
-// countUnackedRO opens uri and counts; it never writes.
-func countUnackedRO(ctx context.Context, uri string) (int64, error) {
-	db, err := sql.Open("sqlite", uri)
+// countUnackedRO opens path with the given URI parameters and counts; it never
+// writes.
+func countUnackedRO(ctx context.Context, path string, params ...string) (int64, error) {
+	db, err := openSQLite(path, params...)
 	if err != nil {
 		return 0, fmt.Errorf("open read-only: %w", err)
 	}
@@ -181,8 +183,12 @@ func countUnackedRO(ctx context.Context, uri string) (int64, error) {
 	return countUnackedInbox(ctx, db)
 }
 
-// fileURIPath escapes the characters that end a file: URI path.
+// fileURIPath escapes the characters that end a file: URI path. A Windows
+// drive path becomes /C:/dir/file, the form SQLite reads (MTIX-112.2.4).
 func fileURIPath(path string) string {
+	if vol := filepath.VolumeName(path); len(vol) == 2 && vol[1] == ':' {
+		path = "/" + filepath.ToSlash(path)
+	}
 	return strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
 }
 

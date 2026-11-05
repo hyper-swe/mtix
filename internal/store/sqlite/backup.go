@@ -5,7 +5,6 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"os"
 )
@@ -39,8 +38,9 @@ func (s *Store) Backup(ctx context.Context, destPath string) (*BackupResult, err
 	// Uses parameterized query — destPath is a string literal here because
 	// VACUUM INTO does not support parameterized paths.
 	// We validate the path doesn't contain SQL injection characters.
-	vacuumSQL := fmt.Sprintf("VACUUM INTO '%s'", escapeSQLitePath(destPath))
-	if _, err := s.writeDB.ExecContext(ctx, vacuumSQL); err != nil {
+	// destPath is a BOUND parameter (SQL Rule 1), so quotes and any other
+	// character in it are data, never SQL (MTIX-112.2.4).
+	if _, err := s.writeDB.ExecContext(ctx, "VACUUM INTO ?", destPath); err != nil {
 		return nil, fmt.Errorf("vacuum into %s: %w", destPath, err)
 	}
 
@@ -101,7 +101,7 @@ func verifyDatabase(ctx context.Context, path string) (bool, error) {
 
 	// file: URI scheme so mode=ro is honored — verification must never
 	// write, let alone create, its subject.
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	db, err := openSQLite(path, "mode=ro")
 	if err != nil {
 		return false, fmt.Errorf("open for verify: %w", err)
 	}
@@ -113,18 +113,4 @@ func verifyDatabase(ctx context.Context, path string) (bool, error) {
 	}
 
 	return result == "ok", nil
-}
-
-// escapeSQLitePath escapes single quotes in a path for use in VACUUM INTO.
-// This is necessary because VACUUM INTO does not support parameterized paths.
-func escapeSQLitePath(path string) string {
-	result := make([]byte, 0, len(path))
-	for i := 0; i < len(path); i++ {
-		if path[i] == '\'' {
-			result = append(result, '\'', '\'')
-		} else {
-			result = append(result, path[i])
-		}
-	}
-	return string(result)
 }

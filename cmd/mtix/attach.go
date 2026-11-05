@@ -53,6 +53,12 @@ type attachDeps struct {
 	// glueWriter reports whether this build can rewrite a harness's glue;
 	// nil means it cannot.
 	glueWriter func(harness string) bool
+	// glue decides whether glue may act in the invoking directory (MTIX-112.19.8,
+	// ADR-007 A5). nil fails closed: the verb prints the not-attached line only.
+	glue func(ctx context.Context) attach.GlueDecision
+	// drain drains the board's pending attach queue after the predicate passed
+	// (MTIX-112.19.8, reusing the MTIX-112.17.13 dispatcher drain); nil skips it.
+	drain func(ctx context.Context, d attach.GlueDecision) error
 }
 
 func productionAttachDeps() attachDeps {
@@ -62,6 +68,8 @@ func productionAttachDeps() attachDeps {
 		state:      operatorState,
 		clock:      func() time.Time { return time.Now().UTC() },
 		glueWriter: productionGlueWriter,
+		glue:       productionGluePredicate,
+		drain:      productionGlueDrain,
 	}
 }
 
@@ -78,6 +86,31 @@ func productionGlueWriter(harness string) bool {
 
 func (d attachDeps) hasGlueWriter(harness string) bool {
 	return d.glueWriter != nil && d.glueWriter(harness)
+}
+
+// admitGlue runs the attach predicate. When it declines, the verb prints the
+// one not-attached line and nothing else changes. When it passes, a
+// session-start first drains the board's pending attach queue through the
+// dispatcher's validating drain, so forged rows are dropped and the first
+// session on a sandbox discovers its queue (MTIX-112.19.8, ADR-007 A5). An
+// unwired predicate does not act.
+func admitGlue(ctx context.Context, deps attachDeps, req attach.VerbRequest) bool {
+	var decision attach.GlueDecision
+	if deps.glue != nil {
+		decision = deps.glue(ctx)
+	}
+	if !decision.Act {
+		_, _ = fmt.Fprintln(req.Stderr, attach.NotAttachedLine)
+		return false
+	}
+	if req.Verb == attach.VerbSessionStart && deps.drain != nil {
+		if err := deps.drain(ctx, decision); err != nil {
+			attachFailure(ctx, deps, req.Stderr, req.Harness, attachAlertVerbFailure,
+				fmt.Sprintf("mtix attach %s: could not drain the attach queue: %v; messages stay in the inbox (mtix inbox)", req.Verb, err),
+				operatorStateFix)
+		}
+	}
+	return true
 }
 
 func operatorState() (*oplocal.State, error) {
@@ -169,6 +202,9 @@ func newAttachVerbCmd(deps attachDeps, verb string) *cobra.Command {
 // runAttachVerb performs the handshake and runs the harness adapter. It never
 // returns an error: failures are reported on stderr and as alerts.
 func runAttachVerb(ctx context.Context, deps attachDeps, req attach.VerbRequest, protocol string) {
+	if !admitGlue(ctx, deps, req) { // before any alert, refresh mark or adapter: nothing is written
+		return
+	}
 	if !attach.KnownHarness(req.Harness) {
 		attachFailure(ctx, deps, req.Stderr, attachAlertAgent, attachAlertVerbFailure,
 			fmt.Sprintf("mtix attach %s: unknown harness %q; messages stay in the inbox (mtix inbox)", req.Verb, req.Harness),

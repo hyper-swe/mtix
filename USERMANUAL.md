@@ -163,6 +163,28 @@ Doctor shows these rows only when they apply:
   mtix upgrade (compare `mtix version`), and older glue this build cannot
   rewrite must be corrected or removed in the harness configuration. The
   attach verb's stderr line and alert name the same fix.
+- `glue.tracked-store`: the attach verbs (harness glue entry points) act only
+  in a checkout, or a verified linked worktree of one, whose board is listed or
+  enrolled on this host with a store path and `store_instance_id` matching the
+  operator-local record. Anywhere else a verb prints the single line `board not
+  attached on this host` and changes nothing (no injection, proposal, alert or
+  operator-state write); that is normal, not a fault. The row appears only in
+  a listed checkout where git tracks the store (`.mtix/data`), or where the git
+  index uses a layout mtix refuses to guess about (an unknown index version or
+  extension, a sparse-index directory entry covering `.mtix/`, an oversize or
+  split index whose base is missing). The glue stays off there until fixed.
+  Tracked store: `git rm -r --cached --ignore-unmatch .mtix/data && echo
+  .mtix/data/ >> .gitignore`. Unreadable index: `git update-index
+  --no-split-index && git sparse-checkout reapply --no-sparse-index`. A
+  `.git` file that points straight at a common directory, or a worktree admin
+  directory without its back-link, is not a worktree, so a forged one cannot
+  borrow a listed board's authority. In an attached board, a `session-start`
+  first drains the board's pending attach queue through the same validation the
+  host dispatcher uses; a row naming another board or path is dropped and
+  raises an `attach.pending-rejected` alert, and an unattached directory's queue
+  is never read. The glue path never imports `tasks.json` and never triggers
+  hooks, whatever `sync.auto_sync` says. mtix reads the git index itself and
+  never runs git.
 - `attach.failures`: recent `attach.protocol-skew` and `attach.verb-failure`
   operator alerts from the hidden attach verbs, with counts. These verbs are
   entry points for harness glue, not for agents. They always exit 0, even on

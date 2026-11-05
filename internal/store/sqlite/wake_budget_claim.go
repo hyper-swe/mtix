@@ -106,7 +106,7 @@ func applyWakeBudgetDecision(ctx context.Context, tx *sql.Tx, key model.WakeKey,
 			return r, fmt.Errorf("wake counter is exhausted: %w", model.ErrInvalidInput)
 		}
 		r.Snapshot.Total++
-		if err := writeWakeAttempt(ctx, tx, p.Attempt, true); err != nil {
+		if err := writeWakeAttempt(ctx, tx, p.Attempt); err != nil {
 			return r, fmt.Errorf("apply local wake accounting writes: %w", err)
 		}
 		r.Attempt, r.Won = p.Attempt, true

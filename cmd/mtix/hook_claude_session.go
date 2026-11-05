@@ -190,12 +190,8 @@ func claudeHookWait(ctx context.Context, agent string, timeout time.Duration, sk
 	}
 	ticker := time.NewTicker(claudeHookPollInterval)
 	defer ticker.Stop()
-	svc := newPolicyInboxService() // the wake policy applies to priming reads too (ADR-007 A12)
-	held := 0
 	for {
-		res, err := svc.InboxRead(ctx, agent, service.InboxReadOptions{})
-		held = max(held, res.Held.Count)
-		events := inboxShown(res)
+		events, err := app.store.InboxList(ctx, agent)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, nil
@@ -209,12 +205,10 @@ func claudeHookWait(ctx context.Context, agent string, timeout time.Duration, sk
 			}
 		}
 		if len(fresh) > 0 {
-			writeInboxHeldNotice(os.Stderr, service.InboxHeld{Count: held})
 			return fresh, nil
 		}
 		select {
 		case <-waitCtx.Done():
-			writeInboxHeldNotice(os.Stderr, service.InboxHeld{Count: held})
 			return nil, nil
 		case <-ticker.C:
 		}

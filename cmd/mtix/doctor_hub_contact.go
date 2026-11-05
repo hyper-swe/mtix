@@ -97,7 +97,6 @@ func hubContactRow(src *hubContactSource, hub bool, now time.Time) DoctorCheck {
 		return row
 	}
 	row.Detail += "; " + contactNowText(src, now)
-	attachReplyStatus(&row, src, now)
 	if _, snapErr := src.snapshot(); snapErr != nil {
 		// The daemon makes no hub contact on unreadable inputs, so this is a failure, not a pass.
 		row.Pass, row.Fix = false, fixUnreadableInputs

@@ -129,26 +129,11 @@ func openHostBoard(_ context.Context, row oplocal.ListedBoard, st *oplocal.State
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
-	board, err := service.NewHostBoard(hostBoardOptionsFor(hostBoardDeps{Store: store, State: st, Source: source, Host: host}, row.Path, exe))
+	board, err := service.NewHostBoard(service.HostBoardOptions{Store: store, State: st, Path: row.Path, Host: host, PID: int64(os.Getpid()), Clock: utcNow, Logger: slog.Default(), Close: store.Close, Contact: service.NewContactScheduler(utcNow, source.snapshot), Pull: func(ctx context.Context, dsn string) error { return pullHostCheckout(ctx, exe, row.Path, dsn) }, LegacyService: legacyServiceProbe(runtime.GOOS, os.UserHomeDir)})
 	if err != nil {
 		return nil, errors.Join(err, store.Close())
 	}
 	return board, nil
-}
-
-// hostBoardDeps are the opened resources of one enrolled board.
-type hostBoardDeps struct {
-	Store  *sqlite.Store
-	State  *oplocal.State
-	Source *hubContactSource
-	Host   service.RegistrationHost
-}
-
-// hostBoardOptionsFor wires one enrolled board for the host dispatcher. The
-// reply processor is the same one the daemon runs (newReplyProcessor); a board
-// without it would keep its windows open until the TTL and never hold.
-func hostBoardOptionsFor(d hostBoardDeps, root, exe string) service.HostBoardOptions {
-	return service.HostBoardOptions{Store: d.Store, State: d.State, Path: root, Host: d.Host, PID: int64(os.Getpid()), Clock: utcNow, Logger: slog.Default(), Close: d.Store.Close, Contact: service.NewContactScheduler(utcNow, d.Source.snapshot), Replies: newReplyProcessor(d.Store, d.State, d.Source, d.Host), Pull: func(ctx context.Context, dsn string) error { return pullHostCheckout(ctx, exe, root, dsn) }, LegacyService: legacyServiceProbe(runtime.GOOS, os.UserHomeDir)}
 }
 
 // pullHostCheckout delegates the existing full pull engine in a separate process.

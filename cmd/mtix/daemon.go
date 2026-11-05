@@ -120,11 +120,22 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 	// between the hub pull and dispatch so a single tick can carry an
 	// event from another machine all the way to a local wake — and
 	// dispatch needs no knowledge that a relay exists.
-	plan, err := newDaemonPlan(ctx, daemonPlanSpec{stdout: stdout, stderr: stderr, hub: hub, intervalSec: intervalSec, control: control,
-		pull: func() { runOneDaemonPull(ctx, stderr, args, opts) }})
+	sched, onContact, err := newDaemonScheduler(stdout, stderr, hub, intervalSec)
 	if err != nil {
 		return err
 	}
+	pass := buildDaemonPass(hub, daemonPassSteps{
+		drain: func() { drainPendingMirror(ctx, stderr) },
+		pull:  func() { runOneDaemonPull(ctx, stderr, args, opts) },
+		relay: func() { maybeRunRelayPhase(ctx, stderr) },
+		dispatch: func() {
+			if app.hooksDisp != nil {
+				app.hooksDisp.Dispatch(ctx)
+			}
+		},
+	})
+
+	plan := daemonLoopPlan{label: "mtix daemon", interval: intervalSec, pass: pass, controls: control, sched: sched, onContact: onContact}
 	if listen {
 		l, err := newDaemonListener(hub, intervalSec)
 		if err != nil {
@@ -135,50 +146,10 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 	return runDaemonPassLoop(ctx, stdout, stderr, plan)
 }
 
-// daemonPlanSpec is what the daemon's pass loop is built from.
-type daemonPlanSpec struct {
-	stdout, stderr io.Writer
-	hub            bool
-	intervalSec    int
-	control        []daemonPassControl
-	pull           func() // the hub pull; a test stands in for the hub
-}
-
-// newDaemonPlan builds the daemon's loop plan: the scheduler, the shared reply
-// processor and the pass body that scans after each pull (MTIX-112.20.3). It
-// is one function so a test can pin that the real daemon wires the processor.
-func newDaemonPlan(ctx context.Context, spec daemonPlanSpec) (daemonLoopPlan, error) {
-	sched, onContact, replies, err := newDaemonScheduler(spec.stdout, spec.stderr, spec.hub, spec.intervalSec)
-	if err != nil {
-		return daemonLoopPlan{}, err
-	}
-	pass := daemonPassFor(ctx, spec.stderr, spec.hub, replies, spec.pull)
-	return daemonLoopPlan{label: "mtix daemon", interval: spec.intervalSec, pass: pass, controls: spec.control, sched: sched, onContact: onContact, replies: replies}, nil
-}
-
-// daemonPassFor wires the daemon's real pass body: mirror drain, the hub pull
-// followed by the reply scan (MTIX-112.20.3), the relay phase and dispatch.
-// The pull is a parameter so a test can stand in for the hub.
-func daemonPassFor(ctx context.Context, stderr io.Writer, hub bool, replies *service.ReplyProcessor, pull func()) func(contact bool) {
-	return buildDaemonPass(hub, daemonPassSteps{
-		drain: func() { drainPendingMirror(ctx, stderr) },
-		pull:  pull,
-		scan:  func() { scanDaemonReplies(ctx, stderr, replies) },
-		relay: func() { maybeRunRelayPhase(ctx, stderr) },
-		dispatch: func() {
-			if app.hooksDisp != nil {
-				app.hooksDisp.Dispatch(ctx)
-			}
-		},
-	})
-}
-
 // daemonPassSteps are the four phases of one daemon pass. They are fields so
 // a test can count them without a hub.
 type daemonPassSteps struct {
 	drain, pull, relay, dispatch func()
-	// scan runs right after a pull (reply accounting, MTIX-112.20.3); optional.
-	scan func()
 }
 
 // buildDaemonPass returns the locked pass body. The hub pull runs only when a
@@ -190,9 +161,6 @@ func buildDaemonPass(hub bool, st daemonPassSteps) func(contact bool) {
 		st.drain()
 		if hub && contact {
 			st.pull()
-			if st.scan != nil {
-				st.scan()
-			}
 		}
 		st.relay()
 		st.dispatch()
@@ -232,10 +200,7 @@ type daemonLoopPlan struct {
 	// sched, when set, replaces the fixed ticker (MTIX-112.20.1); nil keeps
 	// the fixed cadence and contacts the hub on every pass.
 	sched     *service.ContactScheduler
-	onContact func() // called after a pass that contacted the hub
-	// replies is ticked before each scheduling decision (MTIX-112.20.3); nil
-	// means no reply accounting.
-	replies   *service.ReplyProcessor
+	onContact func()        // called after a pass that contacted the hub
 	localTick time.Duration // local-work tick under sched; default interval seconds
 	// done, when set, is checked after every pass and ends the loop (listen mode).
 	done func() (bool, string)
@@ -315,7 +280,6 @@ func listenerDone(stdout io.Writer, plan daemonLoopPlan) bool {
 func runScheduledPass(ctx context.Context, stderr io.Writer, plan daemonLoopPlan, control daemonPassControl) {
 	contact := true
 	if plan.sched != nil {
-		tickDaemonReplies(ctx, stderr, plan.replies)
 		contact = plan.sched.Decide().Contact
 	}
 	acquired := runLockedDaemonPass(ctx, stderr, func() { plan.pass(contact) })
@@ -348,27 +312,4 @@ func runLockedDaemonPass(ctx context.Context, stderr io.Writer, pass func()) boo
 		pass()
 	}
 	return true
-}
-
-// tickDaemonReplies settles the reply accounting before the scheduler decides,
-// exactly where the host dispatcher does; a failure is reported and never
-// blocks the pass (MTIX-112.20.3).
-func tickDaemonReplies(ctx context.Context, stderr io.Writer, replies *service.ReplyProcessor) {
-	if replies == nil {
-		return
-	}
-	if err := replies.Tick(ctx); err != nil {
-		fmt.Fprintf(stderr, "daemon: reply tick: %s\n", err)
-	}
-}
-
-// scanDaemonReplies runs after a hub pull: replies that arrived close sender
-// windows and reply_by events for a local agent start holds.
-func scanDaemonReplies(ctx context.Context, stderr io.Writer, replies *service.ReplyProcessor) {
-	if replies == nil {
-		return
-	}
-	if err := replies.Scan(ctx); err != nil {
-		fmt.Fprintf(stderr, "daemon: reply scan: %s\n", err)
-	}
 }

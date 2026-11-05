@@ -59,8 +59,6 @@ type wakeAdmission struct {
 	fix     string
 	class   string
 	rewound bool
-	// returned: an inbox read already returned and charged this event.
-	returned bool
 }
 
 func (b *wakeBudgets) claim(ctx context.Context, key model.WakeKey) (model.WakeAttempt, bool, error) {
@@ -112,9 +110,6 @@ func (b *wakeBudgets) claimLocked(ctx context.Context, a *wakeAdmission) error {
 	}
 	a.now = now
 	trimWakeBudgetCredits(a.mirror, now)
-	if returnedErr := b.noteReturned(ctx, a); returnedErr != nil {
-		return returnedErr
-	}
 	a.result, err = b.store.ClaimWakeBudget(ctx, a.key, time.Minute, a.prepareWakeAdmission)
 	if err != nil {
 		return fmt.Errorf("persist accounted wake claim: %w", err)
@@ -135,21 +130,5 @@ func (b *wakeBudgets) claimLocked(ctx context.Context, a *wakeAdmission) error {
 	if err := a.save(); err != nil {
 		return fmt.Errorf("persist committed wake accounting: %w", err)
 	}
-	return nil
-}
-
-// noteReturned records whether an inbox read already returned (and charged)
-// this event, so the wake that follows does not charge it a second time. It
-// runs inside the same budget lock the read charges in (ADR-007 A12).
-func (b *wakeBudgets) noteReturned(ctx context.Context, a *wakeAdmission) error {
-	marks, ok := b.store.(InboxMarkStore)
-	if !ok {
-		return nil
-	}
-	mark, err := marks.InboxReturnedMark(ctx, a.key.AgentID)
-	if err != nil {
-		return fmt.Errorf("read inbox returned mark: %w", err)
-	}
-	a.returned = a.key.EventSeq <= mark
 	return nil
 }

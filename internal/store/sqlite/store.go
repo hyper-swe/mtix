@@ -181,21 +181,23 @@ func openDB(ctx context.Context, path string, isWriter, readOnly bool) (*sql.DB,
 // file to WAL needs a lock that concurrent first opens contend for, so each
 // pragma runs under retryTransient (MTIX-147).
 func openDBWith(ctx context.Context, path string, isWriter, readOnly bool, rt openRetry) (*sql.DB, error) {
-	dsn := path
+	var params []string
 	switch {
 	case readOnly:
 		// MTIX-58: read-only open for the unsafe-FS store. query_only(1) is applied
 		// to EVERY pooled connection by modernc, so any write on this handle is
 		// rejected ("attempt to write a readonly database") — the belt-and-suspenders
 		// under preflightWrite's refusal, covering direct writeDB.Exec paths too.
-		dsn = path + "?_pragma=query_only(1)"
+		// mode=ro makes the driver itself refuse a missing file instead of
+		// creating an empty one, with no stat-then-open window (MTIX-112.2.4).
+		params = readOnlyDSNParams()
 	case isWriter:
-		dsn = path + "?_txlock=immediate" + writerConnPragmas
+		params = []string{"_txlock=immediate" + writerConnPragmas}
 	}
 
-	db, err := sql.Open("sqlite", dsn)
+	db, err := openSQLite(path, params...)
 	if err != nil {
-		return nil, fmt.Errorf("sql.Open: %w", err)
+		return nil, err
 	}
 
 	// PRAGMA foreign_keys = ON and busy_timeout on ALL connections
@@ -317,46 +319,6 @@ func (s *Store) init(ctx context.Context) error {
 		}
 	}
 
-	return nil
-}
-
-// addUIDColumnPreV3 adds nodes.uid to a pre-v3 database (MTIX-30.1).
-// No-op on fresh DBs (schemaSQL already has the column) and on v3+. A
-// "duplicate column" error from a re-run after an interrupted migration
-// is tolerated.
-func (s *Store) addUIDColumnPreV3(ctx context.Context, existingVersion int) error {
-	if existingVersion == 0 || existingVersion >= 3 {
-		return nil
-	}
-	if _, err := s.writeDB.ExecContext(ctx, migrateV2ToV3SQL); err != nil &&
-		!containsString(err.Error(), "duplicate column name") {
-		return fmt.Errorf("migrate v2 -> v3 (add nodes.uid): %w", err)
-	}
-	return nil
-}
-
-// addSyncEventUIDColumnPreV4 adds sync_events.uid to a pre-v4 database
-// (MTIX-30.6 / ADR-003 §3, §7 Phase 3). No-op on fresh DBs (schemaSQL
-// already has the column) and on v4+. A "duplicate column" error from a
-// re-run after an interrupted migration is tolerated, mirroring
-// addUIDColumnPreV3. Legacy rows keep uid NULL; apply falls back to
-// node_id for them (dual-carry), so no row backfill is needed here.
-func (s *Store) addSyncEventUIDColumnPreV4(ctx context.Context, existingVersion int) error {
-	// Only v2/v3 DBs carry a pre-v4 sync_events table that survives into
-	// this init and needs the ALTER. A v1 DB has its legacy sync_events
-	// DROPped by the v1->v2 step above and then re-created (with uid) by
-	// schemaSQL, so it needs no ALTER; a fresh (0) or already-v4 DB needs
-	// none either.
-	if existingVersion < 2 || existingVersion >= 4 {
-		return nil
-	}
-	if _, err := s.writeDB.ExecContext(ctx, migrateV3ToV4SQL); err != nil &&
-		!containsString(err.Error(), "duplicate column name") {
-		return fmt.Errorf("migrate v3 -> v4 (add sync_events.uid): %w", err)
-	}
-	s.logger.Info("schema_migrated",
-		"event", "schema_migrated", "from_version", existingVersion, "to_version", 4,
-		"added", "sync_events.uid")
 	return nil
 }
 

@@ -181,7 +181,7 @@ func TestVerify_ProgressInconsistency_MultipleChildren_Detected(t *testing.T) {
 }
 
 // =============================================================================
-// Backup: escapeSQLitePath (path with single quotes)
+// Backup: destination path with a single quote (bound VACUUM INTO parameter)
 // =============================================================================
 
 // TestBackup_PathWithSingleQuote_Succeeds verifies paths with quotes work.

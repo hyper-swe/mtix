@@ -605,8 +605,6 @@ wake does not yet send a fresh nudge (follow-up MTIX-112.40.10); read the inbox 
 with `data.reachable` false and `data.blocked_by` naming the ticket whose adapter is not built yet (hook waiter
 MTIX-112.40.4 and install MTIX-112.40.5, session socket MTIX-112.40.3): they are not reachable in this build and are never silently skipped.
 
-
-
 For a temporary export later moved to `.mtix/tasks.json`, or a pipe such as
 `tee` writing that mirror, use `mtix export --board-only`. Default explicit
 exports are private. `recover --from-export` supplements only the inbox journal;

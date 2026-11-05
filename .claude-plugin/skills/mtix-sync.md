@@ -353,7 +353,7 @@ while checking cleanup.
 
    The temporary name must not already exist; the command refuses to overwrite
    it. On failure, keep the original board file and do not publish the partial
-   export. On success, the fresh snapshot has no per-task or top-level history.
+   export. On success, the fresh snapshot has no per-task or top-level history and no inbox journal.
    Do not hand-edit history or its checksum, and do not import an edited snapshot
    expecting it to erase local entries: history import keeps local entries.
 

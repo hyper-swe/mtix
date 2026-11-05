@@ -1,86 +1,114 @@
 #!/usr/bin/env bash
-# MTIX-112.17.42: block pull requests while main's macOS CI is red.
+# MTIX-112.17.42: block merges while main's macOS CI is red.
 #
-# Pull requests run only one macOS job; the full macOS matrix runs on push to
-# main and nightly. This check, run by the test-go job on pull_request events
-# only, reads the latest informative main run and fails when any macOS job in
-# it did not succeed.
+# Pull requests run one macOS job; the full macOS matrix runs on push to main
+# and nightly. This check judges the newest informative main run and fails
+# unless every expected macOS job (scripts/main-macos-expected-jobs.txt, the
+# single list) ran and succeeded.
 #
-# Policy:
-#   - Only completed ci.yml runs on main triggered by push or schedule count.
-#   - A run whose overall conclusion is cancelled says nothing about health and
-#     is skipped in favour of the next older one.
-#   - A newer run still in progress is ignored: it neither clears nor causes a
-#     block; the last completed run decides.
-#   - Fail closed: an API error, unreadable data, no qualifying run, or a run
-#     with no macOS jobs is a failure, never a pass.
-#   - Override: the PR label main-macos-fix (applied by a maintainer, on the PR
-#     that repairs main) turns the check into a notice.
+# Two places run it:
+#   1. The test-go job on pull_request, from the BASE branch's copy of this
+#      script. It is advisory for a hostile PR, which can edit ci.yml itself.
+#   2. The merger, standalone with gh credentials, immediately before every
+#      merge (enforcing; the required-check ruleset is not strict):
+#        GITHUB_REPOSITORY=<owner>/<repo> PR_LABELS="$(gh pr view <n> --json labels --jq '[.labels[].name]')" \
+#          bash scripts/main-macos-health.sh
+#      A red, unknown or failing result stops the merge.
 #
-# Usage: main-macos-health.sh [--runs RUNS.json --jobs JOBS.json]
-# Live mode needs gh, GH_TOKEN and GITHUB_REPOSITORY. PR_LABELS is a JSON array.
+# Policy (walk completed-or-running push and schedule runs of ci.yml on main,
+# newest first):
+#   - completed, not cancelled: judge it. Any expected job missing, or any
+#     macOS job not success (skipped included), is red.
+#   - completed and cancelled: red if a macOS job in its latest attempt
+#     failed or timed out; otherwise skipped, for at most 3 runs, then fail
+#     closed.
+#   - not completed, first attempt: ignored (accepted residual: a run in
+#     progress is not red; the next merge after it finishes sees the result).
+#   - not completed, run_attempt above 1 (a re-run): judge the previous
+#     attempt; fail closed unless it was green.
+#   - API error, unreadable data, no run to judge: fail closed.
+# Override: PR label main-macos-fix (PR_LABELS is a JSON array).
+# Takes no arguments. Needs gh, jq, GH_TOKEN and GITHUB_REPOSITORY.
 set -uo pipefail
 
 OVERRIDE_LABEL="main-macos-fix"
-fail() { echo "main-macos-health: $*" >&2; exit 1; }
+MAX_CANCELLED_SKIPS=3
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd) || exit 1
+tmp=$(mktemp -d) || { echo "main-macos-health: cannot create a temporary directory" >&2; exit 1; }
+trap 'rm -f "$tmp/runs.json" "$tmp/jobs.json" "$tmp/err" "$tmp/ids"; rmdir "$tmp"' EXIT
 
-labels="${PR_LABELS:-[]}"
-if jq -e --arg l "$OVERRIDE_LABEL" 'type == "array" and index($l) != null' <<<"$labels" >/dev/null 2>&1; then
-  echo "main-macos-health: override: label $OVERRIDE_LABEL is set; the main macOS state is not enforced for this PR"
+fail() {
+  echo "main-macos-health: $*" >&2
+  [ -s "$tmp/err" ] && sed 's/^/main-macos-health: gh: /' "$tmp/err" >&2
+  exit 1
+}
+
+[ $# -eq 0 ] || fail "takes no arguments (got: $*)"
+
+if jq -e --arg l "$OVERRIDE_LABEL" 'type == "array" and index($l) != null' <<<"${PR_LABELS:-[]}" >/dev/null 2>&1; then
+  echo "main-macos-health: override: label $OVERRIDE_LABEL is set; the main macOS state is not enforced"
   exit 0
 fi
+[ -n "${GITHUB_REPOSITORY:-}" ] || fail "cannot read main CI state: GITHUB_REPOSITORY is unset"
+expected_file="$here/main-macos-expected-jobs.txt"
+[ -s "$expected_file" ] || fail "cannot read the expected macOS job list $expected_file"
 
-runs_file="" jobs_file=""
-while [ $# -gt 0 ]; do
-  case "$1" in
-    --runs) runs_file="${2:-}"; shift 2 ;;
-    --jobs) jobs_file="${2:-}"; shift 2 ;;
-    *) fail "unknown argument $1" ;;
-  esac
-done
+# fetch_jobs RUN_ID [ATTEMPT]: all jobs of that run attempt, one JSON object per line.
+fetch_jobs() {
+  local path="actions/runs/$1/jobs?per_page=100&filter=latest"
+  [ -z "${2:-}" ] || path="actions/runs/$1/attempts/$2/jobs?per_page=100"
+  gh api --paginate "repos/${GITHUB_REPOSITORY}/${path}" --jq '.jobs[]' >"$tmp/jobs.json" 2>"$tmp/err" \
+    || fail "cannot read jobs of main run $1 (API error); failing closed"
+  jq -s -e 'length > 0 and all(type == "object" and (.name | type == "string"))' "$tmp/jobs.json" >/dev/null 2>&1 \
+    || fail "cannot read jobs of main run $1 (unparsable or empty job list); failing closed"
+}
 
-tmp=$(mktemp -d) || fail "cannot create a temporary directory"
-trap 'rm -f "$tmp"/runs.json "$tmp"/jobs.json; rmdir "$tmp"' EXIT
+# judge_full RUN_ID LABEL: every expected macOS job present and success, no other macOS job red.
+judge_full() {
+  local missing bad
+  missing=$(jq -s -r --rawfile exp "$expected_file" \
+    '(($exp | split("\n") | map(select(length > 0))) - [.[].name]) | join(", ")' "$tmp/jobs.json") \
+    || fail "cannot evaluate main run $1; failing closed"
+  bad=$(jq -s -r '[.[] | select(.name | ascii_downcase | contains("macos")) | select(.conclusion != "success")]
+    | map("\(.name)=\(.conclusion // "unknown")") | join(", ")' "$tmp/jobs.json") \
+    || fail "cannot evaluate main run $1; failing closed"
+  [ -z "$missing" ] || fail "main run $1 ($2) is missing expected macOS jobs: $missing. Fix main first, or label the repairing PR $OVERRIDE_LABEL."
+  [ -z "$bad" ] || fail "main is red on macOS in run $1 ($2): $bad. Fix main first, or label the repairing PR $OVERRIDE_LABEL."
+  echo "main-macos-health: judged main run $1 ($2): all expected macOS jobs succeeded"
+  exit 0
+}
 
-if [ -z "$runs_file" ]; then
-  [ -n "${GITHUB_REPOSITORY:-}" ] || fail "cannot read main CI state: GITHUB_REPOSITORY is unset"
-  # Latest ci.yml runs on main, newest first; run and event filtering is below.
-  gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?branch=main&per_page=30" \
-    >"$tmp/runs.json" 2>"$tmp/err" || fail "cannot read main CI state (API error); failing closed"
-  runs_file="$tmp/runs.json"
-fi
+# failed_in_cancelled RUN_ID: fail if a macOS job of the cancelled run failed or timed out.
+failed_in_cancelled() {
+  local bad
+  bad=$(jq -s -r '[.[] | select(.name | ascii_downcase | contains("macos")) | select(.conclusion == "failure" or .conclusion == "timed_out")]
+    | map("\(.name)=\(.conclusion)") | join(", ")' "$tmp/jobs.json") || fail "cannot evaluate cancelled main run $1; failing closed"
+  [ -z "$bad" ] || fail "main is red on macOS in cancelled run $1: $bad. Fix main first, or label the repairing PR $OVERRIDE_LABEL."
+}
 
-# The run list must be a single object holding a workflow_runs array. jq exits
-# 0 with no output on an empty file in some versions, so check it explicitly.
-jq -s -e 'length == 1 and (.[0] | type == "object") and (.[0].workflow_runs | type == "array")' "$runs_file" >/dev/null 2>&1 \
+gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?branch=main&per_page=30" \
+  >"$tmp/runs.json" 2>"$tmp/err" || fail "cannot read main CI state (API error); failing closed"
+jq -s -e 'length == 1 and (.[0] | type == "object") and (.[0].workflow_runs | type == "array")' "$tmp/runs.json" >/dev/null 2>&1 \
   || fail "cannot read main CI state (unparsable or empty run list); failing closed"
+# One line per push or schedule run, newest first: id, status, conclusion, attempt.
+# Empty fields are written as "-" because read collapses adjacent tabs.
+jq -r '.workflow_runs[] | select(.event == "push" or .event == "schedule")
+  | [(.id | tostring), (.status // "-"), (.conclusion // "-"), ((.run_attempt // 1) | tostring)] | @tsv' \
+  "$tmp/runs.json" >"$tmp/ids" || fail "cannot read main CI state (unparsable run list); failing closed"
 
-# Newest completed, non-cancelled push or schedule run of main.
-run_id=$(jq -r '[.workflow_runs[]
-    | select((.event == "push" or .event == "schedule") and .status == "completed" and .conclusion != "cancelled")]
-    | first | .id // empty' "$runs_file" 2>/dev/null)
-case "$run_id" in
-  ""|*[!0-9]*) fail "no completed main CI run (push or schedule) to judge; failing closed" ;;
-esac
-
-if jq -e '[.workflow_runs[] | select((.event == "push" or .event == "schedule") and .status != "completed")] | length > 0' \
-  "$runs_file" >/dev/null 2>&1; then
-  echo "main-macos-health: a newer main run is in progress and is ignored; judging completed run $run_id"
-fi
-
-if [ -z "$jobs_file" ]; then
-  # Every job of the judged run, one JSON object per line.
-  gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100" --jq '.jobs[]' \
-    >"$tmp/jobs.json" 2>"$tmp/err" || fail "cannot read main CI jobs (API error); failing closed"
-  jobs_file="$tmp/jobs.json"
-fi
-
-jq -s -e 'type == "array" and length > 0 and all(type == "object")' "$jobs_file" >/dev/null 2>&1 \
-  || fail "cannot read main CI jobs (unparsable or empty job list); failing closed"
-
-mac_total=$(jq -s '[.[] | select(.name | test("macos"; "i"))] | length' "$jobs_file")
-[ "$mac_total" -gt 0 ] || fail "no macOS jobs found in main run $run_id; failing closed"
-bad=$(jq -s -r '[.[] | select(.name | test("macos"; "i")) | select(.conclusion != "success" and .conclusion != "skipped")]
-    | map("\(.name)=\(.conclusion // "unknown")") | join(", ")' "$jobs_file")
-[ -z "$bad" ] || fail "main is red on macOS in run $run_id: $bad. Fix main first, or label the repairing PR $OVERRIDE_LABEL."
-echo "main-macos-health: main run $run_id is green on all $mac_total macOS jobs"
+skipped=0
+while IFS=$'\t' read -r id status conclusion attempt; do
+  case "$id$attempt" in ""|*[!0-9]*) fail "unparsable run entry '$id' '$attempt'; failing closed" ;; esac
+  if [ "$status" = completed ] && [ "$conclusion" = cancelled ]; then
+    fetch_jobs "$id"; failed_in_cancelled "$id"
+    skipped=$((skipped + 1))
+    [ "$skipped" -le "$MAX_CANCELLED_SKIPS" ] || fail "more than $MAX_CANCELLED_SKIPS consecutive cancelled main runs; no result to judge; failing closed"
+  elif [ "$status" = completed ]; then
+    fetch_jobs "$id"; judge_full "$id" "attempt $attempt"
+  elif [ "$attempt" -gt 1 ]; then
+    fetch_jobs "$id" "$((attempt - 1))"; judge_full "$id" "re-run in progress, judging attempt $((attempt - 1))"
+  else
+    echo "main-macos-health: main run $id is in progress and is not judged (a run in progress is not red)"
+  fi
+done <"$tmp/ids"
+fail "no completed main CI run (push or schedule) to judge; failing closed"

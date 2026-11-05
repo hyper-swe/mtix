@@ -29,30 +29,65 @@ rest of the macOS matrix runs on `main`. The `os` axis of `test-go-sqlite` and
 so the `test-go` aggregate stays strict: a skipped, cancelled or failed need
 still fails it on every event.
 
-To keep macOS regressions from slipping past PRs, the `test-go` job on
-`pull_request` runs `scripts/main-macos-health.sh`. It judges the newest
-completed `ci.yml` run on `main` (event push or schedule) and fails the PR when
-any macOS job in it did not succeed. Policy:
+To keep macOS regressions from slipping past PRs, `scripts/main-macos-health.sh`
+judges the newest informative `ci.yml` run on `main` (event push or schedule).
+It fails unless every job listed in `scripts/main-macos-expected-jobs.txt` (the
+single list; a test keeps it equal to the macOS legs the workflow generates)
+is present and `success` on that run. A skipped, cancelled, missing or unknown
+macOS job is red. The script runs in two places.
 
-- Fail closed: an API error, unreadable data, no usable run, or a run with no
-  macOS jobs fails the check.
-- A newer run still in progress is ignored: it neither clears nor causes a
-  block; the last completed run decides.
-- A run whose overall conclusion is cancelled is skipped for the next older run.
-- Override: a maintainer labels the PR that repairs `main` with
-  `main-macos-fix`; the check then passes with a notice. Remove the label once
-  `main` is green. Anyone with triage rights can set a label, so treat it as a
-  maintainer action.
+1. **PR check (advisory).** The `test-go` job runs it on `pull_request`, from
+   the BASE branch's copy of the script (the step checks out the base SHA), so
+   a PR cannot quietly edit its own gate. A PR can still edit `ci.yml` itself,
+   so for a hostile PR this check is advisory. Reviewers treat any change to the
+   script, its expected-job list or the step as a gate change. The PR that
+   introduces the script has no base copy and merges through the override label.
+2. **Merge-time gate (enforcing).** A PR check cannot re-judge itself after it
+   is green, and the ruleset (25175194) is not strict, so a PR whose `test-go`
+   passed before main turned red could still merge. Changing the ruleset is out
+   of scope. Instead the merger runs the script standalone with gh credentials
+   immediately before EVERY merge (merge train and admin merges alike):
+
+   ```
+   GITHUB_REPOSITORY=hyper-swe/mtix \
+     PR_LABELS="$(gh pr view <PR> --json labels --jq '[.labels[].name]')" \
+     bash scripts/main-macos-health.sh
+   ```
+
+   Exit 0 is the only go. A red, unknown or failing result (non-zero exit, API
+   error, no output) stops the merge.
+
+Policy, newest `push` or `schedule` run first (other events never count):
+
+- Completed and not cancelled: judge it (see above).
+- Completed and cancelled: red if a macOS job in its latest attempt failed or
+  timed out; otherwise skipped, for at most 3 runs, then fail closed.
+- First attempt still in progress: not judged. A run in progress is not red;
+  this is an accepted residual, and the next merge after it finishes sees the
+  result.
+- A re-run in progress (`run_attempt` above 1) is judged by its previous
+  attempt, and fails closed unless that attempt was green.
+- Fail closed on any API error (the gh message is printed), unreadable data, or
+  no run to judge.
+- Override: a maintainer labels the PR that repairs `main` with `main-macos-fix`
+  (create the label once; triage rights and above can apply it). The PR check
+  skips the gate and prints a notice; the merge-time command above honours the
+  label from `PR_LABELS`. A label is read from the event payload, and
+  `pull_request` has no `labeled` trigger (it would re-run every check on every
+  label change), so after labelling, push a new commit or close and reopen the
+  PR to start a run that sees it; re-running the old run is untested and not
+  relied on. Remove the label, and push again, once `main` is green.
 - Permissions: only the `test-go` job gains `actions: read` (to list runs and
-  jobs); no other job is widened.
-- Re-running a failed PR check after a main fix re-reads the latest state.
+  jobs); no other job is widened. Fork PRs get a read-only token and no
+  secrets; the gate step receives only that token and the repository name, and
+  the checkout does not persist credentials.
 
 ## Go race shards
 
 The explicit package lists are in `scripts/ci-go-shards/`:
 
-- `sqlite.txt`: `internal/store/sqlite`, run in the separate three-test-shard matrix on each OS.
-- `cli.txt`: `cmd/mtix`, run in the separate three-test-shard `test-go-cmd` matrix on each OS.
+- `sqlite.txt`: `internal/store/sqlite`, run in the separate three-test-shard matrix (macOS legs on push and nightly only).
+- `cli.txt`: `cmd/mtix`, run in the separate three-test-shard `test-go-cmd` matrix (macOS legs on push and nightly only).
 - `other.txt`: every remaining selected package.
 
 Each OS verifies the complete partition before running a shard. The guard
@@ -85,7 +120,7 @@ as well as duplicate membership and failed inventory enumeration.
 ## SQLite test shards (MTIX-112.17.29)
 
 The SQLite race package approached the unchanged 20-minute timeout on macOS.
-PR CI runs it in three hash shards on each OS, using the same
+PR CI runs it in three hash shards on Linux (macOS on push and nightly), using the same
 `scripts/ci-go-shards.sh` modes as the remote bar:
 
 ```bash

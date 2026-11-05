@@ -28,7 +28,11 @@ type ciOSAxis struct {
 	expr string
 }
 
-var ciOSExprLiteral = regexp.MustCompile(`'(\[[^']*\])'`)
+// ciOSExprForm is the one accepted shape of the event-conditioned axis:
+// fromJSON(github.event_name == 'E' && '[A]' || '[B]'). Anything else (an
+// or in place of the and, an extra operand) does not match, so the test fails.
+var ciOSExprForm = regexp.MustCompile(
+	`^\$\{\{ fromJSON\(github\.event_name == '([a-z_]+)' && '(\[[^']*\])' \|\| '(\[[^']*\])'\) \}\}$`)
 
 func (a *ciOSAxis) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind == yaml.ScalarNode {
@@ -38,20 +42,21 @@ func (a *ciOSAxis) UnmarshalYAML(node *yaml.Node) error {
 	return node.Decode(&a.list)
 }
 
-// For returns the OS legs generated for event ("pull_request", "push",
-// "schedule"). A literal list applies to every event.
+// For evaluates the axis for event ("pull_request", "push", "schedule"). A
+// literal list applies to every event. An expression is evaluated with the
+// GitHub semantics of cond && A || B for non-empty A; an unrecognised
+// expression yields nil so the calling test fails.
 func (a ciOSAxis) For(event string) []string {
 	if a.expr == "" {
 		return a.list
 	}
-	// The expression is: event_name == 'pull_request' && '[PR]' || '[FULL]'.
-	lits := ciOSExprLiteral.FindAllStringSubmatch(a.expr, -1)
-	if len(lits) != 2 {
+	m := ciOSExprForm.FindStringSubmatch(a.expr)
+	if m == nil {
 		return nil
 	}
-	pick := lits[1][1]
-	if event == "pull_request" {
-		pick = lits[0][1]
+	pick := m[3]
+	if event == m[1] {
+		pick = m[2]
 	}
 	var legs []string
 	if err := yaml.Unmarshal([]byte(pick), &legs); err != nil {
@@ -142,8 +147,12 @@ func TestCIWorkflow_OSAxis_OnlyTheTwoSQLiteAndCmdJobsAreEventConditioned(t *test
 	for name, job := range readCIJobs(t) {
 		m := job.Strategy.Matrix
 		if name == "test-go-sqlite" || name == "test-go-cmd" {
-			require.NotEmpty(t, m.OS.expr, name)
-			require.Contains(t, m.OS.expr, "github.event_name == 'pull_request'", name)
+			require.Equal(t, `${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-22.04"]' || '["ubuntu-22.04","macos-latest"]') }}`,
+				m.OS.expr, name)
+			require.Equal(t, []string{"ubuntu-22.04"}, m.OS.For("pull_request"), name)
+			require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, m.OS.For("push"), name)
+			require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, m.OS.For("schedule"), name)
+			require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, m.OS.For("workflow_dispatch"), name)
 			continue
 		}
 		require.Empty(t, m.OS.expr, name+" must not be event-conditioned")
@@ -171,7 +180,49 @@ func TestCIWorkflow_TestGo_KeepsNameNeedsAndStrictAggregateOnEveryEvent(t *testi
 	}
 }
 
-func TestCIWorkflow_MainMacOSHealthStep_RunsOnlyOnPullRequestsAndIsLeastPrivilege(t *testing.T) {
+const ciOverrideLabel = "main-macos-fix"
+
+func ciTestGoSteps(t *testing.T) map[string]int {
+	t.Helper()
+	index := map[string]int{}
+	for i, step := range readCIJobs(t)["test-go"].Steps {
+		index[step.Name] = i
+	}
+	return index
+}
+
+func TestCIWorkflow_MainMacOSHealth_RunsBaseScriptOnlyOnPullRequestsWithoutOverride(t *testing.T) {
+	job := readCIJobs(t)["test-go"]
+	idx := ciTestGoSteps(t)
+	checkout, ok := idx["Check out the base branch's health script"]
+	require.True(t, ok)
+	health, ok := idx["Require main macOS CI to be green"]
+	require.True(t, ok)
+	note, ok := idx["Note the main macOS override"]
+	require.True(t, ok)
+	require.Less(t, checkout, health, "the script must be checked out before it runs")
+
+	notOverridden := "${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, '" + ciOverrideLabel + "') }}"
+	overridden := "${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, '" + ciOverrideLabel + "') }}"
+	require.Equal(t, notOverridden, job.Steps[checkout].If)
+	require.Equal(t, notOverridden, job.Steps[health].If)
+	require.Equal(t, overridden, job.Steps[note].If)
+
+	co := job.Steps[checkout]
+	require.True(t, strings.HasPrefix(co.Uses, "actions/checkout@"))
+	require.Equal(t, "${{ github.event.pull_request.base.sha }}", co.With["ref"], "gate script must come from the base, not the PR")
+	require.Equal(t, false, co.With["persist-credentials"])
+
+	h := job.Steps[health]
+	require.Nil(t, h.ContinueOnError)
+	require.Equal(t, "bash scripts/main-macos-health.sh", h.Run)
+	require.Equal(t, map[string]string{
+		"GH_TOKEN":          "${{ github.token }}",
+		"GITHUB_REPOSITORY": "${{ github.repository }}",
+	}, h.Env, "no secret and no other value reaches the gate")
+}
+
+func TestCIWorkflow_Permissions_OnlyTestGoReadsActions(t *testing.T) {
 	source, err := os.ReadFile("../.github/workflows/ci.yml")
 	require.NoError(t, err)
 	var workflow struct {
@@ -189,16 +240,26 @@ func TestCIWorkflow_MainMacOSHealthStep_RunsOnlyOnPullRequestsAndIsLeastPrivileg
 			require.Empty(t, job.Permissions, name+" must not widen permissions")
 		}
 	}
-	var health *ciGoStep
-	for _, step := range readCIJobs(t)["test-go"].Steps {
-		if strings.Contains(step.Run, "scripts/main-macos-health.sh") {
-			health = &step
+}
+
+func TestMainMacOSExpectedJobs_TrackTheWorkflowMatrix(t *testing.T) {
+	raw, err := os.ReadFile("main-macos-expected-jobs.txt")
+	require.NoError(t, err)
+	listed := strings.Split(strings.TrimSpace(string(raw)), "\n")
+	var rendered []string
+	jobs := readCIJobs(t)
+	for _, key := range []string{"test-go-shards", "test-go-sqlite", "test-go-cmd"} {
+		job := jobs[key]
+		for _, osName := range job.Strategy.Matrix.OS.For("push") {
+			if !strings.HasPrefix(osName, "macos") {
+				continue
+			}
+			for _, shard := range job.Strategy.Matrix.Shard {
+				name := strings.ReplaceAll(job.Name, "${{ matrix.os }}", osName)
+				rendered = append(rendered, strings.ReplaceAll(name, "${{ matrix.shard }}", shard))
+			}
 		}
 	}
-	require.NotNil(t, health, "test-go must run the main macOS health check")
-	require.Equal(t, "github.event_name == 'pull_request'", strings.Trim(health.If, "${} "))
-	require.Nil(t, health.ContinueOnError)
-	require.Equal(t, "${{ github.token }}", health.Env["GH_TOKEN"])
-	require.Equal(t, "${{ github.repository }}", health.Env["GITHUB_REPOSITORY"])
-	require.Equal(t, "${{ toJSON(github.event.pull_request.labels.*.name) }}", health.Env["PR_LABELS"])
+	require.ElementsMatch(t, rendered, listed, "expected-jobs list must equal the macOS legs the workflow generates")
+	require.Len(t, listed, countCIMacOSLegs(t, "push"))
 }

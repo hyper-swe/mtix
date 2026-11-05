@@ -70,9 +70,6 @@ func registerHostEnrollmentDoctor(svc *service.DoctorService, registry oplocal.D
 	if err != nil {
 		return err
 	}
-	if markerErr := registerEnrolInterruptedDoctor(svc, app.mtixDir); markerErr != nil {
-		return markerErr
-	}
 	enrolled := false
 	for _, row := range registry.Enrolled {
 		if row.Path == root && row.StoreInstanceID == instance {

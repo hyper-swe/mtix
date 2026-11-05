@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/sync/pushlock"
@@ -20,6 +21,11 @@ const (
 	enrolLockName    = "enroll.lock"
 	enrolMarkerName  = "in-progress.json"
 	partialDirPrefix = "data.partial-enrol-" //nolint:misspell // on-disk name next to the ADR-007 aside directory
+
+	// enrolLockAttempts and enrolLockRetryEvery bound the wait for a guard probe
+	// to let go of the enroll lock: 40 x 5 ms.
+	enrolLockAttempts   = 40
+	enrolLockRetryEvery = 5 * time.Millisecond
 )
 
 var (
@@ -114,8 +120,18 @@ func removeEnrolMarker(mtixDir string) error {
 	return syncMarkerDir(enrolDir(mtixDir))
 }
 
+// Moved reports whether the store was moved aside: the aside directory exists.
+// A crash between the marker and the move leaves the live store in place.
+func (m *EnrolMarker) Moved() bool {
+	_, err := os.Lstat(m.Aside)
+	return err == nil
+}
+
 // RecoveryHint is the exact next step for a found marker.
 func (m *EnrolMarker) RecoveryHint() string {
+	if !m.Moved() {
+		return fmt.Sprintf("the store never moved: it is still in the data directory (backup %s); run the worktree enrolment again, which clears the marker", m.Backup)
+	}
 	return fmt.Sprintf("the original store is in %s (backup %s); run the worktree enrolment again, which first puts the original store back", m.Aside, m.Backup)
 }
 
@@ -126,7 +142,7 @@ func (m *EnrolMarker) RecoveryHint() string {
 func CheckEnrolGuard(mtixDir string, allowInterrupted bool) error {
 	lockFile := filepath.Join(enrolDir(mtixDir), "data", enrolLockName)
 	if _, err := os.Lstat(lockFile); err == nil {
-		lock, lockErr := pushlock.AcquireNamed(enrolDir(mtixDir), enrolLockName)
+		lock, lockErr := acquireEnrolLock(mtixDir)
 		if errors.Is(lockErr, pushlock.ErrLockHeld) {
 			return fmt.Errorf("%w%s; retry when it finishes", ErrEnrolInProgress, holderSuffix(mtixDir))
 		}
@@ -145,6 +161,20 @@ func CheckEnrolGuard(mtixDir string, allowInterrupted bool) error {
 		return fmt.Errorf("%w: %s", ErrEnrolInterrupted, m.RecoveryHint())
 	}
 	return nil
+}
+
+// acquireEnrolLock takes the enroll lock, retrying for a moment on contention:
+// every ordinary command's guard probes by locking it for microseconds, so a
+// held lock is only an enrolment once it stays held past the retry window
+// (about 200 ms), never because two commands probed at the same instant.
+func acquireEnrolLock(mtixDir string) (*pushlock.PushLock, error) {
+	for attempt := 0; ; attempt++ {
+		lock, err := pushlock.AcquireNamed(enrolDir(mtixDir), enrolLockName)
+		if !errors.Is(err, pushlock.ErrLockHeld) || attempt >= enrolLockAttempts {
+			return lock, err
+		}
+		time.Sleep(enrolLockRetryEvery)
+	}
 }
 
 func holderSuffix(mtixDir string) string {

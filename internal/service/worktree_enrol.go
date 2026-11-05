@@ -14,7 +14,6 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/hyper-swe/mtix/internal/sync/pushlock"
 )
 
 // asideDirPrefix names the directory the old store moves to; ADR-007 section 4.2
@@ -96,7 +95,7 @@ func (s *WorktreeEnrolment) EnrolWorktree(ctx context.Context, r EnrollmentReque
 	}
 	// The lock lives under .mtix/enroll.d, not in .mtix/data: the procedure moves
 	// the data directory, and a lock inside it would move with it.
-	lock, err := pushlock.AcquireNamed(enrolDir(filepath.Join(root, ".mtix")), enrolLockName)
+	lock, err := acquireEnrolLock(filepath.Join(root, ".mtix"))
 	if err != nil {
 		return nil, fmt.Errorf("lock worktree enrolment: %w", err)
 	}

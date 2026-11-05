@@ -129,22 +129,18 @@ func (s *WorktreeEnrolment) keepPartial(data, partial string) error {
 	return nil
 }
 
-// writerLocks are the push and dispatch locks every other writer honors.
+// writerLocks are the push, dispatch and daemon locks every other writer honors.
 type writerLocks []*pushlock.PushLock
 
 func holdWriterLocks(mtix string) (writerLocks, error) {
 	var held writerLocks
-	for _, name := range []string{"push.lock", "dispatch.lock"} {
-		var l *pushlock.PushLock
-		var err error
-		if name == "push.lock" {
-			l, err = pushlock.Acquire(mtix)
-		} else {
-			l, err = pushlock.AcquireNamed(mtix, name)
-		}
+	// sync.daemon.lock is the lifetime lock of a project daemon, which holds
+	// dispatch.lock only per pass: between passes it is the only sign of it.
+	for _, name := range []string{"sync.push.lock", "dispatch.lock", "sync.daemon.lock"} {
+		l, err := pushlock.AcquireNamed(mtix, name)
 		if err != nil {
 			relErr := held.release()
-			return nil, errors.Join(fmt.Errorf("the %s is held by another process (a sync push, daemon or dispatcher is using this worktree): stop it and run the enrolment again: %w", name, err), relErr)
+			return nil, errors.Join(fmt.Errorf("the %s is held by another process (a sync push, project daemon or dispatcher is using this worktree): stop it and run the enrolment again: %w", name, err), relErr)
 		}
 		held = append(held, l)
 	}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -141,24 +142,50 @@ func hubMissingIDs(ctx context.Context, root string, ids []string, opts transpor
 	return missing, nil
 }
 
-// cloneWorktree seeds a fresh store at the worktree's data directory through
-// the same checked clone path as `mtix sync clone`, and records the
-// hub-connected mark with the worktree's secrets as the evidence.
+// cloneWorktree connects to the hub with the worktree's own secrets and seeds a
+// fresh store at the worktree's data directory through the same checked clone
+// path as `mtix sync clone`.
 func cloneWorktree(ctx context.Context, logger *slog.Logger, progress io.Writer, root string, opts transport.Options) error {
 	dsn, err := worktreeDSN(root)
 	if err != nil {
 		return err
 	}
+	connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
+	defer cancel()
+	pool, err := transport.New(connectCtx, dsn, opts)
+	if err != nil {
+		return fmt.Errorf("connect to the hub: %w", err)
+	}
+	defer pool.Close()
+	return cloneWorktreeFrom(ctx, logger, progress, root, pool)
+}
+
+// cloneWorktreeFrom creates the fresh data directory and seeds the store in it
+// from pool. The old store moved away with its directory; sqlite.New on a path
+// that is not a directory creates a database FILE of that name, which every
+// later command would then fail to open as the data directory.
+func cloneWorktreeFrom(ctx context.Context, logger *slog.Logger, progress io.Writer, root string, pool cursorPuller) error {
+	if err := os.MkdirAll(worktreeDataDir(root), 0o750); err != nil {
+		return fmt.Errorf("create the fresh data directory: %w", err)
+	}
 	return withWorktreeStore(logger, root, func(st *sqlite.Store) error {
-		connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
-		defer cancel()
-		pool, err := transport.New(connectCtx, dsn, opts)
-		if err != nil {
-			return fmt.Errorf("connect to the hub: %w", err)
-		}
-		defer pool.Close()
 		return seedFreshStore(ctx, st, progress, pool)
 	})
+}
+
+// freshStoreHoldsData reports whether st holds any event or any node: a tasks.json
+// import writes nodes without journal rows, so events alone do not show it.
+func freshStoreHoldsData(ctx context.Context, st *sqlite.Store) (bool, error) {
+	has, err := localHasEvents(ctx, st)
+	if err != nil || has {
+		return has, err
+	}
+	var n int
+	// Any node row means something other than the clone wrote to this store.
+	if err := st.QueryRow(ctx, `SELECT COUNT(*) FROM nodes`).Scan(&n); err != nil {
+		return false, fmt.Errorf("count nodes in the fresh store: %w", err)
+	}
+	return n > 0, nil
 }
 
 // seedFreshStore clones the hub into st, which must hold no event: a store that
@@ -167,12 +194,12 @@ func cloneWorktree(ctx context.Context, logger *slog.Logger, progress io.Writer,
 // guard `mtix sync clone` has). It then starts the hook scan floor at the journal tail, so the
 // cloned history wakes no lane, and records the hub-connected mark.
 func seedFreshStore(ctx context.Context, st *sqlite.Store, progress io.Writer, pool cursorPuller) error {
-	has, err := localHasEvents(ctx, st)
+	has, err := freshStoreHoldsData(ctx, st)
 	if err != nil {
 		return fmt.Errorf("check the fresh store is empty: %w", err)
 	}
 	if has {
-		return fmt.Errorf("the fresh store at the worktree's data directory already holds events written by another process; "+
+		return fmt.Errorf("the fresh store at the worktree's data directory already holds events or nodes written by another process; "+
 			"nothing was cloned over them and the original store is restored: %w", model.ErrConflict)
 	}
 	if _, _, stage, cloneErr := checkThenCloneInto(ctx, st, progress, pool, transport.PullCursor{}, 1000); cloneErr != nil {

@@ -170,7 +170,9 @@ func TestInitApp_EnrolmentRunningOrInterrupted_RefusesBeforeCreatingAStore(t *te
 
 func TestDoctor_EnrolInterrupted_ReportsMarkerWithExactRecovery(t *testing.T) {
 	initTestApp(t)
-	require.NoError(t, service.WriteEnrolMarker(app.mtixDir, service.EnrolMarker{Aside: "/x/data.pre-enrol-T", Backup: "/x/bk.db", Started: "2026-11-03T01:02:03Z", PID: 9}))
+	aside := filepath.Join(filepath.Dir(app.mtixDir), "data.pre-enrol-T")
+	require.NoError(t, os.MkdirAll(aside, 0o700))
+	require.NoError(t, service.WriteEnrolMarker(app.mtixDir, service.EnrolMarker{Aside: aside, Backup: "/x/bk.db", Started: "2026-11-03T01:02:03Z", PID: 9}))
 	svc := service.NewDoctorService(service.DoctorOptions{})
 
 	require.NoError(t, registerEnrolInterruptedDoctor(svc, app.mtixDir))
@@ -185,9 +187,9 @@ func TestDoctor_EnrolInterrupted_ReportsMarkerWithExactRecovery(t *testing.T) {
 	}
 	require.NotNil(t, found)
 	assert.Equal(t, service.DoctorFail, found.Status)
-	assert.Contains(t, found.Fix, "/x/data.pre-enrol-T")
+	assert.Contains(t, found.Fix, aside)
 	assert.Contains(t, found.Fix, "in-progress.json")
-	assert.Equal(t, "/x/data.pre-enrol-T", found.Data["aside_dir"])
+	assert.Equal(t, aside, found.Data["aside_dir"])
 }
 
 func TestDoctor_NoMarker_RegistersNothing(t *testing.T) {

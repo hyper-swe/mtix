@@ -38,6 +38,11 @@ func (s *WorktreeEnrolment) seed(ctx context.Context, root string, snap *Worktre
 	if err := p.ImportCarry(ctx, root, snap.Carry, s.o.Clock().UTC()); err != nil {
 		return fmt.Errorf("carry inbox state: %w", err)
 	}
+	// The fresh store has no sync.sha256: without one, the first command would
+	// import tasks.json (the old store's export) over the hub clone.
+	if err := recordBoardSeen(filepath.Join(root, ".mtix")); err != nil {
+		return fmt.Errorf("record the board file as seen: %w", err)
+	}
 	// A process that held the old store open writes through its descriptor into
 	// the moved-aside directory; if the aside store differs from what was
 	// carried, the carry is incomplete and the original must go back.

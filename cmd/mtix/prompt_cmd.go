@@ -48,17 +48,34 @@ func runPrompt(id, text string) error {
 
 // newAnnotateCmd creates the mtix annotate command per FR-3.4.
 func newAnnotateCmd() *cobra.Command {
-	return &cobra.Command{
+	var to string
+	cmd := &cobra.Command{
 		Use:   "annotate <id> <text>",
 		Short: "Add an annotation to a node",
-		Args:  cobra.ExactArgs(2),
+		Long: `Add an annotation to a node.
+
+Use --to <agent> to address the annotation at a specific agent: it then takes
+exactly the path of 'mtix comment --to' and lands in that agent's inbox (see
+'mtix inbox'), the same as the MCP mtix_annotate tool with 'to'. Without --to
+the annotation is stored on the node as before. For a reply window use
+'mtix comment --to <agent> --await-reply'.`,
+		Args: cobra.ExactArgs(2),
 		RunE: withAutoExport(func(_ *cobra.Command, args []string) error {
-			return runAnnotate(args[0], args[1])
+			return runAnnotate(args[0], args[1], to)
 		}),
 	}
+	cmd.Flags().StringVar(&to, "to", "", "Address the annotation to an agent (delivers to its inbox, like comment --to)")
+	return cmd
 }
 
-func runAnnotate(id, text string) error {
+// runAnnotate stores an annotation on a node (FR-3.4). A non-empty to sends it
+// through the comment path, so annotate --to and comment --to share one
+// addressed-send implementation (MTIX-112.31); an empty to keeps the plain
+// annotation path.
+func runAnnotate(id, text, to string) error {
+	if to != "" {
+		return runComment(id, text, to)
+	}
 	if app.promptSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}

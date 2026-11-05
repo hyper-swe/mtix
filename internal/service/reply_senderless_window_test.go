@@ -146,4 +146,36 @@ func TestScan_JournalRejectsWindowAsInvalidInput_SkippedNotFatal(t *testing.T) {
 	require.Empty(t, st.Windows)
 	require.Len(t, st.Skipped, 1)
 	require.Equal(t, "N-1", st.Skipped[0].Window.Node)
+	require.NotEmpty(t, st.Skipped[0].Reason, "the record says why the journal refused the window")
+}
+
+func TestReplyStatusAt_SkippedWindowAge_Boundary(t *testing.T) {
+	tests := []struct {
+		name string
+		age  time.Duration
+		want int
+	}{
+		{"fresh", 0, 1},
+		{"23 hours", 23 * time.Hour, 1},
+		{"just under 24 hours", 24*time.Hour - time.Second, 1},
+		{"exactly 24 hours", 24 * time.Hour, 0},
+		{"25 hours", 25 * time.Hour, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := oplocal.ReplyState{Skipped: []oplocal.SkippedReplyWindow{{Reason: "r", At: t0}}}
+			got := service.ReplyStatusAt(st, service.ReplyPolicy{}, t0.Add(tt.age))
+			require.Equal(t, tt.want, got.SkippedWindows)
+		})
+	}
+}
+
+func TestScan_SkippedRecord_StillPresentBeforeADay(t *testing.T) {
+	f := newReplyFixture(t, t0, t0)
+	f.proc.Journal = &strictJournal{fakeJournal: f.j}
+	f.writeRawWindows(f.window("peer", "", "N-1"))
+	require.NoError(t, f.proc.Scan(t.Context()))
+	f.now = f.now.Add(23 * time.Hour)
+	require.NoError(t, f.proc.Scan(t.Context()))
+	require.Len(t, f.replyState().Skipped, 1, "the record lasts a full day")
 }

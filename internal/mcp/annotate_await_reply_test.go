@@ -81,16 +81,23 @@ func TestAnnotateTool_NoAwaitReply_NeverCallsHook(t *testing.T) {
 }
 
 func TestAnnotateTool_AwaitReply_BlankAuthor_RefusedWithoutWindow(t *testing.T) {
-	for _, args := range []string{
-		`{"id":"TEST-1","text":"n","author":"","to":"agent-b","await_reply":"30m"}`,
-		`{"id":"TEST-1","text":"n","author":"  ","to":"agent-b","await_reply":"30m"}`,
-	} {
-		called := false
-		reg := NewToolRegistry()
-		RegisterContextTools(reg, newTestContextService(), newTestPromptService(),
-			WithReplyWindowHook(func(context.Context, string, string, service.AnnotationResult) string { called = true; return "" }))
-		_, err := reg.Call(context.Background(), "mtix_annotate", json.RawMessage(args))
-		require.Error(t, err)
-		assert.False(t, called, "a refused send opens no window")
+	tests := []struct {
+		name string
+		args string
+	}{
+		{"empty author", `{"id":"TEST-1","text":"n","author":"","to":"agent-b","await_reply":"30m"}`},
+		{"whitespace author", `{"id":"TEST-1","text":"n","author":"  ","to":"agent-b","await_reply":"30m"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			reg := NewToolRegistry()
+			RegisterContextTools(reg, newTestContextService(), newTestPromptService(),
+				WithReplyWindowHook(func(context.Context, string, string, service.AnnotationResult) string { called = true; return "" }))
+			_, err := reg.Call(context.Background(), "mtix_annotate", json.RawMessage(tt.args))
+			require.ErrorIs(t, err, model.ErrInvalidInput)
+			assert.Contains(t, err.Error(), "author", "the error names the field to fix")
+			assert.False(t, called, "a refused send opens no window")
+		})
 	}
 }

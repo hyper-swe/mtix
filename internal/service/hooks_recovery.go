@@ -39,7 +39,7 @@ func (d *HooksDispatcher) refireStaleClaim(ctx context.Context, cfg hooks.Config
 	}
 	h, found := hookByName(cfg, claim.Hook)
 	event, ok, err := d.store.ReadJournalEventAt(ctx, claim.Seq)
-	if err == nil && ok && event.EventID != claim.EventID {
+	if err == nil && (!ok || event.EventID != claim.EventID) {
 		d.identityFenceMisses.Add(1)
 		return
 	}

@@ -270,7 +270,7 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 		}
 		if err := adapter.Deliver(ctx, adapterDel); err != nil {
 			switch d.adapterFailureOutcome(ctx, h, evt, name, err) {
-			case sqlite.OutcomeSkippedReplaced:
+			case outcomeHookDeliveryReplaced:
 				anyReplaced = true
 			case sqlite.OutcomeSkippedUntrusted:
 				anySkipped = true

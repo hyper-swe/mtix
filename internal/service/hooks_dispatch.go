@@ -47,6 +47,8 @@ type HooksDispatcher struct {
 	identityFenceMisses atomic.Uint64
 	// encodeEvent is per-dispatcher so encoding failures can be exercised in tests.
 	encodeEvent func(any) ([]byte, error)
+	// readJournal is bound per dispatcher so the floor/read boundary can be exercised.
+	readJournal func(context.Context, int64, int) ([]sqlite.JournalEvent, error)
 	approvals   *hooks.Approvals
 
 	// isDaemon marks this dispatcher as the daemon trigger — the only trigger
@@ -76,7 +78,7 @@ func NewHooksDispatcher(store *sqlite.Store, mtixDir string, logger *slog.Logger
 	// a hook can write a human-readable audit trail like FRONTIER-INBOX.md at the
 	// project top level (FR-19.3); the adapter clamps traversal to that base. The
 	// exec adapter is registered with independent per-hook approval decisions.
-	d := &HooksDispatcher{store: store, mtixDir: mtixDir, logger: logger, encodeEvent: json.Marshal}
+	d := &HooksDispatcher{store: store, mtixDir: mtixDir, logger: logger, encodeEvent: json.Marshal, readJournal: store.ReadJournalSince}
 	d.registry = hooks.NewRegistry(
 		&inboxAdapter{store: store, identityFenceMisses: &d.identityFenceMisses},
 		hooks.NewWebhookAdapter(hooks.ProcessOriginSource()),
@@ -137,7 +139,7 @@ func (d *HooksDispatcher) dispatchHooks(ctx context.Context) {
 		d.logger.Error("hook dispatch: read scan floor", "error", err)
 		return
 	}
-	events, err := d.store.ReadJournalSince(ctx, floor, 500)
+	events, err := d.readJournal(ctx, floor, 500)
 	if err != nil {
 		d.logger.Error("hook dispatch: read journal", "error", err)
 		return
@@ -146,7 +148,7 @@ func (d *HooksDispatcher) dispatchHooks(ctx context.Context) {
 	for _, je := range events {
 		d.claimAndFireMatching(ctx, cfg, je, execTrusted, execMode)
 	}
-	d.advanceHookSnapshot(ctx, events)
+	d.advanceHookSnapshot(ctx, floor, events)
 	if err := d.store.PruneHookDispatchLedger(ctx); err != nil {
 		d.logger.Error("hook dispatch: prune ledger", "error", err)
 	}

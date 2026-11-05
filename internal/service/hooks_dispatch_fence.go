@@ -20,8 +20,8 @@ func (d *HooksDispatcher) HookIdentityFenceMisses() uint64 {
 	return d.identityFenceMisses.Load()
 }
 
-func (d *HooksDispatcher) advanceHookSnapshot(ctx context.Context, events []sqlite.JournalEvent) {
-	misses, err := d.store.AdvanceHookScanFloorForEvents(ctx, events)
+func (d *HooksDispatcher) advanceHookSnapshot(ctx context.Context, floor int64, events []sqlite.JournalEvent) {
+	misses, err := d.store.AdvanceHookScanFloorForEvents(ctx, floor, events)
 	if err != nil {
 		d.logger.Error("hook dispatch: advance scan floor", "error", err)
 		return

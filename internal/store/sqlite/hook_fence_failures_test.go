@@ -26,7 +26,7 @@ func hookFenceOperation(ctx context.Context, s *sqlite.Store, events []sqlite.Jo
 		_, err := s.RecordHookDispatchEventOutcome(ctx, "fenced", event, sqlite.OutcomeDelivered)
 		return err
 	case "floor":
-		_, err := s.AdvanceHookScanFloorForEvents(ctx, events)
+		_, err := s.AdvanceHookScanFloorForEvents(ctx, 0, events)
 		return err
 	case "inbox":
 		_, err := s.RecordInboxDeliveryEvent(ctx, "recipient", event, "fenced")

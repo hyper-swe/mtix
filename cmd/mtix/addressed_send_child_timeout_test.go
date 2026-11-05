@@ -35,7 +35,7 @@ func TestAddressedSendChild_DefaultRunnerSuppliesFiveMinuteDeadline(t *testing.T
 	require.NotNil(t, observed)
 	deadline, ok := observed.Deadline()
 	require.True(t, ok, "the detached child runner must impose a deadline without its caller doing so")
-	assert.WithinDuration(t, start.Add(addressedPushTimeout), deadline, time.Second)
+	assert.WithinDuration(t, start.Add(5*time.Minute), deadline, time.Second)
 	assert.ErrorIs(t, observed.Err(), context.Canceled, "returning must release the deadline timer")
 }
 

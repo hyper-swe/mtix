@@ -175,7 +175,7 @@ func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult, mirro
 		return nil, fmt.Errorf("stat database: %w", err)
 	}
 
-	db, err := openSQLite(dbPath, "mode=ro")
+	db, err := sql.Open("sqlite", dbPath+"?mode=ro")
 	if err != nil {
 		return nil, fmt.Errorf("open read-only: %w", err)
 	}

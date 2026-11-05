@@ -172,8 +172,6 @@ type ReplyStatus struct {
 	DailyCapSecs        int64                 `json:"daily_cap_secs,omitempty"`
 	ExtensionsPerHour   int64                 `json:"extensions_per_hour,omitempty"`
 	CapSpent            bool                  `json:"cap_spent,omitempty"`
-	// SkippedWindows counts malformed windows the scan removed recently.
-	SkippedWindows int `json:"skipped_windows,omitempty"`
 }
 
 // ReplyStatusAt summarizes open windows, active holds and remote-held time
@@ -186,11 +184,6 @@ func ReplyStatusAt(st oplocal.ReplyState, p ReplyPolicy, now time.Time) ReplySta
 	out := ReplyStatus{DailyCapSecs: p.DailyCapSecs, ExtensionsPerHour: p.ExtensionsPerHour,
 		CapSpent: spent || (p.DailyCapSecs > 0 && view.HeldSecs >= p.DailyCapSecs), RemoteHeldSecsToday: view.HeldSecs,
 		OpenWindows: []oplocal.ReplyWindow{}, ActiveHolds: []oplocal.ReplyHold{}}
-	for _, sk := range st.Skipped {
-		if now.Sub(sk.At) < skippedWindowAge {
-			out.SkippedWindows++
-		}
-	}
 	for _, w := range st.Windows {
 		if now.Before(w.ReplyBy) {
 			out.OpenWindows = append(out.OpenWindows, w)

@@ -153,17 +153,3 @@ func TestCommentCmd_AwaitReplyFlag_AllThreeSpellings(t *testing.T) {
 	assert.Equal(t, "default", cmd.Flags().Lookup("await-reply").NoOptDefVal)
 	assert.Contains(t, cmd.Long, "default 1h, at most 8h")
 }
-
-func TestRunComment_AwaitReply_BlankAuthor_RefusedAndWritesNothing(t *testing.T) {
-	initTestApp(t)
-	id := seedOneNode(t)
-	app.authorID = "  "
-	err := runCommentWith(id, "q", commentOptions{To: "peer", Await: "30m", AwaitSet: true})
-	require.ErrorIs(t, err, model.ErrInvalidInput)
-	assert.Contains(t, err.Error(), "author")
-	n, _ := replyWindowsOf(t)
-	assert.Zero(t, n)
-	evs, err := app.store.ReplyByEvents(context.Background(), 0, 10)
-	require.NoError(t, err)
-	assert.Empty(t, evs)
-}

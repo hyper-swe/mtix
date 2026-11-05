@@ -94,14 +94,13 @@ func windowsRuntimeSteps() []any {
 		map[string]any{"name": windowsAlertsStepName, "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsAlertsScript()},
 		windowsDurabilityStep(),
 		map[string]any{"name": windowsLivenessStepName, "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsLivenessScript()},
-		map[string]any{"name": windowsSQLitePathStepName, "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "run": windowsSQLitePathScript()},
 		map[string]any{"name": "Record attempt duration", "env": map[string]any{"MTIX_WINDOWS_CAPTURE_DIR": windowsRuntimeDir}, "if": "${{ always() }}", "run": windowsRuntimeDurationScript},
 		map[string]any{"name": "Preserve explicit runtime evidence", "if": "${{ always() }}", "uses": "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9", "with": windowsRuntimeArtifactInputs()},
 	}
 }
 
 func windowsRuntimeArtifactInputs() map[string]any {
-	paths := []string{"capture.json", "oplocal.json", "hooks.json", "hooks-launch.json", "toolchain.json", "duration.json", "started.txt", "named-locks.json", "dispatch-lock.json", "named-lock-exits.json", "alerts.json", "alerts-doctor.json", "durability.json", "durability.cover", "durability-process.json", "durability-runtime.json", "liveness.json", "sqlite-paths.json"}
+	paths := []string{"capture.json", "oplocal.json", "hooks.json", "hooks-launch.json", "toolchain.json", "duration.json", "started.txt", "named-locks.json", "dispatch-lock.json", "named-lock-exits.json", "alerts.json", "alerts-doctor.json", "durability.json", "durability.cover", "durability-process.json", "durability-runtime.json", "liveness.json"}
 	for i := range paths {
 		paths[i] = windowsRuntimeDir + "/" + paths[i]
 	}
@@ -186,9 +185,9 @@ func windowsRuntimeJob(wf map[string]any) map[string]any {
 
 func windowsRuntimeStep(wf map[string]any, index int) map[string]any {
 	// Existing contract controls retain their original duration/artifact identities;
-	// the alerts, durability, liveness and SQLite path steps sit between the ACL step and them.
+	// the alerts, durability and liveness steps sit between the ACL step and them.
 	if index >= 6 {
-		index += 4
+		index += 3
 	}
 	return windowsRuntimeJob(wf)["steps"].([]any)[index].(map[string]any)
 }

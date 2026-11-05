@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
-	"strings"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/format"
@@ -116,7 +115,7 @@ type AnnotationResult struct {
 
 // AddAnnotationRequest is AddAnnotation with an optional reply window
 // (MTIX-112.20.3, ADR-007 X6). Returns ErrInvalidInput when AwaitReply is set
-// without an addressee or an author.
+// without an addressee.
 func (svc *PromptService) AddAnnotationRequest(ctx context.Context, req AnnotationRequest) (AnnotationResult, error) {
 	addressee := req.Addressee
 	if addressee == "" {
@@ -126,12 +125,6 @@ func (svc *PromptService) AddAnnotationRequest(ctx context.Context, req Annotati
 	res.Addressee = addressee
 	if req.AwaitReply < 0 || (req.AwaitReply > 0 && addressee == "") {
 		return res, fmt.Errorf("await-reply needs an addressee (--to) and a positive duration: %w", model.ErrInvalidInput)
-	}
-	// A reply window is keyed on the sender, so a blank author could never be
-	// answered and would stall the reply scan (MTIX-112.20.3.5); refuse before
-	// anything is stored.
-	if req.AwaitReply > 0 && strings.TrimSpace(req.Author) == "" {
-		return res, fmt.Errorf("await-reply needs an author (the sender's agent id): %w", model.ErrInvalidInput)
 	}
 
 	now := svc.clock()

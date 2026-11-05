@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,9 +56,14 @@ func TestHooksDispatcher_EncoderError_RecordsErrorWithoutDelivery(t *testing.T) 
 			adapters := []*encodingCaptureAdapter{{name: hooks.AdapterInbox}, {name: hooks.AdapterExec}, {name: hooks.AdapterWebhook}, {name: hooks.AdapterAppendFile}}
 			d.registry = hooks.NewRegistry(adapters[0], adapters[1], adapters[2], adapters[3])
 			h := hooks.Hook{Name: "encode-failure", Deliver: []string{hooks.AdapterInbox, hooks.AdapterExec, hooks.AdapterWebhook, hooks.AdapterAppendFile}}
-			je := sqlite.JournalEvent{Seq: 42}
-			evt := hooks.Event{Seq: je.Seq, Name: hooks.EventNodeCreated, NodeID: "TEST-1"}
 			ctx := context.Background()
+			nodes := NewNodeService(d.store, nil, nil, d.logger, time.Now)
+			_, err := nodes.CreateNode(ctx, &CreateNodeRequest{Project: "TEST", Title: "encoding failure", Creator: "worker"})
+			require.NoError(t, err)
+			je, ok, err := d.store.ReadJournalEventAt(ctx, 1)
+			require.NoError(t, err)
+			require.True(t, ok)
+			evt := NormalizeEvent(je)
 			won, err := d.store.ClaimHookDispatch(ctx, h.Name, je.Seq, hookClaimLease)
 			require.NoError(t, err)
 			require.True(t, won)

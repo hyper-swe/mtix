@@ -399,7 +399,7 @@ Every PR must pass all 23 of its checks (full Linux matrix plus one macOS job) a
 every main push and nightly run all 29 (fourteen Go race shards and the strict
 `test-go` aggregate). A red macOS run on main blocks merges until it is fixed: the PR check is
 advisory, and the merger runs `scripts/main-macos-health.sh` immediately before
-every merge (exact command in the CI gates doc). Label the repairing PR
+every merge, from the copy on `origin/main` (exact command in the CI gates doc). Label the repairing PR
 `main-macos-fix`, then push a new commit so the check sees it. See [CI and release gates](docs/CI-GATES.md)
 for package coverage, failure handling, merge checks and release gates.
 

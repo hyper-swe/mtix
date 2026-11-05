@@ -46,27 +46,41 @@ macOS job is red. The script runs in two places.
    is green, and the ruleset (25175194) is not strict, so a PR whose `test-go`
    passed before main turned red could still merge. Changing the ruleset is out
    of scope. Instead the merger runs the script standalone with gh credentials
-   immediately before EVERY merge (merge train and admin merges alike):
+   immediately before EVERY merge (merge train and admin merges alike). The
+   command runs the copy of the script and its expected-job list on
+   `origin/main` as fetched at merge time, never the PR branch's or a stale
+   local copy, from any checkout of the repository (replace `<PR>`):
 
+   <!-- merge-gate-command -->
    ```
-   GITHUB_REPOSITORY=hyper-swe/mtix \
-     PR_LABELS="$(gh pr view <PR> --json labels --jq '[.labels[].name]')" \
-     bash scripts/main-macos-health.sh
+   ( git fetch origin main && d=$(mktemp -d) &&
+     git archive origin/main scripts/main-macos-health.sh scripts/main-macos-expected-jobs.txt | tar -x -C "$d" &&
+     GITHUB_REPOSITORY=hyper-swe/mtix PR_LABELS="$(gh pr view <PR> --json labels --jq '[.labels[].name]')" \
+       bash "$d/scripts/main-macos-health.sh"; rc=$?
+     rm -f "$d/scripts/main-macos-health.sh" "$d/scripts/main-macos-expected-jobs.txt"
+     rmdir "$d/scripts" "$d"; exit "$rc" )
    ```
 
    Exit 0 is the only go. A red, unknown or failing result (non-zero exit, API
-   error, no output) stops the merge.
+   error, no output) stops the merge. The one exception is the PR that
+   introduces the script: `origin/main` has no copy yet, the command fails, and
+   that PR merges through the override label after its own review.
 
 Policy, newest `push` or `schedule` run first (other events never count):
 
-- Completed and not cancelled: judge it (see above).
-- Completed and cancelled: red if a macOS job in its latest attempt failed or
-  timed out; otherwise skipped, for at most 3 runs, then fail closed.
+- Jobs are read per run attempt (`actions/runs/ID/attempts/N/jobs`) and
+  de-duplicated by job name to the highest `run_attempt`, because the jobs API
+  has been seen returning rows of two attempts together.
+- Latest attempt completed and not cancelled: judge it (see above).
+- Latest attempt cancelled, or a re-run in progress (`run_attempt` above 1): judge
+  the previous attempt, walking down past attempts that were themselves
+  cancelled. A red earlier attempt stays red, so cancelling a re-run does not
+  clear a red main; if no attempt has a result, fail closed.
+- First attempt cancelled: red if a macOS job failed or timed out; otherwise
+  skipped, for at most 3 runs, then fail closed.
 - First attempt still in progress: not judged. A run in progress is not red;
   this is an accepted residual, and the next merge after it finishes sees the
   result.
-- A re-run in progress (`run_attempt` above 1) is judged by its previous
-  attempt, and fails closed unless that attempt was green.
 - Fail closed on any API error (the gh message is printed), unreadable data, or
   no run to judge.
 - Override: a maintainer labels the PR that repairs `main` with `main-macos-fix`

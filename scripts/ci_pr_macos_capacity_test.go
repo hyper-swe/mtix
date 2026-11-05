@@ -208,10 +208,20 @@ func TestCIWorkflow_MainMacOSHealth_RunsBaseScriptOnlyOnPullRequestsWithoutOverr
 	require.Equal(t, notOverridden, job.Steps[health].If)
 	require.Equal(t, overridden, job.Steps[note].If)
 
+	var names []string
+	for _, step := range job.Steps {
+		names = append(names, step.Name)
+	}
+	require.Equal(t, []string{
+		"Check out the base branch's health script", "Require every Go shard to succeed",
+		"Note the main macOS override", "Require main macOS CI to be green",
+	}, names, "test-go must hold exactly these steps in this order; no other checkout may replace the base script")
 	co := job.Steps[checkout]
 	require.True(t, strings.HasPrefix(co.Uses, "actions/checkout@"))
-	require.Equal(t, "${{ github.event.pull_request.base.sha }}", co.With["ref"], "gate script must come from the base, not the PR")
-	require.Equal(t, false, co.With["persist-credentials"])
+	require.Equal(t, map[string]any{
+		"ref":                 "${{ github.event.pull_request.base.sha }}",
+		"persist-credentials": false,
+	}, co.With, "gate script must come from the base, with no path, repository or token override")
 
 	h := job.Steps[health]
 	require.Nil(t, h.ContinueOnError)

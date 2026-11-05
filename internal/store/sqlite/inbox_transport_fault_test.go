@@ -30,15 +30,19 @@ func (c *inboxFaultConn) QueryContext(ctx context.Context, query string, args []
 	if err != nil {
 		return nil, err
 	}
-	return &inboxFaultRows{Rows: rows, stage: c.stage}, nil
+	return &inboxFaultRows{Rows: rows, stage: c.stage, point: query == salvageInboxSQL}, nil
 }
 
 type inboxFaultRows struct {
 	driver.Rows
 	stage string
+	point bool
 }
 
 func (r *inboxFaultRows) Next(values []driver.Value) error {
+	if r.point && r.stage == "iteration" {
+		return errSnapshotRead
+	}
 	err := r.Rows.Next(values)
 	if r.stage == "iteration" && errors.Is(err, io.EOF) {
 		return errSnapshotRead
@@ -76,9 +80,8 @@ func TestExportWithInbox_ReadFault_NeverPublishesPartialExport(t *testing.T) {
 			report := &RecoverResult{}
 			salvaged, err := salvageInboxRows(t.Context(), wrapped, report)
 			if stage == "scan" {
-				require.NoError(t, err)
+				require.ErrorContains(t, err, "1 unreadable sync event record(s)")
 				require.Empty(t, salvaged.Events)
-				require.Contains(t, report.Notes[0], "1 unreadable comment record(s)")
 			} else {
 				require.ErrorIs(t, err, errSnapshotRead)
 			}

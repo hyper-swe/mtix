@@ -27,6 +27,7 @@ func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (*Inb
 	var records []salvageMail
 	loss := inboxLoss{}
 	unreadable := 0
+	var firstReadErr error
 	for _, seq := range keys {
 		if ctx.Err() != nil {
 			keyErr = errors.Join(keyErr, ctx.Err())
@@ -38,6 +39,9 @@ func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (*Inb
 		err := db.QueryRowContext(ctx, salvageInboxSQL, seq).Scan(&e.EventID, &e.Project, &e.NodeID, &e.UID, &e.Author, &e.Payload, &e.CreatedAt, &r.seq, &op)
 		if err != nil {
 			unreadable++
+			if firstReadErr == nil {
+				firstReadErr = err
+			}
 			continue
 		}
 		if op == "comment" && loss.keep(*e) {
@@ -46,7 +50,7 @@ func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (*Inb
 	}
 	res.Notes = append(res.Notes, loss.notes()...)
 	if unreadable > 0 {
-		keyErr = errors.Join(keyErr, fmt.Errorf("%d unreadable sync event record(s) omitted; addressed-mail loss among these records unknown", unreadable))
+		keyErr = errors.Join(keyErr, firstReadErr, fmt.Errorf("%d unreadable sync event record(s) omitted; addressed-mail loss among these records unknown", unreadable))
 	}
 	restoreSalvageCoverage(ctx, db, records, journal, res)
 	return journal, keyErr

@@ -150,8 +150,10 @@ func TestRunDaemon_SurfacesFailClosedDSNError(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv(transport.EnvDSN, "")
 	// 0644 on .mtix/secrets violates the 0600 requirement → ErrSecretsFileMode.
-	require.NoError(t, os.WriteFile(filepath.Join(dir, transport.SecretsFilename),
-		[]byte("postgres://u:p@h/d"), 0o644))
+	secretsPath := filepath.Join(dir, transport.SecretsFilename)
+	require.NoError(t, os.WriteFile(secretsPath, []byte("postgres://u:p@h/d"), 0o644))
+	// WriteFile applies the umask; force the loose mode this test depends on (MTIX-238).
+	require.NoError(t, os.Chmod(secretsPath, 0o644)) //nolint:gosec // deliberately too-loose for the test
 
 	store := newDaemonTestStore(t, dir)
 	saved := app

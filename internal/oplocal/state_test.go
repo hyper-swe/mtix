@@ -105,7 +105,10 @@ func TestReadJSON_InvalidRecord_ReturnsSentinel(t *testing.T) {
 			if tc.mode == 0644 {
 				body = fmt.Sprintf(body, id)
 			}
-			require.NoError(t, os.WriteFile(filepath.Join(s.pathForTest(t), "hooks.json"), []byte(body), tc.mode))
+			recordPath := filepath.Join(s.pathForTest(t), "hooks.json")
+			require.NoError(t, os.WriteFile(recordPath, []byte(body), tc.mode))
+			// WriteFile applies the umask; force the exact mode under test (MTIX-238).
+			require.NoError(t, os.Chmod(recordPath, tc.mode)) //nolint:gosec // exact mode under test, may be too-loose
 			var got map[string]int
 			_, err = s.ReadJSON("hooks", &got)
 			require.ErrorIs(t, err, model.ErrOperatorStateUnreadable)

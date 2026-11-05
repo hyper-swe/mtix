@@ -50,7 +50,7 @@ func TestInboxListing_HostileEvents_NoControlBytes(t *testing.T) {
 	events := hostileInbox()
 	var errOut string
 	out := captureStdout(t, func() {
-		errOut = captureStderr(t, func() { require.NoError(t, writeInbox("dev", "", events)) })
+		errOut = captureStderr(t, func() { require.NoError(t, writeInbox("dev", "plain", events)) })
 	})
 	assert.Empty(t, terminalViolation(out), "stdout")
 	assert.Empty(t, terminalViolation(errOut), "stderr")
@@ -62,7 +62,7 @@ func TestInboxListing_HostileEvents_NoControlBytes(t *testing.T) {
 func TestInboxListing_ForgedBody_CannotPassForEntryOrAckLine(t *testing.T) {
 	initTestApp(t)
 	events := hostileInbox()
-	out := captureStdout(t, func() { require.NoError(t, writeInbox("dev", "", events)) })
+	out := captureStdout(t, func() { require.NoError(t, writeInbox("dev", "plain", events)) })
 	var entries, acks int
 	for _, line := range strings.Split(strings.TrimSuffix(out, "\n"), "\n") {
 		switch {
@@ -96,7 +96,7 @@ func TestInboxJSON_HostileEvents_AuthorAndBodyByteExact(t *testing.T) {
 	initTestApp(t)
 	app.jsonOutput = true
 	events := hostileInbox()
-	out := captureStdout(t, func() { require.NoError(t, writeInbox("dev", "", events)) })
+	out := captureStdout(t, func() { require.NoError(t, writeInbox("dev", "plain", events)) })
 	var got []sqlite.InboxEvent
 	require.NoError(t, json.Unmarshal([]byte(out), &got))
 	require.Len(t, got, len(events))

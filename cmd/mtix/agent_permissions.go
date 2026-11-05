@@ -64,30 +64,35 @@ func runAgentPermission(agent, action string, yes bool) error {
 }
 
 func configuredPermissions() (*service.WakePermissions, service.PermissionBoard, error) {
+	svc, board, _, err := configuredPermissionState()
+	return svc, board, err
+}
+
+// configuredPermissionState also returns the operator state and host scope the
+// inbox budget needs (ADR-007 A12).
+func configuredPermissionState() (*service.WakePermissions, service.PermissionBoard, service.PermissionDeps, error) {
 	if app.store == nil || app.mtixDir == "" {
-		return nil, service.PermissionBoard{}, fmt.Errorf("not in an mtix project")
+		return nil, service.PermissionBoard{}, service.PermissionDeps{}, fmt.Errorf("not in an mtix project")
 	}
 	env, err := oplocal.FromProcess()
 	if err != nil {
-		return nil, service.PermissionBoard{}, err
+		return nil, service.PermissionBoard{}, service.PermissionDeps{}, err
 	}
 	state := oplocal.New(env)
 	host, err := state.HostID()
 	if err != nil {
-		return nil, service.PermissionBoard{}, err
+		return nil, service.PermissionBoard{}, service.PermissionDeps{}, err
 	}
 	uid, err := currentUserID()
 	if err != nil {
-		return nil, service.PermissionBoard{}, err
+		return nil, service.PermissionBoard{}, service.PermissionDeps{}, err
 	}
 	board, err := permissionBoard(state)
 	if err != nil {
-		return nil, board, err
+		return nil, board, service.PermissionDeps{}, err
 	}
-	svc := service.NewWakePermissions(service.PermissionDeps{
-		Store: app.store, State: state, HostID: host, UID: uid, Clock: time.Now,
-	})
-	return svc, board, nil
+	deps := service.PermissionDeps{Store: app.store, State: state, HostID: host, UID: uid, Clock: time.Now}
+	return service.NewWakePermissions(deps), board, deps, nil
 }
 
 func permissionBoard(state *oplocal.State) (service.PermissionBoard, error) {

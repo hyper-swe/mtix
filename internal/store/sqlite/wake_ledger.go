@@ -46,7 +46,7 @@ func (s *Store) claimWake(ctx context.Context, key model.WakeKey, lease time.Dur
 			return fmt.Errorf("wake attempt fence was not fresh: %w", model.ErrConflict)
 		}
 		result = model.WakeAttempt{Key: key, Token: fence, ClaimedAt: now}
-		return writeWakeAttempt(ctx, tx, result)
+		return writeWakeAttempt(ctx, tx, result, false)
 	})
 	if err != nil {
 		return model.WakeAttempt{}, false, fmt.Errorf("claim wake: %w", err)
@@ -83,14 +83,20 @@ func readWakeAttempt(ctx context.Context, tx *sql.Tx, key model.WakeKey) (model.
 	return attempt, outcome, true, nil
 }
 
-func writeWakeAttempt(ctx context.Context, tx *sql.Tx, attempt model.WakeAttempt) error {
+// writeWakeAttempt records a claim; charged says the wake budget admitted and
+// charged it, which the inbox read uses to avoid charging the event again.
+func writeWakeAttempt(ctx context.Context, tx *sql.Tx, attempt model.WakeAttempt, charged bool) error {
 	k := attempt.Key
+	chargedFlag := 0
+	if charged {
+		chargedFlag = 1
+	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO wake_ledger
-		(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome,attempt_token) VALUES(?,?,?,?,?,?,?,?)
+		(agent_id,host_id,uid,event_seq,epoch,claimed_at,outcome,attempt_token,charged) VALUES(?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(agent_id,host_id,uid,event_seq,epoch) DO UPDATE SET
-		claimed_at=excluded.claimed_at,outcome=excluded.outcome,attempt_token=excluded.attempt_token,
+		claimed_at=excluded.claimed_at,outcome=excluded.outcome,attempt_token=excluded.attempt_token,charged=excluded.charged,
 		route='',reason='',outcome_at=''`,
-		k.AgentID, k.HostID, k.UID, k.EventSeq, k.Epoch, attempt.ClaimedAt.Format(time.RFC3339Nano), model.WakeClaimed, attempt.Token)
+		k.AgentID, k.HostID, k.UID, k.EventSeq, k.Epoch, attempt.ClaimedAt.Format(time.RFC3339Nano), model.WakeClaimed, attempt.Token, chargedFlag)
 	return checkWakeWrite(result, err, "write wake attempt")
 }
 

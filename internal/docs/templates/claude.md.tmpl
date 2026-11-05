@@ -154,6 +154,8 @@ Operator alerts: inspect `alerts.recent` with `mtix sync doctor --json`, follow 
 
 <!-- AUTO-GENERATED: WAKE_ROUTINE -->
 
+Held inbox events: on a hub or relay board, inbox reads (CLI, session hook, MCP) return only events for ids your operator confirmed and report the rest as a count on stderr (`N held: ask your operator ...`). Tell your operator; never try to read held bodies. A wait that returns nothing exits 5: re-arm it. `mtix doctor` row `inbox.held` prints the fix.
+
 ## Read-only inbox counts
 
 Use `mtix inbox --agent <agent-id> --count` for pending work, or

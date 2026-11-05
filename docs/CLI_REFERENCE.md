@@ -1181,8 +1181,9 @@ the body.
 | `--agent` |  | Agent id whose inbox to read (required) |  |
 | `--all` |  | With --count, print total retained events including acknowledged events | false |
 | `--count` |  | Print pending count without acknowledging or touching sessions | false |
-| `--format` |  | Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection) |  |
+| `--format` |  | Output: default is the quoted envelope; 'plain' is the old listing; 'prompt' (wake payload) or 'context' (hook injection) |  |
 | `--history` |  | List every event ever addressed to the agent with its ack state and time (read-only, local, no hub contact) | false |
+| `--include-held` |  | Also show events the wake policy holds (refused inside an agent harness session) | false |
 | `--timeout` |  | Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused) | 300 |
 | `--wait` |  | Long-poll: block until an event arrives or --timeout | false |
 

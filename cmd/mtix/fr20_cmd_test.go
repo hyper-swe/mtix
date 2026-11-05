@@ -59,7 +59,7 @@ func TestWriteInbox_AllFormats(t *testing.T) {
 	})
 	t.Run("human", func(t *testing.T) {
 		app.jsonOutput = false
-		out := captureStdout(t, func() { require.NoError(t, writeInbox("dev", "", events)) })
+		out := captureStdout(t, func() { require.NoError(t, writeInbox("dev", "plain", events)) })
 		assert.Contains(t, out, "ack with: mtix inbox ack 7")
 	})
 	t.Run("human empty", func(t *testing.T) {

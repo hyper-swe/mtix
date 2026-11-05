@@ -169,6 +169,9 @@ func (in *hookInputs) readArgument(i int, arg string) (scriptInput, bool, error)
 	if err != nil {
 		return scriptInput{}, false, err
 	}
+	if !inside {
+		rel, inside = physicalScriptLocation(in.root, value)
+	}
 	if inside {
 		if linkErr := scriptComponents(in.root, rel); linkErr != nil {
 			return scriptInput{}, false, linkErr
@@ -220,6 +223,27 @@ func projectScriptLocation(logicalRoot, root, arg string) (string, bool, error) 
 		return "", false, fmt.Errorf("script location: %w", err)
 	}
 	return rel, rel != ".." && !filepath.IsAbs(rel) && !slices.Contains(splitPath(rel), ".."), nil
+}
+
+// physicalScriptLocation classes a path the text check called outside by where
+// it physically lands: a path spelled through an alias or a case variant of
+// the project root is pinned like any project file. It uses the same
+// resolution and identity check as the launch-time projectPath. A path whose
+// own last component is a link stays unpinned: a link to a project file keeps
+// being refused rather than adopted.
+func physicalScriptLocation(root, arg string) (string, bool) {
+	path := arg
+	if !filepath.IsAbs(path) {
+		path = root + string(filepath.Separator) + arg
+	}
+	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", false
+	}
+	resolved, complete := resolveDeepestStatus(path, 0)
+	if !complete {
+		return "", false
+	}
+	return rootRelative(root, resolved)
 }
 
 func (s *hookSnapshot) combinedError() error {

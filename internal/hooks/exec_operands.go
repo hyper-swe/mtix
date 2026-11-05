@@ -369,25 +369,39 @@ func projectPath(logical, root, value string) (resolved string, lexical, inside 
 	return resolved, lexical, lexical || byName || underRoot(root, resolved)
 }
 
-// underRoot reports whether path is the project root or lies under it by file
-// identity: some existing ancestor of path is the same file as root. A string
-// comparison alone is wrong on a case-insensitive volume, where a case-variant
-// spelling names the same file.
-func underRoot(root, path string) bool {
+// rootRelative reports where path lies under root by file identity: some
+// existing ancestor of path is the same file as root, and rel is the rest of
+// the path below that ancestor ("." for the root itself). A string comparison
+// alone is wrong on a case-insensitive volume or through an alias of the
+// root, where a different spelling names the same file (FR-19.2). It is the
+// one physical-location check, shared by launch and approval.
+func rootRelative(root, path string) (rel string, ok bool) {
 	rootInfo, err := os.Stat(root)
 	if err != nil {
-		return false
+		return "", false
 	}
+	var tail []string
 	for current := filepath.Clean(path); ; {
 		if info, statErr := os.Stat(current); statErr == nil && os.SameFile(rootInfo, info) {
-			return true
+			if len(tail) == 0 {
+				return ".", true
+			}
+			return filepath.Join(tail...), true
 		}
 		parent := filepath.Dir(current)
 		if parent == current {
-			return false
+			return "", false
 		}
+		tail = append([]string{filepath.Base(current)}, tail...)
 		current = parent
 	}
+}
+
+// underRoot reports whether path is the project root or lies under it by file
+// identity.
+func underRoot(root, path string) bool {
+	_, ok := rootRelative(root, path)
+	return ok
 }
 
 // checkOperands refuses a launch that would run, by path, a file that is not

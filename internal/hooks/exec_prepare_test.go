@@ -35,6 +35,7 @@ type fixtureOptions struct {
 	linked     bool              // enter the project through a symlink
 	unapproved bool              // do not approve the hook
 	toAgent    string            // match.to-agent of the hook
+	aliased    bool              // "{A}" names the project through a link kept outside it
 }
 
 // newPrepareFixture builds an approved exec hook with the given flow-style
@@ -76,6 +77,13 @@ func newFixture(t *testing.T, command string, opts fixtureOptions) prepareFixtur
 		path := filepath.Join(root, name)
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 		require.NoError(t, os.WriteFile(path, []byte(content), 0o700))
+	}
+	if opts.aliased {
+		alias, aerr := filepath.EvalSymlinks(t.TempDir())
+		require.NoError(t, aerr)
+		alias = filepath.Join(alias, "alias")
+		require.NoError(t, os.Symlink(root, alias))
+		command = strings.ReplaceAll(command, "{A}", alias)
 	}
 	command = strings.ReplaceAll(command, "{L}", logical)
 	match := "{events: [comment.addressed]}"

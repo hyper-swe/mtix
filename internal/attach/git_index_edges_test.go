@@ -5,10 +5,12 @@ package attach
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -119,5 +121,94 @@ func TestDetectCheckout_UnreadableAndRelativeGitFile_Handled(t *testing.T) {
 	writeFile(t, filepath.Join(bareAdmin, "gitdir"), filepath.Join(w2, ".git")+"\n")
 	got, err = DetectCheckout(w2)
 	require.NoError(t, err)
-	assert.Equal(t, CheckoutNone, got.Kind)
+	assert.Equal(t, CheckoutInvalid, got.Kind)
+}
+
+func TestScanStoreInIndex_TrackedSymlinkOverStorePath_ReportsAncestor(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries []idxEntry
+		want    string
+	}{
+		{"symlink at .mtix", []idxEntry{{path: ".mtix", mode: 0o120000}}, TrackedAncestor},
+		{"symlink at .mtix/data", []idxEntry{{path: ".mtix/data", mode: 0o120000}}, TrackedAncestor},
+		{"gitlink at .mtix", []idxEntry{{path: ".mtix", mode: 0o160000}}, TrackedAncestor},
+		{"store file", []idxEntry{{path: ".mtix/data/mtix.db"}}, TrackedStore},
+		{"only tasks.json", []idxEntry{{path: ".mtix/tasks.json"}}, TrackedNone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gitDir := filepath.Join(t.TempDir(), ".git")
+			writeIndex(t, gitDir, buildIndex(2, tt.entries))
+			got, err := ScanStoreInIndex(gitDir, storeRel)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestScanStoreInIndex_SparseDirInsideStoreDir_FailsClosedWithCause(t *testing.T) {
+	gitDir := filepath.Join(t.TempDir(), ".git")
+	writeIndex(t, gitDir, buildIndex(3, []idxEntry{{path: ".mtix/data/sub/", mode: 0o040000}}, ext("sdir", nil)))
+	_, err := ScanStoreInIndex(gitDir, storeRel)
+	var ie *IndexError
+	require.ErrorAs(t, err, &ie)
+	assert.Equal(t, CauseSparse, ie.Cause)
+	require.ErrorIs(t, err, ErrIndexUnsupported)
+}
+
+func TestScanStoreInIndex_Causes_AreTyped(t *testing.T) {
+	tests := []struct {
+		name  string
+		raw   []byte
+		cause string
+	}{
+		{"unknown extension", buildIndex(2, nil, ext("XYZW", nil)), CauseExtension},
+		{"unknown version", buildIndex(9, nil), CauseVersion},
+		{"malformed", []byte("not an index at all, just text........"), CauseMalformed},
+		{"split base missing", buildIndex(2, nil, ext("link", append(bytes.Repeat([]byte{7}, 20), make([]byte, 8)...))), CauseSplitBase},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gitDir := filepath.Join(t.TempDir(), ".git")
+			writeIndex(t, gitDir, tt.raw)
+			_, err := ScanStoreInIndex(gitDir, storeRel)
+			var ie *IndexError
+			require.ErrorAs(t, err, &ie)
+			assert.Equal(t, tt.cause, ie.Cause)
+		})
+	}
+}
+
+// A crafted v4 index: one huge name, then many entries that each strip one byte
+// and add one. Rebuilding every name copied the whole previous path, which ran
+// for minutes inside the size cap; the path cap fails it closed at once.
+func TestIndexReader_V4HugePathQuadratic_FailsClosedWithinDeadline(t *testing.T) {
+	var b bytes.Buffer
+	b.WriteString("DIRC")
+	_ = binary.Write(&b, binary.BigEndian, uint32(4))
+	const n = 200000
+	_ = binary.Write(&b, binary.BigEndian, uint32(n+1))
+	writeEntry := func(strip byte, name []byte) {
+		b.Write(make([]byte, 62))
+		b.WriteByte(strip)
+		b.Write(name)
+		b.WriteByte(0)
+	}
+	writeEntry(0, bytes.Repeat([]byte("a"), 8<<20))
+	for i := 0; i < n; i++ {
+		writeEntry(1, []byte("b"))
+	}
+	b.Write(make([]byte, 20))
+	gitDir := filepath.Join(t.TempDir(), ".git")
+	writeIndex(t, gitDir, b.Bytes())
+
+	done := make(chan error, 1)
+	go func() { _, err := ScanStoreInIndex(gitDir, storeRel); done <- err }()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, ErrIndexUnsupported)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the crafted v4 index kept the reader busy for over 10 seconds")
+	}
 }

@@ -66,7 +66,7 @@ func (s *Store) readAttachMeta(ctx context.Context, key string) (string, bool, e
 // not migrate, create or write anything). The result is empty for a legacy
 // store with no identity. A missing, empty or non-database file is an error,
 // never a new database (MTIX-112.19.8).
-func ReadStoreInstanceIDFile(ctx context.Context, dbPath string) (string, error) {
+func ReadStoreInstanceIDFile(ctx context.Context, dbPath string) (id string, retErr error) {
 	info, err := os.Stat(dbPath)
 	if err != nil {
 		return "", fmt.Errorf("read store identity: %w", err)
@@ -78,7 +78,11 @@ func ReadStoreInstanceIDFile(ctx context.Context, dbPath string) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("open store read-only: %w", err)
 	}
-	defer func() { _ = db.Close() }()
+	defer func() {
+		if closeErr := db.Close(); retErr == nil && closeErr != nil {
+			id, retErr = "", fmt.Errorf("close store read-only: %w", closeErr)
+		}
+	}()
 	var value string
 	err = db.QueryRowContext(ctx, "SELECT value FROM meta WHERE key=?", "store_instance_id").Scan(&value)
 	if errors.Is(err, sql.ErrNoRows) {

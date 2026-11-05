@@ -88,29 +88,31 @@ func (d attachDeps) hasGlueWriter(harness string) bool {
 	return d.glueWriter != nil && d.glueWriter(harness)
 }
 
-// admitGlue runs the attach predicate. When it declines, the verb prints the
-// one not-attached line and nothing else changes. When it passes, a
-// session-start first drains the board's pending attach queue through the
-// dispatcher's validating drain, so forged rows are dropped and the first
-// session on a sandbox discovers its queue (MTIX-112.19.8, ADR-007 A5). An
-// unwired predicate does not act.
-func admitGlue(ctx context.Context, deps attachDeps, req attach.VerbRequest) bool {
-	var decision attach.GlueDecision
-	if deps.glue != nil {
-		decision = deps.glue(ctx)
+// glueDecision runs the attach predicate; an unwired predicate does not act.
+func (d attachDeps) glueDecision(ctx context.Context) attach.GlueDecision {
+	if d.glue == nil {
+		return attach.GlueDecision{Reason: attach.ReasonStateUnavailable, Line: attach.NotAttachedLine}
 	}
-	if !decision.Act {
-		_, _ = fmt.Fprintln(req.Stderr, attach.NotAttachedLine)
-		return false
+	return d.glue(ctx)
+}
+
+// drainAttachQueue drains the attached board's pending attach queue on a
+// session-start, after the handshake accepted the request, through the
+// dispatcher's validating drain: rows queued by a registration inside a
+// sandbox are applied and forged rows are dropped (MTIX-112.19.8). It only ever
+// runs for a board the predicate matched, so a queue in a directory that is not
+// listed is never read; listing such a board stays with host-side consent
+// (ADR-007 A5, MTIX-112.19.2), because repository content must not activate a
+// host. Doctor reports a stranded list row (glue.stranded-queue).
+func drainAttachQueue(ctx context.Context, deps attachDeps, req attach.VerbRequest, decision attach.GlueDecision) {
+	if req.Verb != attach.VerbSessionStart || deps.drain == nil {
+		return
 	}
-	if req.Verb == attach.VerbSessionStart && deps.drain != nil {
-		if err := deps.drain(ctx, decision); err != nil {
-			attachFailure(ctx, deps, req.Stderr, req.Harness, attachAlertVerbFailure,
-				fmt.Sprintf("mtix attach %s: could not drain the attach queue: %v; messages stay in the inbox (mtix inbox)", req.Verb, err),
-				operatorStateFix)
-		}
+	if err := deps.drain(ctx, decision); err != nil {
+		attachFailure(ctx, deps, req.Stderr, req.Harness, attachAlertVerbFailure,
+			fmt.Sprintf("mtix attach %s: could not drain the attach queue: %v; messages stay in the inbox (mtix inbox)", req.Verb, err),
+			operatorStateFix)
 	}
-	return true
 }
 
 func operatorState() (*oplocal.State, error) {
@@ -202,7 +204,9 @@ func newAttachVerbCmd(deps attachDeps, verb string) *cobra.Command {
 // runAttachVerb performs the handshake and runs the harness adapter. It never
 // returns an error: failures are reported on stderr and as alerts.
 func runAttachVerb(ctx context.Context, deps attachDeps, req attach.VerbRequest, protocol string) {
-	if !admitGlue(ctx, deps, req) { // before any alert, refresh mark or adapter: nothing is written
+	decision := deps.glueDecision(ctx)
+	if !decision.Act { // before any alert, refresh mark or adapter: nothing is written
+		_, _ = fmt.Fprintln(req.Stderr, attach.NotAttachedLine) //nolint:errcheck // stderr is the last-resort channel
 		return
 	}
 	if !attach.KnownHarness(req.Harness) {
@@ -233,6 +237,7 @@ func runAttachVerb(ctx context.Context, deps attachDeps, req attach.VerbRequest,
 		markGlue(ctx, deps, req, requested)
 	}
 	req.Protocol = requested
+	drainAttachQueue(ctx, deps, req, decision)
 	recordGlueActivity(req.Verb) // MTIX-112.20.1: session start and prompt submit are activity
 	runAttachAdapter(ctx, deps, req)
 }
@@ -269,7 +274,17 @@ func markGlue(ctx context.Context, deps attachDeps, req attach.VerbRequest, seen
 
 // attachFailure prints the one-line notice and raises the alert. If the alert
 // cannot be recorded, it says so instead of failing silently.
+//
+// Outside an attached board (the glue predicate declines) it prints only the
+// not-attached line and writes nothing: no alert, no operator state. Every
+// failure path (unknown verb, unparsable flag, bad -C directory, handshake)
+// goes through here, so none of them writes in a directory the host did not
+// attach (MTIX-112.19.8, ADR-007 A5).
 func attachFailure(ctx context.Context, deps attachDeps, stderr io.Writer, agent, class, line, fix string) {
+	if !deps.glueDecision(ctx).Act {
+		_, _ = fmt.Fprintln(stderr, attach.NotAttachedLine) //nolint:errcheck // stderr is the last-resort channel
+		return
+	}
 	_, _ = fmt.Fprintln(stderr, line) //nolint:errcheck // stderr is the last-resort channel
 	st, err := deps.state()
 	if err == nil {

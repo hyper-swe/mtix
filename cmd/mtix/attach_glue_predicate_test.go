@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
@@ -73,6 +74,7 @@ func TestGlue_NoPredicateWired_FailsClosed(t *testing.T) {
 
 func TestGlue_ProductionDeps_WirePredicate(t *testing.T) {
 	assert.NotNil(t, productionAttachDeps().glue, "the production glue entry must carry the predicate")
+	assert.NotNil(t, productionAttachDeps().drain, "the production glue entry must carry the queue drain")
 }
 
 // listedBoardCheckout makes a git checkout with a real store and lists it in st,
@@ -256,4 +258,134 @@ func nodeCount(t *testing.T, root string) int {
 	var n int
 	require.NoError(t, store.ReadDB().QueryRowContext(t.Context(), "SELECT COUNT(*) FROM nodes").Scan(&n))
 	return n
+}
+
+// operatorEntries lists the operator directory's files, so a test can prove a
+// verb created or changed nothing there.
+func operatorEntries(t *testing.T, st *oplocal.State) map[string]string {
+	t.Helper()
+	dir, err := st.Path()
+	require.NoError(t, err)
+	out := map[string]string{}
+	if _, statErr := os.Stat(dir); os.IsNotExist(statErr) {
+		return out // an operator directory that was never created holds nothing
+	}
+	require.NoError(t, filepath.WalkDir(dir, func(p string, d os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !d.IsDir() {
+			raw, readErr := os.ReadFile(p) //nolint:gosec // test reads files it just walked
+			require.NoError(t, readErr)
+			out[p] = string(raw)
+		}
+		return nil
+	}))
+	return out
+}
+
+// Every failure path of an attach verb, in a directory that is not an attached
+// board, prints only the not-attached line and writes nothing.
+func TestGlue_UnlistedDir_EveryFailurePathPrintsOneLineAndWritesNothing(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{"unknown verb", []string{"attach", "frobnicate", "--harness", "pi", "--protocol", "1"}},
+		{"verb without arguments", []string{"attach"}},
+		{"protocol flag without a value", []string{"attach", "session-start", "--harness", "pi", "--protocol"}},
+		{"malformed root flag", []string{"attach", "session-start", "--harness", "pi", "--protocol", "1", "--json=x"}},
+		{"project directory missing", []string{"-C", "/nonexistent/mtix-attach-test", "attach", "session-start", "--harness", "pi", "--protocol", "1"}},
+		{"unknown harness", []string{"attach", "session-start", "--harness", "nope", "--protocol", "1"}},
+		{"protocol out of range", []string{"attach", "session-start", "--harness", "pi", "--protocol", "99"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			saveAndResetApp(t)
+			st := testutil.OperatorState(t)
+			other := t.TempDir()
+			require.NoError(t, os.MkdirAll(filepath.Join(other, ".git"), 0o755))
+			t.Chdir(other)
+			before := operatorEntries(t, st)
+			root := newRootCmd()
+			var errOut bytes.Buffer
+			root.SetErr(&errOut)
+			root.SetOut(&bytes.Buffer{})
+			root.SetArgs(tt.args)
+			require.NoError(t, root.ExecuteContext(context.Background()), "hook verbs always exit 0")
+			assert.Equal(t, "board not attached on this host\n", errOut.String())
+			assert.Equal(t, before, operatorEntries(t, st), "nothing is written in an unattached directory")
+		})
+	}
+}
+
+// A listed linked worktree drains its own store's queue: a valid row is applied,
+// a forged one is dropped (S1: the queue of the directory the session runs in).
+func TestGlue_ListedWorktree_DrainsItsOwnQueueAndDropsForgedRow(t *testing.T) {
+	st := testutil.OperatorState(t)
+	mainRoot := listedBoardCheckout(t, st)
+	wt := linkedWorktreeOf(t, mainRoot)
+	dataDir := filepath.Join(wt, ".mtix", "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	store, err := sqlite.New(dataDir, slog.Default())
+	require.NoError(t, err)
+	id, err := store.StoreInstanceID(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+	require.NoError(t, st.ListBoardInstance(t.Context(), oplocal.ListedBoard{Key: id, Path: wt, StoreInstanceID: id}))
+	validPayload, err := json.Marshal(map[string]string{"agent_id": "wt-agent", "harness": "claude-code", "lane_path": wt})
+	require.NoError(t, err)
+	enqueueRow(t, wt, sqlite.AttachPending{Kind: "lane", BoardKey: id, Path: wt, Payload: string(validPayload), QueuedAt: "now"})
+	enqueueRow(t, wt, forgedRow(t, id, t.TempDir()))
+	t.Chdir(wt)
+
+	_, stderr, err := runAttachVerbForTest(t, productionGlueDeps(st, &recordingAdapter{}), "session-start", "--harness", "claude-code", "--protocol", "2")
+	require.NoError(t, err)
+	assert.Empty(t, stderr)
+	assert.Empty(t, pendingRows(t, wt), "both rows leave the worktree queue: one applied, one dropped")
+	alerts := attachAlerts(t, st)
+	require.Len(t, alerts, 1, "only the forged row alerts")
+	assert.Equal(t, "attach.pending-rejected", alerts[0].Class)
+}
+
+// A listed board reached through a symlinked working directory and a listed
+// board with no git checkout both act (they were declined as unattached).
+func TestGlue_ProductionPredicate_SymlinkedCwdAndNonGitBoard_Act(t *testing.T) {
+	st := testutil.OperatorState(t)
+	root := listedBoardCheckout(t, st)
+	link := filepath.Join(t.TempDir(), "via-link")
+	require.NoError(t, os.Symlink(root, link))
+	t.Chdir(link)
+	assert.True(t, productionGluePredicate(t.Context()).Act, "symlinked cwd")
+
+	plain := t.TempDir()
+	dataDir := filepath.Join(plain, ".mtix", "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	store, err := sqlite.New(dataDir, slog.Default())
+	require.NoError(t, err)
+	id, err := store.StoreInstanceID(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+	require.NoError(t, st.ListBoardInstance(t.Context(), oplocal.ListedBoard{Key: id, Path: plain, StoreInstanceID: id}))
+	t.Chdir(plain)
+	assert.True(t, productionGluePredicate(t.Context()).Act, "non-git board")
+}
+
+// The real attach command, built the way main builds it, drains a forged row on
+// session-start: removing the drain from the production deps, or the drain call,
+// fails this test.
+func TestGlue_ProductionCommand_SessionStartDropsForgedRow(t *testing.T) {
+	saveAndResetApp(t)
+	st := testutil.OperatorState(t)
+	root := listedBoardCheckout(t, st)
+	boards, err := st.DispatchBoards(t.Context())
+	require.NoError(t, err)
+	enqueueRow(t, root, forgedRow(t, boards.Listed[0].Key, t.TempDir()))
+	t.Chdir(root)
+	cmd := newRootCmd()
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetArgs([]string{"attach", "session-start", "--harness", "pi", "--protocol", "1"})
+	require.NoError(t, cmd.ExecuteContext(t.Context()))
+	assert.Empty(t, pendingRows(t, root), "the production command drained the queue")
 }

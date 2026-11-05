@@ -269,7 +269,7 @@ func TestAttachVerb_FlagParseErrors_ExitZeroAndAlert(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			saveAndResetApp(t)
 			st := testutil.OperatorState(t)
-			t.Chdir(t.TempDir())
+			t.Chdir(listedBoardCheckout(t, st)) // an attached board: failures are reported and alerted
 			root := newRootCmd()
 			var errOut bytes.Buffer
 			root.SetErr(&errOut)

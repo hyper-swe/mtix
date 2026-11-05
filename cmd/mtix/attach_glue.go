@@ -44,13 +44,14 @@ func productionPredicateDeps() attach.PredicateDeps {
 
 // productionGlueDrain drains the pending attach queue of the board the glue
 // predicate matched, through the same validating drain the host dispatcher
-// runs (service.DrainAttachPending, MTIX-112.17.13); there is no second
+// runs (service.DrainAttachPending, MTIX-112.17.13) over the matched root's own store: a
+// listed linked worktree drains its own queue, not the main checkout's; there is no second
 // implementation. Rows with a foreign board key or path are dropped with an
 // attach.pending-rejected alert. It runs no import and no hook.
 func productionGlueDrain(ctx context.Context, d attach.GlueDecision) (retErr error) {
 	st, err := operatorState()
 	if err != nil {
-		return err
+		return fmt.Errorf("drain attach queue: %w", err)
 	}
 	store, err := sqlite.New(filepath.Join(d.BoardRoot, ".mtix", "data"), slog.Default())
 	if err != nil {
@@ -62,8 +63,11 @@ func productionGlueDrain(ctx context.Context, d attach.GlueDecision) (retErr err
 		}
 	}()
 	instance, err := store.StoreInstanceID(ctx)
-	if err != nil || instance == "" || d.BoardKey == "" {
-		return err // a legacy store has no routing identity: nothing to drain
+	if err != nil {
+		return fmt.Errorf("read attached board identity: %w", err)
+	}
+	if instance == "" || d.BoardKey == "" {
+		return nil // a legacy store has no routing identity: nothing to drain
 	}
 	routing := &service.AttachRouting{State: st, Board: service.AttachBoard{Key: d.BoardKey, Path: d.BoardRoot}, LanePath: d.BoardRoot, StoreInstanceID: instance}
 	reg := service.NewRegistrationService(service.RegistrationDeps{Store: store, Clock: func() time.Time { return time.Now().UTC() }, Routing: routing})

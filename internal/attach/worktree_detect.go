@@ -17,9 +17,11 @@ import (
 type CheckoutKind int
 
 const (
-	// CheckoutNone is no checkout, or a .git entry that is not provably a
-	// plain checkout or a linked worktree.
+	// CheckoutNone is no .git entry anywhere above the directory.
 	CheckoutNone CheckoutKind = iota
+	// CheckoutInvalid is a .git entry that is not provably a plain checkout or
+	// a linked worktree (a forged commondir, a missing back-link, a symlink).
+	CheckoutInvalid
 	// CheckoutPlain is a checkout whose .git is a directory.
 	CheckoutPlain
 	// CheckoutWorktree is a linked worktree: a .git file naming an admin
@@ -51,9 +53,15 @@ const (
 // .git file that points straight at a common dir, or a commondir without the
 // back-link, is not a worktree and yields CheckoutNone (MTIX-112.19.8).
 func DetectCheckout(dir string) (Checkout, error) {
-	cur, err := filepath.Abs(dir)
+	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return Checkout{}, fmt.Errorf("resolve %s: %w", dir, err)
+	}
+	// Listed paths are physical (registration resolves symlinks), so walk the
+	// physical directory; an unresolvable one fails closed.
+	cur, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return Checkout{Kind: CheckoutInvalid}, nil //nolint:nilerr // unresolvable directory fails closed as an invalid checkout
 	}
 	for depth := 0; depth < maxWalkDepth; depth++ {
 		info, statErr := os.Lstat(filepath.Join(cur, ".git"))
@@ -62,8 +70,8 @@ func DetectCheckout(dir string) (Checkout, error) {
 			return Checkout{Kind: CheckoutPlain, Root: cur, GitDir: filepath.Join(cur, ".git")}, nil
 		case statErr == nil && info.Mode().IsRegular():
 			return detectLinkedWorktree(cur), nil
-		case statErr != nil && !errors.Is(statErr, os.ErrNotExist):
-			return Checkout{}, nil // unreadable: fail closed
+		case statErr == nil, !errors.Is(statErr, os.ErrNotExist):
+			return Checkout{Kind: CheckoutInvalid}, nil // a symlink, FIFO or unreadable entry: fail closed
 		}
 		parent := filepath.Dir(cur)
 		if parent == cur {
@@ -76,7 +84,7 @@ func DetectCheckout(dir string) (Checkout, error) {
 
 // detectLinkedWorktree validates the .git file of root as a linked worktree.
 func detectLinkedWorktree(root string) Checkout {
-	none := Checkout{}
+	none := Checkout{Kind: CheckoutInvalid}
 	gitFile := filepath.Join(root, ".git")
 	body, ok := readSmallFile(gitFile)
 	if !ok || !strings.HasPrefix(body, "gitdir:") {
@@ -89,7 +97,10 @@ func detectLinkedWorktree(root string) Checkout {
 	if !filepath.IsAbs(admin) {
 		admin = filepath.Join(root, admin)
 	}
-	admin = filepath.Clean(admin)
+	admin, err := filepath.EvalSymlinks(filepath.Clean(admin))
+	if err != nil {
+		return none
+	}
 	commonRaw, ok := readSmallFile(filepath.Join(admin, "commondir"))
 	if !ok {
 		return none
@@ -98,17 +109,22 @@ func detectLinkedWorktree(root string) Checkout {
 	if !filepath.IsAbs(common) {
 		common = filepath.Join(admin, common)
 	}
-	back, ok := readSmallFile(filepath.Join(admin, "gitdir"))
-	if !ok || !sameFile(strings.TrimSpace(back), gitFile) {
+	backRaw, ok := readSmallFile(filepath.Join(admin, "gitdir"))
+	back := strings.TrimSpace(backRaw)
+	if !filepath.IsAbs(back) { // git worktree add --relative-paths writes a link relative to the admin dir
+		back = filepath.Join(admin, back)
+	}
+	if !ok || !sameFile(back, gitFile) {
 		return none
 	}
 	if !sameFile(filepath.Dir(filepath.Dir(admin)), common) || filepath.Base(filepath.Dir(admin)) != "worktrees" {
 		return none
 	}
-	if filepath.Base(filepath.Clean(common)) != ".git" {
+	physicalCommon, err := filepath.EvalSymlinks(common)
+	if err != nil || filepath.Base(physicalCommon) != ".git" {
 		return none // a bare common dir has no main checkout to attach to
 	}
-	return Checkout{Kind: CheckoutWorktree, Root: root, GitDir: admin, CommonRoot: filepath.Dir(filepath.Clean(common))}
+	return Checkout{Kind: CheckoutWorktree, Root: root, GitDir: admin, CommonRoot: filepath.Dir(physicalCommon)}
 }
 
 // readSmallFile reads a regular file of at most maxGitFileBytes; anything else
@@ -122,9 +138,8 @@ func readSmallFile(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	defer func() { _ = f.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(f, maxGitFileBytes))
-	if err != nil {
+	if closeErr := f.Close(); err != nil || closeErr != nil {
 		return "", false
 	}
 	return string(raw), true

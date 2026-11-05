@@ -65,7 +65,7 @@ func TestWorktreeDetect_CommondirWithoutBacklink_NotWorktree(t *testing.T) {
 
 	got, err := DetectCheckout(wtRoot)
 	require.NoError(t, err)
-	assert.Equal(t, CheckoutNone, got.Kind, "commondir without the back-link is forgeable")
+	assert.Equal(t, CheckoutInvalid, got.Kind, "commondir without the back-link is forgeable")
 }
 
 func TestWorktreeDetect_BacklinkPointsElsewhere_NotWorktree(t *testing.T) {
@@ -75,7 +75,7 @@ func TestWorktreeDetect_BacklinkPointsElsewhere_NotWorktree(t *testing.T) {
 
 	got, err := DetectCheckout(wtRoot)
 	require.NoError(t, err)
-	assert.Equal(t, CheckoutNone, got.Kind)
+	assert.Equal(t, CheckoutInvalid, got.Kind)
 }
 
 func TestWorktreeDetect_GitFilePointingAtCommonDir_NotWorktree(t *testing.T) {
@@ -87,7 +87,7 @@ func TestWorktreeDetect_GitFilePointingAtCommonDir_NotWorktree(t *testing.T) {
 
 	got, err := DetectCheckout(wt)
 	require.NoError(t, err)
-	assert.Equal(t, CheckoutNone, got.Kind, "a .git file naming the common dir itself has no admin dir")
+	assert.Equal(t, CheckoutInvalid, got.Kind, "a .git file naming the common dir itself has no admin dir")
 }
 
 func TestDetectCheckout_MalformedGitFile_NotWorktree(t *testing.T) {
@@ -103,7 +103,7 @@ func TestDetectCheckout_MalformedGitFile_NotWorktree(t *testing.T) {
 			writeFile(t, filepath.Join(root, ".git"), body)
 			got, err := DetectCheckout(root)
 			require.NoError(t, err)
-			assert.Equal(t, CheckoutNone, got.Kind)
+			assert.Equal(t, CheckoutInvalid, got.Kind)
 		})
 	}
 }
@@ -119,4 +119,44 @@ func readGitdirTarget(t *testing.T, wtRoot string) string {
 	raw, err := os.ReadFile(filepath.Join(wtRoot, ".git"))
 	require.NoError(t, err)
 	return filepath.Clean(string(raw[len("gitdir: ") : len(raw)-1]))
+}
+
+func TestDetectCheckout_RelativeBacklink_IsWorktree(t *testing.T) {
+	mainRoot, wtRoot := linkedWorktree(t)
+	admin := readGitdirTarget(t, wtRoot)
+	rel, err := filepath.Rel(admin, filepath.Join(wtRoot, ".git"))
+	require.NoError(t, err)
+	writeFile(t, filepath.Join(admin, "gitdir"), rel+"\n") // git worktree add --relative-paths layout
+
+	got, err := DetectCheckout(wtRoot)
+	require.NoError(t, err)
+	assert.Equal(t, CheckoutWorktree, got.Kind)
+	assert.Equal(t, mainRoot, got.CommonRoot)
+}
+
+func TestDetectCheckout_SymlinkedDirectory_ResolvesToPhysicalRoot(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "real", ".git"), 0o755))
+	link := filepath.Join(root, "link")
+	require.NoError(t, os.Symlink(filepath.Join(root, "real"), link))
+
+	got, err := DetectCheckout(link)
+	require.NoError(t, err)
+	assert.Equal(t, CheckoutPlain, got.Kind)
+	assert.Equal(t, filepath.Join(root, "real"), got.Root, "listed paths are physical")
+}
+
+func TestDetectCheckout_SymlinkedGitEntry_FailsClosed(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "elsewhere", ".git"), 0o755))
+	require.NoError(t, os.Symlink(filepath.Join(root, "elsewhere", ".git"), filepath.Join(root, ".git")))
+	got, err := DetectCheckout(root)
+	require.NoError(t, err)
+	assert.Equal(t, CheckoutInvalid, got.Kind, "a symlinked .git must not fall through to the enclosing repository")
+}
+
+func TestDetectCheckout_MissingDirectory_FailsClosed(t *testing.T) {
+	got, err := DetectCheckout(filepath.Join(t.TempDir(), "absent"))
+	require.NoError(t, err)
+	assert.Equal(t, CheckoutInvalid, got.Kind)
 }

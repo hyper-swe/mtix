@@ -27,7 +27,7 @@ func TestHooksFence_StorageFailureIsLogged(t *testing.T) {
 			event := sqlite.JournalEvent{Seq: 1, EventID: "observed"}
 			switch operation {
 			case "floor":
-				d.advanceHookSnapshot(ctx, []sqlite.JournalEvent{event})
+				d.advanceHookSnapshot(ctx, 0, []sqlite.JournalEvent{event})
 			case "outcome":
 				d.recordOutcome(ctx, "fenced", event, sqlite.OutcomeDelivered)
 			case "stale scan":

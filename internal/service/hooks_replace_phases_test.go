@@ -156,7 +156,11 @@ func TestHooksReplace_ClaimAndOutcomeResumeWithOldIdentity(t *testing.T) {
 			if phase == "claim" {
 				assert.Zero(t, authors["removed1"], "second stale snapshot event must not be claimed at its reused sequence")
 			}
-			assert.GreaterOrEqual(t, f.dispatcher.HookIdentityFenceMisses(), uint64(2))
+			expectedMisses := uint64(2)
+			if phase == "claim" {
+				expectedMisses = 3
+			}
+			assert.Equal(t, expectedMisses, f.dispatcher.HookIdentityFenceMisses())
 		})
 	}
 }
@@ -264,6 +268,7 @@ func TestHooksReplace_InFlightInboxDeliveryCannotAttachToFreshEvent(t *testing.T
 	require.NoError(t, err)
 	for _, entry := range audit {
 		assert.NotEqual(t, sqlite.OutcomeDelivered, entry.Outcome, "a discarded inbox delivery must not be audited as delivered")
+		assert.NotEqual(t, sqlite.OutcomeError, entry.Outcome, "a replaced delivery is a quiet miss, not an error")
 	}
 	assert.Equal(t, uint64(3), d.HookIdentityFenceMisses(), "inbox, outcome and floor misses are counted")
 }

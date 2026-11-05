@@ -92,22 +92,22 @@ const loggedNodeMatch = `((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
 // read through q.
 func loggedNodes(ctx context.Context, q rowQuerier) (nodes []loggedNode, err error) {
 	query, predicateErr := restoredInboxQuery(ctx, q, `SELECT n.id, COALESCE(n.uid, ''), n.title,
-		EXISTS (SELECT 1 FROM sync_events se WHERE ((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
+		EXISTS (SELECT 1 FROM sync_events se WHERE ((n.uid IS NOT NULL AND n.uid <> '' AND (se.uid = n.uid
 		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
 	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))
 			AND se.op_type = 'create_node' AND se.sync_status <> 'pending')
 		FROM nodes n
-		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE ((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
+		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE ((n.uid IS NOT NULL AND n.uid <> '' AND (se.uid = n.uid
 		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
 	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))
           AND NOT (0))
 		ORDER BY n.id`, `SELECT n.id, COALESCE(n.uid, ''), n.title,
-		EXISTS (SELECT 1 FROM sync_events se WHERE ((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
+		EXISTS (SELECT 1 FROM sync_events se WHERE ((n.uid IS NOT NULL AND n.uid <> '' AND (se.uid = n.uid
 		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
 	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))
 			AND se.op_type = 'create_node' AND se.sync_status <> 'pending')
 		FROM nodes n
-		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE ((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
+		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE ((n.uid IS NOT NULL AND n.uid <> '' AND (se.uid = n.uid
 		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
 	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))
           AND NOT (EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=se.event_id)))

@@ -162,6 +162,13 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	if err := registerWakeDoctorChecks(svc); err != nil {
 		return nil, fmt.Errorf("register wake doctor checks: %w", err)
 	}
+	// Before the host registry: the first enrolment on a host has no listed
+	// board and no installed dispatcher, and is when the row is needed.
+	if app.mtixDir != "" {
+		if err := registerEnrolInterruptedDoctor(svc, app.mtixDir); err != nil {
+			return nil, fmt.Errorf("register enrolment marker check: %w", err)
+		}
+	}
 	if err := registerHostDispatcherDoctor(svc); err != nil {
 		return nil, fmt.Errorf("register host dispatcher checks: %w", err)
 	}

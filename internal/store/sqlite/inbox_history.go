@@ -9,8 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
+	"runtime"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -183,13 +182,10 @@ func countUnackedRO(ctx context.Context, path string, params ...string) (int64, 
 	return countUnackedInbox(ctx, db)
 }
 
-// fileURIPath escapes the characters that end a file: URI path. A Windows
-// drive path becomes /C:/dir/file, the form SQLite reads (MTIX-112.2.4).
+// fileURIPath escapes the characters that end a file: URI path for the
+// running OS (fileURIPathFor, MTIX-112.2.4).
 func fileURIPath(path string) string {
-	if vol := filepath.VolumeName(path); len(vol) == 2 && vol[1] == ':' {
-		path = "/" + filepath.ToSlash(path)
-	}
-	return strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
+	return fileURIPathFor(path, runtime.GOOS)
 }
 
 func countUnackedInbox(ctx context.Context, db *sql.DB) (int64, error) {

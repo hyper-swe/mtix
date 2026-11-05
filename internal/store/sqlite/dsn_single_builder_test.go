@@ -18,8 +18,9 @@ import (
 )
 
 var (
-	sqliteOpenRe   = regexp.MustCompile(`sql\.Open\(\s*"sqlite`)
+	sqliteOpenRe   = regexp.MustCompile(`sql\.Open\(`)
 	dsnLiteralRe   = regexp.MustCompile(`"file:"\s*\+|"\?(mode|_pragma|_txlock|immutable|cache)=|\+\s*"\?`)
+	sprintfDSNRe   = regexp.MustCompile(`Sprintf\(\s*"[^"]*(file:|\?(mode|_pragma|_txlock|immutable|cache)=)`)
 	vacuumLiteralR = regexp.MustCompile(`VACUUM INTO\s*'|VACUUM INTO[^"` + "`" + `\n]*%`)
 )
 
@@ -30,7 +31,8 @@ const dsnGuardMinFiles = 100
 
 // dsnViolations scans non-test Go sources (path -> text) and returns one
 // line per breach of the single-builder rule (MTIX-112.2.4): the only
-// sql.Open("sqlite", ...) is in dsn.go; no DSN or query string is spelled out
+// sql.Open (whatever its driver argument, so a driver name held in a variable
+// or constant is caught too) is in dsn.go; no DSN or query string is spelled out
 // anywhere else; VACUUM INTO never takes its target as a literal. It errors
 // when it was given too few files to mean anything.
 func dsnViolations(files map[string]string, minFiles int) ([]string, error) {
@@ -45,8 +47,11 @@ func dsnViolations(files map[string]string, minFiles int) ([]string, error) {
 		if n := len(sqliteOpenRe.FindAllString(src, -1)); n > 0 {
 			opens += n
 			if !isHelper {
-				out = append(out, path+": sql.Open(\"sqlite\") outside dsn.go")
+				out = append(out, path+": sql.Open outside dsn.go")
 			}
+		}
+		if !isHelper && sprintfDSNRe.MatchString(src) {
+			out = append(out, path+": DSN built with Sprintf")
 		}
 		if !isHelper && dsnLiteralRe.MatchString(src) {
 			out = append(out, path+": DSN or query string built by hand")
@@ -120,6 +125,10 @@ func TestDSNViolations_PlantedBreaches_AreCaught(t *testing.T) {
 		{"second open", "x/open.go", `sql.Open("sqlite", d)`, "outside dsn.go"},
 		{"concatenated query", "x/q.go", `d := path + "?mode=ro"`, "built by hand"},
 		{"file scheme concat", "x/f.go", `d := "file:" + path`, "built by hand"},
+		{"sprintf query string", "x/sp.go", `d := fmt.Sprintf("%s?mode=ro", p)`, "built with Sprintf"},
+		{"sprintf file scheme", "x/sf.go", `d := fmt.Sprintf("file:%s", p)`, "built with Sprintf"},
+		{"driver in variable", "x/dv.go", `sql.Open(driverName, d)`, "outside dsn.go"},
+		{"driver in constant", "x/dc.go", `sql.Open(sqliteDriver, d)`, "outside dsn.go"},
 		{"vacuum literal", "x/v.go", `"VACUUM INTO '" + p + "'"`, "not a bound parameter"},
 		{"vacuum sprintf", "x/s.go", `fmt.Sprintf("VACUUM INTO '%s'", p)`, "not a bound parameter"},
 	}

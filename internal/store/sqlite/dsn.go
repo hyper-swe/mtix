@@ -9,6 +9,35 @@ import (
 	"strings"
 )
 
+// fileURIPathFor escapes the characters that end a file: URI path, for the
+// given GOOS. The OS is a parameter so the Windows branch runs on every host
+// (MTIX-112.2.4). On Windows a drive path C:\x becomes /C:/x, the form SQLite
+// reads, and a UNC path \\host\share becomes ////host/share (empty
+// authority, then the //host/share path). A drive-relative C:dir stays as is.
+func fileURIPathFor(path, goos string) string {
+	if goos == "windows" {
+		path = windowsURIPath(path)
+	}
+	return strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
+}
+
+// windowsURIPath rewrites a Windows path to its forward-slash URI path form.
+func windowsURIPath(path string) string {
+	slashed := strings.ReplaceAll(path, `\`, "/")
+	switch {
+	case strings.HasPrefix(slashed, "//"):
+		return "//" + slashed
+	case len(slashed) >= 3 && slashed[1] == ':' && slashed[2] == '/' && isASCIILetter(slashed[0]):
+		return "/" + slashed
+	default:
+		return slashed
+	}
+}
+
+func isASCIILetter(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
+}
+
 // sqliteDSN builds the driver DSN for a database file as a file: URI with the
 // path escaped (fileURIPath) and the given query parameters appended after
 // it (MTIX-112.2.4). It is the only place a DSN is built: concatenating
@@ -32,4 +61,12 @@ func openSQLite(path string, params ...string) (*sql.DB, error) {
 		return nil, fmt.Errorf("sql.Open: %w", err)
 	}
 	return db, nil
+}
+
+// readOnlyDSNParams are the DSN parameters of a store's read-only open
+// (MTIX-58, MTIX-112.2.4): mode=ro makes the driver refuse a missing file
+// instead of creating it, and query_only(1) is applied to every pooled
+// connection so a write on the handle is rejected.
+func readOnlyDSNParams() []string {
+	return []string{"mode=ro", "_pragma=query_only(1)"}
 }

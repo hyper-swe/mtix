@@ -35,9 +35,6 @@ func (s *Store) Backup(ctx context.Context, destPath string) (*BackupResult, err
 
 	// VACUUM INTO creates an atomic, consistent copy of the database.
 	// This is the recommended approach for SQLite backup per FR-6.3a.
-	// Uses parameterized query — destPath is a string literal here because
-	// VACUUM INTO does not support parameterized paths.
-	// We validate the path doesn't contain SQL injection characters.
 	// destPath is a BOUND parameter (SQL Rule 1), so quotes and any other
 	// character in it are data, never SQL (MTIX-112.2.4).
 	if _, err := s.writeDB.ExecContext(ctx, "VACUUM INTO ?", destPath); err != nil {

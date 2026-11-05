@@ -80,7 +80,7 @@ func TestExportWithInbox_ReadFault_NeverPublishesPartialExport(t *testing.T) {
 			report := &RecoverResult{}
 			salvaged, err := salvageInboxRows(t.Context(), wrapped, report)
 			if stage == "scan" {
-				require.ErrorContains(t, err, "1 unreadable sync event record(s)")
+				require.ErrorContains(t, err, "1 unreadable rowid positions probed")
 				require.Empty(t, salvaged.Events)
 			} else {
 				require.ErrorIs(t, err, errSnapshotRead)

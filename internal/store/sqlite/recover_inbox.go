@@ -13,6 +13,7 @@ import (
 func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData, res *RecoverResult, inboxSources ...*ExportData) *InboxJournal {
 	journal, readErr := salvageInboxJournal(ctx, dbPath, res)
 	if readErr != nil {
+		res.InboxIncomplete = true
 		res.Notes = append(res.Notes, fmt.Sprintf("inbox journal partially unreadable or unavailable: %v", readErr))
 	}
 	if journal == nil {
@@ -24,6 +25,7 @@ func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData,
 			continue
 		}
 		if err := validateInboxJournal(source.InboxJournal); err != nil {
+			res.InboxIncomplete = true
 			res.Notes = append(res.Notes, fmt.Sprintf("export inbox journal rejected: %v", err))
 			continue
 		}
@@ -32,11 +34,13 @@ func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData,
 	}
 
 	if !available {
+		res.InboxIncomplete = true
 		res.Notes = append(res.Notes, "inbox journal unavailable from both database and supplied export; lost event count unknown; ordinary tasks.json carries no journal")
 		return nil
 	}
 	sum, err := inboxJournalChecksum(journal)
 	if err != nil {
+		res.InboxIncomplete = true
 		res.Notes = append(res.Notes, fmt.Sprintf("recovered inbox checksum failed: %v", err))
 		return nil
 	}

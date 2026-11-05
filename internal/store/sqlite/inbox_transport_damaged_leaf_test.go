@@ -47,7 +47,7 @@ func TestRecover_DamagedInboxLeaf_KeepsEveryReadableRow(t *testing.T) {
 				got = append(got, event.EventID)
 			}
 			require.ElementsMatch(t, expected, got)
-			require.Contains(t, strings.Join(result.Notes, " "), fmt.Sprintf("%d unreadable sync event record(s)", unreadable))
+			require.Contains(t, strings.Join(result.Notes, " "), fmt.Sprintf("%d unreadable rowid positions probed", unreadable))
 			require.NoError(t, sqlite.ValidateExport(result.Export))
 		})
 	}

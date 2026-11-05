@@ -26,12 +26,14 @@ import (
 // ancestors are synthesized as placeholders so the parent foreign-key chain
 // holds.
 type RecoverResult struct {
-	Export       *ExportData
-	RecoveredIDs []string // rows read from the damaged database, by the id each row carries
-	LostIDs      []string // unreadable in the database and absent from the mirror, each id once
-	FromMirror   []string // unreadable or missing in the database, salvaged from the mirror
-	Placeholders []string // synthesized parents for orphaned survivors
-	Notes        []string // human-readable salvage diagnostics
+	// InboxIncomplete means recovery cannot claim that every original mail row survived.
+	InboxIncomplete bool
+	Export          *ExportData
+	RecoveredIDs    []string // rows read from the damaged database, by the id each row carries
+	LostIDs         []string // unreadable in the database and absent from the mirror, each id once
+	FromMirror      []string // unreadable or missing in the database, salvaged from the mirror
+	Placeholders    []string // synthesized parents for orphaned survivors
+	Notes           []string // human-readable salvage diagnostics
 }
 
 // RecoverOptions supplies optional journal sources and logging (FR-19.1).

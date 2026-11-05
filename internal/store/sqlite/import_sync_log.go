@@ -40,7 +40,17 @@ func (s *Store) HasSyncedWithHub(ctx context.Context) (bool, error) {
 }
 
 func syncedWithHub(ctx context.Context, q rowQuerier) (bool, error) {
-	restored, predicateErr := restoredInboxPredicate(ctx, q, "sync_events.event_id")
+	query, predicateErr := restoredInboxQuery(ctx, q, `SELECT EXISTS (SELECT 1 FROM board_flags WHERE key = ?)
+		OR EXISTS (SELECT 1 FROM applied_events)
+		OR EXISTS (SELECT 1 FROM sync_events WHERE sync_status <> 'pending'
+          AND NOT (0))
+		OR EXISTS (SELECT 1 FROM relay_push_cursor WHERE cursor > 0 OR next_rs > 1 OR pub_epoch > 1)
+		OR EXISTS (SELECT 1 FROM relay_ingest_cursor)`, `SELECT EXISTS (SELECT 1 FROM board_flags WHERE key = ?)
+		OR EXISTS (SELECT 1 FROM applied_events)
+		OR EXISTS (SELECT 1 FROM sync_events WHERE sync_status <> 'pending'
+          AND NOT (EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=sync_events.event_id)))
+		OR EXISTS (SELECT 1 FROM relay_push_cursor WHERE cursor > 0 OR next_rs > 1 OR pub_epoch > 1)
+		OR EXISTS (SELECT 1 FROM relay_ingest_cursor)`)
 	if predicateErr != nil {
 		return false, predicateErr
 	}
@@ -54,12 +64,7 @@ func syncedWithHub(ctx context.Context, q rowQuerier) (bool, error) {
 	// reset-peer (ResetRelayPublisher) rewind the cursor to a floor, and the
 	// sequence and the epoch only ever advance on a publish and a reset. An
 	// ingestor has a cursor row for a peer.
-	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM board_flags WHERE key = ?)
-		OR EXISTS (SELECT 1 FROM applied_events)
-		OR EXISTS (SELECT 1 FROM sync_events WHERE sync_status <> 'pending'
-          AND NOT (`+restored+`))
-		OR EXISTS (SELECT 1 FROM relay_push_cursor WHERE cursor > 0 OR next_rs > 1 OR pub_epoch > 1)
-		OR EXISTS (SELECT 1 FROM relay_ingest_cursor)`, hubMarkKey).Scan(&synced)
+	err := q.QueryRowContext(ctx, query, hubMarkKey).Scan(&synced)
 	if err != nil {
 		return false, fmt.Errorf("read whether the store syncs with a hub: %w", err)
 	}
@@ -86,20 +91,34 @@ const loggedNodeMatch = `((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
 // loggedNodes returns the local nodes the sync log holds an event for,
 // read through q.
 func loggedNodes(ctx context.Context, q rowQuerier) (nodes []loggedNode, err error) {
-	restored, predicateErr := restoredInboxPredicate(ctx, q, "se.event_id")
+	query, predicateErr := restoredInboxQuery(ctx, q, `SELECT n.id, COALESCE(n.uid, ''), n.title,
+		EXISTS (SELECT 1 FROM sync_events se WHERE ((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
+		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
+	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))
+			AND se.op_type = 'create_node' AND se.sync_status <> 'pending')
+		FROM nodes n
+		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE ((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
+		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
+	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))
+          AND NOT (0))
+		ORDER BY n.id`, `SELECT n.id, COALESCE(n.uid, ''), n.title,
+		EXISTS (SELECT 1 FROM sync_events se WHERE ((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
+		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
+	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))
+			AND se.op_type = 'create_node' AND se.sync_status <> 'pending')
+		FROM nodes n
+		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE ((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
+		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
+	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))
+          AND NOT (EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=se.event_id)))
+		ORDER BY n.id`)
 	if predicateErr != nil {
 		return nil, predicateErr
 	}
 	// Each node with an event of the log, and whether its creation is past
 	// pending. Matched by uid first, as the comparison of an
 	// automatic import is (DiffReplace, MTIX-95.31.4).
-	rows, err := q.QueryContext(ctx, `SELECT n.id, COALESCE(n.uid, ''), n.title,
-		EXISTS (SELECT 1 FROM sync_events se WHERE `+loggedNodeMatch+`
-			AND se.op_type = 'create_node' AND se.sync_status <> 'pending')
-		FROM nodes n
-		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE `+loggedNodeMatch+`
-          AND NOT (`+restored+`))
-		ORDER BY n.id`)
+	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -172,10 +191,14 @@ func refuseDroppingLoggedNodes(ctx context.Context, tx *sql.Tx, data *ExportData
 	if len(dropped) == 0 {
 		return nil
 	}
+	guide, err := inboxSafeRecoveryGuide(ctx, tx, SyncLogRecovery)
+	if err != nil {
+		return err
+	}
 	return fmt.Errorf("%w: the file does not hold %s as the same task (a task is matched by its uid), and "+
 		"their events stay in the local sync log, so a pull cannot restore them; nothing was imported. "+
 		"To rebuild the board from the hub, run %s: %w",
-		ErrReplaceOnSyncedStore, nameNodes(dropped), SyncLogRecovery, model.ErrInvalidInput)
+		ErrReplaceOnSyncedStore, nameNodes(dropped), guide, model.ErrInvalidInput)
 }
 
 // droppedLoggedNodes returns the local nodes the sync log holds an event for

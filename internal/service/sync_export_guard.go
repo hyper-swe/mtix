@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"os"
 	"path/filepath"
 	"time"
@@ -42,6 +43,9 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 	if refusal.Synced {
 		// A replace import is refused on a store that syncs (MTIX-107.31).
 		replace, keepFile = syncedReplaceWays, syncedReplaceWays
+	}
+	if refusal.RestoredInbox {
+		replace, keepFile = sqlite.RestoredInboxRecovery, sqlite.RestoredInboxRecovery
 	}
 	switch refusal.Kind {
 	case refusalNewerSchema:

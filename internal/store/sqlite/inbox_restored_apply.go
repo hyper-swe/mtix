@@ -16,12 +16,12 @@ import (
 // upgradeRestoredInboxEvent adopts a real envelope without changing the arrival
 // rowid, ack coverage or hook suppression (FR-19.1, MTIX-112.2.1).
 func upgradeRestoredInboxEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (bool, error) {
-	restored, err := restoredInboxPredicate(ctx, tx, "sync_events.event_id")
+	query, err := restoredInboxQuery(ctx, tx, `SELECT author_id,payload FROM sync_events WHERE event_id=? AND (0)`, `SELECT author_id,payload FROM sync_events WHERE event_id=? AND (EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=sync_events.event_id))`)
 	if err != nil {
 		return false, err
 	}
 	stored := inboxJournalEvent{EventID: e.EventID}
-	err = tx.QueryRowContext(ctx, `SELECT author_id,payload FROM sync_events WHERE event_id=? AND (`+restored+`)`, e.EventID).Scan(&stored.Author, &stored.Payload)
+	err = tx.QueryRowContext(ctx, query, e.EventID).Scan(&stored.Author, &stored.Payload)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

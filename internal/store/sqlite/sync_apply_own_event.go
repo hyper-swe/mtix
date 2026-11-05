@@ -67,7 +67,7 @@ func (a syncApplier) acknowledgeHeldEvent(ctx context.Context, tx *sql.Tx, event
 // event carries only EventID, LamportClock, VectorClock and AuthorID: what
 // acknowledgeHeldEvent merges and records (MTIX-95.11).
 func readHeldEvent(ctx context.Context, tx *sql.Tx, eventID string) (*model.SyncEvent, error) {
-	restored, err := restoredInboxPredicate(ctx, tx, "sync_events.event_id")
+	query, err := restoredInboxQuery(ctx, tx, `SELECT lamport_clock, vector_clock, author_id FROM sync_events WHERE event_id = ? AND NOT (0)`, `SELECT lamport_clock, vector_clock, author_id FROM sync_events WHERE event_id = ? AND NOT (EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=sync_events.event_id))`)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func readHeldEvent(ctx context.Context, tx *sql.Tx, eventID string) (*model.Sync
 	var vc string
 	// Primary-key lookup on sync_events.event_id; the status is irrelevant.
 	err = tx.QueryRowContext(ctx,
-		`SELECT lamport_clock, vector_clock, author_id FROM sync_events WHERE event_id = ? AND NOT (`+restored+`)`, eventID,
+		query, eventID,
 	).Scan(&held.LamportClock, &vc, &held.AuthorID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

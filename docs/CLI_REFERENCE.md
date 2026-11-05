@@ -1520,11 +1520,16 @@ List nodes ready for work (unblocked, unassigned)
 Salvage data from a damaged database into an importable export
 
 Reads the project database read-only — even when it fails integrity
-checks — salvaging every readable row individually, fills gaps from the
+checks — salvaging readable data with explicit incomplete reports, fills gaps from the
 .mtix/tasks.json mirror, synthesizes placeholders for lost parents, and
 writes an importable export with a fresh checksum to .mtix/.
 
 Readable addressed mail and acknowledgement coverage are recovered too.
+Inbox salvage walks rowids without secondary indexes. After 10,000 failed
+rowid probes it stops and reports the limit and position as incomplete; an
+unreadable upper bound means the lost record count is unknown. Keep the
+original database. The recovered file is private and is added to .gitignore
+before it is written, including in existing projects.
 Use --from-export private-export.json to supplement the database with an
 explicit private export. Ordinary tasks.json does not carry the inbox journal.
 Read the salvage report for missing or unreadable mail. Treat the recovered
@@ -1931,7 +1936,10 @@ does 'mtix sync reconcile --discard-local' come first. It deletes local
 tasks and unpushed changes, so first run 'mtix sync push' and check that
 'mtix sync status' shows pending 0. It then asks for the ticket count,
 typed at an interactive terminal; no flag supplies it, so it cannot run
-unattended. Clone reads the hub's event log twice, once to check it and
+unattended. Stores holding restored mail refuse that discard. Keep the
+original store; in a new empty directory run 'mtix init PREFIX', configure
+the same hub credentials via MTIX_SYNC_DSN, then 'mtix sync clone'.
+Clone reads the hub's event log twice, once to check it and
 once to apply it.
 
 Use --resume to pick up an interrupted clone from the last batch
@@ -2623,6 +2631,10 @@ and when stdin is not a terminal the command refuses, so it cannot run
 unattended and automation fails closed. A verified snapshot of the
 database is written to .mtix/data/backups/pre-discard-local-<time>.db
 before anything is deleted (MTIX-90).
+
+Stores holding restored mail refuse --discard-local, including dry runs.
+Keep the original store; in a new empty directory run 'mtix init PREFIX',
+configure the same hub credentials via MTIX_SYNC_DSN, then 'mtix sync clone'.
 
 See 'mtix sync init' for divergent-history detection.
 

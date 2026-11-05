@@ -83,10 +83,14 @@ func refuseSyncedReplace(ctx context.Context) error {
 	if !synced && !counts {
 		return nil
 	}
+	guide, err := app.store.InboxSafeRecoveryGuide(ctx, sqlite.SyncLogRecovery)
+	if err != nil {
+		return err
+	}
 	return fmt.Errorf("import failed: this store syncs with a hub, and a replace import would delete tasks and "+
 		"changes whose events stay in the local sync log, which a pull cannot restore; nothing was imported. "+
 		"To rebuild the board from the hub, run %s. To load the file as it is, import it into a project that "+
-		"does not sync: %w", sqlite.SyncLogRecovery, sqlite.ErrReplaceOnSyncedStore)
+		"does not sync: %w", guide, sqlite.ErrReplaceOnSyncedStore)
 }
 
 // workflowResolution returns the caller's answer to workflow conflicts from

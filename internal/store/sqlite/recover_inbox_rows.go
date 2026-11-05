@@ -6,54 +6,40 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 )
 
-// Point reads bypass secondary indexes and isolate a damaged leaf (FR-19.1).
+// Rowid seeks bypass every secondary index and skip healthy gaps (FR-19.1).
 const salvageInboxSQL = `SELECT event_id,project_prefix,node_id,COALESCE(uid,''),
- author_id,payload,created_at,rowid,op_type FROM sync_events NOT INDEXED WHERE rowid=?`
+ author_id,payload,created_at,rowid,op_type FROM sync_events NOT INDEXED WHERE rowid>=? ORDER BY rowid LIMIT 1`
 
 type salvageMail struct {
 	e   inboxJournalEvent
 	seq int64
 }
 
-// salvageInboxRows visits each indexed row independently, so damage never ends
-// the scan of later readable mail. Failed rows are counted explicitly (FR-19.1).
+// salvageInboxRows uses one rowid path through readable rows and damaged ranges.
 func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (*InboxJournal, error) {
-	keys, keyErr := salvageInboxKeys(ctx, db)
 	journal := &InboxJournal{Version: 1, Events: []inboxJournalEvent{}}
+	walk := inboxRowidWalk{next: 1}
 	var records []salvageMail
 	loss := inboxLoss{}
-	unreadable := 0
-	var firstReadErr error
-	for _, seq := range keys {
-		if ctx.Err() != nil {
-			keyErr = errors.Join(keyErr, ctx.Err())
+	for {
+		row, op, ok := walk.read(ctx, db)
+		if !ok {
 			break
 		}
-		r := salvageMail{seq: seq}
-		e := &r.e
-		var op string
-		err := db.QueryRowContext(ctx, salvageInboxSQL, seq).Scan(&e.EventID, &e.Project, &e.NodeID, &e.UID, &e.Author, &e.Payload, &e.CreatedAt, &r.seq, &op)
-		if err != nil {
-			unreadable++
-			if firstReadErr == nil {
-				firstReadErr = err
-			}
-			continue
-		}
-		if op == "comment" && loss.keep(*e) {
-			records = append(records, r)
+		if op == "comment" && loss.keep(row.e) {
+			records = append(records, row)
 		}
 	}
-	res.Notes = append(res.Notes, loss.notes()...)
-	if unreadable > 0 {
-		keyErr = errors.Join(keyErr, firstReadErr, fmt.Errorf("%d unreadable sync event record(s) omitted; addressed-mail loss among these records unknown", unreadable))
+	notes := loss.notes()
+	if len(notes) > 0 {
+		res.InboxIncomplete = true
 	}
+	res.Notes = append(res.Notes, notes...)
 	restoreSalvageCoverage(ctx, db, records, journal, res)
-	return journal, keyErr
+	return journal, walk.resultError()
 }
 
 // restoreSalvageCoverage combines duplicate identities by recipient coverage (FR-19.1, MTIX-112.2.1).
@@ -79,6 +65,7 @@ func restoreSalvageCoverage(ctx context.Context, db *sql.DB, records []salvageMa
 		j.Events = append(j.Events, r.e)
 	}
 	if unreadable > 0 {
+		res.InboxIncomplete = true
 		res.Notes = append(res.Notes, fmt.Sprintf("acknowledgment coverage unreadable for %d addressed inbox event(s); delivered as unacknowledged unless supplied export restores coverage", unreadable))
 	}
 }

@@ -92,7 +92,7 @@ func TestWakeClaimSources_ReplaceBeforeClaim_OldSnapshotRefused(t *testing.T) {
 				assert.Empty(t, attempt.Token)
 			} else {
 				h := NewClaudeHook(ClaudeHookDeps{Key: WakeLeaseKey{AgentID: f.key.AgentID, HostID: f.key.HostID, UID: f.key.UID}, Claims: wrapped, ClaimLease: time.Minute})
-				events, attempts, err := h.claimEvents(t.Context(), f.events, f.key.Epoch, map[int64]bool{})
+				events, attempts, err := h.claimEvents(t.Context(), f.events, f.key.Epoch, map[hookEventIdentity]bool{})
 				require.NoError(t, err)
 				assert.Empty(t, events)
 				assert.Empty(t, attempts)

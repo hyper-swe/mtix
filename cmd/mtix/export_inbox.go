@@ -33,8 +33,6 @@ func exportIncludesInbox(output *os.File, mtixDir string) (bool, error) {
 
 // Explicit recovery input must be readable and validate; a typo must not
 // silently fall back to a different source and claim that recovery succeeded.
-func checkRecoverExport(path string) error { _, err := readRecoverExport(path); return err }
-
 func readRecoverExport(path string) (data *sqlite.ExportData, err error) {
 	file, err := os.Open(path)
 	if err != nil {

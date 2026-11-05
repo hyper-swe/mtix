@@ -45,8 +45,11 @@ func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData,
 	return journal
 }
 
+// salvageInboxJournal reads damaged files without writes or index dependence (FR-19.1, MTIX-112.2.1).
 func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult) (journal *InboxJournal, err error) {
-	db, err := openSQLite(path, readOnlyDSNParams()...)
+	// Apply salvage pragmas on every connection through the shared DSN builder.
+	params := append(readOnlyDSNParams(), "_pragma=cell_size_check(0)")
+	db, err := openSQLite(path, params...)
 	if err != nil {
 		return nil, fmt.Errorf("open journal for salvage: %w", err)
 	}
@@ -59,6 +62,7 @@ func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult) (
 	return journal, err
 }
 
+// mergeRecoveredInbox unions compatible identities and ack coverage (FR-19.1, MTIX-112.2.1).
 func mergeRecoveredInbox(dst, src *InboxJournal, res *RecoverResult) {
 	positions := make(map[string]int, len(dst.Events))
 	for i, event := range dst.Events {

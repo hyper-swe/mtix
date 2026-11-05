@@ -67,14 +67,17 @@ func TestRecoverHelp_PublishedReference_MatchesGenerator(t *testing.T) {
 	require.Equal(t, cliReferenceSection(t, generated, "recover", "recover"), cliReferenceSection(t, string(actual), "recover", "recover"))
 }
 
-func TestCheckRecoverExport_UnreadableOrInvalidFile_RejectsInput(t *testing.T) {
+func TestReadRecoverExport_UnreadableOrInvalidFile_RejectsInput(t *testing.T) {
 	dir := t.TempDir()
-	require.ErrorContains(t, checkRecoverExport(filepath.Join(dir, "absent.json")), "open recovery export")
+	_, err := readRecoverExport(filepath.Join(dir, "absent.json"))
+	require.ErrorContains(t, err, "open recovery export")
 	path := filepath.Join(dir, "invalid.json")
 	require.NoError(t, os.WriteFile(path, []byte("{"), 0600))
-	require.ErrorContains(t, checkRecoverExport(path), "read recovery export")
+	_, err = readRecoverExport(path)
+	require.ErrorContains(t, err, "read recovery export")
 	require.NoError(t, os.WriteFile(path, []byte(`{"version":999}`), 0600))
-	require.ErrorContains(t, checkRecoverExport(path), "validate recovery export")
+	_, err = readRecoverExport(path)
+	require.ErrorContains(t, err, "validate recovery export")
 }
 
 func TestExportIncludesInbox_MirrorAlias_OmitsJournal(t *testing.T) {

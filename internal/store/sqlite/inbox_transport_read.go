@@ -9,6 +9,7 @@ import (
 	"fmt"
 )
 
+// readInboxJournal reads addressed mail and coverage from the board snapshot (FR-19.1, MTIX-112.2.1).
 func readInboxJournal(ctx context.Context, q rowQuerier) (out *InboxJournal, err error) {
 	out = &InboxJournal{Version: 1, Events: []inboxJournalEvent{}}
 	rows, err := q.QueryContext(ctx, exportInboxJournalSQL)

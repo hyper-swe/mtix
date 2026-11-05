@@ -10,15 +10,17 @@ import (
 	"fmt"
 )
 
-// Read all comments: SQL must not hide damaged payloads before loss counting.
+// Read all comments without relying on damaged secondary indexes. SQL must not
+// hide damaged payloads before loss counting (FR-19.1, MTIX-112.2.1).
 const salvageInboxSQL = `SELECT event_id,project_prefix,node_id,COALESCE(uid,''),
- author_id,payload,created_at,rowid FROM sync_events WHERE op_type='comment' ORDER BY rowid`
+ author_id,payload,created_at,rowid FROM sync_events NOT INDEXED WHERE op_type='comment' ORDER BY rowid`
 
 type salvageMail struct {
 	event inboxJournalEvent
 	seq   int64
 }
 
+// salvageInboxRows retains the readable prefix even if later rows fail (FR-19.1, MTIX-112.2.1).
 func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (journal *InboxJournal, err error) {
 	journal = &InboxJournal{Version: 1, Events: []inboxJournalEvent{}}
 	rows, err := db.QueryContext(ctx, salvageInboxSQL)
@@ -46,6 +48,7 @@ func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (jour
 	return journal, errors.Join(readErr, closeErr)
 }
 
+// restoreSalvageCoverage combines duplicate identities by recipient coverage (FR-19.1, MTIX-112.2.1).
 func restoreSalvageCoverage(ctx context.Context, db *sql.DB, records []salvageMail, j *InboxJournal, res *RecoverResult) {
 	unreadable := 0
 	positions := map[string]int{}
@@ -72,6 +75,7 @@ func restoreSalvageCoverage(ctx context.Context, db *sql.DB, records []salvageMa
 	}
 }
 
+// salvageInboxAck reads coverage by source rowid and validates its time (FR-19.1, MTIX-112.2.1).
 func salvageInboxAck(ctx context.Context, db *sql.DB, event *inboxJournalEvent, seq int64) error {
 	// A damaged uniqueness index can leave duplicate IDs. Coverage belongs to
 	// the exact readable source row, whose sequence is never transported.

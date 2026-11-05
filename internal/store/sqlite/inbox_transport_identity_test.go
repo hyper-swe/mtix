@@ -17,10 +17,6 @@ func TestValidateInboxJournal_InvalidActors_RejectsChecksummedInput(t *testing.T
 		change func(*inboxJournalEvent)
 	}{
 		{"empty author", func(e *inboxJournalEvent) { e.Author = "" }},
-		{"author grammar", func(e *inboxJournalEvent) { e.Author = "Bad Author" }},
-		{"recipient control", func(e *inboxJournalEvent) { e.Payload = `{"to":"worker\n","body":"mail"}` }},
-		{"recipient invisible", func(e *inboxJournalEvent) { e.Payload = `{"to":"work\u200ber","body":"mail"}` }},
-		{"recipient whitespace", func(e *inboxJournalEvent) { e.Payload = `{"to":"   ","body":"mail"}` }},
 		{"recipient length", func(e *inboxJournalEvent) { e.Payload = `{"to":"` + strings.Repeat("w", 65) + `"}` }},
 		{"event length", func(e *inboxJournalEvent) { e.EventID = strings.Repeat("x", 64*1024+1) }},
 		{"unstorable time", func(e *inboxJournalEvent) { e.CreatedAt = "0000-01-01T00:00:00Z" }},

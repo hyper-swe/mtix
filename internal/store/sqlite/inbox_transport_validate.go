@@ -12,6 +12,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
+// validateInboxEvent checks transport bounds and storable timestamps (FR-19.1, MTIX-112.2.1).
 func validateInboxEvent(e inboxJournalEvent) error {
 	if !validInboxIdentity(e) || !validInboxPayload(e.Payload) {
 		return fmt.Errorf("invalid addressed journal event %s: %w", format.EventID(e.EventID), model.ErrInvalidInput)
@@ -31,13 +32,14 @@ func validateInboxEvent(e inboxJournalEvent) error {
 	return nil
 }
 
+// validInboxIdentity preserves historical actor text within transport bounds (FR-19.1, MTIX-112.2.1).
 func validInboxIdentity(e inboxJournalEvent) bool {
 	return e.CreatedAt != "" && e.EventID != "" && len(e.EventID) <= 64*1024 &&
-		model.IsValidAuthorID(e.Author) && model.ValidateSyncNodeID(e.Project+"-1") == nil && model.ValidateSyncNodeID(e.NodeID) == nil
+		e.Author != "" && len(e.Author) <= 64 && model.ValidateSyncNodeID(e.Project+"-1") == nil && model.ValidateSyncNodeID(e.NodeID) == nil
 }
 
+// validInboxPayload requires a bounded recipient; payload author stays optional (FR-19.1, MTIX-112.2.1).
 func validInboxPayload(raw string) bool {
 	var payload model.CommentPayload
-	return json.Unmarshal([]byte(raw), &payload) == nil && payload.To != "" && model.ValidateAgentID(payload.To) == nil &&
-		(payload.AuthorID == "" || model.IsValidAuthorID(payload.AuthorID))
+	return json.Unmarshal([]byte(raw), &payload) == nil && payload.To != "" && len(payload.To) <= 64 && len(payload.AuthorID) <= 64
 }

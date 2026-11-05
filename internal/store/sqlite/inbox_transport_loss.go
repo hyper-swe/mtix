@@ -9,6 +9,7 @@ import (
 	"fmt"
 )
 
+// inboxLoss distinguishes known mail losses from unreadable recipients (FR-19.1, MTIX-112.2.1).
 type inboxLoss struct {
 	unknown int
 	invalid []string
@@ -41,6 +42,7 @@ func (l *inboxLoss) keep(e inboxJournalEvent) bool {
 	return true
 }
 
+// notes reports loss without claiming an unknown recipient was addressed (FR-19.1, MTIX-112.2.1).
 func (l *inboxLoss) notes() []string {
 	var notes []string
 	if l.unknown > 0 {
@@ -53,6 +55,7 @@ func (l *inboxLoss) notes() []string {
 	return notes
 }
 
+// countUncarriedInbox reports unread local deliveries absent from transport (FR-19.1, MTIX-112.2.1).
 func countUncarriedInbox(ctx context.Context, q rowQuerier, j *InboxJournal) {
 	var total int64
 	if err := q.QueryRowContext(ctx, unackedInboxSQL).Scan(&total); err != nil {

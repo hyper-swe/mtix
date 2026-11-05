@@ -21,6 +21,7 @@ func checkInboxJournalCollisions(ctx context.Context, tx *sql.Tx, j *InboxJourna
 	for _, incoming := range j.Events {
 		var stored inboxJournalEvent
 		var op string
+		// Compare immutable content before replacement can remove local collision evidence.
 		err := tx.QueryRowContext(ctx, `SELECT event_id, project_prefix, node_id,
    COALESCE(uid,''), author_id, payload, created_at, op_type FROM sync_events WHERE event_id=?`, incoming.EventID).
 			Scan(&stored.EventID, &stored.Project, &stored.NodeID, &stored.UID, &stored.Author,
@@ -38,6 +39,7 @@ func checkInboxJournalCollisions(ctx context.Context, tx *sql.Tx, j *InboxJourna
 	return nil
 }
 
+// importInboxJournal restores local mail and monotonic recipient coverage (FR-19.1, MTIX-112.2.1).
 func importInboxJournal(ctx context.Context, tx *sql.Tx, j *InboxJournal) error {
 	if j == nil {
 		return nil
@@ -50,6 +52,7 @@ func importInboxJournal(ctx context.Context, tx *sql.Tx, j *InboxJournal) error 
 	return nil
 }
 
+// importInboxEvent preserves held identities and marks only new rows as local restores (FR-19.1, MTIX-112.2.1).
 func importInboxEvent(ctx context.Context, tx *sql.Tx, e inboxJournalEvent) error {
 	// These are recovered inbox records, not an outbound sync queue. Original
 	// host identity and clocks are intentionally absent from the transport.

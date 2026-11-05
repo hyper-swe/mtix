@@ -14,7 +14,7 @@ import (
 func TestImport_ReplaceRetainsJournalIdentity_PreservesLocalBookkeeping(t *testing.T) {
 	for _, node := range []string{"PROJ-1", "PROJ-3"} {
 		t.Run(node, func(t *testing.T) {
-			dest := newTestStore(t)
+			dest, raw := retentionStore(t)
 			addressThree(t, dest, "recipient")
 			mail, err := dest.InboxList(t.Context(), "recipient")
 			require.NoError(t, err)
@@ -51,7 +51,14 @@ func TestImport_ReplaceRetainsJournalIdentity_PreservesLocalBookkeeping(t *testi
 					retained = event
 				}
 			}
-			require.Equal(t, held, retained, "existing event keeps pending status and clocks")
+			require.Nil(t, retained, "mail for a dropped task must leave the outbound queue")
+			var status string
+			var lamport, wall, seq int64
+			require.NoError(t, raw.QueryRow(`SELECT sync_status,lamport_clock,wall_clock_ts,rowid FROM sync_events WHERE event_id=?`, selected.EventID).Scan(&status, &lamport, &wall, &seq))
+			require.Equal(t, "applied", status)
+			require.Equal(t, held.LamportClock, lamport)
+			require.Equal(t, held.WallClockTS, wall)
+			require.Equal(t, selected.Seq, seq)
 			hooks, err := dest.ReadJournalSince(t.Context(), 0, 100)
 			require.NoError(t, err)
 			present := false

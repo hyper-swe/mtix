@@ -217,6 +217,9 @@ func discardUnsharedEvents(ctx context.Context, tx *sql.Tx, data *ExportData, as
 		return err
 	}
 	for _, l := range dropped {
+		if err := retainDroppedInboxEvents(ctx, tx, l.id, retained); err != nil {
+			return err
+		}
 		// The pending events of the dropped task, and of the links to it:
 		// first the held copies, then the events themselves.
 		for _, stmt := range []string{deleteHeldCopiesOfDropped, deleteEventsOfDropped} {

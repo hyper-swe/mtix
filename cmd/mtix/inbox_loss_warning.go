@@ -32,8 +32,8 @@ func writeExportInboxNote(w io.Writer, n int64) {
 	if n == 0 {
 		return
 	}
-	fmt.Fprintf(w, "note: this store holds %d unacknowledged inbox event(s); this tracked-mirror export does not carry them "+
-		"(tasks.json is journal-free; export to a private file to carry addressed mail). "+
+	fmt.Fprintf(w, "note: this store holds %d unacknowledged inbox event(s); this journal-free export does not carry them "+
+		"(tasks.json is journal-free; export to a private file without --board-only to carry addressed mail). "+
 		"List what was addressed to an agent with: mtix inbox --agent <id> --history\n", n)
 }
 

@@ -63,6 +63,7 @@ const exportInboxJournalSQL = `SELECT e.event_id, e.project_prefix, e.node_id,
  WHERE e.op_type='comment'
  ORDER BY e.rowid`
 
+// inboxJournalChecksum binds the optional transport independently of the board (FR-19.1, MTIX-112.2.1).
 func inboxJournalChecksum(j *InboxJournal) (string, error) {
 	document := struct {
 		Version int                 `json:"version"`
@@ -76,6 +77,7 @@ func inboxJournalChecksum(j *InboxJournal) (string, error) {
 	return hex.EncodeToString(hash[:]), nil
 }
 
+// validateInboxJournal rejects unsupported, corrupt or ambiguous mail before import (FR-19.1, MTIX-112.2.1).
 func validateInboxJournal(j *InboxJournal) error {
 	if j == nil {
 		return nil

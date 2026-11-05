@@ -4,10 +4,12 @@
 > [USERMANUAL.md](../USERMANUAL.md) (Backup, Export, and Import); the
 > requirements are FR-7.8 and FR-15 in [REQUIREMENTS.md](../REQUIREMENTS.md).
 
-`mtix export` writes one JSON document, and mtix keeps the same document in
-`.mtix/tasks.json` after every change (the git-tracked board, FR-15). This
-page describes that document: what it carries, how its checksum is
-computed, and how `mtix import` and the automatic import read it back.
+`mtix export` writes a private JSON snapshot to standard output, including an
+optional addressed inbox journal. Automatic `.mtix/tasks.json` publication
+keeps a journal-free board document after every change (FR-15). Use
+`mtix export --board-only` for a journal-free baseline; board annotations may
+still contain private text. This page describes both documents, their
+checksums, and how explicit and automatic import read them back.
 
 The current format is `schema_version` **2.0.0**, written by mtix 0.5.4 and
 later. mtix 0.5.3 and earlier wrote 1.0.0. With the experimental

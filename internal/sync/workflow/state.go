@@ -118,7 +118,9 @@ func DetectState(ctx context.Context, db stateReader, mtixDir string) (Report, e
 	if err != nil {
 		return Report{}, fmt.Errorf("read consecutive_errors: %w", err)
 	}
-	localEventCount, err := scanCount(ctx, db, `SELECT COUNT(*) FROM sync_events`)
+	// Restored inbox mail is not sync activity or evidence against backfill (MTIX-112.2.1).
+	localEventCount, err := scanCount(ctx, db, `SELECT COUNT(*) FROM sync_events e
+        WHERE NOT EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=e.event_id)`)
 	if err != nil {
 		return Report{}, fmt.Errorf("count sync_events: %w", err)
 	}

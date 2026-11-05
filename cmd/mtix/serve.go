@@ -21,6 +21,7 @@ func newServeCmd() *cobra.Command {
 		addr     string
 		port     int
 		insecure bool
+		origins  []string
 	)
 
 	cmd := &cobra.Command{
@@ -30,6 +31,7 @@ func newServeCmd() *cobra.Command {
 		RunE: func(c *cobra.Command, _ []string) error {
 			return runServeCommand(serveRequest{
 				Addr: addr, AddrChanged: c.Flags().Changed("addr"), Port: port, InsecureBind: insecure,
+				AllowedOrigins: origins,
 			})
 		},
 	}
@@ -39,6 +41,8 @@ func newServeCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&insecure, "insecure-bind", false,
 		"Allow a non-loopback bind: the server requires a bearer token, created on first use in the operator-local state directory (NFR-5.2)")
 	cmd.Flags().IntVar(&port, "port", 8377, "HTTP port")
+	cmd.Flags().StringArrayVar(&origins, "allow-origin", nil,
+		"Also accept browser requests from this exact origin, written as scheme://host[:port] (repeatable)")
 
 	return cmd
 }

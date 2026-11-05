@@ -99,7 +99,7 @@ func (f *enrolPGFixture) service() *service.WorktreeEnrolment {
 	ports := newWorktreeEnrolPorts(slog.Default(), io.Discard, transport.Options{InsecureTLS: true}, func(_ context.Context, r service.EnrollmentRequest) error {
 		f.enrolled = append(f.enrolled, r)
 		return nil
-	})
+	}, func(context.Context, string) (bool, error) { return len(f.enrolled) > 0, nil })
 	return service.NewWorktreeEnrolment(service.WorktreeEnrolOptions{Ports: ports})
 }
 
@@ -196,7 +196,7 @@ func TestEnrolWorktree_EnrolFails_StoreRestoredAndUsable_PG(t *testing.T) {
 	f := newEnrolPGFixture(t)
 	ports := newWorktreeEnrolPorts(slog.Default(), io.Discard, transport.Options{InsecureTLS: true}, func(context.Context, service.EnrollmentRequest) error {
 		return io.ErrUnexpectedEOF
-	})
+	}, func(context.Context, string) (bool, error) { return false, nil })
 	svc := service.NewWorktreeEnrolment(service.WorktreeEnrolOptions{Ports: ports})
 
 	_, err := svc.EnrolWorktree(ctx, service.EnrollmentRequest{Path: f.root, Mode: "yes", Source: "test"})

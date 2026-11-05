@@ -59,9 +59,9 @@ func TestWorktreePorts_SnapshotBackupImport_OnARealStore(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-1", "", 0, 1, "local")))
 	require.NoError(t, st.Close())
-	ports := newWorktreeEnrolPorts(slog.Default(), io.Discard, transport.Options{}, func(context.Context, service.EnrollmentRequest) error { return nil })
+	ports := newWorktreeEnrolPorts(slog.Default(), io.Discard, transport.Options{}, func(context.Context, service.EnrollmentRequest) error { return nil }, nil)
 
-	snap, err := ports.Snapshot(ctx, root)
+	snap, err := ports.Snapshot(ctx, worktreeDataDir(root))
 	require.NoError(t, err)
 	assert.False(t, snap.HubConnected, "a store that never touched a hub is not a hub-board store")
 	require.NotEmpty(t, snap.Events)
@@ -84,7 +84,7 @@ func TestWorktreePorts_SnapshotBackupImport_OnARealStore(t *testing.T) {
 func TestWorktreePorts_NoSecrets_HubCallsRefuse(t *testing.T) {
 	ctx := context.Background()
 	root := enrolPortsRoot(t)
-	ports := newWorktreeEnrolPorts(slog.Default(), io.Discard, transport.Options{}, nil)
+	ports := newWorktreeEnrolPorts(slog.Default(), io.Discard, transport.Options{}, nil, nil)
 	_, err := ports.HubMissing(ctx, root, []string{"e"})
 	require.ErrorIs(t, err, os.ErrNotExist)
 	require.ErrorIs(t, ports.Clone(ctx, root), os.ErrNotExist)
@@ -93,10 +93,10 @@ func TestWorktreePorts_NoSecrets_HubCallsRefuse(t *testing.T) {
 }
 
 func TestWorktreePorts_OpenFailure_Reported(t *testing.T) {
-	ports := newWorktreeEnrolPorts(slog.Default(), io.Discard, transport.Options{}, nil)
+	ports := newWorktreeEnrolPorts(slog.Default(), io.Discard, transport.Options{}, nil, nil)
 	root := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(root, ".mtix"), []byte("a file, not a directory"), 0o600))
-	_, err := ports.Snapshot(context.Background(), root)
+	_, err := ports.Snapshot(context.Background(), worktreeDataDir(root))
 	require.Error(t, err)
 	require.Error(t, ports.Backup(context.Background(), root, filepath.Join(t.TempDir(), "x.db")))
 	require.Error(t, ports.ImportCarry(context.Background(), root, nil, time.Now()))

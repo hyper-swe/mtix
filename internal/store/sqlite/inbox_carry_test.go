@@ -174,3 +174,69 @@ func TestLocalEvents_ListsStatusNodeOpAndTime(t *testing.T) {
 		assert.False(t, e.At.IsZero())
 	}
 }
+
+// TestInboxCarry_SingleAckAtReusedSeq_AcksOnlyThatEvent uses an asymmetric
+// shape: one ack at old seq 1, and a clone that reverses the journal, so event
+// three holds seq 1 in the clone. A carry keyed by seq would ack event three.
+func TestInboxCarry_SingleAckAtReusedSeq_AcksOnlyThatEvent(t *testing.T) {
+	ctx := context.Background()
+	oldS, oldRaw := retentionStore(t)
+	newS, newRaw := retentionStore(t)
+	addressTo(t, oldS, "opus", "PROJ-1")
+	addressTo(t, oldS, "opus", "PROJ-2")
+	addressTo(t, oldS, "opus", "PROJ-3")
+	evs, err := oldS.InboxList(ctx, "opus")
+	require.NoError(t, err)
+	require.Len(t, evs, 3)
+	require.NoError(t, oldS.InboxAck(ctx, "opus", evs[0].Seq))
+	copyJournalReversed(t, oldRaw, newRaw)
+
+	carry, err := oldS.ExportInboxCarry(ctx)
+	require.NoError(t, err)
+	_, err = newS.ImportInboxCarry(ctx, carry, time.Now().UTC())
+	require.NoError(t, err)
+
+	left, err := newS.InboxList(ctx, "opus")
+	require.NoError(t, err)
+	var leftIDs []string
+	for _, e := range left {
+		leftIDs = append(leftIDs, e.EventID)
+	}
+	assert.ElementsMatch(t, []string{evs[1].EventID, evs[2].EventID}, leftIDs,
+		"only the acked event leaves the inbox; the event that now holds the old seq is still delivered")
+}
+
+func TestInboxCarry_AckTime_RoundTripsAndBadTimeIsAnError(t *testing.T) {
+	ctx := context.Background()
+	oldS, oldRaw := retentionStore(t)
+	newS, newRaw := retentionStore(t)
+	addressTo(t, oldS, "opus", "PROJ-1")
+	evs, err := oldS.InboxList(ctx, "opus")
+	require.NoError(t, err)
+	require.NoError(t, oldS.InboxAck(ctx, "opus", evs[0].Seq))
+	_, err = oldRaw.Exec(`UPDATE agent_inbox_ack SET acked_at = '2026-01-02T03:04:05.5Z'`)
+	require.NoError(t, err)
+	copyJournalReversed(t, oldRaw, newRaw)
+
+	carry, err := oldS.ExportInboxCarry(ctx)
+	require.NoError(t, err)
+	_, err = newS.ImportInboxCarry(ctx, carry, time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	var at string
+	require.NoError(t, newRaw.QueryRow(`SELECT acked_at FROM agent_inbox_ack`).Scan(&at))
+	assert.Equal(t, "2026-01-02T03:04:05.5Z", at, "the ack keeps its own time, not the import time")
+
+	_, err = oldRaw.Exec(`UPDATE agent_inbox_ack SET acked_at = 'garbage'`)
+	require.NoError(t, err)
+	_, err = oldS.ExportInboxCarry(ctx)
+	require.ErrorContains(t, err, "acked_at")
+}
+
+func TestLocalEvents_BadCreatedAt_IsAnError(t *testing.T) {
+	s, raw := retentionStore(t)
+	addressTo(t, s, "opus", "PROJ-1")
+	_, err := raw.Exec(`UPDATE sync_events SET created_at = 'garbage'`)
+	require.NoError(t, err)
+	_, err = s.LocalEvents(context.Background())
+	require.ErrorContains(t, err, "created_at")
+}

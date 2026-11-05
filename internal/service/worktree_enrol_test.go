@@ -40,8 +40,13 @@ type enrolWorld struct {
 	carry   *sqlite.InboxCarry
 	fail    map[string]error
 	hubConn bool
-	svc     *service.WorktreeEnrolment
-	opts    service.WorktreeEnrolOptions
+	// onSnapshot may replace the nth Snapshot result (1-based) to model a writer.
+	onSnapshot func(n int, dataDir string, s *service.WorktreeSnapshot) *service.WorktreeSnapshot
+	snapDirs   []string
+	snapSeen   []string // the store bytes each Snapshot saw
+	enrolled   func() (bool, error)
+	svc        *service.WorktreeEnrolment
+	opts       service.WorktreeEnrolOptions
 }
 
 func newEnrolWorld(t *testing.T) *enrolWorld {
@@ -72,11 +77,21 @@ func (w *enrolWorld) step(name string) error {
 
 func (w *enrolWorld) ports() service.WorktreePorts {
 	return service.WorktreePorts{
-		Snapshot: func(context.Context, string) (*service.WorktreeSnapshot, error) {
+		Snapshot: func(_ context.Context, dataDir string) (*service.WorktreeSnapshot, error) {
 			if err := w.step("snapshot"); err != nil {
 				return nil, err
 			}
-			return &service.WorktreeSnapshot{HubConnected: w.hubConn, Events: w.events, Carry: w.carry}, nil
+			w.snapDirs = append(w.snapDirs, dataDir)
+			snap := &service.WorktreeSnapshot{HubConnected: w.hubConn, Events: w.events, Carry: w.carry}
+			b, readErr := os.ReadFile(filepath.Join(dataDir, "mtix.db"))
+			w.snapSeen = append(w.snapSeen, string(b))
+			if readErr == nil && string(b) == "CLONED" {
+				snap = &service.WorktreeSnapshot{HubConnected: true, Carry: &sqlite.InboxCarry{}}
+			}
+			if w.onSnapshot != nil {
+				snap = w.onSnapshot(len(w.snapDirs), dataDir, snap)
+			}
+			return snap, nil
 		},
 		HubMissing: func(_ context.Context, _ string, ids []string) ([]string, error) {
 			if err := w.step("hub"); err != nil {
@@ -110,6 +125,12 @@ func (w *enrolWorld) ports() service.WorktreePorts {
 			return w.step("carry")
 		},
 		Enroll: func(context.Context, service.EnrollmentRequest) error { return w.step("enrol") },
+		Enrolled: func(context.Context, string) (bool, error) {
+			if w.enrolled != nil {
+				return w.enrolled()
+			}
+			return false, nil
+		},
 	}
 }
 
@@ -128,6 +149,9 @@ func treeHash(t *testing.T, dir string) string {
 	}))
 	sort.Strings(paths)
 	for _, p := range paths {
+		if strings.HasSuffix(p, ".lock") {
+			continue // lock files carry no state; the push and dispatch locks create them
+		}
 		info, err := os.Lstat(p)
 		require.NoError(t, err)
 		fmt.Fprintf(h, "%s|%v|", strings.TrimPrefix(p, dir), info.Mode())
@@ -200,7 +224,7 @@ func TestEnrolWorktree_UsedStore_BackedUpMovedAndCloned(t *testing.T) {
 	res, err := w.run()
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"snapshot", "hub", "backup", "clone", "carry", "enrol"}, w.calls)
+	assert.Equal(t, []string{"snapshot", "hub", "backup", "snapshot", "clone", "carry", "snapshot", "enrol"}, w.calls)
 	assert.Equal(t, filepath.Join(w.root, ".mtix", "data.pre-enrol-20261103T102030Z"), res.AsideDir)
 	old, err := os.ReadFile(filepath.Join(res.AsideDir, "mtix.db"))
 	require.NoError(t, err)
@@ -232,6 +256,14 @@ func TestEnrolWorktree_FailureAfterMove_RestoresByteIdentical(t *testing.T) {
 			assert.Equal(t, before, treeHash(t, w.data), "the store is exactly as it was")
 			_, statErr := os.Lstat(filepath.Join(w.root, ".mtix", "data.pre-enrol-20261103T102030Z"))
 			assert.ErrorIs(t, statErr, os.ErrNotExist, "the aside directory is gone after a restore")
+			{
+				partial, readErr := os.ReadFile(filepath.Join(w.root, ".mtix", "data.partial-enrol-20261103T102030Z", "mtix.db"))
+				require.NoError(t, readErr, "the half-built store is kept aside, never deleted")
+				assert.Equal(t, "CLONED", string(partial))
+			}
+			m, markErr := service.ReadEnrolMarker(filepath.Join(w.root, ".mtix"))
+			require.NoError(t, markErr)
+			assert.Nil(t, m, "a completed rollback removes the marker")
 			if step != "enrol" {
 				assert.NotContains(t, w.calls, "enrol")
 			}
@@ -274,7 +306,7 @@ func TestEnrolWorktree_RestoreFails_NamesTheIntactAsideDir(t *testing.T) {
 	renames := 0
 	w.opts.Rename = func(a, b string) error {
 		renames++
-		if renames == 2 {
+		if renames == 3 {
 			return errors.New("restore refused")
 		}
 		return os.Rename(a, b)
@@ -290,16 +322,26 @@ func TestEnrolWorktree_RestoreFails_NamesTheIntactAsideDir(t *testing.T) {
 	assert.Equal(t, "OLD-STORE-BYTES", string(old), "the original is intact where the error says")
 }
 
-func TestEnrolWorktree_PartialStoreCannotBeRemoved_NamesTheIntactAsideDir(t *testing.T) {
+func TestEnrolWorktree_PartialStoreCannotBeKept_NamesTheIntactAsideDir(t *testing.T) {
 	w := newEnrolWorld(t)
 	w.fail["carry"] = errors.New("carry broke")
-	w.opts.RemoveTree = func(string) error { return errors.New("remove refused") }
+	renames := 0
+	w.opts.Rename = func(a, b string) error {
+		renames++
+		if renames == 2 {
+			return errors.New("keep refused")
+		}
+		return os.Rename(a, b)
+	}
 	w.svc = service.NewWorktreeEnrolment(w.opts)
 	_, err := w.run()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "remove refused")
+	assert.Contains(t, err.Error(), "keep refused")
 	assert.Contains(t, err.Error(), "carry broke")
 	assert.Contains(t, err.Error(), "original store is intact")
+	m, markErr := service.ReadEnrolMarker(filepath.Join(w.root, ".mtix"))
+	require.NoError(t, markErr)
+	assert.NotNil(t, m, "an unfinished rollback keeps the marker for doctor")
 }
 
 func TestEnrolWorktree_PriorAsideDir_RefusesWithoutMoving(t *testing.T) {
@@ -317,6 +359,14 @@ func TestEnrolWorktree_Preconditions_Refused(t *testing.T) {
 	t.Run("not a worktree", func(t *testing.T) {
 		w := newEnrolWorld(t)
 		require.NoError(t, os.Remove(filepath.Join(w.root, ".git")))
+		_, err := w.run()
+		require.ErrorIs(t, err, model.ErrInvalidInput)
+		assert.Empty(t, w.calls)
+	})
+	t.Run("a main checkout has a .git directory", func(t *testing.T) {
+		w := newEnrolWorld(t)
+		require.NoError(t, os.Remove(filepath.Join(w.root, ".git")))
+		require.NoError(t, os.MkdirAll(filepath.Join(w.root, ".git"), 0o700))
 		_, err := w.run()
 		require.ErrorIs(t, err, model.ErrInvalidInput)
 		assert.Empty(t, w.calls)
@@ -358,7 +408,7 @@ func TestEnrolWorktree_NeverDiscardLocal(t *testing.T) {
 		assert.NotContains(t, strings.ToLower(typ.Field(i).Name), "discard")
 		assert.NotContains(t, strings.ToLower(typ.Field(i).Name), "reconcile")
 	}
-	assert.Equal(t, []string{"Snapshot", "HubMissing", "Backup", "Clone", "ImportCarry", "Enroll"}, names,
+	assert.Equal(t, []string{"Snapshot", "HubMissing", "Backup", "Clone", "ImportCarry", "Enroll", "Enrolled"}, names,
 		"a new port must be reviewed against the no-discard rule")
 	files, err := filepath.Glob("worktree_enrol*.go")
 	require.NoError(t, err)

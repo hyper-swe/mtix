@@ -116,10 +116,15 @@ func (s *Store) collectLedgerAcks(ctx context.Context, carry *InboxCarry, seen m
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var agent, event, at string
-		if err := rows.Scan(&agent, &event, &at); err != nil {
-			return fmt.Errorf("scan inbox ack ledger: %w", err)
+		if scanErr := rows.Scan(&agent, &event, &at); scanErr != nil {
+			return fmt.Errorf("scan inbox ack ledger: %w", scanErr)
 		}
-		t, _ := time.Parse(time.RFC3339Nano, at)
+		var t time.Time
+		if at != "" {
+			if t, err = time.Parse(time.RFC3339Nano, at); err != nil {
+				return fmt.Errorf("parse acked_at %q of an ack on event %s: %w", at, format.EventID(event), err)
+			}
+		}
 		carry.Acks = append(carry.Acks, CarriedAck{AgentID: agent, EventID: event, AckedAt: t})
 		seen[[2]string{agent, event}] = true
 	}

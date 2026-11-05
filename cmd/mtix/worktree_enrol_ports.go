@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -26,10 +27,12 @@ const hubIDLookupChunk = 500
 // the worktree's own secrets file; the process environment DSN is never read.
 // The set cannot remove local state: a store with local-only events is refused
 // before anything moves. enroll records the enrolment (HostEnrollment.Enroll in setup).
-func newWorktreeEnrolPorts(logger *slog.Logger, progress io.Writer, opts transport.Options, enroll func(context.Context, service.EnrollmentRequest) error) service.WorktreePorts {
+func newWorktreeEnrolPorts(logger *slog.Logger, progress io.Writer, opts transport.Options,
+	enroll func(context.Context, service.EnrollmentRequest) error, enrolled func(context.Context, string) (bool, error),
+) service.WorktreePorts {
 	return service.WorktreePorts{
-		Snapshot: func(ctx context.Context, root string) (*service.WorktreeSnapshot, error) {
-			return snapshotWorktree(ctx, logger, root)
+		Snapshot: func(ctx context.Context, dataDir string) (*service.WorktreeSnapshot, error) {
+			return snapshotWorktree(ctx, logger, dataDir)
 		},
 		HubMissing: func(ctx context.Context, root string, ids []string) ([]string, error) {
 			return hubMissingIDs(ctx, root, ids, opts)
@@ -39,7 +42,8 @@ func newWorktreeEnrolPorts(logger *slog.Logger, progress io.Writer, opts transpo
 		ImportCarry: func(ctx context.Context, root string, c *sqlite.InboxCarry, at time.Time) error {
 			return importWorktreeCarry(ctx, logger, root, c, at)
 		},
-		Enroll: enroll,
+		Enroll:   enroll,
+		Enrolled: enrolled,
 	}
 }
 
@@ -61,8 +65,12 @@ func worktreeDSN(root string) (string, error) {
 	return dsn, nil
 }
 
-func withWorktreeStore(logger *slog.Logger, root string, fn func(*sqlite.Store) error) (retErr error) {
-	st, err := sqlite.New(worktreeDataDir(root), logger)
+func withWorktreeStore(logger *slog.Logger, root string, fn func(*sqlite.Store) error) error {
+	return withStoreAt(logger, worktreeDataDir(root), fn)
+}
+
+func withStoreAt(logger *slog.Logger, dataDir string, fn func(*sqlite.Store) error) (retErr error) {
+	st, err := sqlite.New(dataDir, logger)
 	if err != nil {
 		return fmt.Errorf("open worktree store: %w", err)
 	}
@@ -70,9 +78,9 @@ func withWorktreeStore(logger *slog.Logger, root string, fn func(*sqlite.Store) 
 	return fn(st)
 }
 
-func snapshotWorktree(ctx context.Context, logger *slog.Logger, root string) (*service.WorktreeSnapshot, error) {
+func snapshotWorktree(ctx context.Context, logger *slog.Logger, dataDir string) (*service.WorktreeSnapshot, error) {
 	snap := &service.WorktreeSnapshot{}
-	err := withWorktreeStore(logger, root, func(st *sqlite.Store) error {
+	err := withStoreAt(logger, dataDir, func(st *sqlite.Store) error {
 		status, err := service.NewHubMarkService(st).Inspect(ctx, service.HubEvidence{})
 		if err != nil {
 			return fmt.Errorf("read hub mark: %w", err)
@@ -149,15 +157,32 @@ func cloneWorktree(ctx context.Context, logger *slog.Logger, progress io.Writer,
 			return fmt.Errorf("connect to the hub: %w", err)
 		}
 		defer pool.Close()
-		if _, _, stage, cloneErr := checkThenCloneInto(ctx, st, progress, pool, transport.PullCursor{}, 1000); cloneErr != nil {
-			return fmt.Errorf("clone %s: %w", stage, cloneErr)
-		}
-		if err := st.InitHookScanFloorAtTail(ctx); err != nil {
-			return fmt.Errorf("initialize hook scan floor: %w", err)
-		}
-		if _, err := service.NewHubMarkService(st).HubConnected(ctx, service.HubEvidence{SecretsDSN: true}); err != nil {
-			return fmt.Errorf("record hub-connected mark: %w", err)
-		}
-		return nil
+		return seedFreshStore(ctx, st, progress, pool)
 	})
+}
+
+// seedFreshStore clones the hub into st, which must hold no event: a store that
+// already holds one was written by another process after the old store moved,
+// and cloning over it would mix local and hub state (the same
+// guard `mtix sync clone` has). It then starts the hook scan floor at the journal tail, so the
+// cloned history wakes no lane, and records the hub-connected mark.
+func seedFreshStore(ctx context.Context, st *sqlite.Store, progress io.Writer, pool cursorPuller) error {
+	has, err := localHasEvents(ctx, st)
+	if err != nil {
+		return fmt.Errorf("check the fresh store is empty: %w", err)
+	}
+	if has {
+		return fmt.Errorf("the fresh store at the worktree's data directory already holds events written by another process; "+
+			"nothing was cloned over them and the original store is restored: %w", model.ErrConflict)
+	}
+	if _, _, stage, cloneErr := checkThenCloneInto(ctx, st, progress, pool, transport.PullCursor{}, 1000); cloneErr != nil {
+		return fmt.Errorf("clone %s: %w", stage, cloneErr)
+	}
+	if err := st.InitHookScanFloorAtTail(ctx); err != nil {
+		return fmt.Errorf("initialize hook scan floor: %w", err)
+	}
+	if _, err := service.NewHubMarkService(st).HubConnected(ctx, service.HubEvidence{SecretsDSN: true}); err != nil {
+		return fmt.Errorf("record hub-connected mark: %w", err)
+	}
+	return nil
 }

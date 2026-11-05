@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/hyper-swe/mtix/internal/format"
 )
 
 // LocalEvent is one journal row as the worktree enrolment lists it.
@@ -32,10 +34,12 @@ func (s *Store) LocalEvents(ctx context.Context) ([]LocalEvent, error) {
 	for rows.Next() {
 		var e LocalEvent
 		var at string
-		if err := rows.Scan(&e.ID, &e.NodeID, &e.Op, &e.Status, &at); err != nil {
-			return nil, fmt.Errorf("scan local event: %w", err)
+		if scanErr := rows.Scan(&e.ID, &e.NodeID, &e.Op, &e.Status, &at); scanErr != nil {
+			return nil, fmt.Errorf("scan local event: %w", scanErr)
 		}
-		e.At, _ = time.Parse(time.RFC3339Nano, at)
+		if e.At, err = time.Parse(time.RFC3339Nano, at); err != nil {
+			return nil, fmt.Errorf("parse created_at %q of event %s: %w", at, format.EventID(e.ID), err)
+		}
 		out = append(out, e)
 	}
 	if err := rows.Err(); err != nil {

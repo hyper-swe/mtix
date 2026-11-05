@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -31,6 +32,12 @@ const pushBatchSize = 100
 // a non-error message; pending work stays durable. A drained pusher
 // rechecks after unlock, but a non-pusher holder does not drain. --force bypasses the lock for debugging.
 func newSyncPushCmd() *cobra.Command {
+	return newSyncPushCmdWithTimeout(addressedPushTimeout)
+}
+
+// newSyncPushCmdWithTimeout injects the addressed-send bound for command tests.
+// Ordinary manual pushes retain their caller's context (FR-20.8).
+func newSyncPushCmdWithTimeout(bound time.Duration) *cobra.Command {
 	var (
 		insecureTLS bool
 		force       bool
@@ -56,7 +63,7 @@ so git pre-push hooks never block code pushes.`,
 			if onSend {
 				// MTIX-112.20.2: the detached child of an addressed send.
 				return runAddressedSendPush(cmd.Context(), cmd.ErrOrStderr(), addressedRunOptions{
-					Transport: transport.Options{InsecureTLS: insecureTLS}, Now: utcNow, HeldTries: heldPushTries, HeldWait: heldPushWait})
+					Transport: transport.Options{InsecureTLS: insecureTLS}, Now: utcNow, HeldTries: heldPushTries, HeldWait: heldPushWait, Timeout: bound})
 			}
 			return runSyncPush(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, force)

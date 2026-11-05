@@ -92,6 +92,7 @@ func hubContactRow(src *hubContactSource, hub bool, now time.Time) DoctorCheck {
 		modeText = "interval (grandfathered: the daemon's own --interval)"
 	}
 	row.Detail = "mode " + modeText + "; " + lastActivityText(src, now) + "; " + lastContactText(src, now)
+	attachHubContactOutcome(&row, src)
 	if !hub {
 		row.Detail += "; no hub configured, so the daemon makes no hub contact"
 		return row

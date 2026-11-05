@@ -121,7 +121,7 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 	// event from another machine all the way to a local wake — and
 	// dispatch needs no knowledge that a relay exists.
 	plan, err := newDaemonPlan(ctx, daemonPlanSpec{stdout: stdout, stderr: stderr, hub: hub, intervalSec: intervalSec, control: control,
-		pull: func() { runOneDaemonPull(ctx, stderr, args, opts) }})
+		pull: func() daemonPullOutcome { return runOneDaemonPull(ctx, stderr, args, opts) }})
 	if err != nil {
 		return err
 	}
@@ -141,7 +141,7 @@ type daemonPlanSpec struct {
 	hub            bool
 	intervalSec    int
 	control        []daemonPassControl
-	pull           func() // the hub pull; a test stands in for the hub
+	pull           func() daemonPullOutcome // the hub pull; a test stands in for the hub
 }
 
 // newDaemonPlan builds the daemon's loop plan: the scheduler, the shared reply
@@ -159,7 +159,7 @@ func newDaemonPlan(ctx context.Context, spec daemonPlanSpec) (daemonLoopPlan, er
 // daemonPassFor wires the daemon's real pass body: mirror drain, the hub pull
 // followed by the reply scan (MTIX-112.20.3), the relay phase and dispatch.
 // The pull is a parameter so a test can stand in for the hub.
-func daemonPassFor(ctx context.Context, stderr io.Writer, hub bool, replies *service.ReplyProcessor, pull func()) func(contact bool) {
+func daemonPassFor(ctx context.Context, stderr io.Writer, hub bool, replies *service.ReplyProcessor, pull func() daemonPullOutcome) func(contact bool) daemonPullOutcome {
 	return buildDaemonPass(hub, daemonPassSteps{
 		drain: func() { drainPendingMirror(ctx, stderr) },
 		pull:  pull,
@@ -176,7 +176,8 @@ func daemonPassFor(ctx context.Context, stderr io.Writer, hub bool, replies *ser
 // daemonPassSteps are the four phases of one daemon pass. They are fields so
 // a test can count them without a hub.
 type daemonPassSteps struct {
-	drain, pull, relay, dispatch func()
+	drain, relay, dispatch func()
+	pull                   func() daemonPullOutcome
 	// scan runs right after a pull (reply accounting, MTIX-112.20.3); optional.
 	scan func()
 }
@@ -185,17 +186,19 @@ type daemonPassSteps struct {
 // hub is configured AND the scheduler allowed contact on this pass (the
 // scale-to-zero guarantee); drain, relay and dispatch are local and run on
 // every pass.
-func buildDaemonPass(hub bool, st daemonPassSteps) func(contact bool) {
-	return func(contact bool) {
+func buildDaemonPass(hub bool, st daemonPassSteps) func(contact bool) daemonPullOutcome {
+	return func(contact bool) daemonPullOutcome {
+		var outcome daemonPullOutcome
 		st.drain()
 		if hub && contact {
-			st.pull()
+			outcome = st.pull()
 			if st.scan != nil {
 				st.scan()
 			}
 		}
 		st.relay()
 		st.dispatch()
+		return outcome
 	}
 }
 
@@ -227,12 +230,12 @@ type daemonLoopPlan struct {
 	label    string
 	interval int
 	// pass runs one locked pass; contact says whether it may dial the hub.
-	pass     func(contact bool)
+	pass     func(contact bool) daemonPullOutcome
 	controls []daemonPassControl
 	// sched, when set, replaces the fixed ticker (MTIX-112.20.1); nil keeps
 	// the fixed cadence and contacts the hub on every pass.
 	sched     *service.ContactScheduler
-	onContact func() // called after a pass that contacted the hub
+	onContact func(daemonPullOutcome) // called after a pass that contacted the hub
 	// replies is ticked before each scheduling decision (MTIX-112.20.3); nil
 	// means no reply accounting.
 	replies   *service.ReplyProcessor
@@ -318,11 +321,12 @@ func runScheduledPass(ctx context.Context, stderr io.Writer, plan daemonLoopPlan
 		tickDaemonReplies(ctx, stderr, plan.replies)
 		contact = plan.sched.Decide().Contact
 	}
-	acquired := runLockedDaemonPass(ctx, stderr, func() { plan.pass(contact) })
-	if acquired && contact && plan.sched != nil {
+	var outcome daemonPullOutcome
+	acquired := runLockedDaemonPass(ctx, stderr, func() { outcome = plan.pass(contact) })
+	if acquired && contact && outcome.attempted && plan.sched != nil {
 		plan.sched.MarkContact()
 		if plan.onContact != nil {
-			plan.onContact()
+			plan.onContact(outcome)
 		}
 	}
 	if control.observed != nil {

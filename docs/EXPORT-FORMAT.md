@@ -430,3 +430,33 @@ The provenance reader is bounded, validates format/hash/identity/count/time/owne
 Diagnostic categories are fixed and bounded at both storage and reporting boundaries. Unknown stored or supplied values become `unknown`, without repeating their original text. A failed completed publication retains its specific category instead of becoming an incomplete-pull report. Fetched responses must match their exact requested batch: unexpected, missing, nil or repeated IDs withhold the receipt while existing valid event admission remains unchanged.
 
 Compatible imports whose schema has no defined receipt hash form still import successfully. They preserve any prior receipt and report `unsupported-schema`; no form is guessed. A failure saving that omission remains an error.
+
+
+## Explicit inbox journal transport
+
+Explicit `mtix export > private-export.json` adds optional `inbox_journal`
+with `version: 1`, `events`, and `checksum`. Automatic `.mtix/tasks.json`
+and direct explicit redirection to that mirror omit it. Treat explicit and
+recovered exports as private and never commit them. The CLI reports the number
+of addressed events written to the explicit export.
+
+Each event carries `event_id`, `project`, `node_id`, optional `uid`, `author`,
+the comment `payload` as a JSON string, `created_at`, `acked`, and optional
+`acked_at`. Only directly addressed comments and their recipient coverage are
+included. Source rowids, sync queues, dispatch state and host identity are not
+included. A missing acknowledgement time means the source retained coverage
+but no time, as after cumulative acknowledgement; it is never invented.
+
+The separate SHA-256 checksum covers the Go JSON encoding of the object with
+`version` then `events`, with event fields in the order above. Event array order
+is source journal order. The existing board and IDs checksums are unchanged.
+With `history.export` off, a 0.5.4 reader imports the board and ignores this optional extension, but drops
+it when rewriting; only journal-aware readers preserve mail. Import validates
+the journal before writes and rejects conflicting event identities atomically.
+Coverage is remapped by event identity, never by a source watermark. Existing
+destination coverage remains monotonic. Newly restored records are excluded
+from outbound push and local hook replay.
+
+`mtix recover --from-export private-export.json` supplements readable database
+mail with an explicit export. The recovery report states unavailable data and
+known loss counts; a journal-free mirror cannot recover missing mail.

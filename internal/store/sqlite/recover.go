@@ -85,7 +85,12 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger
 	// After the placeholders: history of a lost task without a uid is keyed on
 	// its id, and a placeholder parent may now hold that id (MTIX-95.31.19.5).
 	carryRecoveredHistory(nodes, db, mirror.data, res)
-	return finishRecover(res, nodes, db, mtixVersion)
+	result, err := finishRecover(res, nodes, db, mtixVersion)
+	if err != nil {
+		return nil, err
+	}
+	result.Export.InboxJournal = recoverInboxJournal(ctx, dbPath, mirror.data, res)
+	return result, nil
 }
 
 // mergeMirrorRows adds to the salvage what only the mirror holds (MTIX-26.5):

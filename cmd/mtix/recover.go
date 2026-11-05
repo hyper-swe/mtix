@@ -29,7 +29,8 @@ const recoverNextStep = "Next: review the file, then run 'mtix import --mode rep
 	"terminal; no flag supplies it, so it cannot run unattended."
 
 func newRecoverCmd() *cobra.Command {
-	return &cobra.Command{
+	var fromExport string
+	cmd := &cobra.Command{
 		Use:   "recover",
 		Args:  cobra.NoArgs,
 		Short: "Salvage data from a damaged database into an importable export",
@@ -37,6 +38,12 @@ func newRecoverCmd() *cobra.Command {
 checks — salvaging every readable row individually, fills gaps from the
 .mtix/tasks.json mirror, synthesizes placeholders for lost parents, and
 writes an importable export with a fresh checksum to .mtix/.
+
+Readable addressed mail and acknowledgement coverage are recovered too.
+Use --from-export private-export.json to supplement the database with an
+explicit private export. Ordinary tasks.json does not carry the inbox journal.
+Read the salvage report for missing or unreadable mail. Treat the recovered
+file as private and never commit it.
 
 The damaged database is never modified. After reviewing the salvage
 report, restore with:
@@ -50,14 +57,18 @@ unattended.
 Restore into this project (after moving the damaged database aside) or a fresh
 'mtix init' project.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			_, err := runRecover()
+			_, err := runRecoverFrom(fromExport)
 			return err
 		},
 	}
+	cmd.Flags().StringVar(&fromExport, "from-export", "", "Private explicit export to supplement database salvage (includes inbox journal)")
+	return cmd
 }
 
 // runRecover performs the salvage and returns the output file path.
-func runRecover() (string, error) {
+func runRecover() (string, error) { return runRecoverFrom("") }
+
+func runRecoverFrom(fromExport string) (string, error) {
 	mtixDir, err := findMtixDir()
 	if err != nil {
 		return "", fmt.Errorf("not in an mtix project: %w", err)
@@ -65,6 +76,12 @@ func runRecover() (string, error) {
 
 	dbPath := filepath.Join(mtixDir, "data", "mtix.db")
 	mirrorPath := filepath.Join(mtixDir, "tasks.json")
+	if fromExport != "" {
+		if checkErr := checkRecoverExport(fromExport); checkErr != nil {
+			return "", checkErr
+		}
+		mirrorPath = fromExport
+	}
 
 	// recover skips initApp (the store may be unopenable), so the app
 	// logger may not exist yet.
@@ -89,6 +106,7 @@ func runRecover() (string, error) {
 
 	printRecoverReport(res, outPath)
 	writeRecoverInboxNote(context.Background(), os.Stdout, dbPath)
+
 	return outPath, nil
 }
 
@@ -103,7 +121,7 @@ func writeSalvageFile(mtixDir string, raw []byte) (string, error) {
 			name = fmt.Sprintf("recovered-%s-%d.json", stamp, i)
 		}
 		outPath := filepath.Join(mtixDir, name)
-		f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if errors.Is(err, os.ErrExist) {
 			continue
 		}

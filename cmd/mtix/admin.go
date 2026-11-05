@@ -151,10 +151,11 @@ func runExport(format string) error {
 	_ = format // Only JSON supported currently.
 	ctx := context.Background()
 
-	// Use store.Export() to produce the FR-7.8 ExportData envelope with
-	// version, schema_version, checksum, and node_count — matching the
-	// format used by AutoExport for consistency.
-	exportData, err := app.store.Export(ctx, "", "")
+	includeInbox, err := exportIncludesInbox(os.Stdout, app.mtixDir)
+	if err != nil {
+		return err
+	}
+	exportData, err := service.NewAdminService(app.store).Export(ctx, includeInbox)
 	if err != nil {
 		return fmt.Errorf("export: %w", err)
 	}
@@ -163,10 +164,15 @@ func runExport(format string) error {
 	if err != nil {
 		return fmt.Errorf("marshal export: %w", err)
 	}
-	fmt.Println(string(data))
-	// The export is complete and written: a failed count only costs the note.
-	if noteErr := exportInboxNoteTo(ctx, os.Stderr); noteErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not count unacknowledged inbox events (%v); the export does not carry the inbox\n", noteErr)
+	if _, err := fmt.Fprintln(os.Stdout, string(data)); err != nil {
+		return fmt.Errorf("write export: %w", err)
+	}
+	if exportData.InboxJournal != nil {
+		if _, err := fmt.Fprintf(os.Stderr, "export carries %d addressed inbox event(s); treat this file as private and never commit it\n", len(exportData.InboxJournal.Events)); err != nil {
+			return fmt.Errorf("write inbox export notice: %w", err)
+		}
+	} else if err := exportInboxNoteTo(ctx, os.Stderr); err != nil {
+		return err
 	}
 	return nil
 }

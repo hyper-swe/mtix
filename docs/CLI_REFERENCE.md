@@ -1521,6 +1521,12 @@ checks — salvaging every readable row individually, fills gaps from the
 .mtix/tasks.json mirror, synthesizes placeholders for lost parents, and
 writes an importable export with a fresh checksum to .mtix/.
 
+Readable addressed mail and acknowledgement coverage are recovered too.
+Use --from-export private-export.json to supplement the database with an
+explicit private export. Ordinary tasks.json does not carry the inbox journal.
+Read the salvage report for missing or unreadable mail. Treat the recovered
+file as private and never commit it.
+
 The damaged database is never modified. After reviewing the salvage
 report, restore with:
 
@@ -1532,6 +1538,12 @@ unattended.
 
 Restore into this project (after moving the damaged database aside) or a fresh
 'mtix init' project.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--from-export` |  | Private explicit export to supplement database salvage (includes inbox journal) |  |
 ---
 
 ## reopen

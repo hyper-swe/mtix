@@ -776,6 +776,12 @@ mtix annotate PROJ-1.1 "Consider rate limiting on this endpoint"
 
 Annotations appear in the context assembly and are visible to agents working on the node.
 
+To address an annotation to another agent, add `--to <agent>`. It then takes the same path as `mtix comment --to`: it lands in that agent's inbox (`mtix inbox`) and prints the same push and wake status lines, and it matches the MCP `mtix_annotate` tool with `to`. An empty `--to` addresses nobody. Without `--to` nothing changes. Only `mtix comment` takes `--await-reply`.
+
+```bash
+mtix annotate PROJ-1.1 "Please review the rate limit" --to reviewer-a
+```
+
 ### Resolve Annotations
 
 When an annotation has been addressed:
@@ -4550,7 +4556,7 @@ change the node's status with the normal commands instead.
 
 ### MCP integration
 
-Use `mtix_discover` to list the tools this build registers. Comments use `mtix_annotate` (`id`, `text`, `author`); `mtix_dep_show` lists a node's active blockers. Tree views and administration use the CLI: `mtix tree <id>`, `mtix verify`, `mtix backup <path>`, `mtix export`, `mtix gc`, and `mtix config get/set`. There is no MCP import tool: use `mtix import <file> --mode merge`. Replace import needs an operator to type the ticket count at an interactive terminal; agents never run it.
+Use `mtix_discover` to list the tools this build registers. Comments use `mtix_annotate` (`id`, `text`, `author`; `to` addresses another agent, like the CLI `mtix annotate <id> "<text>" --to <agent>` or `mtix comment <id> "<text>" --to <agent>`); `mtix_dep_show` lists a node's active blockers. Tree views and administration use the CLI: `mtix tree <id>`, `mtix verify`, `mtix backup <path>`, `mtix export`, `mtix gc`, and `mtix config get/set`. There is no MCP import tool: use `mtix import <file> --mode merge`. Replace import needs an operator to type the ticket count at an interactive terminal; agents never run it.
 
 The `mtix_sync_workflow` MCP tool exposes structured sync-state
 recommendations to LLM agents. State buckets: `solo`,

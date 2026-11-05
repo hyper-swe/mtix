@@ -246,6 +246,20 @@ Show current work assignment for an agent
 **Usage:** `annotate <id> <text>`
 
 Add an annotation to a node
+
+Add an annotation to a node.
+
+Use --to <agent> to address the annotation at a specific agent: it then takes
+exactly the path of 'mtix comment --to' and lands in that agent's inbox (see
+'mtix inbox'), the same as the MCP mtix_annotate tool with 'to'. Without --to
+the annotation is stored on the node as before. For a reply window use
+'mtix comment --to <agent> --await-reply'.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--to` |  | Address the annotation to an agent (delivers to its inbox, like comment --to) |  |
 ---
 
 ## attach

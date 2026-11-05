@@ -61,9 +61,10 @@ so git pre-push hooks never block code pushes.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if onSend {
+				push, _ := cmd.Context().Value(addressedPushBodyKey{}).(func(context.Context, io.Writer, transport.Options) error)
 				// MTIX-112.20.2: the detached child of an addressed send.
 				return runAddressedSendPush(cmd.Context(), cmd.ErrOrStderr(), addressedRunOptions{
-					Transport: transport.Options{InsecureTLS: insecureTLS}, Now: utcNow, HeldTries: heldPushTries, HeldWait: heldPushWait, Timeout: bound})
+					Transport: transport.Options{InsecureTLS: insecureTLS}, Now: utcNow, HeldTries: heldPushTries, HeldWait: heldPushWait, Timeout: bound, Push: push})
 			}
 			return runSyncPush(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, force)
@@ -430,3 +431,6 @@ func markPushed(ctx context.Context, store *sqlite.Store, acceptedIDs []string) 
 		return nil
 	})
 }
+
+// addressedPushBodyKey injects an invocation-local push body for command tests.
+type addressedPushBodyKey struct{}

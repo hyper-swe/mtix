@@ -52,7 +52,7 @@ type RecoverResult struct {
 //
 // Returns an error only when there is nothing to salvage from either
 // source — partial damage yields a partial result plus Notes.
-func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger *slog.Logger) (*RecoverResult, error) {
+func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger *slog.Logger, inboxSources ...*ExportData) (*RecoverResult, error) {
 	res := &RecoverResult{}
 	mirrorNotes := &RecoverResult{}
 	mirror := readMirrorSource(mirrorPath, mirrorNotes)
@@ -89,7 +89,7 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger
 	if err != nil {
 		return nil, err
 	}
-	result.Export.InboxJournal = recoverInboxJournal(ctx, dbPath, mirror.data, res)
+	result.Export.InboxJournal = recoverInboxJournal(ctx, dbPath, mirror.data, res, inboxSources...)
 	return result, nil
 }
 

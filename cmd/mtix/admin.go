@@ -128,22 +128,27 @@ func runBackup(path string) error {
 // newExportCmd creates the mtix export command per FR-6.3.
 func newExportCmd() *cobra.Command {
 	var format string
+	var boardOnly bool
 
 	cmd := &cobra.Command{
 		Use:   "export",
 		Args:  cobra.NoArgs,
-		Short: "Export nodes to JSON",
+		Short: "Export board and addressed inbox to private JSON",
+		Long:  "Export board and addressed inbox to private JSON. Never commit the default output. Use --board-only for a journal-free snapshot; board comments may still contain private text.",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runExport(format)
+			return runExportWithInbox(format, !boardOnly)
 		},
 	}
 
 	cmd.Flags().StringVar(&format, "format", "json", "Export format (json)")
+	cmd.Flags().BoolVar(&boardOnly, "board-only", false, "Omit the inbox journal, including for temporary mirror files and pipes")
 
 	return cmd
 }
 
-func runExport(format string) error {
+func runExport(format string) error { return runExportWithInbox(format, true) }
+
+func runExportWithInbox(format string, wantInbox bool) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -155,7 +160,7 @@ func runExport(format string) error {
 	if err != nil {
 		return err
 	}
-	exportData, err := service.NewAdminService(app.store).Export(ctx, includeInbox)
+	exportData, err := service.NewAdminService(app.store).Export(ctx, includeInbox && wantInbox)
 	if err != nil {
 		return fmt.Errorf("export: %w", err)
 	}
@@ -167,13 +172,8 @@ func runExport(format string) error {
 	if _, err := fmt.Fprintln(os.Stdout, string(data)); err != nil {
 		return fmt.Errorf("write export: %w", err)
 	}
-	if exportData.InboxJournal != nil {
-		if _, err := fmt.Fprintf(os.Stderr, "export carries %d addressed inbox event(s); treat this file as private and never commit it\n", len(exportData.InboxJournal.Events)); err != nil {
-			return fmt.Errorf("write inbox export notice: %w", err)
-		}
-	} else if err := exportInboxNoteTo(ctx, os.Stderr); err != nil {
-		return err
-	}
+	writeExplicitExportNotes(ctx, os.Stderr, exportData)
+
 	return nil
 }
 

@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestInboxTransport_BoardAndJournalShareSnapshot(t *testing.T) {
+func TestExportWithInbox_ConcurrentWrite_SharesBoardSnapshot(t *testing.T) {
 	s := exchangeSnapshotStore(t)
 	require.NoError(t, s.CreateNode(t.Context(), &model.Node{ID: "TEST-1", Project: "TEST", Seq: 1, Title: "before", Status: model.StatusOpen, Priority: 3, Weight: 1}))
 	ctx, cancel := context.WithCancel(t.Context())
@@ -49,8 +49,8 @@ func TestInboxTransport_BoardAndJournalShareSnapshot(t *testing.T) {
 	require.Len(t, after.InboxJournal.Events, 1)
 }
 
-func TestInboxTransport_RecoveryUnionKeepsDatabaseConflictAndMonotonicCoverage(t *testing.T) {
-	e := inboxJournalEvent{EventID: "same", Project: "TEST", NodeID: "TEST-1", Payload: `{"to":"worker","body":"original"}`, CreatedAt: "2026-11-05T00:00:00Z"}
+func TestMergeRecoveredInbox_ConflictsAndStaleCoverage_KeepsDatabaseContentAndAcks(t *testing.T) {
+	e := inboxJournalEvent{EventID: "same", Author: "sender", Project: "TEST", NodeID: "TEST-1", Payload: `{"to":"worker","body":"original"}`, CreatedAt: "2026-11-05T00:00:00Z"}
 	dst := &InboxJournal{Version: 1, Events: []inboxJournalEvent{e}}
 	acked := e
 	acked.Acked = true

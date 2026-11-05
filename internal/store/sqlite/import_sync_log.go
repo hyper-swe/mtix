@@ -52,7 +52,8 @@ func syncedWithHub(ctx context.Context, q rowQuerier) (bool, error) {
 	// ingestor has a cursor row for a peer.
 	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM board_flags WHERE key = ?)
 		OR EXISTS (SELECT 1 FROM applied_events)
-		OR EXISTS (SELECT 1 FROM sync_events WHERE sync_status <> 'pending')
+		OR EXISTS (SELECT 1 FROM sync_events WHERE sync_status <> 'pending'
+          AND NOT EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=sync_events.event_id))
 		OR EXISTS (SELECT 1 FROM relay_push_cursor WHERE cursor > 0 OR next_rs > 1 OR pub_epoch > 1)
 		OR EXISTS (SELECT 1 FROM relay_ingest_cursor)`, hubMarkKey).Scan(&synced)
 	if err != nil {
@@ -88,7 +89,8 @@ func loggedNodes(ctx context.Context, q rowQuerier) (nodes []loggedNode, err err
 		EXISTS (SELECT 1 FROM sync_events se WHERE `+loggedNodeMatch+`
 			AND se.op_type = 'create_node' AND se.sync_status <> 'pending')
 		FROM nodes n
-		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE `+loggedNodeMatch+`)
+		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE `+loggedNodeMatch+`
+          AND NOT EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=se.event_id))
 		ORDER BY n.id`)
 	if err != nil {
 		return nil, err
@@ -210,11 +212,15 @@ func discardUnsharedEvents(ctx context.Context, tx *sql.Tx, data *ExportData, as
 	if err != nil {
 		return err
 	}
+	retained, err := retainedInboxIDs(data.InboxJournal)
+	if err != nil {
+		return err
+	}
 	for _, l := range dropped {
 		// The pending events of the dropped task, and of the links to it:
 		// first the held copies, then the events themselves.
 		for _, stmt := range []string{deleteHeldCopiesOfDropped, deleteEventsOfDropped} {
-			if _, err := tx.ExecContext(ctx, stmt, l.id); err != nil {
+			if _, err := tx.ExecContext(ctx, stmt, l.id, retained); err != nil {
 				return fmt.Errorf("discard the unshared events of %s: %w", l.id, err)
 			}
 		}
@@ -231,7 +237,8 @@ func discardUnsharedEvents(ctx context.Context, tx *sql.Tx, data *ExportData, as
 // ?1 (matched by uid first, loggedNodeMatch) and of the pending link events
 // that name it as their target.
 const droppedEventIDs = `SELECT se.event_id FROM sync_events se
-	WHERE se.sync_status = 'pending' AND (
+	WHERE se.sync_status = 'pending'
+      AND se.event_id NOT IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?2)) AND (
 	  EXISTS (SELECT 1 FROM nodes n WHERE n.id = ?1 AND ` + loggedNodeMatch + `)
 	  OR (se.op_type IN ('link_dep', 'unlink_dep') AND json_valid(se.payload)
 	      AND json_extract(se.payload, '$.depends_on_node_id') = ?1))`

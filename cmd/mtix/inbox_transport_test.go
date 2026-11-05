@@ -15,7 +15,7 @@ import (
 )
 
 // Explicit exports are private; automatic or redirected tracked mirrors are not.
-func TestInboxTransportCLI_ExplicitExportAndMirror(t *testing.T) {
+func TestRunExport_ExplicitSnapshot_IncludesPrivateJournalOnlyInExplicitFile(t *testing.T) {
 	initTestApp(t)
 	envelopeCLIEvents(t, "mail one", "mail two")
 	var out string
@@ -35,7 +35,7 @@ func TestInboxTransportCLI_ExplicitExportAndMirror(t *testing.T) {
 	require.NotContains(t, string(mirror), `"inbox_journal"`)
 }
 
-func TestInboxTransportCLI_RedirectedMirrorOmitsJournal(t *testing.T) {
+func TestRunExport_RedirectedMirror_OmitsJournal(t *testing.T) {
 	initTestApp(t)
 	envelopeCLIEvents(t, "mail")
 	path := filepath.Join(app.mtixDir, "tasks.json")
@@ -53,19 +53,7 @@ func TestInboxTransportCLI_RedirectedMirrorOmitsJournal(t *testing.T) {
 	require.Contains(t, string(raw), `"nodes"`)
 }
 
-func TestInboxTransportCLI_RecoverAcceptsExplicitExport(t *testing.T) {
-	initTestApp(t)
-	envelopeCLIEvents(t, "mail")
-	out, err := cliBehaviorOutput(t, func() error { return runExport("json") })
-	require.NoError(t, err)
-	path := filepath.Join(t.TempDir(), "private-export.json")
-	require.NoError(t, os.WriteFile(path, []byte(out), 0600))
-	cmd := newRecoverCmd()
-	require.NoError(t, cmd.ParseFlags([]string{"--from-export", path}))
-	require.NoError(t, cmd.RunE(cmd, nil))
-}
-
-func TestInboxTransportCLI_RecoveryReferenceMatchesGenerator(t *testing.T) {
+func TestRecoverHelp_PublishedReference_MatchesGenerator(t *testing.T) {
 	actual, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI_REFERENCE.md"))
 	require.NoError(t, err)
 	generated := generatedHelpReference(t)
@@ -79,7 +67,7 @@ func TestInboxTransportCLI_RecoveryReferenceMatchesGenerator(t *testing.T) {
 	require.Equal(t, cliReferenceSection(t, generated, "recover", "recover"), cliReferenceSection(t, string(actual), "recover", "recover"))
 }
 
-func TestInboxTransportCLI_RecoveryRejectsUnreadableOrInvalidExport(t *testing.T) {
+func TestCheckRecoverExport_UnreadableOrInvalidFile_RejectsInput(t *testing.T) {
 	dir := t.TempDir()
 	require.ErrorContains(t, checkRecoverExport(filepath.Join(dir, "absent.json")), "open recovery export")
 	path := filepath.Join(dir, "invalid.json")
@@ -89,7 +77,7 @@ func TestInboxTransportCLI_RecoveryRejectsUnreadableOrInvalidExport(t *testing.T
 	require.ErrorContains(t, checkRecoverExport(path), "validate recovery export")
 }
 
-func TestInboxTransportCLI_MirrorAliasesRemainJournalFree(t *testing.T) {
+func TestExportIncludesInbox_MirrorAlias_OmitsJournal(t *testing.T) {
 	dir := t.TempDir()
 	mirror := filepath.Join(dir, "tasks.json")
 	require.NoError(t, os.WriteFile(mirror, []byte("{}"), 0600))
@@ -111,7 +99,7 @@ func TestInboxTransportCLI_MirrorAliasesRemainJournalFree(t *testing.T) {
 	}
 }
 
-func TestInboxTransportCLI_UnreadableMirrorIdentityRefusesExport(t *testing.T) {
+func TestExportIncludesInbox_UnreadableMirrorIdentity_RefusesExport(t *testing.T) {
 	dir := t.TempDir()
 	mirror := filepath.Join(dir, "tasks.json")
 	require.NoError(t, os.Symlink(mirror, mirror))

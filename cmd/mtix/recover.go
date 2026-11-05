@@ -76,11 +76,12 @@ func runRecoverFrom(fromExport string) (string, error) {
 
 	dbPath := filepath.Join(mtixDir, "data", "mtix.db")
 	mirrorPath := filepath.Join(mtixDir, "tasks.json")
+	var inboxSource *sqlite.ExportData
 	if fromExport != "" {
-		if checkErr := checkRecoverExport(fromExport); checkErr != nil {
-			return "", checkErr
+		inboxSource, err = readRecoverExport(fromExport)
+		if err != nil {
+			return "", err
 		}
-		mirrorPath = fromExport
 	}
 
 	// recover skips initApp (the store may be unopenable), so the app
@@ -90,7 +91,7 @@ func runRecoverFrom(fromExport string) (string, error) {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 
-	res, err := sqlite.Recover(context.Background(), dbPath, mirrorPath, version, logger)
+	res, err := sqlite.Recover(context.Background(), dbPath, mirrorPath, version, logger, inboxSource)
 	if err != nil {
 		return "", err
 	}

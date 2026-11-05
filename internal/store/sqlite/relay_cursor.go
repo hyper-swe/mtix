@@ -237,6 +237,7 @@ func (s *Store) ReadRelayJournalSince(ctx context.Context, seq int64, limit int)
 		       author_id, author_machine_hash, uid
 		FROM sync_events
 		WHERE rowid > ?
+          AND NOT EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=sync_events.event_id)
 		ORDER BY rowid ASC
 		LIMIT ?`, seq, limit)
 	if err != nil {

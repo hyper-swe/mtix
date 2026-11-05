@@ -4,8 +4,10 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -31,18 +33,39 @@ func exportIncludesInbox(output *os.File, mtixDir string) (bool, error) {
 
 // Explicit recovery input must be readable and validate; a typo must not
 // silently fall back to a different source and claim that recovery succeeded.
-func checkRecoverExport(path string) (err error) {
+func checkRecoverExport(path string) error { _, err := readRecoverExport(path); return err }
+
+func readRecoverExport(path string) (data *sqlite.ExportData, err error) {
 	file, err := os.Open(path)
 	if err != nil {
-		return fmt.Errorf("open recovery export: %w", err)
+		return nil, fmt.Errorf("open recovery export: %w", err)
 	}
 	defer func() { err = errors.Join(err, file.Close()) }()
-	data, err := sqlite.DecodeExportData(file)
+	data, err = sqlite.DecodeExportData(file)
 	if err != nil {
-		return fmt.Errorf("read recovery export: %w", err)
+		return nil, fmt.Errorf("read recovery export: %w", err)
 	}
-	if err := sqlite.ValidateExport(data); err != nil {
-		return fmt.Errorf("validate recovery export: %w", err)
+	if err = sqlite.ValidateExport(data); err != nil {
+		return nil, fmt.Errorf("validate recovery export: %w", err)
 	}
-	return nil
+	return data, nil
+}
+
+// A diagnostic failure after a successful write must not turn a complete
+// export into a failed command. The data write itself still reports errors.
+func writeExplicitExportNotes(ctx context.Context, w io.Writer, data *sqlite.ExportData) {
+	j := data.InboxJournal
+	if j == nil {
+		if err := exportInboxNoteTo(ctx, w); err != nil {
+			fmt.Fprintf(w, "warning: %v\n", err)
+		}
+		return
+	}
+	fmt.Fprintf(w, "export carries %d addressed inbox event(s); treat this file as private and never commit it\n", len(j.Events))
+	if j.UncarriedUnacked > 0 {
+		fmt.Fprintf(w, "note: %d unacknowledged inbox delivery(s) not carried; hook-created deliveries are local\n", j.UncarriedUnacked)
+	}
+	for _, note := range j.Notes {
+		fmt.Fprintf(w, "warning: %s\n", note)
+	}
 }

@@ -37,7 +37,8 @@ func (s *Store) ReplyByEvents(ctx context.Context, afterSeq int64, limit int) ([
 	// Addressed comments with a reply deadline, in arrival order (rowid).
 	// json_valid guards a hand-damaged payload; the index-free scan is bounded by limit.
 	rows, err := s.readDB.QueryContext(ctx, `
-		SELECT e.rowid, e.event_id, e.author_id, e.payload, e.sync_status
+		SELECT e.rowid, e.event_id, e.author_id, e.payload,
+          CASE WHEN EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=e.event_id) THEN 'restored' ELSE e.sync_status END
 		  FROM sync_events e
 		 WHERE e.op_type = 'comment'
 		   AND e.rowid > ?

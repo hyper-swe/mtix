@@ -348,7 +348,7 @@ while checking cleanup.
    `.mtix/tasks.json` only if export succeeds. In a POSIX shell:
 
    ```sh
-   (umask 077; set -C; mtix export > .mtix/tasks-clean.json) &&
+   (umask 077; set -C; mtix export --board-only > .mtix/tasks-clean.json) &&
      mv .mtix/tasks-clean.json .mtix/tasks.json
    ```
 

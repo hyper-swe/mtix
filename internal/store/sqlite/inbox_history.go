@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
+	"runtime"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -183,7 +183,7 @@ func countUnackedRO(ctx context.Context, uri string) (int64, error) {
 
 // fileURIPath escapes the characters that end a file: URI path.
 func fileURIPath(path string) string {
-	return strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
+	return fileURIPathFor(path, runtime.GOOS)
 }
 
 func countUnackedInbox(ctx context.Context, db *sql.DB) (int64, error) {

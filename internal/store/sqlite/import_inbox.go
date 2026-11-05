@@ -31,8 +31,7 @@ func checkInboxJournalCollisions(ctx context.Context, tx *sql.Tx, j *InboxJourna
 		if err != nil {
 			return fmt.Errorf("check inbox event collision: %w", err)
 		}
-		incoming.Acked, incoming.AckedAt = false, ""
-		if op != "comment" || stored != incoming {
+		if op != "comment" || !sameInboxContent(stored, incoming) {
 			return fmt.Errorf("inbox event identity has different content: %w", model.ErrConflict)
 		}
 	}
@@ -58,7 +57,7 @@ func importInboxEvent(ctx context.Context, tx *sql.Tx, e inboxJournalEvent) erro
   (event_id,project_prefix,node_id,uid,op_type,payload,author_id,created_at,
    wall_clock_ts,lamport_clock,vector_clock,author_machine_hash,sync_status)
   VALUES(?,?,?,?,'comment',?,?,?,0,0,'{}','','applied')`,
-		e.EventID, e.Project, e.NodeID, e.UID, e.Payload, e.Author, e.CreatedAt)
+		e.EventID, e.Project, e.NodeID, nullableString(e.UID), e.Payload, e.Author, e.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("restore inbox event: %w", err)
 	}
@@ -72,9 +71,8 @@ func importInboxEvent(ctx context.Context, tx *sql.Tx, e inboxJournalEvent) erro
 		if suppressErr := suppressWorkflowHook(ctx, tx, e.EventID); suppressErr != nil {
 			return suppressErr
 		}
-		if _, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO applied_events
-   (event_id,applied_at,applied_by_lamport) VALUES(?,?,0)`, e.EventID, e.CreatedAt); err != nil {
-			return fmt.Errorf("record recovered event deduplication: %w", err)
+		if _, err = tx.ExecContext(ctx, `INSERT INTO inbox_restored_events(event_id) VALUES(?)`, e.EventID); err != nil {
+			return fmt.Errorf("record restored inbox provenance: %w", err)
 		}
 	}
 	if !e.Acked {

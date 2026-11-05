@@ -16,7 +16,8 @@ import (
 func (s *Store) PermissionAddressedAgents(ctx context.Context) (out []string, err error) {
 	rows, err := s.readDB.QueryContext(ctx, `SELECT s.payload FROM sync_events s
 	 JOIN applied_events a ON a.event_id = s.event_id
-	 WHERE s.op_type = ? AND s.sync_status = ?`, model.OpComment, model.SyncStatusApplied)
+	 WHERE s.op_type = ? AND s.sync_status = ?
+          AND NOT EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=s.event_id)`, model.OpComment, model.SyncStatusApplied)
 	if err != nil {
 		return nil, fmt.Errorf("read addressed permission evidence: %w", err)
 	}

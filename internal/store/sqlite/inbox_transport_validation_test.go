@@ -10,7 +10,7 @@ import (
 )
 
 // Checksummed input still has to satisfy the journal's domain constraints.
-func TestInboxTransport_ValidateContents(t *testing.T) {
+func TestValidateInboxJournal_InvalidContents_RejectsInput(t *testing.T) {
 	cases := []struct {
 		name   string
 		change func(*inboxJournalEvent)
@@ -26,7 +26,7 @@ func TestInboxTransport_ValidateContents(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			e := inboxJournalEvent{EventID: "event-1", Project: "TEST", NodeID: "TEST-1", Payload: `{"to":"worker","body":"mail"}`, CreatedAt: "2026-11-05T00:00:00Z"}
+			e := inboxJournalEvent{EventID: "event-1", Author: "sender", Project: "TEST", NodeID: "TEST-1", Payload: `{"to":"worker","body":"mail"}`, CreatedAt: "2026-11-05T00:00:00Z"}
 			tc.change(&e)
 			j := &InboxJournal{Version: 1, Events: []inboxJournalEvent{e}}
 			var err error
@@ -37,8 +37,8 @@ func TestInboxTransport_ValidateContents(t *testing.T) {
 	}
 }
 
-func TestInboxTransport_DuplicateIdentityAndCoverageValidation(t *testing.T) {
-	e := inboxJournalEvent{EventID: "event-1", Project: "TEST", NodeID: "TEST-1", Payload: `{"to":"worker","body":"mail"}`, CreatedAt: "2026-11-05T00:00:00Z", Acked: true}
+func TestValidateInboxJournal_DuplicateIdentityOrInvalidCoverage_RejectsInput(t *testing.T) {
+	e := inboxJournalEvent{EventID: "event-1", Author: "sender", Project: "TEST", NodeID: "TEST-1", Payload: `{"to":"worker","body":"mail"}`, CreatedAt: "2026-11-05T00:00:00Z", Acked: true}
 	j := &InboxJournal{Version: 1, Events: []inboxJournalEvent{e}}
 	var err error
 	j.Checksum, err = inboxJournalChecksum(j)

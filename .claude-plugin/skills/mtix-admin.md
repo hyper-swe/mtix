@@ -285,16 +285,17 @@ Backup creates a timestamped copy of the SQLite database. Store backups in a saf
 
 ## Export
 
-Run `mtix export > <file>` to save a JSON snapshot of all project data.
+Run `mtix export > <private-file>` to save board data, addressed mail and recipient acknowledgment coverage. Stderr reports carried mail, unreadable records and uncarried unacknowledged deliveries. Never commit this default export; hook-created deliveries and host state are not transported.
 
 The export includes:
 - All nodes with every field, including each node's annotations (comments, review verdicts, close receipts) and activity stream
 - All dependencies
 - All agent records
 - All session records
+- Addressed inbox events and recipient acknowledgment coverage, with their own checksum (omitted with `--board-only`)
 - SHA-256 checksum for integrity verification; it covers the nodes, annotations included, and the dependencies
 
-`.mtix/tasks.json` is the same document (`schema_version` 2.0.0 from mtix 0.5.4). An mtix client older than 0.5.4 skips such a file as newer than it supports, but its next writing command re-exports `.mtix/tasks.json` from its own store, without the annotations and changes it skipped, and committing that file reverts them upstream. On such a client even an `mtix import` that fails rewrites `.mtix/tasks.json` the same way. Until every agent and teammate sharing a board runs 0.5.4 or later, never run writing commands or `mtix import` on an older client and never commit its `.mtix/tasks.json`. If one was committed, restore `.mtix/tasks.json` from the last good commit in git history, or restore the store from the backup taken before the import (`.mtix/data/backups/pre-sync-<time>.db`; `.mtix/data/pre-sync-backup.db` on 0.5.3 and earlier): stop every mtix process (the MCP server, `mtix serve` and the sync daemon), copy the backup over `.mtix/data/mtix.db`, delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`, then continue. A 0.5.4 store is protected by the auto-import guard (see "Automatic import of `.mtix/tasks.json`" below): such a file carries no annotations or activity, so its automatic import is refused and nothing changes.
+`.mtix/tasks.json` carries the same board fields (`schema_version` 2.0.0 from mtix 0.5.4) but no inbox journal. Default explicit exports include addressed mail and recipient acknowledgments: keep them private and never commit them. Use `mtix export --board-only` for temporary files or pipes destined for the tracked mirror; board comments may still be private. An mtix client older than 0.5.4 skips such a file as newer than it supports, but its next writing command re-exports `.mtix/tasks.json` from its own store, without the annotations and changes it skipped, and committing that file reverts them upstream. On such a client even an `mtix import` that fails rewrites `.mtix/tasks.json` the same way. Until every agent and teammate sharing a board runs 0.5.4 or later, never run writing commands or `mtix import` on an older client and never commit its `.mtix/tasks.json`. If one was committed, restore `.mtix/tasks.json` from the last good commit in git history, or restore the store from the backup taken before the import (`.mtix/data/backups/pre-sync-<time>.db`; `.mtix/data/pre-sync-backup.db` on 0.5.3 and earlier): stop every mtix process (the MCP server, `mtix serve` and the sync daemon), copy the backup over `.mtix/data/mtix.db`, delete `.mtix/data/mtix.db-wal` and `.mtix/data/mtix.db-shm`, then continue. A 0.5.4 store is protected by the auto-import guard (see "Automatic import of `.mtix/tasks.json`" below): such a file carries no annotations or activity, so its automatic import is refused and nothing changes.
 
 **After export:** Verify the checksum field is present. Store exports alongside backups for disaster recovery.
 

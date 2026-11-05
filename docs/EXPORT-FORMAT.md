@@ -436,13 +436,17 @@ Compatible imports whose schema has no defined receipt hash form still import su
 
 Explicit `mtix export > private-export.json` adds optional `inbox_journal`
 with `version: 1`, `events`, and `checksum`. Automatic `.mtix/tasks.json`
-and direct explicit redirection to that mirror omit it. Treat explicit and
+and direct explicit redirection to that mirror omit it. `--board-only` also
+omits it for temporary files and pipes intended for the mirror. Treat explicit and
 recovered exports as private and never commit them. The CLI reports the number
-of addressed events written to the explicit export.
+of addressed events written, uncarried unread deliveries, and unreadable
+comment records; an indeterminate recipient is reported as unknown addressed-mail loss.
 
 Each event carries `event_id`, `project`, `node_id`, optional `uid`, `author`,
 the comment `payload` as a JSON string, `created_at`, `acked`, and optional
-`acked_at`. Only directly addressed comments and their recipient coverage are
+`acked_at`. Invalid-UTF8 event IDs and UIDs also carry `event_id_hex` and
+`uid_hex`, using the existing ID encoding; arbitrary identity bytes are preserved
+(MTIX-187.6). Only directly addressed comments and their recipient coverage are
 included. Source rowids, sync queues, dispatch state and host identity are not
 included. A missing acknowledgement time means the source retained coverage
 but no time, as after cumulative acknowledgement; it is never invented.
@@ -455,8 +459,12 @@ it when rewriting; only journal-aware readers preserve mail. Import validates
 the journal before writes and rejects conflicting event identities atomically.
 Coverage is remapped by event identity, never by a source watermark. Existing
 destination coverage remains monotonic. Newly restored records are excluded
-from outbound push and local hook replay.
+from outbound push, relay publication and local hook replay. Restoration alone
+does not create hub-contact evidence; locally held events retain their existing
+status, clocks, hooks, deliveries and acknowledgments.
 
 `mtix recover --from-export private-export.json` supplements readable database
-mail with an explicit export. The recovery report states unavailable data and
+mail with an explicit export without replacing the board mirror. Duplicate
+readable event identities are combined when their immutable content matches;
+conflicts retain the first readable database copy and are reported. The recovery report states unavailable data and
 known loss counts; a journal-free mirror cannot recover missing mail.

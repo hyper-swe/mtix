@@ -3,7 +3,7 @@ name: multi-agent
 description: Coordinate multiple agents working on mtix tasks. Manage claiming, sessions, heartbeats, and parallel execution.
 ---
 
-# Multi-Agent Coordination with mtix
+# MTIX — Multi-Agent Coordination
 
 Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
@@ -204,7 +204,7 @@ An event addressed to an agent (`mtix comment --to <agent-id>`, or a hook delive
 The guarantee covers the journal of one store (`.mtix/data/mtix.db`). Its exact boundaries:
 
 - **Per store.** The journal and the acknowledgements live in one store. An event reaches another checkout only through sync. Acknowledgements are not synced: a new checkout made with `mtix sync clone` lists every addressed event as unacknowledged, including events the first checkout already acknowledged. Delivery is at least once, so handle inbox work idempotently. Carrying acknowledgements to a new checkout is planned work (MTIX-112.17.16).
-- **Export, import and recover.** `mtix export > private-export.json` carries addressed comments and recipient acknowledgement coverage by default; stderr reports the event count. Treat this file as private and never commit it. Merge or replace import restores that mail by event identity (replace requires the typed ticket count at a terminal when the store holds tickets), without replaying hooks or queueing it for push; importing the same file twice adds no mail and never undoes local acknowledgements. Automatic `.mtix/tasks.json` stays journal-free, as does explicit export redirected to that path (including links to it). A fresh store imported only from that mirror has no inbox journal. `mtix recover` salvages readable mail from the database; `mtix recover --from-export private-export.json` also fills gaps from an explicit export. Its report identifies missing or unreadable journal data and gives counts where known; keep the damaged database when recovery is incomplete. Hook-created deliveries, dispatch state and host identities are not transported. With `history.export` off, a 0.5.4 reader can import the board but ignores the journal and drops it on rewrite, so use this version to move or recover mail. Cumulative acknowledgements become per-event coverage without an invented acknowledgement time; no source watermark can hide unrelated destination mail.
+- **Export, import and recover.** `mtix export > private-export.json` carries addressed comments and recipient acknowledgement coverage by default; stderr reports the event count. Treat this file as private and never commit it. Merge or replace import restores that mail by event identity (replace requires the typed ticket count at a terminal when the store holds tickets), without replaying hooks or queueing it for push; importing the same file twice adds no mail and never undoes local acknowledgements. Automatic `.mtix/tasks.json` stays journal-free, as does explicit export redirected to that path (including links to it). For a temporary file later moved to the mirror, or a pipe such as `tee`, explicitly use `--board-only`. A fresh store imported only from that mirror has no inbox journal. `mtix recover` salvages readable mail from the database; `mtix recover --from-export private-export.json` also fills journal gaps from an explicit export while retaining `.mtix/tasks.json` as the board source. Its report identifies missing or unreadable journal data and gives counts where known; keep the damaged database when recovery is incomplete. Hook-created deliveries, dispatch state and host identities are not transported. With `history.export` off, a 0.5.4 reader can import the board but ignores the journal and drops it on rewrite, so use this version to move or recover mail. Cumulative acknowledgements become per-event coverage without an invented acknowledgement time; no source watermark can hide unrelated destination mail.
 - **`mtix import --mode replace`.** On a store that never synced, a replace removes the events of every ticket the file lacks. It asks for the ticket count, typed at a terminal, and lists the number of unacknowledged inbox events first; that number is the most the replace can remove. A store that has synced refuses a replace that would drop a task its sync log holds; a replace that keeps every task proceeds and removes no event. When a replace does remove events, the acknowledgement and delivery rows for event numbers above the newest surviving event are removed in the same step, and any agent cursor above that event is lowered to it (cursors are lowered, not removed; an agent whose cursor is already at or below it keeps it), so mail addressed afterwards shows as unread. A merge import never removes events.
 - **`mtix sync reconcile --discard-local`.** It deletes the whole journal and the acknowledgements, with the local tasks and unpushed changes. Run `mtix sync push` first and check that `mtix sync status` shows pending 0. It asks for the ticket count, typed at a terminal, lists the unacknowledged inbox events first, and saves a snapshot of the database before the delete.
 - **Backups.** A backup copy of the database keeps the journal and the acknowledgements together, with the same event numbers. Restoring an older copy brings back its older state: events acknowledged after the copy was made are unacknowledged again, and events addressed after it are not in it.
@@ -303,13 +303,39 @@ This check and inbox rendering make no hub contact; sync doctor's separate hub
 checks may contact the configured hub. If the host record is invalid or unreadable,
 restore its operator-owned location before retrying.
 
-## Agent Registration
+## Context Chain Awareness
 
-```bash
-mtix agent register <agent-name>
-mtix claim <id> --agent <agent-name>
-mtix session start <agent-name>
-```
+When coordinating agents, remember: every agent MUST call `mtix_context` before working on any task. The context chain is the agent's complete briefing. An agent working without context is an agent working blind.
+
+## Agent Identity
+
+Every agent has a unique ID (e.g., `agent-claude-1`, `agent-opus-review`). All operations are traced to this identity for audit:
+- Session records track which agent worked when
+- Claim records show who owns each task
+- Heartbeat records prove agent liveness
+- Comments are attributed to the authoring agent
+
+**Never use anonymous or shared agent IDs.** Each agent instance must be uniquely identifiable.
+
+## Agent Lifecycle
+
+### 1. Registration
+Run `mtix agent register <agent-id>` at session boot. Repeat registration on the same board exits 0 with an "already registered" notice and refreshes the heartbeat. It preserves the existing state, work assignment, project, and active session; it does not start or replace a session. With `--json`, the status is `registered` for a new identity or `already_registered` for a repeat. Use a unique ID per agent. Registration also records this shell's session for the id (harness and session handle detected from the environment): a restarted lane registers again with no flags, and a still-running session of the same id is refused unless you pass `--take-over` (see "Registration and lanes"). Registration is automatic on first claim, but explicit registration is preferred for audit clarity.
+
+### 2. Session Start
+Call `mcp__mtix__mtix_session_start` with agent ID and project. This creates a timestamped session record.
+
+### 3. Active Work
+During work, the agent:
+- Claims nodes via `mcp__mtix__mtix_claim`
+- Sends heartbeats via `mcp__mtix__mtix_agent_heartbeat` every 5 minutes
+
+Cross-machine wake: hub contact by the daemon follows `sync.hub_contact` (`activity` default, `interval:<duration>`, `manual`): `activity` contacts the hub only for 30 minutes after real activity so a database that pauses when idle can pause, `interval` keeps it awake around the clock, `manual` never contacts it. Real activity is a mutation command, an addressed comment, an MCP commit, `mtix agent heartbeat`, or glue session-start or prompt-submit; reads, `mtix inbox`, waits and any waiter arming a lease are not. `sync.listen` (shipped default: `live`) configures a listen hold: parking `mtix inbox --wait` on a board that syncs through a hub or relay arms a lease and starts one detached `mtix daemon --listen` for the board (it prints one line saying so, or why not), shared by every waiter, and it exits within seconds of the last waiter ending. While a waiter lives, `live` keeps the hub contacted every `sync.listen_interval` (10s) until `sync.listen_max_idle` (8h) after the last real activity, and `mtix config set sync.listen off` switches that off. `mtix doctor` rows `sync.hub-contact` and `sync.listen` show the state and print the fix command; row `wake.listener.no-hub-listener` fails when waiters are parked with no listener and prints `mtix daemon --listen`.
+- Executes tasks following the context chain
+- Marks nodes done or defers them
+
+### 4. Session End
+Call `mcp__mtix__mtix_session_end` when work is complete.
 
 <!-- learned-lane-identity:start -->
 In this release, agents pass their id explicitly to `mtix agent register <agent-id>`, using the id supplied by their instructions or operator.
@@ -348,27 +374,81 @@ with an operator-local alert. There is no drain command in this release.
 - **Verify:** `mtix sync doctor` reports `agents.stale` (dead sessions; a row unseen for 24 hours with a dead session is deleted) and `agents.mcp-only`, each with the exact fix; add `--json` for tools.
 - **Never** register under another agent's id to "see" its inbox, and never pass `--take-over` to get around a refusal you do not understand: ask the operator.
 
-## Finding Work
+## Heartbeat Protocol
 
-```bash
-mtix ready          # Tasks available for pickup (no assignee, no blockers)
-mtix blocked        # Tasks waiting on dependencies
-mtix stale          # Tasks with inactive agents
-```
+Heartbeats prove agent liveness. Without them, the system assumes the agent has crashed.
 
-## Parallel Execution Rules
+- **Frequency:** Every 5 minutes during active work
+- **Detection:** `mcp__mtix__mtix_stale` reports agents whose last heartbeat exceeds the configured threshold (default: 30 minutes)
+- **Consequence:** Stale agents may have their work reclaimed by other agents via force-reclaim
+- **Recovery:** If you detect your own heartbeat lapsed, immediately send a heartbeat and verify your claims are still active
 
-- Only one agent can claim a task at a time
-- Read the context chain before starting: `mtix context <id>`
-- Send heartbeats during long work: `mtix agent heartbeat <agent-name>`
-- End sessions when done: `mtix session end <agent-name>`
+## Concurrent Claim Rules
 
-## Conflict Prevention
+- **One agent per node.** A node can only be claimed by one agent at a time
+- **No double-claiming.** If you try to claim an already-claimed node, you get `ErrAlreadyClaimed`
+- **Check before claiming:** Use `mcp__mtix__mtix_show` to verify a node is unclaimed before attempting to claim it
+- **Force-reclaim:** Only available when the current agent is stale (heartbeat expired). Never force-reclaim an active agent's work
+- **Synced machines:** Agents on different machines can each claim the same node between syncs. After `mtix sync pull`, every machine shows the status set by the most recent claim or status change (highest Lamport clock, ties broken by event id), and older ones change nothing; the losing claim is not reported as a conflict. The status agrees for claims and status changes, which travel as events; two automatic changes do not, so status can still differ there (a node claimed on one machine while another adds a dependency that blocks it can end up blocked on one and in progress on the other, and descendants of a cascade cancel can differ the same way: they are not cancelled on other machines, yet a node the cascade unblocked shows unblocked there although its blocker is not cancelled; when other machines must see the descendants cancelled, cancel them one at a time, deepest first, without cascade). Beyond status nothing is guaranteed to agree: the assignee can still differ between machines when changes arrive out of order (if the agent whose claim lost marks the node done before pulling, both machines show done, each with its own agent as assignee). After every pull, check the node with `mcp__mtix__mtix_show`; if it is no longer in progress under your name, stop work on it and pick other work
 
-- Check task status before claiming: `mtix show <id>`
-- Never modify tasks claimed by other agents
-- Release only your own claim: `mtix unclaim <id> --agent <agent-name> --reason "..."`. mtix refuses to release another agent's claim and names the current assignee; add `--force` only when that agent is stale or gone, and the activity log records you, the previous assignee and the reason
-- Use comments to coordinate: `mtix comment <id> "message"`
+## Handoff Protocol
+
+When unclaiming a node (via `mcp__mtix__mtix_unclaim`):
+
+1. **Always provide a reason** — the next agent needs context on why you stopped
+2. **Release only your own claim** — pass your `agent_id`; mtix refuses an unclaim of another agent's claim (`ErrAlreadyClaimed`) and names the current assignee. Pass `force: true` only when that agent is stale or gone; the activity log records you, the previous assignee and your reason
+3. **Document progress** — use `mcp__mtix__mtix_annotate` to record what was completed, what remains, and any issues discovered
+4. **Clean state** — ensure no partial changes are left that would confuse the next agent
+
+## Independent Verification
+
+**The agent that implements a task should NOT be the same agent that verifies it.**
+
+For critical tasks:
+1. The implementing agent marks the task as done
+2. A separate verification agent reviews the work
+3. The verifier checks: acceptance criteria met, tests passing, no stub implementations, traceability comments present
+4. If verification fails, the verifier adds a comment and reopens the task
+
+This principle aligns with NASA IV&V requirements, DO-178C verification objectives, and IEC 62304 safety class requirements.
+
+## Stale Agent Recovery
+
+When `mcp__mtix__mtix_stale` reports stale agents:
+
+1. **Investigate first** — is the agent truly dead, or just temporarily unresponsive?
+2. **Check partial work** — use `mcp__mtix__mtix_agent_work` to see what the stale agent was working on
+3. **Document** — add a comment to affected nodes explaining the stale detection
+4. **Reclaim if needed** — unclaim the node with `force: true` and a reason so it becomes available for other agents
+5. **Never delete agent records** — they are part of the audit trail
+
+## Parallel Work Coordination
+
+When multiple agents work simultaneously:
+
+- Each agent works on different nodes — never the same node
+- Use `mcp__mtix__mtix_ready` to find unclaimed work
+- Declare cross-task dependencies via `mtix_dep_add` to prevent conflicts
+- After completing work that others depend on, verify the dependent tasks are unblocked
+
+## pi sessions (experimental)
+
+pi sessions are woken by a different path from Claude Code: the pi extension runs a
+wait child (the hidden `mtix attach wait` verb with `--harness pi` and `--session`),
+and the host scanner skips pi registrations. The wait child claims each addressed
+event once through the same wake ledger, records it as sent, prints one wake line and
+exits 0 only after that claim. An event that was claimed but not acknowledged never
+wakes the session again; read it with `mtix inbox`, then acknowledge it. A lost claim
+race, a claim error or an unknown or invalid session prints no wake line.
+
+Status: experimental, not installed by default. This build embeds the extension
+(`internal/attach/assets/pi/mtix-attach.ts`) but no setup, refresh, doctor or docs
+command writes it, so a pi host has no live wake unless an operator installs the file
+by hand and sets `MTIX_BIN` to the absolute path of mtix. The live pi leg is unproven:
+the interactive extension trust prompt and a real end-to-end pi wake have not been
+verified. The wait child polls the local board only and never contacts a hub, so it
+does not keep a scale-to-zero database awake. Without the extension, a pi session
+reads its messages with `mtix inbox`.
 
 ## Reference Wake Routine
 
@@ -515,3 +595,11 @@ wake does not yet send a fresh nudge (follow-up MTIX-112.40.10); read the inbox 
 with `data.reachable` false and `data.blocked_by` naming the ticket whose adapter is not built yet (hook waiter
 MTIX-112.40.4 and install MTIX-112.40.5, session socket MTIX-112.40.3): they are not reachable in this build and are never silently skipped.
 
+
+
+For a temporary export later moved to `.mtix/tasks.json`, or a pipe such as
+`tee` writing that mirror, use `mtix export --board-only`. Default explicit
+exports are private. `recover --from-export` supplements only the inbox journal;
+the board still comes from database salvage and the current `tasks.json` mirror.
+Restoring mail alone never marks a solo board as hub-connected, publishes that
+mail through the relay, or changes the destination's existing hook deliveries.

@@ -25,7 +25,7 @@ func transportExport(t *testing.T, s *sqlite.Store) *sqlite.ExportData {
 	return data
 }
 
-func TestInboxTransport_FreshStoreRoundTrip(t *testing.T) {
+func TestImport_FreshJournalRoundTrip_PreservesCoverage(t *testing.T) {
 	for _, mode := range []sqlite.ImportMode{sqlite.ImportModeMerge, sqlite.ImportModeReplace} {
 		t.Run(string(mode), func(t *testing.T) {
 			source := newTestStore(t)
@@ -52,7 +52,7 @@ func TestInboxTransport_FreshStoreRoundTrip(t *testing.T) {
 	}
 }
 
-func TestInboxTransport_OrdinaryExportOmitsJournal(t *testing.T) {
+func TestExport_OrdinarySnapshot_OmitsJournal(t *testing.T) {
 	s := newTestStore(t)
 	addressThree(t, s, "recipient")
 	board, err := s.Export(t.Context(), "", "")
@@ -67,7 +67,7 @@ func TestInboxTransport_OrdinaryExportOmitsJournal(t *testing.T) {
 	require.Equal(t, board.Checksum, explicit.Checksum)
 }
 
-func TestInboxTransport_RecoverDatabase(t *testing.T) {
+func TestRecover_ReadableDatabase_PreservesMail(t *testing.T) {
 	s, raw := retentionStore(t)
 	addressThree(t, s, "recipient")
 	var dbPath string
@@ -82,7 +82,7 @@ func TestInboxTransport_RecoverDatabase(t *testing.T) {
 	require.Len(t, got, 3)
 }
 
-func TestInboxTransport_RejectCollisionWithoutPartialWrites(t *testing.T) {
+func TestImport_ConflictingIdentity_RollsBackAllWrites(t *testing.T) {
 	for _, mode := range []sqlite.ImportMode{sqlite.ImportModeMerge, sqlite.ImportModeReplace} {
 		t.Run(string(mode), func(t *testing.T) {
 			source := newTestStore(t)
@@ -108,7 +108,7 @@ func TestInboxTransport_RejectCollisionWithoutPartialWrites(t *testing.T) {
 	}
 }
 
-func TestInboxTransport_RemapCoverageAndSuppressOnlyRestoredEvents(t *testing.T) {
+func TestImport_UnrelatedDestinationWork_RemapDoesNotHideOrSuppressIt(t *testing.T) {
 	source := newTestStore(t)
 	first, _, last := addressThree(t, source, "recipient")
 	require.NoError(t, source.InboxAckThrough(t.Context(), "recipient", first))
@@ -136,7 +136,7 @@ func TestInboxTransport_RemapCoverageAndSuppressOnlyRestoredEvents(t *testing.T)
 	require.Equal(t, "local-event", pending[0].EventID)
 }
 
-func TestInboxTransport_ReleasedReader(t *testing.T) {
+func TestExportWithInbox_Released054Reader_ImportsNonemptyJournal(t *testing.T) {
 	reader := compat054Binary(t)
 	source := newTestStore(t)
 	addressThree(t, source, "recipient")
@@ -152,7 +152,7 @@ func TestInboxTransport_ReleasedReader(t *testing.T) {
 	attachReaderCommand(t, reader, project, "", "show", "PROJ-1", "--json")
 }
 
-func TestInboxTransport_RecoverFromExplicitExport(t *testing.T) {
+func TestRecover_ExplicitExport_PreservesMailAndCoverage(t *testing.T) {
 	source := newTestStore(t)
 	first, _, _ := addressThree(t, source, "recipient")
 	require.NoError(t, source.InboxAckThrough(t.Context(), "recipient", first))
@@ -172,7 +172,7 @@ func TestInboxTransport_RecoverFromExplicitExport(t *testing.T) {
 	require.Len(t, got, 2)
 }
 
-func TestInboxTransport_RecoverUnreadableAcksKeepsReadableMail(t *testing.T) {
+func TestRecover_UnreadableAcks_KeepsReadableMail(t *testing.T) {
 	source, raw := retentionStore(t)
 	addressThree(t, source, "recipient")
 	var path string
@@ -190,7 +190,7 @@ func TestInboxTransport_RecoverUnreadableAcksKeepsReadableMail(t *testing.T) {
 	require.Contains(t, strings.Join(result.Notes, " "), "acknowledgment")
 }
 
-func TestInboxTransport_ReconcileBacksUpJournalOnlyChange(t *testing.T) {
+func TestImportReconcile_JournalOnlyChange_CreatesBackup(t *testing.T) {
 	source := newTestStore(t)
 	addressThree(t, source, "recipient")
 	board, err := source.Export(t.Context(), "", "")
@@ -209,7 +209,7 @@ func TestInboxTransport_ReconcileBacksUpJournalOnlyChange(t *testing.T) {
 	require.Equal(t, 1, backups, "idempotent second import needs no backup")
 }
 
-func TestInboxTransport_InvalidEnvelopeLeavesDestinationUntouched(t *testing.T) {
+func TestImport_InvalidJournalEnvelope_LeavesDestinationUntouched(t *testing.T) {
 	for _, mode := range []sqlite.ImportMode{sqlite.ImportModeMerge, sqlite.ImportModeReplace} {
 		for _, kind := range []string{"version", "checksum", "payload"} {
 			t.Run(string(mode)+"/"+kind, func(t *testing.T) {
@@ -238,8 +238,8 @@ func TestInboxTransport_InvalidEnvelopeLeavesDestinationUntouched(t *testing.T) 
 	}
 }
 
-func TestInboxTransport_StorageFailureRollsBackBoardAndJournal(t *testing.T) {
-	for _, table := range []string{"sync_events", "hook_suppressed_events", "applied_events", "agent_inbox_ack"} {
+func TestImport_RestoreStorageFailure_RollsBackBoardAndJournal(t *testing.T) {
+	for _, table := range []string{"sync_events", "hook_suppressed_events", "inbox_restored_events", "agent_inbox_ack"} {
 		t.Run(table, func(t *testing.T) {
 			source := newTestStore(t)
 			first, _, _ := addressThree(t, source, "recipient")
@@ -263,13 +263,15 @@ func TestInboxTransport_StorageFailureRollsBackBoardAndJournal(t *testing.T) {
 	}
 }
 
-func TestInboxTransport_DamagedTimestampReportsKnownLoss(t *testing.T) {
+func TestRecover_DamagedTimestamp_ReportsKnownLoss(t *testing.T) {
 	source, raw := retentionStore(t)
 	addressThree(t, source, "recipient")
 	_, err := raw.Exec(`UPDATE sync_events SET created_at='broken' WHERE rowid=(SELECT MIN(rowid) FROM sync_events WHERE op_type='comment')`)
 	require.NoError(t, err)
-	_, err = source.ExportWithInbox(t.Context(), "", "")
-	require.ErrorContains(t, err, "timestamp")
+	exported, err := source.ExportWithInbox(t.Context(), "", "")
+	require.NoError(t, err)
+	require.Len(t, exported.InboxJournal.Events, 2)
+	require.Contains(t, strings.Join(exported.InboxJournal.Notes, " "), "timestamp")
 	var path string
 	require.NoError(t, raw.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path))
 	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "absent.json"), "test", slog.New(slog.NewTextHandler(io.Discard, nil)))

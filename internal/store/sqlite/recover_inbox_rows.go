@@ -10,13 +10,14 @@ import (
 	"fmt"
 )
 
-// Read the mail independently of ack tables: damage to bookkeeping must not
-// erase readable events. Missing coverage conservatively re-delivers the mail.
+// Read all comments: SQL must not hide damaged payloads before loss counting.
 const salvageInboxSQL = `SELECT event_id,project_prefix,node_id,COALESCE(uid,''),
- author_id,payload,created_at FROM sync_events WHERE op_type='comment'
- AND CASE WHEN json_valid(payload) THEN
-  json_type(payload,'$.to')='text' AND json_extract(payload,'$.to')<>'' ELSE 0 END
- ORDER BY rowid`
+ author_id,payload,created_at,rowid FROM sync_events WHERE op_type='comment' ORDER BY rowid`
+
+type salvageMail struct {
+	event inboxJournalEvent
+	seq   int64
+}
 
 func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (journal *InboxJournal, err error) {
 	journal = &InboxJournal{Version: 1, Events: []inboxJournalEvent{}}
@@ -25,45 +26,61 @@ func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (jour
 		return nil, fmt.Errorf("read salvage inbox events: %w", err)
 	}
 	defer func() { err = errors.Join(err, rows.Close()) }()
-	lost := 0
+	var records []salvageMail
+	loss := inboxLoss{}
 	for rows.Next() {
-		var event inboxJournalEvent
-		scanErr := rows.Scan(&event.EventID, &event.Project, &event.NodeID, &event.UID, &event.Author, &event.Payload, &event.CreatedAt)
-		if scanErr != nil || validateInboxEvent(event) != nil {
-			lost++
+		var r salvageMail
+		e := &r.event
+		if scanErr := rows.Scan(&e.EventID, &e.Project, &e.NodeID, &e.UID, &e.Author, &e.Payload, &e.CreatedAt, &r.seq); scanErr != nil {
+			loss.unknown++
 			continue
 		}
-		journal.Events = append(journal.Events, event)
+		if loss.keep(*e) {
+			records = append(records, r)
+		}
 	}
-	if lost > 0 {
-		res.Notes = append(res.Notes, fmt.Sprintf("%d addressed inbox event(s) unreadable and omitted", lost))
-	}
-	if err := rows.Err(); err != nil {
-		return journal, fmt.Errorf("iterate salvage inbox: %w", err)
-	}
-	if err := rows.Close(); err != nil {
-		return journal, fmt.Errorf("close salvage inbox rows: %w", err)
-	}
+	res.Notes = append(res.Notes, loss.notes()...)
+	readErr := rows.Err()
+	closeErr := rows.Close()
+	restoreSalvageCoverage(ctx, db, records, journal, res)
+	return journal, errors.Join(readErr, closeErr)
+}
+
+func restoreSalvageCoverage(ctx context.Context, db *sql.DB, records []salvageMail, j *InboxJournal, res *RecoverResult) {
 	unreadable := 0
-	for i := range journal.Events {
-		if err := salvageInboxAck(ctx, db, &journal.Events[i]); err != nil {
+	positions := map[string]int{}
+	for _, r := range records {
+		if err := salvageInboxAck(ctx, db, &r.event, r.seq); err != nil {
 			unreadable++
 		}
+		if i, exists := positions[r.event.EventID]; exists {
+			if !sameInboxContent(j.Events[i], r.event) {
+				res.Notes = append(res.Notes, "conflicting duplicate inbox identity omitted; first readable database copy retained")
+				continue
+			}
+			res.Notes = append(res.Notes, "duplicate inbox identity combined; acknowledgment coverage retained")
+			if !j.Events[i].Acked && r.event.Acked {
+				j.Events[i].Acked, j.Events[i].AckedAt = true, r.event.AckedAt
+			}
+			continue
+		}
+		positions[r.event.EventID] = len(j.Events)
+		j.Events = append(j.Events, r.event)
 	}
 	if unreadable > 0 {
 		res.Notes = append(res.Notes, fmt.Sprintf("acknowledgment coverage unreadable for %d addressed inbox event(s); delivered as unacknowledged unless supplied export restores coverage", unreadable))
 	}
-	return journal, nil
 }
 
-func salvageInboxAck(ctx context.Context, db *sql.DB, event *inboxJournalEvent) error {
-	// Join by stable identity, then derive coverage from this database's rowid.
+func salvageInboxAck(ctx context.Context, db *sql.DB, event *inboxJournalEvent, seq int64) error {
+	// A damaged uniqueness index can leave duplicate IDs. Coverage belongs to
+	// the exact readable source row, whose sequence is never transported.
 	err := db.QueryRowContext(ctx, `SELECT
  (k.event_seq IS NOT NULL OR e.rowid<=COALESCE(c.cursor,0)),COALESCE(k.acked_at,'')
  FROM sync_events e LEFT JOIN agent_inbox_ack k ON k.event_seq=e.rowid
  AND k.agent_id=json_extract(e.payload,'$.to')
  LEFT JOIN agent_inbox_cursor c ON c.agent_id=json_extract(e.payload,'$.to')
- WHERE e.event_id=?`, event.EventID).Scan(&event.Acked, &event.AckedAt)
+ WHERE e.rowid=?`, seq).Scan(&event.Acked, &event.AckedAt)
 	if err == nil {
 		err = validateInboxEvent(*event)
 	}

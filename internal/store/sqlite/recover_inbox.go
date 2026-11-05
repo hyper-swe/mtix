@@ -5,14 +5,12 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
-	"net/url"
 )
 
 // Recovery reads inbox state independently of damaged node indexes. The
 // supplied export can fill events absent from the readable database prefix.
-func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData, res *RecoverResult) *InboxJournal {
+func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData, res *RecoverResult, inboxSources ...*ExportData) *InboxJournal {
 	journal, readErr := salvageInboxJournal(ctx, dbPath, res)
 	if readErr != nil {
 		res.Notes = append(res.Notes, fmt.Sprintf("inbox journal partially unreadable or unavailable: %v", readErr))
@@ -21,14 +19,18 @@ func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData,
 		journal = &InboxJournal{Version: 1, Events: []inboxJournalEvent{}}
 	}
 	available := readErr == nil || len(journal.Events) > 0
-	if mirror != nil && mirror.InboxJournal != nil {
-		if err := validateInboxJournal(mirror.InboxJournal); err != nil {
-			res.Notes = append(res.Notes, fmt.Sprintf("export inbox journal rejected: %v", err))
-		} else {
-			available = true
-			mergeRecoveredInbox(journal, mirror.InboxJournal, res)
+	for _, source := range append([]*ExportData{mirror}, inboxSources...) {
+		if source == nil || source.InboxJournal == nil {
+			continue
 		}
+		if err := validateInboxJournal(source.InboxJournal); err != nil {
+			res.Notes = append(res.Notes, fmt.Sprintf("export inbox journal rejected: %v", err))
+			continue
+		}
+		available = true
+		mergeRecoveredInbox(journal, source.InboxJournal, res)
 	}
+
 	if !available {
 		res.Notes = append(res.Notes, "inbox journal unavailable from both database and supplied export; lost event count unknown; ordinary tasks.json carries no journal")
 		return nil
@@ -44,8 +46,7 @@ func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData,
 }
 
 func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult) (journal *InboxJournal, err error) {
-	uri := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String()
-	db, err := sql.Open("sqlite", uri)
+	db, err := openSQLite(path, readOnlyDSNParams()...)
 	if err != nil {
 		return nil, fmt.Errorf("open journal for salvage: %w", err)
 	}
@@ -70,10 +71,7 @@ func mergeRecoveredInbox(dst, src *InboxJournal, res *RecoverResult) {
 			dst.Events = append(dst.Events, event)
 			continue
 		}
-		local, incoming := dst.Events[i], event
-		local.Acked, local.AckedAt = false, ""
-		incoming.Acked, incoming.AckedAt = false, ""
-		if local != incoming {
+		if !sameInboxContent(dst.Events[i], event) {
 			res.Notes = append(res.Notes, "conflicting inbox event in supplied export skipped; database copy retained")
 			continue
 		}

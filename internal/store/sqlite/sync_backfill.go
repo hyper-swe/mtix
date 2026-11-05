@@ -58,7 +58,8 @@ var ErrBackfillNodesInvariant = errors.New("nodes table invariant violation")
 func (s *Store) CountSyncEvents(ctx context.Context) (int, error) {
 	var n int
 	if err := s.readDB.QueryRowContext(ctx,
-		`SELECT count(*) FROM sync_events`,
+		`SELECT count(*) FROM sync_events
+          WHERE NOT EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=sync_events.event_id)`,
 	).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count sync_events: %w", err)
 	}

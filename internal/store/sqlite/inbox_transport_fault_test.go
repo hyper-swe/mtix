@@ -56,7 +56,7 @@ func (r *inboxFaultRows) Close() error {
 	return err
 }
 
-func TestInboxTransport_ReadFaultNeverPublishesPartialExport(t *testing.T) {
+func TestExportWithInbox_ReadFault_NeverPublishesPartialExport(t *testing.T) {
 	for _, stage := range []string{"query", "scan", "iteration", "close"} {
 		t.Run(stage, func(t *testing.T) {
 			s := exchangeSnapshotStore(t)
@@ -78,7 +78,7 @@ func TestInboxTransport_ReadFaultNeverPublishesPartialExport(t *testing.T) {
 			if stage == "scan" {
 				require.NoError(t, err)
 				require.Empty(t, salvaged.Events)
-				require.Contains(t, report.Notes[0], "1 addressed inbox event(s) unreadable")
+				require.Contains(t, report.Notes[0], "1 unreadable comment record(s)")
 			} else {
 				require.ErrorIs(t, err, errSnapshotRead)
 			}

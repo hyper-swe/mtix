@@ -16,13 +16,18 @@ import (
 // loop keeps its fixed local cadence. With a hub the scheduler's inputs come
 // from the board config and operator-local state, read fresh every pass. A
 // grandfathered board keeps contacting at the daemon's own --interval.
-func newDaemonScheduler(stdout, stderr io.Writer, hub bool, intervalSec int) (*service.ContactScheduler, func(), error) {
+//
+// The returned ReplyProcessor is the same reply accounting the host dispatcher
+// runs (MTIX-112.20.3, newReplyProcessor): the loop ticks it before each
+// scheduling decision and scans after each pull, so a reply closes a sender
+// window and a reply_by event for a local agent starts a hold here too.
+func newDaemonScheduler(stdout, stderr io.Writer, hub bool, intervalSec int) (*service.ContactScheduler, func(), *service.ReplyProcessor, error) {
 	if !hub {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	src, err := newHubContactSource(app.mtixDir)
 	if err != nil {
-		return nil, nil, fmt.Errorf("mtix daemon: hub contact state: %w", err)
+		return nil, nil, nil, fmt.Errorf("mtix daemon: hub contact state: %w", err)
 	}
 	src.grandfatherInterval = time.Duration(intervalSec) * time.Second
 	if mode, grandfathered, modeErr := daemonHubContactMode(src); modeErr == nil {
@@ -36,7 +41,21 @@ func newDaemonScheduler(stdout, stderr io.Writer, hub bool, intervalSec int) (*s
 			fmt.Fprintf(stderr, "mtix daemon: %s\n", recErr)
 		}
 	}
-	return service.NewContactScheduler(src.now, src.snapshot), onContact, nil
+	return service.NewContactScheduler(src.now, src.snapshot), onContact, daemonReplies(stderr, src), nil
+}
+
+// daemonReplies builds the daemon's reply processor on the shared wiring.
+// Without a host identity no registration can match, so only sender windows
+// work; the warning names the fix.
+func daemonReplies(stderr io.Writer, src *hubContactSource) *service.ReplyProcessor {
+	var host service.RegistrationHost
+	hostID, uid, err := registrationHostIdentity()
+	if err != nil {
+		fmt.Fprintf(stderr, "mtix daemon: host identity unreadable, recipient reply holds are off (run: mtix doctor): %s\n", err)
+	} else {
+		host = service.RegistrationHost{HostID: hostID, UID: uid}
+	}
+	return newReplyProcessor(app.store, src.state, src, host)
 }
 
 func daemonHubContactMode(src *hubContactSource) (service.HubContactMode, bool, error) {

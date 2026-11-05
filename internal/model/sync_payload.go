@@ -89,6 +89,10 @@ type CommentPayload struct {
 	To string `json:"to,omitempty"`
 	// Hop is additive wake-chain context; absent is zero (FR-20.3).
 	Hop int64 `json:"hop,omitempty"`
+	// ReplyBy is the additive RFC 3339 deadline of a reply window the sender
+	// holds open (MTIX-112.20.3). Absent for an ordinary comment; replicas that
+	// predate it ignore the key.
+	ReplyBy string `json:"reply_by,omitempty"`
 }
 
 // LinkDepPayload captures a dependency creation.

@@ -18,9 +18,11 @@ func TestWakeBudgetGuidance_SettingRowsDescribeCurrentEnforcement(t *testing.T) 
 			for _, key := range []string{"wake.wakes_per_hour", "wake.backoff_after_unacked", "wake.per_sender_per_hour"} {
 				require.Contains(t, wakeBudgetSettingLine(t, body, key), "callable dispatcher")
 			}
-			for _, key := range []string{"wake.remote_awake_daily_cap", "wake.reply_extensions_per_hour"} {
-				require.Contains(t, wakeBudgetSettingLine(t, body, key), "stored, not yet enforced")
-			}
+			// Both limits are enforced by the reply-window accounting (MTIX-112.20.3).
+			require.Contains(t, wakeBudgetSettingLine(t, body, "wake.remote_awake_daily_cap"), "per UTC day")
+			require.Contains(t, wakeBudgetSettingLine(t, body, "wake.remote_awake_daily_cap"), "holds end when spent")
+			require.Contains(t, wakeBudgetSettingLine(t, body, "wake.reply_extensions_per_hour"), "rolling 60 minutes")
+			require.NotContains(t, wakeBudgetSettingLine(t, body, "wake.reply_extensions_per_hour"), "not yet enforced")
 			require.Contains(t, body, "budget.rewind")
 			for _, phrase := range []string{"claimed author", "name another sender and spend that sender's allowance", "longer than 256 bytes", "control characters", "Legacy or unexplained credits", "New events without an attributable sender", "combined credits of all senders", "payload author when it decodes", "otherwise the event envelope author", "Acknowledgements do not refund sender credits", "mtix config set wake.per_sender_per_hour <n> --agent <id>"} {
 				require.Contains(t, body, phrase)

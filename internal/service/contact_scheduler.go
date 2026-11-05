@@ -35,8 +35,9 @@ var ErrContactInputs = errors.New("hub contact inputs unavailable")
 type ContactInputs struct {
 	Mode         HubContactMode
 	Listen       ListenSettings
-	LastActivity time.Time // zero: no activity recorded
-	LiveLease    bool      // at least one live listener lease
+	LastActivity time.Time   // zero: no activity recorded
+	LiveLease    bool        // at least one live listener lease
+	Reply        ReplyInputs // open sender windows and active recipient holds (MTIX-112.20.3)
 }
 
 // ContactDecision is the scheduler's answer for one pass.
@@ -117,6 +118,7 @@ func contactCadence(in ContactInputs, now time.Time) (time.Duration, string, tim
 		return 0, "manual", time.Time{}
 	}
 	d, reason := baseCadence(in, now)
+	d, reason = replyCadence(in.Reply, d, reason)
 	hold, deadline := listenHold(in, now)
 	if hold && (d <= 0 || in.Listen.Interval < d) {
 		return in.Listen.Interval, "listen-hold", deadline
@@ -175,4 +177,20 @@ func maxDuration(a, b time.Duration) time.Duration {
 		return a
 	}
 	return b
+}
+
+// replyCadence keeps 60 s pulls while a sender reply window is open or a
+// recipient hold is active (MTIX-112.20.3, X6). It only ever shortens the
+// period, so with no windows and no holds the cadence is exactly the base one.
+func replyCadence(r ReplyInputs, d time.Duration, reason string) (time.Duration, string) {
+	if !r.WindowOpen && !r.HoldActive {
+		return d, reason
+	}
+	if d > 0 && d <= HubContactSlowInterval {
+		return d, reason
+	}
+	if r.WindowOpen {
+		return HubContactSlowInterval, "reply-window"
+	}
+	return HubContactSlowInterval, "reply-hold"
 }

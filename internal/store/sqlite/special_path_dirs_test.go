@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -19,7 +20,27 @@ import (
 // specialDirNames are directory names that end or rewrite a naive SQLite
 // DSN (MTIX-112.2.4): ? starts the query string, # starts a fragment, % starts
 // an escape, and a single quote ends a SQL string literal.
-var specialDirNames = []string{"a?b", "c#d", "e%f", "e%3fx", "it's q", "sp ace"}
+//
+// The set is chosen for the host: a question mark is not a legal Windows file
+// name, so the "a?b" row cannot be created there and is left out of the list
+// rather than skipped (the windows-runtime job rejects any skipped test).
+var specialDirNames = specialDirNamesFor(runtime.GOOS)
+
+// specialDirNamesFor returns the special directory names a host of the given
+// GOOS can create. Windows forbids ? in a file name.
+func specialDirNamesFor(goos string) []string {
+	names := []string{"a?b", "c#d", "e%f", "e%3fx", "it's q", "sp ace"}
+	if goos != "windows" {
+		return names
+	}
+	var out []string
+	for _, n := range names {
+		if !strings.Contains(n, "?") {
+			out = append(out, n)
+		}
+	}
+	return out
+}
 
 // specialDir makes <tmp>/<name> and returns the parent and the directory.
 func specialDir(t *testing.T, name string) (parent, dir string) {
@@ -187,5 +208,49 @@ func TestOpenDB_ReadOnlyMissingPath_NeverCreates(t *testing.T) {
 			requireOnlyEntry(t, parent, name)
 			assert.Empty(t, visibleEntries(t, dir))
 		})
+	}
+}
+
+// TestSpecialDirNamesFor_WindowsDropsQuestionMark pins which rows each host
+// runs: only Windows loses the question-mark name.
+func TestSpecialDirNamesFor_WindowsDropsQuestionMark(t *testing.T) {
+	assert.Equal(t, []string{"c#d", "e%f", "e%3fx", "it's q", "sp ace"}, specialDirNamesFor("windows"))
+	assert.Contains(t, specialDirNamesFor("linux"), "a?b")
+	assert.Contains(t, specialDirNamesFor("darwin"), "a?b")
+	assert.Len(t, specialDirNamesFor("linux"), 6)
+}
+
+// TestNew_TempDirPath_WriteReopenReadOnlyVerifyRecover runs the whole path
+// round trip on a plain t.TempDir path, which on Windows is a drive path:
+// create and write, close, reopen read-only (mode=ro on the file: URI), then
+// verify and recover that same file (MTIX-112.2.4).
+func TestNew_TempDirPath_WriteReopenReadOnlyVerifyRecover(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "mtix.db")
+
+	s, err := New(dbPath, slog.Default())
+	require.NoError(t, err)
+	insertOneNode(t, s, "TEST-1")
+	require.NoError(t, s.Close())
+
+	ro, err := openDBWith(ctx, dbPath, false, true, defaultOpenRetry())
+	require.NoError(t, err)
+	var n int
+	require.NoError(t, ro.QueryRowContext(ctx, `SELECT COUNT(*) FROM nodes`).Scan(&n))
+	assert.Equal(t, 1, n, "the read-only open must see the row written to the exact file")
+	_, werr := ro.ExecContext(ctx, `DELETE FROM nodes`)
+	require.Error(t, werr, "a read-only open must reject writes")
+	require.NoError(t, ro.Close())
+
+	ok, err := verifyDatabase(ctx, dbPath)
+	require.NoError(t, err)
+	assert.True(t, ok)
+
+	res, err := Recover(ctx, dbPath, "", "test-version", slog.Default())
+	require.NoError(t, err)
+	assert.Equal(t, []string{"TEST-1"}, res.RecoveredIDs)
+	for _, name := range visibleEntries(t, dir) {
+		assert.True(t, strings.HasPrefix(name, "mtix.db"), "no sibling database may appear: %s", name)
 	}
 }

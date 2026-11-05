@@ -22,6 +22,8 @@ func TestFileURIPathFor_OSParameterised(t *testing.T) {
 		{"windows drive with specials", "windows", `D:\a?b\c#d\e%f.db`, "/D:/a%3fb/c%23d/e%25f.db"},
 		{"windows unc", "windows", `\\server\share\mtix.db`, "////server/share/mtix.db"},
 		{"windows relative", "windows", `dir\mtix.db`, "dir/mtix.db"},
+		{"windows digit before colon is not a drive", "windows", `1:\x\mtix.db`, "1:/x/mtix.db"},
+		{"windows symbol before colon is not a drive", "windows", `_:/x/mtix.db`, "_:/x/mtix.db"},
 		{"windows drive relative", "windows", `C:dir\mtix.db`, "C:dir/mtix.db"},
 		{"linux plain", "linux", "/t/x.db", "/t/x.db"},
 		{"linux colon path untouched", "linux", "C:/x.db", "C:/x.db"},

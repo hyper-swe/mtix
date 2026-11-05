@@ -18,9 +18,12 @@ import (
 )
 
 var (
-	sqliteOpenRe   = regexp.MustCompile(`sql\.Open\(`)
+	sqliteOpenRe = regexp.MustCompile(`sql\.Open\(`)
+	// otherOpenRe matches the other ways to reach the driver without the
+	// helper: sql.OpenDB with a connector, and a driver value's own Open.
+	otherOpenRe    = regexp.MustCompile(`sql\.OpenDB\(|\bsqlite3?\.(Driver|Open)\b|\bDriver\{\}\.Open\(`)
 	dsnLiteralRe   = regexp.MustCompile(`"file:"\s*\+|"\?(mode|_pragma|_txlock|immutable|cache)=|\+\s*"\?`)
-	sprintfDSNRe   = regexp.MustCompile(`Sprintf\(\s*"[^"]*(file:|\?(mode|_pragma|_txlock|immutable|cache)=)`)
+	sprintfDSNRe   = regexp.MustCompile(`Sprintf\(\s*["` + "`" + `][^"` + "`" + `]*(file:|\?(mode|_pragma|_txlock|immutable|cache)=)`)
 	vacuumLiteralR = regexp.MustCompile(`VACUUM INTO\s*'|VACUUM INTO[^"` + "`" + `\n]*%`)
 )
 
@@ -49,6 +52,9 @@ func dsnViolations(files map[string]string, minFiles int) ([]string, error) {
 			if !isHelper {
 				out = append(out, path+": sql.Open outside dsn.go")
 			}
+		}
+		if !isHelper && otherOpenRe.MatchString(src) {
+			out = append(out, path+": driver reached without the helper (sql.OpenDB or driver Open)")
 		}
 		if !isHelper && sprintfDSNRe.MatchString(src) {
 			out = append(out, path+": DSN built with Sprintf")
@@ -129,6 +135,12 @@ func TestDSNViolations_PlantedBreaches_AreCaught(t *testing.T) {
 		{"sprintf file scheme", "x/sf.go", `d := fmt.Sprintf("file:%s", p)`, "built with Sprintf"},
 		{"driver in variable", "x/dv.go", `sql.Open(driverName, d)`, "outside dsn.go"},
 		{"driver in constant", "x/dc.go", `sql.Open(sqliteDriver, d)`, "outside dsn.go"},
+		{"sql.OpenDB connector", "x/od.go", `db := sql.OpenDB(conn)`, "driver reached without the helper"},
+		{"driver value Open", "x/do.go", `c, err := sqlite.Driver{}.Open(d)`, "driver reached without the helper"},
+		{"aliased driver value Open", "x/ao.go", `c, err := drv.Driver{}.Open(d)`, "driver reached without the helper"},
+		{"driver type used directly", "x/dt.go", `var drv sqlite.Driver`, "driver reached without the helper"},
+		{"backtick sprintf query string", "x/bq.go", "d := fmt.Sprintf(`%s?mode=ro`, p)", "built with Sprintf"},
+		{"backtick sprintf file scheme", "x/bf.go", "d := fmt.Sprintf(`file:%s`, p)", "built with Sprintf"},
 		{"vacuum literal", "x/v.go", `"VACUUM INTO '" + p + "'"`, "not a bound parameter"},
 		{"vacuum sprintf", "x/s.go", `fmt.Sprintf("VACUUM INTO '%s'", p)`, "not a bound parameter"},
 	}

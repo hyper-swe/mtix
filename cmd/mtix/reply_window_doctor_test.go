@@ -100,3 +100,24 @@ func TestHubContactRow_UnreadableReplyState_WarnsWithFix(t *testing.T) {
 	assert.Contains(t, row.Fix, "replywin-"+src.key()+".json")
 	assert.Nil(t, row.Reply)
 }
+
+func TestHubContactRow_SkippedReplyWindows_WarnsWithFixAndJSON(t *testing.T) {
+	src := hubSourceFixture(t, "")
+	require.NoError(t, src.state.UpdateReplyState(context.Background(), src.key(), func(st *oplocal.ReplyState) error {
+		st.Skipped = []oplocal.SkippedReplyWindow{{Window: oplocal.ReplyWindow{AwaitingFrom: "peer"}, Reason: "blank", At: schedT0}}
+		return nil
+	}))
+	row := hubContactRow(src, true, schedT0)
+	assert.True(t, row.Warn)
+	assert.Contains(t, row.Detail, "1 malformed reply window(s) skipped")
+	assert.Contains(t, row.Fix, fixSkippedReplyWindow)
+	raw, err := json.Marshal(row)
+	require.NoError(t, err)
+	var back struct {
+		Reply struct {
+			Skipped int `json:"skipped_windows"`
+		} `json:"reply"`
+	}
+	require.NoError(t, json.Unmarshal(raw, &back))
+	assert.Equal(t, 1, back.Reply.Skipped)
+}

@@ -79,3 +79,18 @@ func TestAnnotateTool_NoAwaitReply_NeverCallsHook(t *testing.T) {
 	assert.False(t, called, "scale-to-zero: no await_reply, no window")
 	assert.Equal(t, model.DefaultReplyWindow, time.Hour)
 }
+
+func TestAnnotateTool_AwaitReply_BlankAuthor_RefusedWithoutWindow(t *testing.T) {
+	for _, args := range []string{
+		`{"id":"TEST-1","text":"n","author":"","to":"agent-b","await_reply":"30m"}`,
+		`{"id":"TEST-1","text":"n","author":"  ","to":"agent-b","await_reply":"30m"}`,
+	} {
+		called := false
+		reg := NewToolRegistry()
+		RegisterContextTools(reg, newTestContextService(), newTestPromptService(),
+			WithReplyWindowHook(func(context.Context, string, string, service.AnnotationResult) string { called = true; return "" }))
+		_, err := reg.Call(context.Background(), "mtix_annotate", json.RawMessage(args))
+		require.Error(t, err)
+		assert.False(t, called, "a refused send opens no window")
+	}
+}

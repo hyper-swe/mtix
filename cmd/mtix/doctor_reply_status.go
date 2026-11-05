@@ -14,6 +14,8 @@ import (
 // fixReplyPolicy is the exact fix for an unreadable reply limit.
 const fixReplyPolicy = "mtix config set wake.remote_awake_daily_cap off; mtix config set wake.reply_extensions_per_hour off (each takes a positive integer, or off for unlimited)"
 
+const fixSkippedReplyWindow = "re-send the comment with an author: set MTIX_AUTHOR_ID or pass author to mtix_annotate; the skipped record clears itself after a day"
+
 // attachReplyStatus adds the open reply windows, active holds and the day's
 // remote-held time to the sync.hub-contact row, in text and in --json
 // (MTIX-112.20.3). An unreadable reply state is a warning with its fix; it
@@ -26,6 +28,11 @@ func attachReplyStatus(row *DoctorCheck, src *hubContactSource, now time.Time) {
 			status := service.ReplyStatusAt(st, pol, now)
 			row.Reply = &status
 			row.Detail += "; " + replyStatusText(status)
+			if status.SkippedWindows > 0 {
+				row.Warn = true
+				row.Detail += fmt.Sprintf("; %d malformed reply window(s) skipped (no sender)", status.SkippedWindows)
+				row.Fix = fixSkippedReplyWindow
+			}
 			return
 		}
 	}

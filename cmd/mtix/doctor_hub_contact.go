@@ -100,12 +100,13 @@ func hubContactRow(src *hubContactSource, hub bool, now time.Time) DoctorCheck {
 	attachReplyStatus(&row, src, now)
 	if _, snapErr := src.snapshot(); snapErr != nil {
 		// The daemon makes no hub contact on unreadable inputs, so this is a failure, not a pass.
-		row.Pass, row.Fix = false, fixUnreadableInputs
+		row.Pass = false
+		addRowFix(&row, fixUnreadableInputs)
 	}
 	if grandfathered {
 		row.Warn = true
 		row.Detail += "; grandfathered: this board predates sync.hub_contact and keeps contacting the hub at the daemon's own interval"
-		row.Fix = fixHubContact
+		addRowFix(&row, fixHubContact)
 	}
 	return row
 }

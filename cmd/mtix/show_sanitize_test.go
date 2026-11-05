@@ -179,7 +179,7 @@ func TestRunShow_MultilineDescriptionAndPrompt_ContinuationLinesIndented(t *test
 		Creator:     "tester",
 	})
 	require.NoError(t, err)
-	captureStdout(t, func() { require.NoError(t, runAnnotate(node.ID, "real verdict")) })
+	captureStdout(t, func() { require.NoError(t, runAnnotate(node.ID, "real verdict", "")) })
 
 	out := showOutput(t, node.ID)
 

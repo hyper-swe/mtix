@@ -21,6 +21,15 @@ type ReplyWindow struct {
 	ReplyBy      time.Time `json:"reply_by"`
 }
 
+// SkippedReplyWindow records a malformed sender window the reply scan removed
+// (MTIX-112.20.3.5): one with a blank sender or awaited agent can never be
+// answered, so it is dropped and noted here for the doctor.
+type SkippedReplyWindow struct {
+	Window ReplyWindow `json:"window"`
+	Reason string      `json:"reason"`
+	At     time.Time   `json:"at"`
+}
+
 // ReplyHold is a recipient-side hold: an event carrying a reply deadline keeps
 // this host's 60 s pulls until Until (clamped, MTIX-112.20.3, C2).
 type ReplyHold struct {
@@ -35,6 +44,8 @@ type ReplyHold struct {
 type ReplyState struct {
 	Windows []ReplyWindow `json:"windows,omitempty"`
 	Holds   []ReplyHold   `json:"holds,omitempty"`
+	// Skipped are the newest malformed windows the scan removed (bounded).
+	Skipped []SkippedReplyWindow `json:"skipped,omitempty"`
 	// Extensions are the hold start times per sender, pruned to the last hour.
 	Extensions map[string][]time.Time `json:"extensions,omitempty"`
 	// Cursor is the highest sync_events rowid the reply scan has examined.

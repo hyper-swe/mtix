@@ -33,9 +33,6 @@ type Annotation struct {
 	Addressee string `json:"addressee,omitempty"`
 	// Hop is transient send metadata, retained only in the comment event payload.
 	Hop int64 `json:"-"`
-	// ReplyBy is transient send metadata (RFC 3339), retained only in the
-	// comment event payload (MTIX-112.20.3).
-	ReplyBy string `json:"-"`
 }
 
 // SortAnnotations returns a copy of annotations ordered by (CreatedAt, ID),

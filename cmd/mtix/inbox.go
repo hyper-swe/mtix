@@ -7,12 +7,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"syscall"
 	"time"
@@ -46,8 +44,6 @@ func newInboxCmd() *cobra.Command {
 		all     bool
 		timeout int
 		format  string
-
-		includeHeld bool
 	)
 	cmd := &cobra.Command{
 		Use:   "inbox",
@@ -64,8 +60,7 @@ func newInboxCmd() *cobra.Command {
 			if count {
 				return runInboxCount(cmd, agent, all)
 			}
-			return runInboxWith(inboxOptions{Agent: agent, Wait: wait, Timeout: timeout, Format: format,
-				IncludeHeld: includeHeld, Stderr: cmd.ErrOrStderr(), Env: os.Environ()})
+			return runInbox(agent, wait, timeout, format)
 		},
 	}
 	cmd.Flags().StringVar(&agent, "agent", "", "Agent id whose inbox to read (required)")
@@ -75,9 +70,7 @@ func newInboxCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&wait, "wait", false, "Long-poll: block until an event arrives or --timeout")
 	cmd.Flags().IntVar(&timeout, "timeout", 300, "Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused)")
 	cmd.Flags().StringVar(&format, "format", "",
-		"Output: default is the quoted envelope; 'plain' is the old listing; 'prompt' (wake payload) or 'context' (hook injection)")
-	cmd.Flags().BoolVar(&includeHeld, "include-held", false,
-		"Also show events the wake policy holds (refused inside an agent harness session)")
+		"Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection)")
 	_ = cmd.MarkFlagRequired("agent")
 	cmd.AddCommand(newInboxAckCmd(), newInboxLeaseCmd(), newInboxStatusCmd())
 	return cmd
@@ -111,92 +104,53 @@ in order.`,
 	return cmd
 }
 
-// inboxOptions are the inputs of one `mtix inbox` read.
-type inboxOptions struct {
-	Agent       string
-	Wait        bool
-	Timeout     int
-	Format      string
-	IncludeHeld bool
-	Stderr      io.Writer // held notice; stdout stays the payload
-	Env         []string  // process environment, for the harness-marker check
-}
-
 func runInbox(agent string, wait bool, timeout int, format string) error {
-	return runInboxWith(inboxOptions{Agent: agent, Wait: wait, Timeout: timeout, Format: format, Stderr: os.Stderr, Env: os.Environ()})
-}
-
-// runInboxWith reads the inbox through the policy-applying service (ADR-007
-// A12): held events appear only as a count on stderr, never in stdout.
-func runInboxWith(o inboxOptions) error {
-	if o.Timeout < 0 || int64(o.Timeout) > math.MaxInt64/int64(time.Second) {
+	if timeout < 0 || int64(timeout) > math.MaxInt64/int64(time.Second) {
 		return fmt.Errorf("inbox: --timeout must be non-negative and fit a duration: %w", model.ErrInvalidInput)
 	}
-	switch o.Format {
-	case "", "plain", "prompt", "context":
-	default:
-		return fmt.Errorf("unknown --format %q (want 'plain', 'prompt' or 'context')", o.Format)
-	}
-	if err := checkIncludeHeld(o.IncludeHeld, o.Env); err != nil {
-		return err
+	if format != "" && format != "prompt" && format != "context" {
+		return fmt.Errorf("unknown --format %q (want 'prompt' or 'context')", format)
 	}
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project (run 'mtix init' first)")
 	}
 	ctx := sessionContext(context.Background()) // refreshes last_seen for the registered session
-	svc := newPolicyInboxService()
-	read := service.InboxReadOptions{IncludeHeld: o.IncludeHeld}
 
 	var (
-		res service.InboxResult
-		err error
+		events []sqlite.InboxEvent
+		err    error
 	)
-	if o.Wait {
-		res, err = waitInbox(ctx, svc, o.Agent, time.Duration(o.Timeout)*time.Second, read)
+	if wait {
+		events, err = waitInbox(ctx, agent, time.Duration(timeout)*time.Second)
 	} else {
-		res, err = svc.InboxRead(ctx, o.Agent, read)
+		events, err = app.store.InboxList(ctx, agent)
 	}
 	if err != nil {
 		return err
 	}
-	writeInboxHeldNotice(o.Stderr, res.Held)
-	shown := inboxShown(res)
-	if err := writeInbox(o.Agent, o.Format, shown); err != nil {
+
+	if err := writeInbox(agent, format, events); err != nil {
 		return err
 	}
 
-	// FR-19.4: an empty --wait timeout surfaces as a distinct exit code, also
-	// when everything was held (exit 5, never a silent success).
-	if o.Wait && len(shown) == 0 {
+	// FR-19.4: an empty --wait timeout surfaces as a distinct exit code.
+	if wait && len(events) == 0 {
 		return errInboxWaitEmpty
 	}
 	return nil
 }
 
-// inboxShown merges returned events with explicitly requested held ones.
-func inboxShown(res service.InboxResult) []sqlite.InboxEvent {
-	all := make([]sqlite.InboxEvent, 0, len(res.Events)+len(res.HeldEvents))
-	for _, e := range res.Events {
-		all = append(all, sqlite.InboxEvent(e))
-	}
-	for _, e := range res.HeldEvents {
-		all = append(all, sqlite.InboxEvent(e))
-	}
-	sort.SliceStable(all, func(i, j int) bool { return all[i].Seq < all[j].Seq })
-	return all
-}
-
 // waitInbox translates OS signal cancellation to the documented exit-7
 // sentinel while preserving storage failures (FR-19).
-func waitInbox(ctx context.Context, svc *service.InboxService, agent string, timeout time.Duration, opt service.InboxReadOptions) (service.InboxResult, error) {
+func waitInbox(ctx context.Context, agent string, timeout time.Duration) ([]sqlite.InboxEvent, error) {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	defer joinListener(agent, os.Stderr)() // MTIX-112.20.4: arm a lease, start the board listener if absent
-	res, err := svc.InboxReadWait(ctx, agent, timeout, opt)
+	events, err := app.store.InboxWait(ctx, agent, timeout)
 	if errors.Is(err, context.Canceled) && ctx.Err() == context.Canceled {
-		return service.InboxResult{}, errInboxWaitInterrupted
+		return nil, errInboxWaitInterrupted
 	}
-	return res, err
+	return events, err
 }
 
 // inboxBodyIndent indents continuation lines of an inbox body under its entry.
@@ -206,10 +160,7 @@ const inboxBodyIndent = "    "
 // (MTIX-56.8), JSON, or the human listing.
 func writeInbox(agent, format string, events []sqlite.InboxEvent) error {
 	out := NewOutputWriter(app.jsonOutput)
-	if format == "" && !app.jsonOutput && len(events) > 0 {
-		format = "context" // the envelope is the default output (ADR-007 A12); --format plain keeps the listing
-	}
-	if format == "prompt" || format == "context" {
+	if format != "" {
 		caps, err := loadInboxEnvelopeCaps(agent)
 		if err != nil {
 			return err

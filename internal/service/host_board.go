@@ -32,9 +32,7 @@ type HostBoardOptions struct {
 	Pull     func(context.Context, string) error
 	Hooks    func(context.Context)
 	Contact  *ContactScheduler
-	// Replies keeps the reply-window accounting (MTIX-112.20.3); nil disables it.
-	Replies *ReplyProcessor
-	Close   func() error
+	Close    func() error
 	// LegacyService reports whether a 0.5.x per-project service still owns pull and hook duty for
 	// the board's .mtix directory (ADR-007 D11); nil means no legacy probe.
 	LegacyService func(ctx context.Context, mtixDir string) (bool, error)
@@ -218,7 +216,6 @@ func (b *HostBoard) effects(ctx context.Context, row oplocal.ListedBoard) (retEr
 	if legacy, err := b.legacyLive(ctx, row); err != nil || legacy {
 		return err
 	}
-	retErr = errors.Join(retErr, b.replyTick(ctx))
 	if b.opts.Contact != nil && b.opts.Pull != nil && b.opts.Contact.Decide().Contact {
 		dsn, err := readCheckoutSecret(filepath.Join(row.Path, ".mtix"))
 		if err != nil {
@@ -226,7 +223,7 @@ func (b *HostBoard) effects(ctx context.Context, row oplocal.ListedBoard) (retEr
 		}
 		if dsn != "" {
 			b.opts.Contact.MarkContact()
-			retErr = errors.Join(retErr, b.opts.Pull(ctx, dsn), b.replyScan(ctx))
+			retErr = b.opts.Pull(ctx, dsn)
 		}
 	}
 	b.opts.Hooks(ctx)
@@ -245,22 +242,4 @@ func (b *HostBoard) legacyLive(ctx context.Context, row oplocal.ListedBoard) (bo
 		return false, fmt.Errorf("legacy service probe: %w", err)
 	}
 	return live, nil
-}
-
-// replyTick settles the reply accounting for this pass; a failure is reported
-// but never blocks the pull or the hooks (MTIX-112.20.3).
-func (b *HostBoard) replyTick(ctx context.Context) error {
-	if b.opts.Replies == nil {
-		return nil
-	}
-	return b.opts.Replies.Tick(ctx)
-}
-
-// replyScan runs after an enrolled pull: replies that arrived close sender
-// windows and reply_by events addressed to a local agent start holds.
-func (b *HostBoard) replyScan(ctx context.Context) error {
-	if b.opts.Replies == nil {
-		return nil
-	}
-	return b.opts.Replies.Scan(ctx)
 }

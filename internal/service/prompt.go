@@ -93,67 +93,33 @@ func ParseAddressee(text string) string {
 // When addressee is empty, the first @<agent> token in text is used as the
 // addressee (FR-19.1); an explicit addressee arg takes precedence over a token.
 func (svc *PromptService) AddAnnotation(ctx context.Context, nodeID, text, author, addressee string) error {
-	_, err := svc.AddAnnotationRequest(ctx, AnnotationRequest{NodeID: nodeID, Text: text, Author: author, Addressee: addressee})
-	return err
-}
-
-// AnnotationRequest is one annotation to append. AwaitReply, when positive,
-// asks for a reply window: the addressed event carries reply_by = now +
-// min(AwaitReply, 8h) (MTIX-112.20.3). It needs an addressee.
-type AnnotationRequest struct {
-	NodeID, Text, Author, Addressee string
-	AwaitReply                      time.Duration
-}
-
-// AnnotationResult reports what AddAnnotationRequest stored.
-type AnnotationResult struct {
-	// Addressee is the resolved addressee (explicit or from an @ token).
-	Addressee string
-	// ReplyBy is the reply deadline carried on the event; zero when none.
-	ReplyBy time.Time
-}
-
-// AddAnnotationRequest is AddAnnotation with an optional reply window
-// (MTIX-112.20.3, ADR-007 X6). Returns ErrInvalidInput when AwaitReply is set
-// without an addressee.
-func (svc *PromptService) AddAnnotationRequest(ctx context.Context, req AnnotationRequest) (AnnotationResult, error) {
-	addressee := req.Addressee
 	if addressee == "" {
-		addressee = ParseAddressee(req.Text)
-	}
-	var res AnnotationResult
-	res.Addressee = addressee
-	if req.AwaitReply < 0 || (req.AwaitReply > 0 && addressee == "") {
-		return res, fmt.Errorf("await-reply needs an addressee (--to) and a positive duration: %w", model.ErrInvalidInput)
+		addressee = ParseAddressee(text)
 	}
 
 	now := svc.clock()
 	id, err := svc.ids.next(now)
 	if err != nil {
-		return res, err
+		return err
 	}
 
 	annotation := model.Annotation{
 		ID:        id,
-		Author:    req.Author,
-		Text:      req.Text,
+		Author:    author,
+		Text:      text,
 		CreatedAt: now,
 		Resolved:  false,
 		Addressee: addressee,
 		Hop:       addressedCommentHop(addressee, svc.logger),
 	}
-	if req.AwaitReply > 0 {
-		res.ReplyBy = now.Add(model.ClampReplyWindow(req.AwaitReply)).UTC().Truncate(time.Second)
-		annotation.ReplyBy = model.FormatReplyBy(res.ReplyBy)
-	}
 
 	// One atomic store append: no read-modify-write outside a transaction (MTIX-148).
-	if err := svc.store.AppendAnnotation(ctx, req.NodeID, annotation); err != nil {
-		return res, fmt.Errorf("append annotation to %s: %w", req.NodeID, err)
+	if err := svc.store.AppendAnnotation(ctx, nodeID, annotation); err != nil {
+		return fmt.Errorf("append annotation to %s: %w", nodeID, err)
 	}
 
-	svc.broadcastPromptEvent(ctx, EventNodeUpdated, req.NodeID, req.Author, nil)
-	return res, nil
+	svc.broadcastPromptEvent(ctx, EventNodeUpdated, nodeID, author, nil)
+	return nil
 }
 
 // ResolveAnnotation sets the resolved flag on an annotation per FR-3.4.

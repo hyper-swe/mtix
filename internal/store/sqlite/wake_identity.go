@@ -13,13 +13,14 @@ import (
 )
 
 // wakeEventMatches validates a candidate in the same writer transaction as its
-// mutation. Production inbox sources supply EventID; an empty value retains the
+// mutation (FR-20, MTIX-112.2.2.1). Production inbox sources supply EventID; an empty value retains the
 // legacy sequence-only store API. Missing or replaced events are quiet misses.
 func wakeEventMatches(ctx context.Context, tx *sql.Tx, key model.WakeKey) (bool, error) {
 	if key.EventID == "" {
 		return true, nil
 	}
 	var id string
+	// Compare the current journal identity before any candidate-driven write.
 	err := tx.QueryRowContext(ctx, `SELECT event_id FROM sync_events WHERE rowid=?`, key.EventSeq).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil

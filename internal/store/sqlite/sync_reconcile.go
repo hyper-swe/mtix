@@ -53,7 +53,7 @@ type auditEvent struct {
 
 // DiscardLocal drops the local mutable state (nodes, dependencies, sync
 // events, conflicts, applied events, staged ids, quarantine), rewinds every
-// cursor that indexes into the journal (inbox, hook dispatch, relay
+// cursor that indexes into the journal (inbox, hook dispatch, wake, relay
 // publish), and resets the meta.sync.* sentinels.
 // The DB schema and meta keys remain — only the data is cleared. Use
 // when the user wants to take the hub's state as the new ground truth.
@@ -157,7 +157,8 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 				return fmt.Errorf("DiscardLocal: %s: %w", stmt, txErr)
 			}
 		}
-		return nil
+		// FR-20, MTIX-112.2.2.1: reset wake progress in the journal wipe transaction.
+		return trimWakeToJournal(ctx, tx)
 	})
 	if err != nil {
 		return err

@@ -21,8 +21,8 @@ import (
 )
 
 // waitForCancel is a Wait that blocks until the run cancels it, as a real wait does.
-func waitForCancel(t *testing.T) func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) {
-	return func(ctx context.Context, _ func(int64) bool) ([]sqlite.InboxEvent, error) {
+func waitForCancel(t *testing.T) func(context.Context, func(sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) {
+	return func(ctx context.Context, _ func(sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) {
 		select {
 		case <-ctx.Done():
 			return nil, nil
@@ -119,7 +119,7 @@ func TestClaudeHook_TransientRenewError_RetriesWhileTheLeaseHolds(t *testing.T) 
 		return WakeLease{Holder: holder}, nil
 	}
 	var waitErr error
-	r.deps.Wait = func(ctx context.Context, _ func(int64) bool) ([]sqlite.InboxEvent, error) {
+	r.deps.Wait = func(ctx context.Context, _ func(sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) {
 		require.Eventually(t, func() bool { return r.leases.renewCount() >= 6 }, 5*time.Second, time.Millisecond)
 		waitErr = ctx.Err()
 		return nil, nil
@@ -182,7 +182,10 @@ func TestClaudeHook_StopJoinsTheRenewerBeforeAbandoning(t *testing.T) {
 	r.deps.RenewEvery = time.Millisecond
 	entered, release := make(chan struct{}), make(chan struct{})
 	blockingRenew(r.leases, entered, release)
-	r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) { <-entered; return nil, nil }
+	r.deps.Wait = func(context.Context, func(sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) {
+		<-entered
+		return nil, nil
+	}
 
 	res := runBlocked(t, r, entered, release)
 
@@ -195,7 +198,10 @@ func TestClaudeHook_PanicInTheWait_StillJoinsTheRenewerBeforeAbandoning(t *testi
 	r.deps.RenewEvery = time.Millisecond
 	entered, release := make(chan struct{}), make(chan struct{})
 	blockingRenew(r.leases, entered, release)
-	r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) { <-entered; panic("kaboom") }
+	r.deps.Wait = func(context.Context, func(sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) {
+		<-entered
+		panic("kaboom")
+	}
 
 	res := runBlocked(t, r, entered, release)
 
@@ -246,7 +252,7 @@ func runCadence(t *testing.T, r *hookRig, n int) *cadenceProbe {
 	t.Helper()
 	p := &cadenceProbe{}
 	r.deps.NewTicker = p.newTicker
-	r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) {
+	r.deps.Wait = func(context.Context, func(sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) {
 		// The renewer goroutine builds its ticker asynchronously: wait for it.
 		require.Eventually(t, func() bool { _, built, _ := p.snapshot(); return built == 1 }, 10*time.Second, time.Millisecond)
 		for i := 1; i <= n; i++ {
@@ -315,7 +321,7 @@ func TestClaudeHook_SuccessfulRenewal_RefreshesTheRetryWindow(t *testing.T) {
 		return WakeLease{Holder: holder}, nil
 	}
 	var waitErr error
-	r.deps.Wait = func(ctx context.Context, _ func(int64) bool) ([]sqlite.InboxEvent, error) {
+	r.deps.Wait = func(ctx context.Context, _ func(sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) {
 		require.Eventually(t, func() bool { return r.leases.renewCount() >= 5 }, 5*time.Second, time.Millisecond)
 		waitErr = ctx.Err()
 		return nil, nil
@@ -337,7 +343,10 @@ func TestClaudeHook_CancelDuringARenewThatReCreatesTheLease_AbandonsTheFreshToke
 		<-ctx.Done() // the run ends while the Renew is in flight; the Renew still commits
 		return WakeLease{Holder: "fresh-token"}, nil
 	}
-	r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) { <-entered; return nil, nil }
+	r.deps.Wait = func(context.Context, func(sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) {
+		<-entered
+		return nil, nil
+	}
 
 	NewClaudeHook(r.deps).Run(t.Context(), ClaudeHookStop)
 
@@ -356,7 +365,10 @@ func TestClaudeHook_LeaseLostReportedAfterCancel_IsNotRecordedAsAFailure(t *test
 		<-ctx.Done()
 		return WakeLease{}, model.ErrAlreadyClaimed // the run is over: this is not a lost lease
 	}
-	r.deps.Wait = func(context.Context, func(int64) bool) ([]sqlite.InboxEvent, error) { <-entered; return nil, nil }
+	r.deps.Wait = func(context.Context, func(sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) {
+		<-entered
+		return nil, nil
+	}
 
 	res := NewClaudeHook(r.deps).Run(t.Context(), ClaudeHookStop)
 

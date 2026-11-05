@@ -35,6 +35,9 @@ func wakeResultColumns() []struct{ name, ddl string } {
 		{"route", "ALTER TABLE wake_ledger ADD COLUMN route TEXT NOT NULL DEFAULT ''"},
 		{"reason", "ALTER TABLE wake_ledger ADD COLUMN reason TEXT NOT NULL DEFAULT ''"},
 		{"outcome_at", "ALTER TABLE wake_ledger ADD COLUMN outcome_at TEXT NOT NULL DEFAULT ''"},
+		// charged is 1 only for a claim the wake budget admitted and charged
+		// (ClaimWakeBudget); an unbudgeted ClaimWake row stays 0 (MTIX-112.18.1).
+		{"charged", "ALTER TABLE wake_ledger ADD COLUMN charged INTEGER NOT NULL DEFAULT 0"},
 	}
 }
 

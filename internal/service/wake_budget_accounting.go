@@ -72,7 +72,7 @@ func (a *wakeAdmission) prepareWakeAdmission(p model.WakeBudgetProposal) (model.
 		return d, fmt.Errorf("proposed wake fence is mismatched: %w", model.ErrConflict)
 	}
 	p.Sender = oplocal.NormalizeWakeBudgetSender(p.Sender)
-	if a.holdWakeFrequency(p.Sender) {
+	if !a.returned && a.holdWakeFrequency(p.Sender) {
 		return d, nil
 	}
 	if holdWakeBackoff(a.key.AgentID, a.policy, a.now, m, a) {
@@ -85,6 +85,9 @@ func (a *wakeAdmission) prepareWakeAdmission(p model.WakeBudgetProposal) (model.
 		return d, fmt.Errorf("charge proposed wake attempt: %w", err)
 	}
 	m.Credits[len(m.Credits)-1].Sender = p.Sender
+	if a.returned { // the inbox read already paid for this event
+		m.Credits = m.Credits[:len(m.Credits)-1]
+	}
 	row.Total++
 	row.Pending = p.Attempt.Token
 	m.Sources[p.Snapshot.Source] = row

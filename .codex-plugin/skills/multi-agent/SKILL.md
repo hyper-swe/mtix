@@ -162,6 +162,14 @@ until an event or caller cancellation. Omission uses default 60 seconds;
 positive values are capped at 60 seconds, and negative values are refused.
 Cancellation is an error, and an empty positive timeout returns `[]`.
 
+## Held events and the wake policy
+
+On a board that syncs through a hub or relay, every inbox read returns only events for ids your operator confirmed on this host: `mtix inbox`, `--wait`, `--format prompt` and `--format context`, the session hook's priming, and MCP `mtix_inbox` and `mtix_inbox_wait`. Events the policy withholds are held. A held event is reported only as a count, never as a body: the line `N held: ask your operator ...` goes to stderr (stdout stays the payload, so `--format prompt` is empty when everything is held), and the MCP tools add a second content block `{"events":n,"held":{"count":N,"reasons":[...]}}`. Do not try to read held bodies: `mtix inbox --include-held` is an operator command and is refused inside a harness session. On a board that never connected to a hub or relay, no id is held; registered ids are still charged to a configured `wake.wakes_per_hour` budget (events past it are held), and an unregistered worker loop is never capped.
+
+If you see a held count, tell your operator. `mtix doctor` row `inbox.held` (also in `--json`) names the held ids and prints the exact fix, `mtix agent allow <agent-id>`, which only the operator runs.
+
+`mtix inbox --count` applies the same policy (a held id reports 0 pending and the held count on stderr). The default `mtix inbox` output is the quoted envelope (the `--format context` shape); `--format plain` keeps the older one-line-per-event listing with the same policy applied; `--json` is the raw event array. A wait is level-triggered: it returns every unacknowledged eligible event, so an event you read but did not ack returns again. A wait that ends with nothing to return exits 5, also when every event was held; re-arm it. A configured budget (`wake.wakes_per_hour`, unset by default) counts each newly returned event once against the hourly allowance shared with wakes; an unacked event read again is not charged again, nor is an event the wake dispatcher already charged when it woke you, and an event the budget refuses stays held until the hour rolls.
+
 ## Read-only inbox counts
 
 Use `mtix inbox --agent <agent-id> --count` for the pending event count, or
@@ -476,6 +484,11 @@ so nothing is delivered automatically. Ack after handling keeps back-off quiet a
 shows the current state and the last wake outcomes with their age. It reads local state only and never contacts a hub.
 The message is always in the inbox: any state other than `confirmed` means the wake is unconfirmed, never that the
 message is lost.
+
+## Waiting for an answer
+
+Send with `mtix comment <id> "<text>" --to <agent> --await-reply=<duration>` (MCP: `mtix_annotate` with `to` and `await_reply`) when you need the reply. The duration defaults to 1h and is at most 8h. Until the agent replies or the time passes, your host keeps contacting the hub every 60 seconds, so the reply is fetched promptly; the sender never has to poll by hand. As the recipient, answer with `mtix comment <id> "<answer>" --to <sender>` and ack the event: that reply closes the sender's window. Use plain `--to` when no answer is needed, because a reply window keeps a scale-to-zero hub awake (about 60 contacts an hour, up to 8 hours). See the sync skill for the optional limits and `mtix doctor` row `sync.hub-contact` for the open windows.
+
 
 | State | Meaning | Next step |
 |---|---|---|

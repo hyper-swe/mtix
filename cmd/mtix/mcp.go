@@ -115,7 +115,7 @@ func registerMCPTools(reg *mcp.ToolRegistry) string {
 		Context:    app.ctxSvc,
 		Prompt:     app.promptSvc,
 		Dependency: service.NewDependencyServiceFromNodeService(app.nodeSvc),
-		Inbox:      service.NewInboxService(app.store),
+		Inbox:      newPolicyInboxService(),
 		Session:    app.sessionSvc,
 		Agent:      app.agentSvc,
 		Config:     app.configSvc,
@@ -125,6 +125,7 @@ func registerMCPTools(reg *mcp.ToolRegistry) string {
 		Author:     mcpToolAuthor(),
 		// MTIX-112.20.2: an addressed send pushes in this long-lived process.
 		OnAddressedSend: mcpAddressedSendHook(),
+		OnReplyWindow:   mcpReplyWindowHook(),
 	})
 	// MTIX-95.12: warn in the tool result when a mutation's sync event is
 	// over the wire cap and a hub is configured.
@@ -213,7 +214,7 @@ func runMCP(channelAgent string, readOnly bool) error {
 				}()
 			}
 		}
-		go channel.Pump(ctx, channel.NewInboxSource(app.store, channelAgent),
+		go channel.Pump(ctx, newChannelInboxSource(channelAgent),
 			channel.NewClaudeCode(srv.SendNotification), logger)
 		logger.Info("channel mode enabled", "agent", channelAgent)
 	}

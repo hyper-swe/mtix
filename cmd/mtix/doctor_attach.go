@@ -36,7 +36,7 @@ type attachDoctorDeps struct {
 	glue func(ctx context.Context) attach.GlueDecision
 	// pending lists the attach queue rows of the board doctor runs in
 	// (glue.stranded-queue); nil registers no such row.
-	pending func(ctx context.Context) ([]sqlite.AttachPending, error)
+	pending func(ctx context.Context, d attach.GlueDecision) ([]sqlite.AttachPending, error)
 }
 
 // operatorStateFix is the remedy for unreadable operator state: the hooks

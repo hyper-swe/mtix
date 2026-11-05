@@ -81,7 +81,7 @@ func TestDoctorGlueRealGit_TrackedStoreFix_ClearsPlainV4AndSplitIndexes(t *testi
 			require.NoError(t, err)
 			require.Equal(t, attach.TrackedStore, kind, "real git wrote an index that tracks the store")
 
-			runFix(t, root, trackedStoreFix)
+			runFix(t, t.TempDir(), trackedStoreFix(attach.GlueDecision{CheckoutRoot: root, StoreRoot: root}))
 			kind, err = attach.ScanStoreInIndex(filepath.Join(root, ".git"), realGitStoreRel)
 			require.NoError(t, err)
 			assert.Equal(t, attach.TrackedNone, kind, "the printed fix leaves the store untracked")
@@ -101,7 +101,7 @@ func TestDoctorGlueRealGit_TrackedSymlinkOverStorePath_FixClearsIt(t *testing.T)
 	require.NoError(t, err)
 	require.Equal(t, attach.TrackedAncestor, kind)
 
-	runFix(t, root, trackedAncestorFix)
+	runFix(t, t.TempDir(), trackedAncestorFix(attach.GlueDecision{CheckoutRoot: root, StoreRoot: root}))
 	kind, err = attach.ScanStoreInIndex(filepath.Join(root, ".git"), realGitStoreRel)
 	require.NoError(t, err)
 	assert.Equal(t, attach.TrackedNone, kind)
@@ -119,7 +119,7 @@ func TestDoctorGlueRealGit_SparseIndexFix_MakesIndexReadable(t *testing.T) {
 	require.ErrorAs(t, err, &ie, "a sparse directory entry covers .mtix")
 	assert.Equal(t, attach.CauseSparse, ie.Cause)
 
-	runFix(t, root, sparseIndexFix)
+	runFix(t, t.TempDir(), gitCmd(attach.GlueDecision{CheckoutRoot: root})+" "+sparseIndexFix)
 	kind, err := attach.ScanStoreInIndex(filepath.Join(root, ".git"), realGitStoreRel)
 	require.NoError(t, err)
 	assert.Equal(t, attach.TrackedNone, kind)
@@ -147,4 +147,42 @@ func TestDoctorGlueRealGit_RelativeWorktree_IsDetected(t *testing.T) {
 	physical, err := filepath.EvalSymlinks(root)
 	require.NoError(t, err)
 	assert.Equal(t, physical, got.CommonRoot)
+}
+
+// The printed fix is run from an unrelated directory against a board that sits in
+// a subdirectory of the checkout, and against a linked worktree's own index.
+func TestDoctorGlueRealGit_FixFromAnyDirectory_ClearsSubdirectoryBoardAndWorktree(t *testing.T) {
+	requireGit(t)
+	root := t.TempDir()
+	gitIn(t, root, "init", "-q")
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "pkg", ".mtix", "data"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "pkg", ".mtix", "data", "mtix.db"), []byte("db"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "README"), []byte("r"), 0o644))
+	gitIn(t, root, "add", "-f", ".")
+	gitIn(t, root, "commit", "-q", "-m", "c")
+	rel := "pkg/" + realGitStoreRel
+	kind, err := attach.ScanStoreInIndex(filepath.Join(root, ".git"), rel)
+	require.NoError(t, err)
+	require.Equal(t, attach.TrackedStore, kind)
+
+	board := filepath.Join(root, "pkg")
+	runFix(t, t.TempDir(), trackedStoreFix(attach.GlueDecision{CheckoutRoot: root, StoreRoot: board}))
+	kind, err = attach.ScanStoreInIndex(filepath.Join(root, ".git"), rel)
+	require.NoError(t, err)
+	assert.Equal(t, attach.TrackedNone, kind, "the subdirectory board's store is untracked by the printed fix")
+	_, statErr := os.Stat(filepath.Join(root, ".gitignore"))
+	require.NoError(t, statErr, "the ignore line lands at the checkout root, not in the directory the fix ran from")
+
+	wt := filepath.Join(t.TempDir(), "wt")
+	gitIn(t, root, "worktree", "add", "-q", wt)
+	co, err := attach.DetectCheckout(wt)
+	require.NoError(t, err)
+	require.Equal(t, attach.CheckoutWorktree, co.Kind)
+	kind, err = attach.ScanStoreInIndex(co.GitDir, rel)
+	require.NoError(t, err)
+	require.Equal(t, attach.TrackedStore, kind, "the worktree's own index tracks the store")
+	runFix(t, t.TempDir(), trackedStoreFix(attach.GlueDecision{CheckoutRoot: co.Root, StoreRoot: filepath.Join(co.Root, "pkg")}))
+	kind, err = attach.ScanStoreInIndex(co.GitDir, rel)
+	require.NoError(t, err)
+	assert.Equal(t, attach.TrackedNone, kind, "the fix edits the worktree's index, the one the predicate judged")
 }

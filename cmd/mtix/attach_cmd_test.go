@@ -75,7 +75,7 @@ func attachTestDeps(st *oplocal.State, current int, adapters map[string]attach.A
 
 // attachedGlue is the predicate of a directory whose board is attached on this host.
 func attachedGlue(context.Context) attach.GlueDecision {
-	return attach.GlueDecision{Act: true, BoardRoot: "/attached/board"}
+	return attach.GlueDecision{Act: true, BoardRoot: "/attached/board", StoreRoot: "/attached/board"}
 }
 
 func attachAlerts(t *testing.T, st *oplocal.State) []oplocal.Alert {

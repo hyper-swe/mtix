@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 
 	"github.com/hyper-swe/mtix/internal/oplocal"
@@ -48,13 +49,19 @@ type GlueDecision struct {
 	Reason string
 	// Line is NotAttachedLine when Act is false.
 	Line string
-	// BoardRoot is the listed checkout root the decision matched.
+	// StoreRoot is the physical project root of the store the verb would open:
+	// the parent of the nearest .mtix above the physical working directory. It
+	// is empty only when no store was found. Everything after the gate uses
+	// this store and none re-discovers one.
+	StoreRoot string
+	// BoardRoot is StoreRoot when the decision matched a listed or enrolled
+	// record, and empty otherwise.
 	BoardRoot string
-	// Worktree is true when the directory is a linked worktree attached through
-	// its main checkout BoardRoot (its own root is not listed).
-	Worktree bool
 	// BoardKey is the key of the matched listed (or enrolled) record.
 	BoardKey string
+	// CheckoutRoot is the root of the git checkout holding StoreRoot ("" when
+	// the store is not in a checkout); doctor builds its git commands from it.
+	CheckoutRoot string
 	// Cause refines a tracked-store or index-unsupported decline (a Cause or
 	// Tracked constant) so doctor can print one remedy per cause.
 	Cause string
@@ -64,61 +71,53 @@ func decline(reason string) GlueDecision {
 	return GlueDecision{Reason: reason, Line: NotAttachedLine}
 }
 
-// glueCandidate is one root the directory could be attached through, with the
-// git dir whose index answers the committed-store question ("" for a board
-// that is not a git checkout).
-type glueCandidate struct{ root, gitDir string }
+// declined turns d into a decline for reason, keeping the facts doctor needs.
+func (d GlueDecision) declined(reason, cause string) GlueDecision {
+	d.Act, d.Reason, d.Cause, d.Line = false, reason, cause, NotAttachedLine
+	d.BoardRoot, d.BoardKey = "", ""
+	return d
+}
 
-// EvaluateGlue decides whether harness glue run in dir may act. dir is resolved
-// to its physical path, as listed paths are. It acts only when the checkout
-// root of dir, or for a verified linked worktree its own root first and then
-// the main checkout, or for a directory with no git checkout the nearest
-// project root holding .mtix, is listed or enrolled in operator-local state and
-// the store path and store_instance_id there match the record. A listing with
-// no instance id (a legacy store) must additionally pass the committed-store
-// test on the git index. Every failure declines (fail closed) (MTIX-112.19.8,
-// ADR-007 A5).
+// EvaluateGlue decides whether harness glue run in dir may act. It resolves
+// once: dir becomes its physical path, and the nearest .mtix at or above it
+// names the store the verb would open. That store, and only that store, is
+// judged: its project root must be listed or enrolled in operator-local state,
+// and the store path and store_instance_id there must match the record. A
+// store nested under a listed checkout, or committed on a worktree branch, is
+// judged as itself, so it is declined unless it is listed. A listing with no
+// instance id (a legacy store) must additionally pass the committed-store test
+// on the index of the checkout holding the store. Every failure declines (fail
+// closed) (MTIX-112.19.8, ADR-007 A5).
 func EvaluateGlue(ctx context.Context, deps PredicateDeps, dir string) GlueDecision {
 	if deps.Boards == nil || deps.StoreInstanceID == nil {
 		return decline(ReasonStateUnavailable)
 	}
-	co, err := DetectCheckout(dir)
+	root := nearestStoreRoot(dir)
+	if root == "" {
+		return decline(ReasonNoCheckout)
+	}
+	base := GlueDecision{StoreRoot: root, Line: NotAttachedLine}
+	co, err := DetectCheckout(root)
 	if err != nil || co.Kind == CheckoutInvalid {
-		return decline(ReasonNoCheckout)
+		return base.declined(ReasonNoCheckout, "")
 	}
-	candidates := glueCandidates(co, dir)
-	if len(candidates) == 0 {
-		return decline(ReasonNoCheckout)
-	}
+	base.CheckoutRoot = co.Root
 	boards, err := deps.Boards(ctx)
 	if err != nil {
-		return decline(ReasonStateUnavailable)
+		return base.declined(ReasonStateUnavailable, "")
 	}
-	for _, c := range candidates {
-		if ids, key, found := recordedInstances(boards, c.root); found {
-			return judgeCandidate(ctx, deps, c, ids, key, co.Kind == CheckoutWorktree && c.root != co.Root)
-		}
+	ids, key, found := recordedInstances(boards, root)
+	if !found {
+		return base.declined(ReasonUnlisted, "")
 	}
-	return decline(ReasonUnlisted)
+	return judgeStore(ctx, deps, base, co, ids, key)
 }
 
-// glueCandidates lists the roots to try, most specific first.
-func glueCandidates(co Checkout, dir string) []glueCandidate {
-	switch co.Kind {
-	case CheckoutPlain:
-		return []glueCandidate{{co.Root, co.GitDir}}
-	case CheckoutWorktree:
-		return []glueCandidate{{co.Root, co.GitDir}, {co.CommonRoot, filepath.Join(co.CommonRoot, ".git")}}
-	}
-	if root := projectRootWithoutGit(dir); root != "" {
-		return []glueCandidate{{root, ""}}
-	}
-	return nil
-}
-
-// projectRootWithoutGit returns the nearest physical ancestor of dir holding a
-// .mtix directory, or "".
-func projectRootWithoutGit(dir string) string {
+// nearestStoreRoot returns the parent of the nearest .mtix at or above the
+// physical path of dir, walking the way the verbs find their board (a .mtix
+// that is a directory, or a symlink to one, counts; the store checks reject a
+// symlink later), or "".
+func nearestStoreRoot(dir string) string {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return ""
@@ -128,7 +127,7 @@ func projectRootWithoutGit(dir string) string {
 		return ""
 	}
 	for depth := 0; depth < maxWalkDepth; depth++ {
-		if info, statErr := os.Lstat(filepath.Join(cur, ".mtix")); statErr == nil && info.IsDir() {
+		if info, statErr := os.Stat(filepath.Join(cur, ".mtix")); statErr == nil && info.IsDir() {
 			return cur
 		}
 		parent := filepath.Dir(cur)
@@ -140,28 +139,33 @@ func projectRootWithoutGit(dir string) string {
 	return ""
 }
 
-// judgeCandidate compares the records for c.root with its store and, for a
-// legacy listing, with the git index.
-func judgeCandidate(ctx context.Context, deps PredicateDeps, c glueCandidate, ids []string, key string, viaCommon bool) GlueDecision {
-	actual, err := readStoreID(ctx, deps, c.root)
+// judgeStore compares the records for the store root with the store itself and,
+// for a legacy listing, with the index of the checkout holding it.
+func judgeStore(ctx context.Context, deps PredicateDeps, base GlueDecision, co Checkout, ids []string, key string) GlueDecision {
+	actual, err := readStoreID(ctx, deps, base.StoreRoot)
 	if err != nil {
-		return decline(ReasonIdentityMismatch)
+		return base.declined(ReasonIdentityMismatch, "")
 	}
 	legacy := false
 	for _, id := range ids {
 		if id != actual {
-			return decline(ReasonIdentityMismatch)
+			return base.declined(ReasonIdentityMismatch, "")
 		}
 		legacy = legacy || id == ""
 	}
-	if legacy && c.gitDir != "" {
-		if reason, cause := committedStoreReason(c.gitDir); reason != "" {
-			d := decline(reason)
-			d.Cause = cause
-			return d
+	if legacy && co.Kind != CheckoutNone {
+		rel, relErr := filepath.Rel(co.Root, base.StoreRoot)
+		if relErr != nil {
+			return base.declined(ReasonIndexUnsupported, CauseMalformed)
+		}
+		storeRel := path.Join(filepath.ToSlash(rel), boardStoreRel)
+		if reason, cause := committedStoreReason(co.GitDir, storeRel); reason != "" {
+			return base.declined(reason, cause)
 		}
 	}
-	return GlueDecision{Act: true, Reason: ReasonAttached, BoardRoot: c.root, Worktree: viaCommon, BoardKey: key}
+	base.Act, base.Reason, base.Line = true, ReasonAttached, ""
+	base.BoardRoot, base.BoardKey = base.StoreRoot, key
+	return base
 }
 
 // recordedInstances returns the instance ids of every listed or enrolled
@@ -204,11 +208,12 @@ func readStoreID(ctx context.Context, deps PredicateDeps, root string) (string, 
 	return deps.StoreInstanceID(ctx, db)
 }
 
-// committedStoreReason runs the bounded index reader over gitDir's index and
+// committedStoreReason runs the bounded index reader over gitDir's index for the
+// store at storeRel (a slash path from the checkout root) and
 // names why glue must not act (with the cause doctor keys its remedy on), or
 // returns "".
-func committedStoreReason(gitDir string) (reason, cause string) {
-	kind, err := ScanStoreInIndex(gitDir, boardStoreRel)
+func committedStoreReason(gitDir, storeRel string) (reason, cause string) {
+	kind, err := ScanStoreInIndex(gitDir, storeRel)
 	var ie *IndexError
 	switch {
 	case errors.As(err, &ie):

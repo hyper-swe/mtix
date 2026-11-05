@@ -238,8 +238,9 @@ func runAttachVerb(ctx context.Context, deps attachDeps, req attach.VerbRequest,
 	}
 	req.Protocol = requested
 	drainAttachQueue(ctx, deps, req, decision)
-	recordGlueActivity(req.Verb) // MTIX-112.20.1: session start and prompt submit are activity
-	runAttachAdapter(ctx, deps, req)
+	recordGlueActivity(req.Verb, decision.StoreRoot) // MTIX-112.20.1: session start and prompt submit are activity
+	// The store the predicate judged is the only one the adapter may open.
+	runAttachAdapter(attach.WithStoreRoot(ctx, decision.StoreRoot), deps, req)
 }
 
 func runAttachAdapter(ctx context.Context, deps attachDeps, req attach.VerbRequest) {

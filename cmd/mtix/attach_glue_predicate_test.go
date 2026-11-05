@@ -105,6 +105,11 @@ func TestGlue_ProductionPredicate_ListedCheckoutActsUnlistedDoesNot(t *testing.T
 	t.Chdir(other)
 	got = productionGluePredicate(t.Context())
 	assert.False(t, got.Act)
+	assert.Equal(t, attach.ReasonNoCheckout, got.Reason, "a checkout with no store has nothing to attach")
+
+	initStoreAt(t, other)
+	got = productionGluePredicate(t.Context())
+	assert.False(t, got.Act)
 	assert.Equal(t, attach.ReasonUnlisted, got.Reason)
 }
 
@@ -241,9 +246,10 @@ func TestGlue_AttachedWorktree_RunsNoImportAndNoHookTrigger(t *testing.T) {
 // linkedWorktreeOf lays out a linked worktree of root the way git does.
 func linkedWorktreeOf(t *testing.T, root string) string {
 	t.Helper()
-	wt := t.TempDir()
+	wt := filepath.Join(root, "wt") // inside root, so a worktree without a store of its own resolves to root's
 	admin := filepath.Join(root, ".git", "worktrees", "wt")
 	require.NoError(t, os.MkdirAll(admin, 0o755))
+	require.NoError(t, os.MkdirAll(wt, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+admin+"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(admin, "commondir"), []byte("../..\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(admin, "gitdir"), []byte(filepath.Join(wt, ".git")+"\n"), 0o644))

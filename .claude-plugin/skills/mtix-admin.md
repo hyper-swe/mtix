@@ -228,43 +228,58 @@ Doctor shows these rows only when they apply:
   rewrite must be corrected or removed in the harness configuration. The
   attach verb's stderr line and alert name the same fix.
 - `glue.tracked-store`: the attach verbs (harness glue entry points) act only
-  in an attached board: the checkout holding the directory, for a verified
-  linked worktree its own listing first and then its main checkout, or for a
-  directory outside git the nearest project holding `.mtix`, must be listed or
-  enrolled on this host with a store path and `store_instance_id` matching the
-  operator-local record (paths are compared as physical paths, so a symlinked
-  working directory works). Anywhere else every verb, including an unknown
-  verb, an unparsable flag or a bad `-C` directory, prints the single line
-  `board not attached on this host` and writes nothing: no injection, proposal,
-  alert or operator-state file. That is normal, not a fault. A `.git` file that
-  points straight at a common directory, or a worktree admin directory without
-  its back-link, is not a worktree, so a forged one cannot borrow a listed
-  board's authority; a relative back-link written by `git worktree add
-  --relative-paths` is accepted. The row appears only for a board listed with
-  no recorded instance id (a legacy store), where mtix reads the git index
-  itself (it never runs git) to make sure the store is not committed, and only
-  when that check declines. One remedy per cause. Store tracked: `git rm -r
-  --cached --ignore-unmatch .mtix/data && git update-index --no-split-index &&
-  echo .mtix/data/ >> .gitignore` (the split-index step matters because a split
-  index's shared base keeps listing the store). A committed symlink or
-  submodule at `.mtix` or `.mtix/data`: `git update-index --force-remove -- .mtix .mtix/data &&
-  git update-index --no-split-index`. Sparse index with a
-  directory entry covering `.mtix`: `git sparse-checkout reapply
-  --no-sparse-index`. Split index whose base file is missing: `git read-tree
-  HEAD` (it rebuilds the index from HEAD, so commit or stash staged changes
-  first). An unknown index version or extension, an oversize index or a
-  SHA-256 repository cannot be read by this build: upgrade mtix.
+  on a board attached on this host. mtix resolves once: the nearest `.mtix` at
+  or above the physical working directory is the store the verb would open, and
+  that store, and only that store, is judged. Its project directory must be
+  listed or enrolled on this host with a store path and `store_instance_id`
+  matching the operator-local record (paths are compared as physical paths, so
+  a symlinked working directory works). A store nested under a listed checkout,
+  or committed on a worktree branch, is judged as itself, so it is declined
+  unless it is listed too; a board listed at a subdirectory of a git checkout
+  is attached because its own store is the one listed. Everything after that
+  decision (the queue drain, the activity record, the pi wait) uses the same
+  store and never searches for another. Anywhere else every verb, including an
+  unknown verb, an unparsable flag or a bad `-C` directory, prints the single
+  line `board not attached on this host` and writes nothing: no injection,
+  proposal, alert or operator-state file. That is normal, not a fault. A `.git`
+  file that points straight at a common directory, or a worktree admin
+  directory without its back-link or outside `<common>/worktrees`, is not a
+  worktree, so a forged one cannot stand in for a checkout; a relative
+  back-link written by `git worktree add --relative-paths` is accepted. The row
+  appears only for a board listed with no recorded instance id (a legacy
+  store), where mtix reads the index of the checkout that holds the store (it
+  never runs git) to make sure the store is not committed, and only when that
+  check declines. Each remedy names the checkout with `git -C`, so it works
+  from any directory and from a worktree. One remedy per cause. Store tracked:
+  `git -C <checkout> rm -r --cached --ignore-unmatch -- <store dir>/.mtix/data
+  && git -C <checkout> update-index --no-split-index && echo
+  <store dir>/.mtix/data/ >> <checkout>/.gitignore` (the split-index step
+  matters because a split index's shared base keeps listing the store). A
+  committed symlink or submodule at `.mtix` or `.mtix/data`: `git -C <checkout>
+  update-index --force-remove -- .mtix .mtix/data && git -C <checkout>
+  update-index --no-split-index`. Sparse index with a directory entry covering
+  `.mtix`: `git -C <checkout> sparse-checkout reapply --no-sparse-index`. Split
+  index whose base file is missing: `git -C <checkout> read-tree HEAD` (it
+  rebuilds the index from HEAD, so commit or stash staged changes first). An
+  index path longer than 4096 bytes: the row lists such paths
+  (`git -C <checkout> ls-files | awk 'length($0) > 4096'`); remove or rename
+  them. An unknown index version or extension, an oversize index or a SHA-256
+  repository cannot be read by this build: upgrade mtix.
 - `glue.stranded-queue`: in an attached board, a `session-start` drains the
   board's pending attach queue (rows queued by a registration inside a sandbox)
   through the same validation the host dispatcher uses; a row naming another
   board or path is dropped and raises an `attach.pending-rejected` alert, and a
   listed linked worktree drains its own store's queue. An unlisted board's
-  queue is never read, and glue never lists a board by itself, because
-  repository content must not activate a host. The row appears when the board
-  you are in is not listed but its store holds such rows; the fix is `mtix agent
-  register <agent-id>` for the agent that registered, run from a normal shell in
-  the checkout (outside any sandbox). The glue path never imports `tasks.json`
-  and never triggers hooks, whatever `sync.auto_sync` says.
+  queue is never read (a linked worktree with a store of its own is a board of
+  its own and needs its own listing), and glue never lists a board by itself,
+  because repository content must not activate a host. The row appears when
+  the board you are in is not listed but its store holds such rows; the fix is
+  printed from the queued rows, one command per registration: `cd <lane> &&
+  mtix agent register <agent-id> --harness <harness>`, run from a normal shell
+  outside any sandbox. It keeps each agent's harness; a bare `mtix agent
+  register <agent-id>` would record the harness as unknown. Add `--session
+  <handle>` if the session was registered with one. The glue path never imports
+  `tasks.json` and never triggers hooks, whatever `sync.auto_sync` says.
 - `attach.failures`: recent `attach.protocol-skew` and `attach.verb-failure`
   operator alerts from the hidden attach verbs, with counts. These verbs are
   entry points for harness glue, not for agents. They always exit 0, even on

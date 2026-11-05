@@ -61,6 +61,12 @@ func (s *Store) readAttachMeta(ctx context.Context, key string) (string, bool, e
 	return value, true, nil
 }
 
+// openStoreReadOnly opens the database file at dbPath so that nothing can be
+// written through it and a missing file is never created (MTIX-112.19.8).
+func openStoreReadOnly(dbPath string) (*sql.DB, error) {
+	return openSQLite(dbPath, readOnlyDSNParams()...)
+}
+
 // ReadStoreInstanceIDFile returns store_instance_id from the database file at
 // dbPath, opened read-only, for callers that must not open a Store (and so must
 // not migrate, create or write anything). The result is empty for a legacy
@@ -74,7 +80,7 @@ func ReadStoreInstanceIDFile(ctx context.Context, dbPath string) (id string, ret
 	if info.Size() == 0 {
 		return "", fmt.Errorf("read store identity: %s is 0 bytes, not a database", dbPath)
 	}
-	db, err := openSQLite(dbPath, readOnlyDSNParams()...)
+	db, err := openStoreReadOnly(dbPath)
 	if err != nil {
 		return "", fmt.Errorf("open store read-only: %w", err)
 	}

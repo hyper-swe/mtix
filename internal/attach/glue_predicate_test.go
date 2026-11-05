@@ -161,26 +161,16 @@ func TestGluePredicate_IdentifiedStore_SkipsIndexReader(t *testing.T) {
 	assert.True(t, EvaluateGlue(context.Background(), f.deps(), f.root).Act)
 }
 
-func TestGluePredicate_Worktree_ListedCommonRoot_ActsOnCommonStore(t *testing.T) {
-	mainRoot, wtRoot := linkedWorktree(t)
-	writeFile(t, filepath.Join(mainRoot, ".mtix", "data", "mtix.db"), "db")
-	f := &predicateFixture{root: mainRoot, id: "inst-1",
-		boards: oplocal.DispatchBoards{Listed: []oplocal.ListedBoard{{Key: "b-1", Path: mainRoot, StoreInstanceID: "inst-1"}}}}
-	got := EvaluateGlue(context.Background(), f.deps(), wtRoot)
-	require.True(t, got.Act, got.Reason)
-	assert.True(t, got.Worktree)
-	assert.Equal(t, mainRoot, got.BoardRoot)
-}
-
-func TestGluePredicate_WorktreeWithoutBacklink_NotAttached(t *testing.T) {
-	mainRoot, wtRoot := linkedWorktree(t)
+func TestGluePredicate_ListedWorktreeWithoutBacklink_NotAttached(t *testing.T) {
+	_, wtRoot := linkedWorktree(t)
 	require.NoError(t, os.Remove(filepath.Join(readGitdirTarget(t, wtRoot), "gitdir")))
-	writeFile(t, filepath.Join(mainRoot, ".mtix", "data", "mtix.db"), "db")
-	f := &predicateFixture{root: mainRoot, id: "inst-1",
-		boards: oplocal.DispatchBoards{Listed: []oplocal.ListedBoard{{Key: "b-1", Path: mainRoot, StoreInstanceID: "inst-1"}}}}
+	writeFile(t, filepath.Join(wtRoot, ".mtix", "data", "mtix.db"), "db")
+	f := &predicateFixture{root: wtRoot, id: "inst-1",
+		boards: oplocal.DispatchBoards{Listed: []oplocal.ListedBoard{{Key: "b-1", Path: wtRoot, StoreInstanceID: "inst-1"}}}}
 	got := EvaluateGlue(context.Background(), f.deps(), wtRoot)
-	assert.False(t, got.Act, "a forged commondir must not borrow the listed board's authority")
+	assert.False(t, got.Act, "a forged commondir must not stand in for a checkout")
 	assert.Equal(t, ReasonNoCheckout, got.Reason)
+	assert.Equal(t, wtRoot, got.StoreRoot)
 }
 
 func TestGluePredicate_ListedWorktreeOwnRecord_ActsOnItsOwnStore(t *testing.T) {
@@ -196,12 +186,12 @@ func TestGluePredicate_ListedWorktreeOwnRecord_ActsOnItsOwnStore(t *testing.T) {
 	require.True(t, got.Act, got.Reason)
 	assert.Equal(t, wtRoot, got.BoardRoot, "the worktree's own listing and store win over the main checkout")
 	assert.Equal(t, "wt-key", got.BoardKey)
-	assert.False(t, got.Worktree)
 	assert.Equal(t, []string{filepath.Join(wtRoot, ".mtix", "data", "mtix.db")}, f.reads)
 }
 
 func TestGluePredicate_UnlistedWorktreeOfUnlistedMain_NotAttached(t *testing.T) {
 	_, wtRoot := linkedWorktree(t)
+	writeFile(t, filepath.Join(wtRoot, ".mtix", "data", "mtix.db"), "db")
 	f := &predicateFixture{root: wtRoot, id: "x"}
 	got := EvaluateGlue(context.Background(), f.deps(), wtRoot)
 	assert.False(t, got.Act)

@@ -20,12 +20,13 @@ const MaxIndexBytes = 32 << 20
 
 // Causes an index could not be judged; doctor prints one remedy per cause.
 const (
-	CauseSplitBase = "split-base-missing"
-	CauseSparse    = "sparse-directory"
-	CauseExtension = "unknown-extension"
-	CauseVersion   = "unknown-version"
-	CauseOversize  = "oversize"
-	CauseMalformed = "malformed"
+	CauseSplitBase  = "split-base-missing"
+	CauseSparse     = "sparse-directory"
+	CauseExtension  = "unknown-extension"
+	CauseVersion    = "unknown-version"
+	CauseOversize   = "oversize"
+	CausePathLength = "path-length"
+	CauseMalformed  = "malformed"
 )
 
 // Kinds of committed store the reader reports.
@@ -117,8 +118,9 @@ func unsupported(cause, format string, args ...any) error {
 	return &IndexError{Cause: cause, Detail: fmt.Sprintf(format, args...)}
 }
 
-// MaxPathBytes caps one entry path (git's PATH_MAX); longer names fail closed,
-// which also bounds the v4 name rebuild to cap x entries of copying.
+// MaxPathBytes caps one entry path; longer names fail closed with CausePathLength
+// (git itself accepts longer ones), which also bounds the v4 name rebuild to
+// cap x entries of copying.
 const MaxPathBytes = 4096
 
 // scanIndexFile reads one index file within the size cap. allowMissing makes an
@@ -267,7 +269,7 @@ func (w *entryWalker) name() (string, error) {
 		return "", unsupported(CauseMalformed, "unterminated entry path")
 	}
 	if end-w.pos > MaxPathBytes || (w.version == 4 && len(w.prev)-strip+end-w.pos > MaxPathBytes) {
-		return "", unsupported(CauseMalformed, "entry path longer than %d bytes", MaxPathBytes)
+		return "", unsupported(CausePathLength, "entry path longer than %d bytes", MaxPathBytes)
 	}
 	suffix := string(w.buf[w.pos:end])
 	w.pos = end + 1

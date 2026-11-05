@@ -567,6 +567,11 @@ shows the current state and the last wake outcomes with their age. It reads loca
 The message is always in the inbox: any state other than `confirmed` means the wake is unconfirmed, never that the
 message is lost.
 
+## Waiting for an answer
+
+Send with `mtix comment <id> "<text>" --to <agent> --await-reply=<duration>` (MCP: `mtix_annotate` with `to` and `await_reply`) when you need the reply. The duration defaults to 1h and is at most 8h. Until the agent replies or the time passes, your host keeps contacting the hub every 60 seconds, so the reply is fetched promptly; the sender never has to poll by hand. As the recipient, answer with `mtix comment <id> "<answer>" --to <sender>` and ack the event: that reply closes the sender's window. Use plain `--to` when no answer is needed, because a reply window keeps a scale-to-zero hub awake (about 60 contacts an hour, up to 8 hours). See the sync skill for the optional limits and `mtix doctor` row `sync.hub-contact` for the open windows.
+
+
 | State | Meaning | Next step |
 |---|---|---|
 | `queued` | A session and a dispatcher exist and no nudge is recorded yet | `mtix inbox status --agent <agent>` |

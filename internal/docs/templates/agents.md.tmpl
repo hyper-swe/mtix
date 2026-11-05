@@ -485,6 +485,8 @@ fix; the message is always in the inbox. `wake.confirm_window` (default 30 secon
 `wake.listener.*` rows give exact fixes. The ledger-backed states are seeded-only until a delivery route is built; approving a held wake does not yet send
 a fresh nudge (MTIX-112.40.10). See the multi-agent skill.
 
+Need an answer: send with `mtix comment <id> "<text>" --to <agent> --await-reply=<duration>` (MCP `mtix_annotate` with `to` and `await_reply`). Default 1h, at most 8h. Your host then contacts the hub every 60 seconds until that agent replies or the time passes; when you are the recipient, answer and ack promptly. A reply window keeps a scale-to-zero hub awake (about 60 contacts an hour, up to 8 hours), so use plain `--to` when no answer is needed; limits and verification are in the sync skill and `mtix doctor` row `sync.hub-contact`.
+
 
 On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
 `--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.

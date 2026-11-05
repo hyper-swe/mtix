@@ -142,11 +142,11 @@ func readSyncStatus(ctx context.Context, store *sqlite.Store) (SyncStatus, error
 		{"pushed", &st.Pushed},
 		{"applied", &st.Applied},
 	} {
-		if err := store.QueryRow(ctx,
-			`SELECT COUNT(*) FROM sync_events WHERE sync_status = ?`, row.status,
-		).Scan(row.dst); err != nil {
+		count, err := store.CountSyncEventsByStatus(ctx, row.status)
+		if err != nil {
 			return st, fmt.Errorf("count %s: %w", row.status, err)
 		}
+		*row.dst = count
 	}
 
 	unresolved, conflictErr := readConflicts(ctx, store, "", false)

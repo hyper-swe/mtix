@@ -91,7 +91,7 @@ func runRecoverFrom(fromExport string) (string, error) {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 
-	res, err := sqlite.Recover(context.Background(), dbPath, mirrorPath, version, logger, inboxSource)
+	res, err := sqlite.Recover(context.Background(), dbPath, mirrorPath, version, sqlite.RecoverOptions{Logger: logger, InboxSources: []*sqlite.ExportData{inboxSource}})
 	if err != nil {
 		return "", err
 	}

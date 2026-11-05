@@ -271,7 +271,7 @@ func applyBatchReport(ctx context.Context, in pullIngest, store *sqlite.Store, e
 	return orphans, nil
 }
 
-// localHasEvents returns true if sync_events has at least one row.
+// localHasEvents returns true if the replication log has a real event (FR-19.1).
 //
 // We only check sync_events (not nodes / dependencies / applied_events)
 // because sync_events is the canonical replication log for this project:
@@ -283,8 +283,7 @@ func applyBatchReport(ctx context.Context, in pullIngest, store *sqlite.Store, e
 // WithTx opens a write tx, which would unnecessarily lock the DB for
 // a read-only check.
 func localHasEvents(ctx context.Context, store *sqlite.Store) (bool, error) {
-	var n int
-	err := store.QueryRow(ctx, `SELECT COUNT(*) FROM sync_events`).Scan(&n)
+	n, err := store.CountSyncEvents(ctx)
 	if err != nil {
 		return false, err
 	}

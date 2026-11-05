@@ -41,7 +41,7 @@ func TestExportWithInbox_MultipleRecipients_CoverageStaysWithRecipient(t *testin
 				if recoverDB {
 					var dbPath string
 					require.NoError(t, raw.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&dbPath))
-					result, err := sqlite.Recover(t.Context(), dbPath, filepath.Join(t.TempDir(), "absent.json"), "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+					result, err := sqlite.Recover(t.Context(), dbPath, filepath.Join(t.TempDir(), "absent.json"), "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 					require.NoError(t, err)
 					file = result.Export
 				}
@@ -92,7 +92,7 @@ func TestRecover_DatabaseRecipientCumulativeAck_RetainsCoverage(t *testing.T) {
 	require.NoError(t, source.InboxAck(t.Context(), "recipient", last))
 	var path string
 	require.NoError(t, raw.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path))
-	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "absent.json"), "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "absent.json"), "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	require.NoError(t, err)
 	dest := newTestStore(t)
 	_, err = dest.Import(t.Context(), result.Export, sqlite.ImportModeMerge, false)
@@ -115,7 +115,7 @@ func TestRecover_OrdinaryMirrorOnly_ReportsUnavailableJournal(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "tasks.json")
 	require.NoError(t, os.WriteFile(path, raw, 0600))
-	result, err := sqlite.Recover(t.Context(), filepath.Join(dir, "absent.db"), path, "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	result, err := sqlite.Recover(t.Context(), filepath.Join(dir, "absent.db"), path, "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	require.NoError(t, err)
 	require.Equal(t, 3, result.Export.NodeCount)
 	require.Nil(t, result.Export.InboxJournal)

@@ -10,42 +10,46 @@ import (
 	"fmt"
 )
 
-// Read all comments without relying on damaged secondary indexes. SQL must not
-// hide damaged payloads before loss counting (FR-19.1, MTIX-112.2.1).
+// Point reads bypass secondary indexes and isolate a damaged leaf (FR-19.1).
 const salvageInboxSQL = `SELECT event_id,project_prefix,node_id,COALESCE(uid,''),
- author_id,payload,created_at,rowid FROM sync_events NOT INDEXED WHERE op_type='comment' ORDER BY rowid`
+ author_id,payload,created_at,rowid,op_type FROM sync_events NOT INDEXED WHERE rowid=?`
 
 type salvageMail struct {
-	event inboxJournalEvent
-	seq   int64
+	e   inboxJournalEvent
+	seq int64
 }
 
-// salvageInboxRows retains the readable prefix even if later rows fail (FR-19.1, MTIX-112.2.1).
-func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (journal *InboxJournal, err error) {
-	journal = &InboxJournal{Version: 1, Events: []inboxJournalEvent{}}
-	rows, err := db.QueryContext(ctx, salvageInboxSQL)
-	if err != nil {
-		return nil, fmt.Errorf("read salvage inbox events: %w", err)
-	}
-	defer func() { err = errors.Join(err, rows.Close()) }()
+// salvageInboxRows visits each indexed row independently, so damage never ends
+// the scan of later readable mail. Failed rows are counted explicitly (FR-19.1).
+func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (*InboxJournal, error) {
+	keys, keyErr := salvageInboxKeys(ctx, db)
+	journal := &InboxJournal{Version: 1, Events: []inboxJournalEvent{}}
 	var records []salvageMail
 	loss := inboxLoss{}
-	for rows.Next() {
-		var r salvageMail
-		e := &r.event
-		if scanErr := rows.Scan(&e.EventID, &e.Project, &e.NodeID, &e.UID, &e.Author, &e.Payload, &e.CreatedAt, &r.seq); scanErr != nil {
-			loss.unknown++
+	unreadable := 0
+	for _, seq := range keys {
+		if ctx.Err() != nil {
+			keyErr = errors.Join(keyErr, ctx.Err())
+			break
+		}
+		r := salvageMail{seq: seq}
+		e := &r.e
+		var op string
+		err := db.QueryRowContext(ctx, salvageInboxSQL, seq).Scan(&e.EventID, &e.Project, &e.NodeID, &e.UID, &e.Author, &e.Payload, &e.CreatedAt, &r.seq, &op)
+		if err != nil {
+			unreadable++
 			continue
 		}
-		if loss.keep(*e) {
+		if op == "comment" && loss.keep(*e) {
 			records = append(records, r)
 		}
 	}
 	res.Notes = append(res.Notes, loss.notes()...)
-	readErr := rows.Err()
-	closeErr := rows.Close()
+	if unreadable > 0 {
+		keyErr = errors.Join(keyErr, fmt.Errorf("%d unreadable sync event record(s) omitted; addressed-mail loss among these records unknown", unreadable))
+	}
 	restoreSalvageCoverage(ctx, db, records, journal, res)
-	return journal, errors.Join(readErr, closeErr)
+	return journal, keyErr
 }
 
 // restoreSalvageCoverage combines duplicate identities by recipient coverage (FR-19.1, MTIX-112.2.1).
@@ -53,22 +57,22 @@ func restoreSalvageCoverage(ctx context.Context, db *sql.DB, records []salvageMa
 	unreadable := 0
 	positions := map[string]int{}
 	for _, r := range records {
-		if err := salvageInboxAck(ctx, db, &r.event, r.seq); err != nil {
+		if err := salvageInboxAck(ctx, db, &r.e, r.seq); err != nil {
 			unreadable++
 		}
-		if i, exists := positions[r.event.EventID]; exists {
-			if !sameInboxContent(j.Events[i], r.event) {
+		if i, exists := positions[r.e.EventID]; exists {
+			if !sameInboxContent(j.Events[i], r.e) {
 				res.Notes = append(res.Notes, "conflicting duplicate inbox identity omitted; first readable database copy retained")
 				continue
 			}
 			res.Notes = append(res.Notes, "duplicate inbox identity combined; acknowledgment coverage retained")
-			if !j.Events[i].Acked && r.event.Acked {
-				j.Events[i].Acked, j.Events[i].AckedAt = true, r.event.AckedAt
+			if !j.Events[i].Acked && r.e.Acked {
+				j.Events[i].Acked, j.Events[i].AckedAt = true, r.e.AckedAt
 			}
 			continue
 		}
-		positions[r.event.EventID] = len(j.Events)
-		j.Events = append(j.Events, r.event)
+		positions[r.e.EventID] = len(j.Events)
+		j.Events = append(j.Events, r.e)
 	}
 	if unreadable > 0 {
 		res.Notes = append(res.Notes, fmt.Sprintf("acknowledgment coverage unreadable for %d addressed inbox event(s); delivered as unacknowledged unless supplied export restores coverage", unreadable))

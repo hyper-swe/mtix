@@ -47,7 +47,7 @@ func TestRecover_RelativeDatabasePath_PreservesMail(t *testing.T) {
 	require.NoError(t, err)
 	relative, err := filepath.Rel(cwd, dbPath)
 	require.NoError(t, err)
-	recovered, err := sqlite.Recover(t.Context(), relative, filepath.Join(t.TempDir(), "missing.json"), "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	recovered, err := sqlite.Recover(t.Context(), relative, filepath.Join(t.TempDir(), "missing.json"), "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	require.NoError(t, err)
 	require.Equal(t, 3, recovered.Export.NodeCount, "the existing board salvage accepts this relative path")
 	require.NotNil(t, recovered.Export.InboxJournal, "readable relative database path must retain its journal: %v", recovered.Notes)

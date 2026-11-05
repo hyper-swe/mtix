@@ -31,7 +31,7 @@ func TestRecover_DuplicateWithLaterAck_UnionsCoverage(t *testing.T) {
 	}
 	var path string
 	require.NoError(t, raw.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path))
-	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "absent.json"), "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "absent.json"), "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	require.NoError(t, err)
 	require.NoError(t, sqlite.ValidateExport(result.Export))
 	require.Len(t, result.Export.InboxJournal.Events, 3)
@@ -54,7 +54,7 @@ func TestRecover_InvalidAckTimestamp_KeepsMailUnacknowledged(t *testing.T) {
 	require.NoError(t, err)
 	var path string
 	require.NoError(t, raw.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path))
-	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "absent.json"), "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "absent.json"), "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	require.NoError(t, err)
 	require.NoError(t, sqlite.ValidateExport(result.Export))
 	require.Len(t, result.Export.InboxJournal.Events, 3)

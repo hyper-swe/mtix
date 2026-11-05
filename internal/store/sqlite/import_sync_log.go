@@ -40,6 +40,10 @@ func (s *Store) HasSyncedWithHub(ctx context.Context) (bool, error) {
 }
 
 func syncedWithHub(ctx context.Context, q rowQuerier) (bool, error) {
+	restored, predicateErr := restoredInboxPredicate(ctx, q, "sync_events.event_id")
+	if predicateErr != nil {
+		return false, predicateErr
+	}
 	var synced bool
 	// The sticky mark, any pulled event, or any own event past pending
 	// (pushed or conflicted).
@@ -53,7 +57,7 @@ func syncedWithHub(ctx context.Context, q rowQuerier) (bool, error) {
 	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM board_flags WHERE key = ?)
 		OR EXISTS (SELECT 1 FROM applied_events)
 		OR EXISTS (SELECT 1 FROM sync_events WHERE sync_status <> 'pending'
-          AND NOT EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=sync_events.event_id))
+          AND NOT (`+restored+`))
 		OR EXISTS (SELECT 1 FROM relay_push_cursor WHERE cursor > 0 OR next_rs > 1 OR pub_epoch > 1)
 		OR EXISTS (SELECT 1 FROM relay_ingest_cursor)`, hubMarkKey).Scan(&synced)
 	if err != nil {
@@ -82,6 +86,10 @@ const loggedNodeMatch = `((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
 // loggedNodes returns the local nodes the sync log holds an event for,
 // read through q.
 func loggedNodes(ctx context.Context, q rowQuerier) (nodes []loggedNode, err error) {
+	restored, predicateErr := restoredInboxPredicate(ctx, q, "se.event_id")
+	if predicateErr != nil {
+		return nil, predicateErr
+	}
 	// Each node with an event of the log, and whether its creation is past
 	// pending. Matched by uid first, as the comparison of an
 	// automatic import is (DiffReplace, MTIX-95.31.4).
@@ -90,7 +98,7 @@ func loggedNodes(ctx context.Context, q rowQuerier) (nodes []loggedNode, err err
 			AND se.op_type = 'create_node' AND se.sync_status <> 'pending')
 		FROM nodes n
 		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE `+loggedNodeMatch+`
-          AND NOT EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=se.event_id))
+          AND NOT (`+restored+`))
 		ORDER BY n.id`)
 	if err != nil {
 		return nil, err

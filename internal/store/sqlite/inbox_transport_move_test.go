@@ -34,7 +34,7 @@ func TestExportWithInbox_DisplaySender_PreservesMailThroughImportAndRecover(t *t
 			require.Empty(t, data.InboxJournal.Notes)
 			var path string
 			require.NoError(t, raw.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&path))
-			recovered, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "missing.json"), "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+			recovered, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "missing.json"), "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 			require.NoError(t, err)
 			for _, file := range []*sqlite.ExportData{data, recovered.Export} {
 				dest := newTestStore(t)
@@ -63,7 +63,7 @@ func TestRecover_DamagedCommentIndex_KeepsReadableMail(t *testing.T) {
 	_, err = file.WriteAt(bytes.Repeat([]byte{0xff}, size), int64((root-1)*size))
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
-	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "missing.json"), "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "missing.json"), "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	require.NoError(t, err)
 	require.Equal(t, 3, result.Export.NodeCount)
 	require.NotNil(t, result.Export.InboxJournal)

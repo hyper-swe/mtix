@@ -38,7 +38,7 @@ func TestRecover_DamagedLaterJournalPage_PreservesReadablePrefix(t *testing.T) {
 	_, err = file.WriteAt(bytes.Repeat([]byte{0xff}, size), int64(lastPage-1)*int64(size))
 	require.NoError(t, err)
 	require.NoError(t, file.Close())
-	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "missing.json"), "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "missing.json"), "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	require.NoError(t, err)
 	require.NotNil(t, result.Export.InboxJournal)
 	require.NotEmpty(t, result.Export.InboxJournal.Events)

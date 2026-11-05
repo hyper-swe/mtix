@@ -231,13 +231,17 @@ func (s *Store) ReadRelayJournalSince(ctx context.Context, seq int64, limit int)
 	if limit <= 0 {
 		limit = 500
 	}
+	restored, predicateErr := restoredInboxPredicate(ctx, s.readDB, "sync_events.event_id")
+	if predicateErr != nil {
+		return nil, predicateErr
+	}
 	rows, err := s.readDB.QueryContext(ctx, `
 		SELECT rowid, event_id, project_prefix, node_id, op_type, payload,
 		       wall_clock_ts, lamport_clock, vector_clock,
 		       author_id, author_machine_hash, uid
 		FROM sync_events
 		WHERE rowid > ?
-          AND NOT EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=sync_events.event_id)
+          AND NOT (`+restored+`)
 		ORDER BY rowid ASC
 		LIMIT ?`, seq, limit)
 	if err != nil {

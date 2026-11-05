@@ -11,8 +11,9 @@ import (
 
 // inboxLoss distinguishes known mail losses from unreadable recipients (FR-19.1, MTIX-112.2.1).
 type inboxLoss struct {
-	unknown int
-	invalid []string
+	unknown   int
+	overBound int
+	invalid   []string
 }
 
 // A corrupt comment cannot be classified as addressed or ordinary. A valid
@@ -35,6 +36,10 @@ func (l *inboxLoss) keep(e inboxJournalEvent) bool {
 	if to == "" {
 		return false
 	}
+	if inboxExceedsActorBounds(e) {
+		l.overBound++
+		return false
+	}
 	if err := validateInboxEvent(e); err != nil {
 		l.invalid = append(l.invalid, err.Error())
 		return false
@@ -45,6 +50,9 @@ func (l *inboxLoss) keep(e inboxJournalEvent) bool {
 // notes reports loss without claiming an unknown recipient was addressed (FR-19.1, MTIX-112.2.1).
 func (l *inboxLoss) notes() []string {
 	var notes []string
+	if l.overBound > 0 {
+		notes = append(notes, fmt.Sprintf("%d addressed inbox event(s) outside the 64-byte transport actor bounds and omitted", l.overBound))
+	}
 	if l.unknown > 0 {
 		notes = append(notes, fmt.Sprintf("%d unreadable comment record(s) omitted; recipient and addressed-mail loss unknown", l.unknown))
 	}
@@ -68,4 +76,16 @@ func countUncarriedInbox(ctx context.Context, q rowQuerier, j *InboxJournal) {
 		}
 	}
 	j.UncarriedUnacked = max(total, 0)
+}
+
+// inboxExceedsActorBounds distinguishes healthy oversized text from damaged mail (FR-19.1).
+func inboxExceedsActorBounds(e inboxJournalEvent) bool {
+	var payload struct {
+		To     string `json:"to"`
+		Author string `json:"author_id"`
+	}
+	if json.Unmarshal([]byte(e.Payload), &payload) != nil {
+		return false
+	}
+	return len(e.Author) > 64 || len(payload.To) > 64 || len(payload.Author) > 64
 }

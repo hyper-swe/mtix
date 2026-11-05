@@ -1,0 +1,49 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
+package sqlite
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+)
+
+// SyncEventReader supplies read-only queries for replication counts (FR-19.1).
+type SyncEventReader interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
+}
+
+// restoredInboxPredicate returns an existence expression for a trusted SQL column.
+// Old read-only stores cannot run init and therefore have no restored mail (FR-19.1).
+func restoredInboxPredicate(ctx context.Context, q SyncEventReader, eventColumn string) (string, error) {
+	var present bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='inbox_restored_events')`).Scan(&present); err != nil {
+		return "", fmt.Errorf("inspect restored inbox provenance: %w", err)
+	}
+	if !present {
+		return "0", nil
+	}
+	return `EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=` + eventColumn + `)`, nil
+}
+
+// CountReplicationEvents excludes local mail from replication state on every reader
+// path, including pre-migration read-only stores (FR-19.1, MTIX-112.2.1).
+// An empty status counts every real event; otherwise only that status is counted.
+func CountReplicationEvents(ctx context.Context, q SyncEventReader, status string) (int, error) {
+	restored, err := restoredInboxPredicate(ctx, q, "e.event_id")
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_events e WHERE NOT (`+restored+`) AND (?='' OR e.sync_status=?)`, status, status).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count replication events: %w", err)
+	}
+	return count, nil
+}
+
+// CountSyncEventsByStatus supplies the same replication-only count to status (FR-18).
+func (s *Store) CountSyncEventsByStatus(ctx context.Context, status string) (int, error) {
+	return CountReplicationEvents(ctx, s.readDB, status)
+}

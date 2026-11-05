@@ -34,6 +34,12 @@ type RecoverResult struct {
 	Notes        []string // human-readable salvage diagnostics
 }
 
+// RecoverOptions supplies optional journal sources and logging (FR-19.1).
+type RecoverOptions struct {
+	Logger       *slog.Logger
+	InboxSources []*ExportData
+}
+
 // Recover salvages as much as possible from a damaged database and the
 // tasks.json mirror, without writing to either (MTIX-26.5). Strategy,
 // mirroring what worked in the 2026-05-19 field incident:
@@ -52,7 +58,12 @@ type RecoverResult struct {
 //
 // Returns an error only when there is nothing to salvage from either
 // source — partial damage yields a partial result plus Notes.
-func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger *slog.Logger, inboxSources ...*ExportData) (*RecoverResult, error) {
+func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, options RecoverOptions) (*RecoverResult, error) {
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	inboxSources := options.InboxSources
 	res := &RecoverResult{}
 	mirrorNotes := &RecoverResult{}
 	mirror := readMirrorSource(mirrorPath, mirrorNotes)

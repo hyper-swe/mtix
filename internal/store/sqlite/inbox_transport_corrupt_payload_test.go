@@ -19,7 +19,7 @@ func TestRecover_MalformedMailPayload_ReportsLoss(t *testing.T) {
 	require.NoError(t, err)
 	var path string
 	require.NoError(t, raw.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path))
-	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "missing.json"), "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "missing.json"), "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	require.NoError(t, err)
 	require.Len(t, result.Export.InboxJournal.Events, 2)
 	require.Contains(t, strings.Join(result.Notes, " "), "unreadable", "a corrupt comment cannot be silently treated as definitely unaddressed")

@@ -14,10 +14,14 @@ import (
 // PermissionAddressedAgents reports actual foreign-applied addressed comments,
 // including acked comments. A local addressed send or own echo is not evidence.
 func (s *Store) PermissionAddressedAgents(ctx context.Context) (out []string, err error) {
+	restored, predicateErr := restoredInboxPredicate(ctx, s.readDB, "s.event_id")
+	if predicateErr != nil {
+		return nil, predicateErr
+	}
 	rows, err := s.readDB.QueryContext(ctx, `SELECT s.payload FROM sync_events s
 	 JOIN applied_events a ON a.event_id = s.event_id
 	 WHERE s.op_type = ? AND s.sync_status = ?
-          AND NOT EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=s.event_id)`, model.OpComment, model.SyncStatusApplied)
+          AND NOT (`+restored+`)`, model.OpComment, model.SyncStatusApplied)
 	if err != nil {
 		return nil, fmt.Errorf("read addressed permission evidence: %w", err)
 	}

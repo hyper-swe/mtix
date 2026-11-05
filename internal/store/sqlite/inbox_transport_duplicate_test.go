@@ -27,7 +27,7 @@ func TestRecover_DamagedDuplicateIdentity_ProducesValidArtifact(t *testing.T) {
 	}
 	var path string
 	require.NoError(t, raw.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&path))
-	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "missing.json"), "test", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "missing.json"), "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	require.NoError(t, err)
 	require.Equal(t, 3, result.Export.NodeCount)
 	require.NoError(t, sqlite.ValidateExport(result.Export), "readable duplicates must be reconciled or reported/omitted, not make the whole salvage unimportable")

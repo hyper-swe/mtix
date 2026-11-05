@@ -36,7 +36,6 @@ func newSyncWorkflowTestDB(t *testing.T) *sql.DB {
 			sync_status TEXT NOT NULL DEFAULT 'pending',
 			created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 		)`,
-		`CREATE TABLE inbox_restored_events (event_id TEXT PRIMARY KEY)`,
 		`CREATE TABLE applied_events (event_id TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
 		`CREATE TABLE sync_conflicts (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,

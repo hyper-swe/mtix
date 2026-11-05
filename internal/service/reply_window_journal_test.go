@@ -140,3 +140,29 @@ func TestReplyProcessor_RealJournal_HoldsOnlyForRegisteredAddressee(t *testing.T
 	require.Empty(t, fx.replyState().Holds, "To is not registered on this host")
 	require.Positive(t, fx.replyState().Cursor, "the event was examined and will not be re-read")
 }
+
+func TestAddAnnotationRequest_AwaitReplyBlankAuthor_RefusedBeforeStore(t *testing.T) {
+	f := newJournalFixture(t)
+	for _, author := range []string{"", "   ", "\t\n"} {
+		_, err := f.prompts.AddAnnotationRequest(t.Context(), service.AnnotationRequest{
+			NodeID: f.node, Text: "q", Author: author, Addressee: "peer", AwaitReply: time.Hour})
+		require.ErrorIs(t, err, model.ErrInvalidInput)
+		require.Contains(t, err.Error(), "author")
+	}
+	evs, err := f.store.ReplyByEvents(t.Context(), 0, 10)
+	require.NoError(t, err)
+	require.Empty(t, evs)
+	n, err := f.store.GetNode(t.Context(), f.node)
+	require.NoError(t, err)
+	require.Empty(t, n.Annotations, "no annotation is stored")
+}
+
+func TestAddAnnotationRequest_PlainAnnotateBlankAuthor_Unchanged(t *testing.T) {
+	f := newJournalFixture(t)
+	_, err := f.prompts.AddAnnotationRequest(t.Context(), service.AnnotationRequest{
+		NodeID: f.node, Text: "q", Author: "", Addressee: "peer"})
+	require.NoError(t, err)
+	n, err := f.store.GetNode(t.Context(), f.node)
+	require.NoError(t, err)
+	require.Len(t, n.Annotations, 1)
+}

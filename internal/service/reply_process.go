@@ -5,9 +5,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -17,6 +20,13 @@ const replyScanBatch = 100
 
 // maxReplyWindows bounds the open sender windows kept per board.
 const maxReplyWindows = 64
+
+// maxSkippedWindows bounds the malformed-window record; entries older than
+// skippedWindowAge are forgotten (MTIX-112.20.3.5).
+const (
+	maxSkippedWindows = 16
+	skippedWindowAge  = 24 * time.Hour
+)
 
 // ReplyJournal is the local journal reads the reply scan needs.
 type ReplyJournal interface {
@@ -139,7 +149,7 @@ func (p *ReplyProcessor) Scan(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	answered, err := p.answered(ctx, st.Windows)
+	answered, bad, err := p.answered(ctx, st.Windows)
 	if err != nil {
 		return err
 	}
@@ -151,6 +161,7 @@ func (p *ReplyProcessor) Scan(ctx context.Context) error {
 	return p.State.UpdateReplyState(ctx, p.Key, func(cur *oplocal.ReplyState) error {
 		settleReplyState(cur, pol, now)
 		closeAnswered(cur, answered)
+		dropSkipped(cur, bad, now)
 		for _, ev := range events {
 			// The cursor is re-read under the lock: a concurrent scan that
 			// already examined this event moved it past, so apply it once.
@@ -179,18 +190,58 @@ func (p *ReplyProcessor) collect(ctx context.Context, cursor int64) ([]sqlite.Re
 	}
 }
 
-func (p *ReplyProcessor) answered(ctx context.Context, windows []oplocal.ReplyWindow) (map[string]bool, error) {
+// answered reports which windows have been answered and which are malformed
+// (a blank sender or awaited agent can never be answered). Malformed windows
+// are returned for removal; only real journal errors fail the pass.
+func (p *ReplyProcessor) answered(ctx context.Context, windows []oplocal.ReplyWindow) (map[string]bool, map[string]string, error) {
 	out := map[string]bool{}
+	bad := map[string]string{}
 	for _, w := range windows {
+		if blankWindow(w) {
+			bad[windowKey(w)] = "blank sender or awaited agent"
+			continue
+		}
 		ok, err := p.Journal.ReplyArrived(ctx, w.AwaitingFrom, w.Sender, w.OpenedSeq)
+		if errors.Is(err, model.ErrInvalidInput) {
+			bad[windowKey(w)] = err.Error()
+			continue
+		}
 		if err != nil {
-			return nil, fmt.Errorf("reply scan: %w", err)
+			return nil, nil, fmt.Errorf("reply scan: %w", err)
 		}
 		if ok {
 			out[windowKey(w)] = true
 		}
 	}
-	return out, nil
+	return out, bad, nil
+}
+
+func blankWindow(w oplocal.ReplyWindow) bool {
+	return strings.TrimSpace(w.Sender) == "" || strings.TrimSpace(w.AwaitingFrom) == ""
+}
+
+// dropSkipped removes the malformed windows from the state and records them,
+// keeping the newest maxSkippedWindows and forgetting entries older than
+// skippedWindowAge.
+func dropSkipped(st *oplocal.ReplyState, bad map[string]string, now time.Time) {
+	kept := st.Skipped[:0:0]
+	for _, s := range st.Skipped {
+		if now.Sub(s.At) < skippedWindowAge {
+			kept = append(kept, s)
+		}
+	}
+	windows := st.Windows[:0:0]
+	for _, w := range st.Windows {
+		if reason, isBad := bad[windowKey(w)]; isBad {
+			kept = append(kept, oplocal.SkippedReplyWindow{Window: w, Reason: reason, At: now})
+			continue
+		}
+		windows = append(windows, w)
+	}
+	if len(kept) > maxSkippedWindows {
+		kept = kept[len(kept)-maxSkippedWindows:]
+	}
+	st.Windows, st.Skipped = windows, kept
 }
 
 func (p *ReplyProcessor) registered(ctx context.Context, needed bool) (map[string]bool, error) {
@@ -253,7 +304,13 @@ func setExtensions(m map[string][]time.Time, sender string, times []time.Time) m
 // OpenReplyWindow records a sender window: the sender keeps 60 s pulls until
 // the awaited agent answers or ReplyBy. A second window to the same agent on
 // the same node replaces the first.
+//
+// Returns ErrInvalidInput for a window with a blank sender or awaited agent:
+// it could never be answered (MTIX-112.20.3.5).
 func OpenReplyWindow(ctx context.Context, state *oplocal.State, key string, w oplocal.ReplyWindow) error {
+	if blankWindow(w) {
+		return fmt.Errorf("reply window needs a sender and an awaited agent: %w", model.ErrInvalidInput)
+	}
 	return state.UpdateReplyState(ctx, key, func(st *oplocal.ReplyState) error {
 		kept := make([]oplocal.ReplyWindow, 0, len(st.Windows)+1)
 		for _, old := range st.Windows {

@@ -51,7 +51,7 @@ func pauseWakeReplace(t *testing.T, phase string) pausedWakeReplace {
 	require.NoError(t, err)
 	var scanErr error
 	go func() { defer close(done); scanErr = scanner.Scan(ctx) }()
-	t.Cleanup(func() { release(); waitWakeReplace(t, done, ctx) })
+	t.Cleanup(func() { release(); waitWakeReplace(ctx, t, done) })
 	select {
 	case <-entered:
 	case <-ctx.Done():
@@ -60,7 +60,7 @@ func pauseWakeReplace(t *testing.T, phase string) pausedWakeReplace {
 	return pausedWakeReplace{wakeReplaceFixture: f, resume: release, done: done, err: &scanErr, oldSends: f.adapter.seqs()}
 }
 
-func waitWakeReplace(t *testing.T, done <-chan struct{}, ctx context.Context) {
+func waitWakeReplace(ctx context.Context, t *testing.T, done <-chan struct{}) {
 	t.Helper()
 	select {
 	case <-done:

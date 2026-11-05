@@ -195,7 +195,7 @@ func lastActivityText(src *hubContactSource, now time.Time) string {
 func lastContactText(src *hubContactSource, now time.Time) string {
 	c, present, err := src.state.ReadHubContact(src.key())
 	if err != nil {
-		return "last contact unreadable (" + err.Error() + ")"
+		return "last contact unreadable (operator-local record; run mtix doctor)"
 	}
 	if !present {
 		return "no scheduled contact yet"

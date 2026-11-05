@@ -75,6 +75,7 @@ const (
 	claimSettled    wakeClaimState = iota // won, or the ledger row is terminal
 	claimBudgetHeld                       // the recipient budget or back-off refused the claim
 	claimInFlight                         // another claimant holds an unexpired unfinished claim
+	claimReplaced                         // the snapshotted event was removed or replaced
 )
 
 // claimState also reports whether the budget held the wake or another claim is in flight.
@@ -97,6 +98,8 @@ func (b *wakeBudgets) claimState(ctx context.Context, key model.WakeKey) (model.
 	}
 	state := claimSettled
 	switch {
+	case admission.result.Replaced:
+		state = claimReplaced
 	case admission.held != "":
 		state = claimBudgetHeld
 	case admission.result.InFlight:
@@ -118,6 +121,9 @@ func (b *wakeBudgets) claimLocked(ctx context.Context, a *wakeAdmission) error {
 	a.result, err = b.store.ClaimWakeBudget(ctx, a.key, time.Minute, a.prepareWakeAdmission)
 	if err != nil {
 		return fmt.Errorf("persist accounted wake claim: %w", err)
+	}
+	if a.result.Replaced {
+		return nil
 	}
 	if a.result.Won && (a.result.Attempt.Token == "" || a.result.Attempt.Key != a.key) {
 		return fmt.Errorf("accounted wake attempt fence is mismatched: %w", model.ErrConflict)

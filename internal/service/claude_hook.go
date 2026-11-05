@@ -336,7 +336,7 @@ func (h *ClaudeHook) claimEvents(ctx context.Context, events []sqlite.InboxEvent
 	var won []sqlite.InboxEvent
 	var attempts []model.WakeAttempt
 	for _, e := range events {
-		key := model.WakeKey{AgentID: h.d.Key.AgentID, HostID: h.d.Key.HostID, UID: h.d.Key.UID, EventSeq: e.Seq, Epoch: epoch}
+		key := model.WakeKey{AgentID: h.d.Key.AgentID, HostID: h.d.Key.HostID, UID: h.d.Key.UID, EventSeq: e.Seq, Epoch: epoch, EventID: e.EventID}
 		attempt, claimed, cerr := h.d.Claims.ClaimWake(ctx, key, h.d.ClaimLease)
 		if cerr != nil {
 			return won, attempts, fmt.Errorf("claim wake for event %d: %w", e.Seq, cerr)

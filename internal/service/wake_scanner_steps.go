@@ -41,7 +41,7 @@ func (s *WakeScanner) candidates(ctx context.Context, reg *sqlite.Registration) 
 		if ev.Seq <= reg.HighWater {
 			continue
 		}
-		key := model.WakeKey{AgentID: reg.AgentID, HostID: reg.HostID, UID: reg.UID, EventSeq: ev.Seq, Epoch: reg.Epoch}
+		key := model.WakeKey{AgentID: reg.AgentID, HostID: reg.HostID, UID: reg.UID, EventSeq: ev.Seq, Epoch: reg.Epoch, EventID: ev.EventID}
 		keys = append(keys, key)
 		if ev.Author == reg.AgentID {
 			skip[key] = true

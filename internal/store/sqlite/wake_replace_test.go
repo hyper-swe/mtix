@@ -41,6 +41,9 @@ func seedReplaceWakeState(t *testing.T, s *sqlite.Store, host string, cursor *in
 	require.NoError(t, err)
 	_, err = s.AcquireWakeLease(t.Context(), sqlite.WakeLeaseKey{AgentID: key.AgentID, HostID: host, UID: key.UID}, "", time.Minute)
 	require.NoError(t, err)
+	// A real contender marks the retained lease dirty without changing ownership.
+	_, err = s.AcquireWakeLease(t.Context(), sqlite.WakeLeaseKey{AgentID: key.AgentID, HostID: host, UID: key.UID}, "", time.Minute)
+	require.ErrorIs(t, err, model.ErrAlreadyClaimed)
 	if cursor != nil {
 		require.NoError(t, s.AdvanceWakeScanCursor(t.Context(), host, key.UID, *cursor, time.Minute))
 	}
@@ -146,11 +149,12 @@ func assertReplaceWakeMarks(t *testing.T, f wakeReplaceState, tail int64) {
 		mark   int64
 		cursor int64
 	}{{"kept-host", f.keptMark, f.keptCursor}, {"removed-host", f.dropped, f.droppedCursor}} {
-		var registration, lease int64
+		var registration, lease, dirty int64
 		require.NoError(t, f.raw.QueryRow(`SELECT high_water FROM agent_registrations WHERE host_id=?`, item.host).Scan(&registration))
-		require.NoError(t, f.raw.QueryRow(`SELECT high_water FROM wake_leases WHERE host_id=?`, item.host).Scan(&lease))
+		require.NoError(t, f.raw.QueryRow(`SELECT high_water,dirty FROM wake_leases WHERE host_id=?`, item.host).Scan(&lease, &dirty))
 		assert.Equal(t, min(item.mark, tail), registration)
 		assert.Equal(t, min(item.mark, tail), lease)
+		assert.Equal(t, int64(1), dirty, "reconciliation preserves the live dirty lease")
 		if f.cursor {
 			got, err := f.store.WakeScanCursor(t.Context(), item.host, "1000")
 			require.NoError(t, err)

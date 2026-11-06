@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Doctor keeps unreadable hub-contact history advisory when automatic contact is disabled, prints a pull that replaces the record, and distinguishes historical hub results from pre-dial errors in daemon logs. TLS recovery also covers certificate host names and hub-side certificate or TLS repair (MTIX-112.20.7).
+
 - **Fix: failed daemon pulls no longer appear as successful hub contacts (MTIX-112.20.7).** Doctor `sync.hub-contact` shows the last pull outcome and a safe failure class with its exact recovery command in text and JSON. Outcomes remain operator-local and preserve contact cadence. An explicit successful pull also clears a failure; exchange-lock contention and shutdown preserve the previous contact. Public doctor JSON includes the structured last contact, local TLS failures have their own recovery class, and directly returned daemon errors are scrubbed before logging.
 
 - **`mtix annotate <id> <text> --to <agent>` addresses an annotation from the CLI (MTIX-112.31).** `--to` takes exactly the path of `mtix comment --to`: the annotation lands in that agent's inbox and prints the same push and wake status lines, matching the MCP `mtix_annotate` tool with `to`. An empty `--to` addresses nobody, and annotate without `--to` is unchanged. Only `mtix comment` takes `--await-reply`. The agent docs, user manual and CLI reference now say so.

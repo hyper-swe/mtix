@@ -35,7 +35,7 @@ func TestRunDaemon_PGPull_FailureSuccessFailureReplacesOutcome(t *testing.T) {
 		require.NoError(t, err)
 		require.NotContains(t, string(raw), "daemon-outcome-secret")
 		if tc.ok {
-			require.Contains(t, row.Detail, "last pull succeeded")
+			require.Contains(t, row.Detail, "last hub contact succeeded")
 			require.NotContains(t, string(raw), `"error_class"`)
 		} else {
 			require.Contains(t, string(raw), `"error_class":"auth"`)

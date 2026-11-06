@@ -160,11 +160,7 @@ func initCloneHookFloor(ctx context.Context, stderr io.Writer, bootstrap bool) {
 	if bootstrap {
 		err = app.store.InitHookScanFloorAtTail(ctx)
 	} else {
-		var tail int64
-		tail, err = app.store.JournalTail(ctx)
-		if err == nil {
-			err = app.store.AdvanceHookScanFloorClamped(ctx, tail)
-		}
+		err = app.store.InitHookOnlyScanFloorAtTail(ctx)
 	}
 	if err != nil {
 		warnSync(stderr, "mtix sync clone: hook floor init", err)

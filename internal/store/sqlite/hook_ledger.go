@@ -138,6 +138,19 @@ func (s *Store) JournalTail(ctx context.Context) (int64, error) {
 // automatic wake backlog. Each floor advances monotonically; callers use this
 // only for bootstrap, not ordinary pulls with pending live work.
 func (s *Store) InitHookScanFloorAtTail(ctx context.Context) error {
+	return s.initHookScanFloorAtTail(ctx, true)
+}
+
+// InitHookOnlyScanFloorAtTail advances only hook dispatch progress using the
+// current writer snapshot, clamped below active claims (FR-20 §8,
+// MTIX-112.2.2.1.3). Nonempty clone resumes must retain automatic wake progress.
+func (s *Store) InitHookOnlyScanFloorAtTail(ctx context.Context) error {
+	return s.initHookScanFloorAtTail(ctx, false)
+}
+
+// initHookScanFloorAtTail keeps tail observation and floor writes in the same
+// writer transaction so discard cannot leave a stale floor above the journal.
+func (s *Store) initHookScanFloorAtTail(ctx context.Context, seedWakes bool) error {
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
 		var tail int64
 		// Read the tail under the same writer transaction as the floor write,
@@ -147,6 +160,9 @@ func (s *Store) InitHookScanFloorAtTail(ctx context.Context) error {
 		}
 		if err := advanceHookScanFloorTx(ctx, tx, tail); err != nil {
 			return err
+		}
+		if !seedWakes {
+			return nil
 		}
 		return seedWakeProgressAtTailTx(ctx, tx, tail)
 	})

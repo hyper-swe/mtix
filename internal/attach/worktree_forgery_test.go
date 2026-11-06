@@ -56,11 +56,20 @@ func TestWorktreeForgery_ControlCase_AWellFormedLayoutIsAWorktree(t *testing.T) 
 	assert.Equal(t, CheckoutWorktree, got.Kind, "the forgery fixtures differ from this layout by one guard each")
 }
 
-func TestWorktreeForgery_BareCommonDir_HasNoMainCheckout(t *testing.T) {
+func TestWorktreeForgery_BareCommonDir_IsAWorktree(t *testing.T) {
 	wt := forgedWorktree(t, "repo.git/worktrees/wt", "../..")
 	got, err := DetectCheckout(wt)
 	require.NoError(t, err)
-	assert.Equal(t, CheckoutInvalid, got.Kind)
+	assert.Equal(t, CheckoutWorktree, got.Kind, "a worktree of a bare repository is a real checkout")
+}
+
+func TestWorktreeForgery_BareCommonDirWithWrongBacklink_IsInvalid(t *testing.T) {
+	wt := forgedWorktree(t, "repo.git/worktrees/wt", "../..")
+	admin := readGitdirTarget(t, wt)
+	writeFile(t, filepath.Join(admin, "gitdir"), filepath.Join(t.TempDir(), ".git")+"\n")
+	got, err := DetectCheckout(wt)
+	require.NoError(t, err)
+	assert.Equal(t, CheckoutInvalid, got.Kind, "the bare layout is accepted only with a matching back-link")
 }
 
 func TestWorktreeForgery_GitFileWithoutGitdirPrefix_IsInvalid(t *testing.T) {

@@ -7,7 +7,6 @@ package main
 
 import (
 	"context"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -16,7 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/attach"
-	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/testutil"
@@ -122,22 +120,6 @@ func TestDoctorGlue_ProductionDeps_ShowTrackedStoreRowForCommittedLegacyBoard(t 
 	row, ok := attachDoctorRows(t, deps, false)["glue.tracked-store"]
 	require.True(t, ok, "committed legacy store must be reported")
 	assert.Equal(t, trackedStoreFix(attach.GlueDecision{CheckoutRoot: root, StoreRoot: root}), row.Fix)
-}
-
-// legacyBoardCheckout lists a git checkout whose store has no instance id.
-func legacyBoardCheckout(t *testing.T, st *oplocal.State) string {
-	t.Helper()
-	root := t.TempDir()
-	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
-	dataDir := filepath.Join(root, ".mtix", "data")
-	require.NoError(t, os.MkdirAll(dataDir, 0o755))
-	store, err := sqlite.New(dataDir, slog.Default())
-	require.NoError(t, err)
-	_, err = store.WriteDB().ExecContext(t.Context(), "DELETE FROM meta WHERE key='store_instance_id'")
-	require.NoError(t, err)
-	require.NoError(t, store.Close())
-	require.NoError(t, st.ListBoard(t.Context(), "11111111-1111-4111-8111-111111111111", root))
-	return root
 }
 
 // writeGitIndex writes a minimal v2 git index tracking the given paths.

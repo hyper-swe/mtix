@@ -111,7 +111,7 @@ func TestDetectCheckout_UnreadableAndRelativeGitFile_Handled(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, CheckoutWorktree, got.Kind)
 
-	// A bare common dir has no main checkout to attach to.
+	// A bare common dir is a real repository; its linked worktree is a checkout.
 	bare := filepath.Join(base, "bare.git")
 	bareAdmin := filepath.Join(bare, "worktrees", "w")
 	w2 := filepath.Join(base, "w2")
@@ -121,7 +121,7 @@ func TestDetectCheckout_UnreadableAndRelativeGitFile_Handled(t *testing.T) {
 	writeFile(t, filepath.Join(bareAdmin, "gitdir"), filepath.Join(w2, ".git")+"\n")
 	got, err = DetectCheckout(w2)
 	require.NoError(t, err)
-	assert.Equal(t, CheckoutInvalid, got.Kind)
+	assert.Equal(t, CheckoutWorktree, got.Kind)
 }
 
 func TestScanStoreInIndex_TrackedSymlinkOverStorePath_ReportsAncestor(t *testing.T) {
@@ -210,5 +210,25 @@ func TestIndexReader_V4HugePathQuadratic_FailsClosedWithinDeadline(t *testing.T)
 		require.ErrorIs(t, err, ErrIndexUnsupported)
 	case <-time.After(10 * time.Second):
 		t.Fatal("the crafted v4 index kept the reader busy for over 10 seconds")
+	}
+}
+
+func TestIndexReader_CaseVariantStorePath_IsTheStore(t *testing.T) {
+	tests := []struct {
+		name  string
+		entry string
+		want  string
+	}{
+		{"upper-case store file", ".MTIX/data/mtix.db", TrackedStore},
+		{"mixed-case sibling in the data dir", ".Mtix/Data/other.bin", TrackedStore},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gitDir := filepath.Join(t.TempDir(), ".git")
+			writeIndex(t, gitDir, buildIndex(2, []idxEntry{{path: tt.entry}}))
+			got, err := ScanStoreInIndex(gitDir, storeRel)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
 	}
 }

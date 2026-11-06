@@ -144,9 +144,38 @@ func TestDoctorGlueRealGit_RelativeWorktree_IsDetected(t *testing.T) {
 	got, err := attach.DetectCheckout(wt)
 	require.NoError(t, err)
 	assert.Equal(t, attach.CheckoutWorktree, got.Kind)
-	physical, err := filepath.EvalSymlinks(root)
+}
+
+// A linked worktree of a bare repository, including the .bare layout whose
+// .git file points at ./.bare, is a real checkout (MTIX-112.19.8.13).
+func TestDoctorGlueRealGit_BareRepositoryWorktrees_AreDetected(t *testing.T) {
+	requireGit(t)
+	src := committedStoreRepo(t)
+	base := t.TempDir()
+	bare := filepath.Join(base, "repo.git")
+	gitIn(t, base, "clone", "-q", "--bare", src, bare)
+	wt := filepath.Join(base, "wt")
+	gitIn(t, bare, "worktree", "add", "-q", "--detach", wt)
+	got, err := attach.DetectCheckout(wt)
 	require.NoError(t, err)
-	assert.Equal(t, physical, got.CommonRoot)
+	assert.Equal(t, attach.CheckoutWorktree, got.Kind, "bare clone worktree")
+
+	layout := filepath.Join(base, "layout")
+	require.NoError(t, os.MkdirAll(layout, 0o755))
+	gitIn(t, layout, "clone", "-q", "--bare", src, ".bare")
+	require.NoError(t, os.WriteFile(filepath.Join(layout, ".git"), []byte("gitdir: ./.bare\n"), 0o644))
+	wt2 := filepath.Join(layout, "main")
+	gitIn(t, layout, "worktree", "add", "-q", "--detach", wt2)
+	got, err = attach.DetectCheckout(wt2)
+	require.NoError(t, err)
+	assert.Equal(t, attach.CheckoutWorktree, got.Kind, ".bare layout worktree")
+
+	forged := filepath.Join(base, "forged")
+	require.NoError(t, os.MkdirAll(forged, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(forged, ".git"), []byte("gitdir: "+filepath.Join(bare, "worktrees", "wt")+"\n"), 0o644))
+	got, err = attach.DetectCheckout(forged)
+	require.NoError(t, err)
+	assert.Equal(t, attach.CheckoutInvalid, got.Kind, "a directory the bare repository does not list is not its worktree")
 }
 
 // The printed fix is run from an unrelated directory against a board that sits in

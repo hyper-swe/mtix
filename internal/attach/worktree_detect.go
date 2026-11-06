@@ -37,8 +37,6 @@ type Checkout struct {
 	// GitDir is the directory holding this checkout's index: Root/.git for a
 	// plain checkout, the admin directory for a linked worktree.
 	GitDir string
-	// CommonRoot is the main checkout of a linked worktree.
-	CommonRoot string
 }
 
 const (
@@ -120,11 +118,7 @@ func detectLinkedWorktree(root string) Checkout {
 	if !sameFile(filepath.Dir(filepath.Dir(admin)), common) || filepath.Base(filepath.Dir(admin)) != "worktrees" {
 		return none
 	}
-	physicalCommon, err := filepath.EvalSymlinks(common)
-	if err != nil || filepath.Base(physicalCommon) != ".git" {
-		return none // a bare common dir has no main checkout to attach to
-	}
-	return Checkout{Kind: CheckoutWorktree, Root: root, GitDir: admin, CommonRoot: filepath.Dir(physicalCommon)}
+	return Checkout{Kind: CheckoutWorktree, Root: root, GitDir: admin}
 }
 
 // readSmallFile reads a regular file of at most maxGitFileBytes; anything else

@@ -25,10 +25,14 @@ func TestApplyBatch_PendingPublication_PeerSnapshotReopenRecoversSameWireID(t *t
 		mode     sqlite.ImportMode
 		resolve  bool
 		wireTime bool
+		legacy   bool
 	}{
-		{"replace", sqlite.ImportModeReplace, false, true},
-		{"merge_keeps_local", sqlite.ImportModeMerge, false, false},
-		{"merge_resolved_peer", sqlite.ImportModeMerge, true, true},
+		{"replace", sqlite.ImportModeReplace, false, true, false},
+		{"merge_keeps_local", sqlite.ImportModeMerge, false, false, false},
+		{"merge_resolved_peer", sqlite.ImportModeMerge, true, true, false},
+		{"replace_legacy", sqlite.ImportModeReplace, false, true, true},
+		{"merge_keeps_local_legacy", sqlite.ImportModeMerge, false, false, true},
+		{"merge_resolved_peer_legacy", sqlite.ImportModeMerge, true, true, true},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -42,7 +46,7 @@ func TestApplyBatch_PendingPublication_PeerSnapshotReopenRecoversSameWireID(t *t
 			require.Error(t, f.svc.ApplyBatch(t.Context(), f.board, batch))
 			assertPendingWireBatch(t, f, batch.ID)
 			publicationID := permissionAcceptedPublicationID(t, f, batch.ID)
-			peer, wireTime := ordinaryPermissionPeer(t, f, publicationID)
+			peer, wireTime := ordinaryPermissionPeer(t, f, publicationID, test.legacy)
 			if test.resolve {
 				require.NoError(t, peer.ResolveAnnotation(t.Context(), "TEST-1", publicationID, true))
 			}
@@ -67,7 +71,7 @@ func TestApplyBatch_PendingPublication_PeerSnapshotReopenRecoversSameWireID(t *t
 	}
 }
 
-func ordinaryPermissionPeer(t *testing.T, f *wakePermissionFixture, id string) (*sqlite.Store, time.Time) {
+func ordinaryPermissionPeer(t *testing.T, f *wakePermissionFixture, id string, legacy bool) (*sqlite.Store, time.Time) {
 	t.Helper()
 	peer, err := sqlite.New(filepath.Join(t.TempDir(), "peer.db"), nil)
 	require.NoError(t, err)
@@ -77,11 +81,11 @@ func ordinaryPermissionPeer(t *testing.T, f *wakePermissionFixture, id string) (
 	require.Len(t, events, 2, "the actual emitter produced one create and one ordinary comment")
 	var wireTime time.Time
 	for _, event := range events {
-		require.NoError(t, peer.WithTx(t.Context(), func(tx *sql.Tx) error { return peer.IdempotentApply(t.Context(), tx, event) }))
 		if event.EventID == id {
 			assert.Equal(t, model.OpComment, event.OpType)
-			wireTime = time.UnixMilli(event.WallClockTS).UTC()
+			wireTime = permissionEventTimestamp(t, event, legacy)
 		}
+		require.NoError(t, peer.WithTx(t.Context(), func(tx *sql.Tx) error { return peer.IdempotentApply(t.Context(), tx, event) }))
 	}
 	node, err := peer.GetNode(t.Context(), "TEST-1")
 	require.NoError(t, err)
@@ -90,8 +94,31 @@ func ordinaryPermissionPeer(t *testing.T, f *wakePermissionFixture, id string) (
 	assert.Equal(t, "mtix-permissions", node.Annotations[0].Author)
 	assert.Empty(t, node.Annotations[0].Addressee)
 	assert.Equal(t, wireTime, node.Annotations[0].CreatedAt)
-	assert.False(t, f.now.Equal(wireTime), "wire reconstruction must differ from private batch timestamp")
+	if legacy {
+		assert.False(t, f.now.Equal(wireTime), "legacy wire reconstruction differs from the original batch timestamp")
+	} else {
+		assert.Equal(t, f.now, wireTime, "new annotation metadata preserves the original timestamp")
+	}
 	return peer, wireTime
+}
+
+// Keep the historical fallback scenarios: only remove the additive metadata
+// to model an old writer. A new event carries its original annotation time.
+func permissionEventTimestamp(t *testing.T, event *model.SyncEvent, legacy bool) time.Time {
+	t.Helper()
+	var payload model.CommentPayload
+	require.NoError(t, json.Unmarshal(event.Payload, &payload))
+	require.NotNil(t, payload.Annotation, "the current emitter must carry annotation metadata")
+	if !legacy {
+		return payload.Annotation.CreatedAt
+	}
+	var old map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(event.Payload, &old))
+	delete(old, "annotation")
+	var err error
+	event.Payload, err = json.Marshal(old)
+	require.NoError(t, err)
+	return time.UnixMilli(event.WallClockTS).UTC()
 }
 
 func permissionSnapshotBytes(t *testing.T, peer *sqlite.Store) *sqlite.ExportData {

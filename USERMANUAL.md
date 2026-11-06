@@ -2262,6 +2262,32 @@ INTEGRITY FAILURE: 2 nodes with hash mismatches:
 
 ### JSON Output
 
+#### Replicated annotation and workflow data
+
+New comment events carry the annotation identity, creation time, addressee and
+resolved state. Push then pull (or clone a fresh checkout) preserves these fields;
+resolving or unresolving updates the original annotation and does not deliver a
+second addressed message. Concurrent snapshots of one annotation use the largest
+Lamport clock, then event ID, so late delivery cannot undo a newer resolution.
+Exports retain the addressee and resolved state as real annotation data.
+
+New status-transition events carry the stored `closed_at`, including an explicit
+null. Rerun invalidation and reset therefore retain the same completion time as
+the source checkout instead of deriving a different value from the rerun event.
+Events without this optional metadata still apply with their legacy behavior.
+Older events that never recorded resolution or original annotation identity
+cannot reconstruct those missing values. Upgrade participating clients before
+relying on the new metadata; older readers ignore it. This change does not repair
+already-applied history or normalize away differences during verification.
+
+An addressed comment created before annotation metadata was carried has a
+different annotation ID on its source and clone. Resolving it with a newer
+client leaves one unresolved legacy row and one resolved source-ID row on the
+clone; both retain the text, author and addressee. Old events still apply, but
+this change does not provide pre-upgrade convergence. Legacy identity migration
+is tracked by MTIX-112.17.16.20. Do not guess which rows to merge from matching
+text or timestamps.
+
 #### CLI read freshness
 
 CLI board reads retry a busy local sync lock briefly, with a total wait budget of

@@ -53,6 +53,9 @@ type TransitionStatusPayload struct {
 	From   Status `json:"from"`
 	To     Status `json:"to"`
 	Reason string `json:"reason,omitempty"`
+	// ClosedAt carries the stored completion time: absent uses legacy derivation,
+	// null clears it, and an RFC3339 string preserves the author's value.
+	ClosedAt json.RawMessage `json:"closed_at,omitempty"`
 }
 
 // ClaimPayload captures an agent claim.
@@ -76,10 +79,23 @@ type DeferPayload struct {
 	Until  *time.Time `json:"until,omitempty"`
 }
 
-// CommentPayload carries a comment annotation. AuthorID is duplicated from
-// the envelope because annotations historically allow a different author
-// from the CLI agent (e.g. attributed comments).
+// CommentAnnotationState carries annotation identity and mutable resolution.
+// Text and author remain in CommentPayload, avoiding duplicate large bodies.
+type CommentAnnotationState struct {
+	ID        string    `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	Resolved  bool      `json:"resolved"`
+	Addressee string    `json:"addressee,omitempty"`
+}
+
+// CommentPayload carries a comment or annotation-state snapshot. AuthorID
+// may differ from the event author for attributed annotations.
 type CommentPayload struct {
+	// Annotation is an additive snapshot. A later (lamport_clock, event_id)
+	// snapshot replaces the same annotation, including resolution/unresolution.
+	// Older events omit it and retain their event-id identity.
+	Annotation *CommentAnnotationState `json:"annotation,omitempty"`
+
 	AuthorID string `json:"author_id"`
 	Body     string `json:"body"`
 	// To is the addressee agent id when the comment is directed at a specific

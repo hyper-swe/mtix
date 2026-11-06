@@ -23,7 +23,7 @@ import (
 //	transition_status  the payload cannot be decoded, or its to-status is missing, null or empty
 //	claim              the payload cannot be decoded
 //	defer              the payload cannot be decoded, including an until that is not an RFC 3339 timestamp
-//	unclaim            never: it carries no parameters, and its payload is not read
+//	unclaim            an optional closed_at is invalid; legacy payloads remain ignored
 //
 // A to-status this build does not know is not malformed: it is the unknown
 // to-status residual in sync_workflow_winner.go.
@@ -74,16 +74,32 @@ func decodeWorkflowPayload(op model.OpType, payload []byte) (workflowPayload, er
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return workflowPayload{}, malformedPayload(op, err)
 		}
-		return workflowPayload{agentID: p.AgentID}, nil
+		closedAt, err := decodeClosedAtSnapshot(p.ClosedAt)
+		if err != nil {
+			return workflowPayload{}, malformedPayload(op, err)
+		}
+		return workflowPayload{agentID: p.AgentID, closedAt: closedAt}, nil
 	case model.OpDefer:
 		var p model.DeferPayload
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return workflowPayload{}, malformedPayload(op, err)
 		}
-		return workflowPayload{deferUntil: p.Until}, nil
+		closedAt, err := decodeClosedAtSnapshot(p.ClosedAt)
+		if err != nil {
+			return workflowPayload{}, malformedPayload(op, err)
+		}
+		return workflowPayload{deferUntil: p.Until, closedAt: closedAt}, nil
 	case model.OpUnclaim:
-		// unclaim carries no parameters; its payload is not read.
-		return workflowPayload{}, nil
+		// Historical unclaim payloads were ignored, including malformed JSON.
+		var p model.UnclaimPayload
+		if json.Unmarshal(payload, &p) != nil {
+			return workflowPayload{}, nil
+		}
+		closedAt, err := decodeClosedAtSnapshot(p.ClosedAt)
+		if err != nil {
+			return workflowPayload{}, malformedPayload(op, err)
+		}
+		return workflowPayload{closedAt: closedAt}, nil
 	default:
 		return workflowPayload{}, fmt.Errorf("op_type %q is not a workflow op: %w", op, model.ErrInvalidInput)
 	}

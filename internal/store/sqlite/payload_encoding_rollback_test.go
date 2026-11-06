@@ -258,7 +258,18 @@ func TestPayloadEncoding_DefaultEncoder_PreservesTypedPayloads(t *testing.T) {
 				tc.prepare(t, s)
 			}
 			before := payloadRows(t, s.readDB, `SELECT event_id FROM sync_events ORDER BY event_id`)
-			expected, err := model.EncodePayload(tc.want)
+			want := tc.want
+			switch p := tc.want.(type) {
+			case *model.ClaimPayload:
+				expectedValue := *p
+				expectedValue.ClosedAt = json.RawMessage(`null`)
+				want = &expectedValue
+			case *model.UnclaimPayload:
+				expectedValue := *p
+				expectedValue.ClosedAt = json.RawMessage(`null`)
+				want = &expectedValue
+			}
+			expected, err := model.EncodePayload(want)
 			require.NoError(t, err)
 			require.NoError(t, tc.run(s))
 			var count int

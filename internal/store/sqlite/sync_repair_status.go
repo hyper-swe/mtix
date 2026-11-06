@@ -256,6 +256,7 @@ func applyStatusRepair(ctx context.Context, tx *sql.Tx, h historyToucher, plan s
 		if err := emitEvent(ctx, tx, emitParams{
 			NodeID: id, ProjectCode: projectPrefixFromNodeID(id), OpType: model.OpTransitionStatus,
 			Author: author, Payload: payload, WallClockTS: repairEventWallClock(plan.winner.wallClockTS, now),
+			LegacyWorkflowPayload: plan.winner.payload.closedAt == nil,
 		}); err != nil {
 			return err
 		}

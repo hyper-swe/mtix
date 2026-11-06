@@ -170,6 +170,9 @@ func reverseNodes(nodes []*model.Node) {
 // Returns ErrNotFound if the node does not exist or is soft-deleted.
 func (s *Store) AppendAnnotation(ctx context.Context, nodeID string, annotation model.Annotation) error {
 	return s.mutateAnnotations(ctx, nodeID, func(current []model.Annotation) ([]model.Annotation, error) {
+		if annotation.ID == "" {
+			return nil, fmt.Errorf("append annotation: missing identity: %w", model.ErrInvalidInput)
+		}
 		next := make([]model.Annotation, 0, len(current)+1)
 		next = append(next, current...)
 		return append(next, annotation), nil

@@ -16,22 +16,32 @@ second addressed message. Concurrent snapshots of one annotation use the largest
 Lamport clock, then event ID, so late delivery cannot undo a newer resolution.
 Exports retain the addressee and resolved state as real annotation data.
 
-New status-transition events carry the stored `closed_at`, including an explicit
-null. Rerun invalidation and reset therefore retain the same completion time as
+New status-transition, claim and unclaim events carry the stored `closed_at`,
+including an explicit null. Rerun invalidation and reset therefore retain the same completion time as
 the source checkout instead of deriving a different value from the rerun event.
 Events without this optional metadata still apply with their legacy behavior.
 Older events that never recorded resolution or original annotation identity
 cannot reconstruct those missing values. Upgrade participating clients before
-relying on the new metadata; older readers ignore it. This change does not repair
+relying on the new metadata. Older readers ignore the metadata and show a
+resolution as an extra copy of the original comment. This change does not repair
 already-applied history or normalize away differences during verification.
 
 An addressed comment created before annotation metadata was carried has a
 different annotation ID on its source and clone. Resolving it with a newer
 client leaves one unresolved legacy row and one resolved source-ID row on the
-clone; both retain the text, author and addressee. Old events still apply, but
+clone; both retain the text, author and addressee. In the reverse direction,
+resolving the legacy row on the clone leaves the source row unresolved and adds
+a resolved row with the legacy event ID on the source. Old events still apply, but
 this change does not provide pre-upgrade convergence. Legacy identity migration
 is tracked by MTIX-112.17.16.20. Do not guess which rows to merge from matching
 text or timestamps.
+
+Current-client backfill carries available annotation identity, author, creation
+time, addressee and resolution, plus the stored completion time even on an open
+rerun task. An original annotation `id` that is absent cannot be recovered;
+backfill allocates a fresh event identity. A missing or invalid `created_at` uses
+the node creation time, and a missing `author` remains empty. These limits do not
+change the separate old-journal identity residual in MTIX-112.17.16.20.
 
 ## CLI read freshness
 

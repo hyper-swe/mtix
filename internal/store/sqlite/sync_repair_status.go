@@ -249,7 +249,7 @@ func applyStatusRepair(ctx context.Context, tx *sql.Tx, h historyToucher, plan s
 		return fmt.Errorf("record repair activity: %w", err)
 	}
 	if from != to {
-		payload, err := model.EncodePayload(&model.TransitionStatusPayload{From: from, To: to, Reason: statusRepairReason})
+		payload, err := repairTransitionPayload(ctx, tx, plan)
 		if err != nil {
 			return fmt.Errorf("encode repair event: %w", err)
 		}
@@ -333,7 +333,9 @@ func planStatusRepair(ctx context.Context, q workflowQueryer, row workflowRow, n
 	kept := updateFieldOwnedColumns(events, winner)
 	w = keepColumns(w, row, kept)
 	w.closedAt = originatorClosedAt(chain, w.closedAt, now)
-	w = alignWithRepairEvent(w, row)
+	if winner.payload.closedAt == nil {
+		w = alignWithRepairEvent(w, row)
+	}
 	leaf, err := isLeafNode(ctx, q, row.id)
 	if err != nil {
 		return statusPlan{}, false, err

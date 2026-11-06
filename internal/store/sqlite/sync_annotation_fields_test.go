@@ -142,3 +142,29 @@ func TestSyncAnnotationFields_LegacyIdentityResidual_MTIX112171620(t *testing.T)
 	resolved.Resolved = true
 	require.ElementsMatch(t, []model.Annotation{legacy, resolved}, got.Annotations, "accepted residual: unresolved legacy row and resolved source-ID row; nothing dropped")
 }
+
+func TestRepairNodeStatus_RerunSnapshot_KeepsCompletionTime(t *testing.T) {
+	source, raw := mutationTestStore(t)
+	completed := time.Date(2026, 11, 1, 1, 2, 3, 0, time.UTC)
+	source.SetClock(func() time.Time { return completed })
+	mustCreateNode(t, source, "MTIX-1", "")
+	require.NoError(t, source.TransitionStatus(t.Context(), "MTIX-1", model.StatusInProgress, "start", "worker"))
+	require.NoError(t, source.TransitionStatus(t.Context(), "MTIX-1", model.StatusDone, "done", "worker"))
+	source.SetClock(func() time.Time { return completed.Add(time.Hour) })
+	require.NoError(t, source.TransitionStatus(t.Context(), "MTIX-1", model.StatusInvalidated, "rerun", "worker"))
+	require.NoError(t, source.TransitionStatus(t.Context(), "MTIX-1", model.StatusOpen, "reset by rerun", "worker"))
+	clone, _ := mutationTestStore(t)
+	pullEvents(t, clone, pushPendingOwnEvents(t, raw))
+	_, err := raw.Exec(`UPDATE nodes SET status = 'done' WHERE id = 'MTIX-1'`)
+	require.NoError(t, err)
+	_, applied, err := source.RepairNodeStatus(t.Context(), "MTIX-1", "repairer", true)
+	require.NoError(t, err)
+	require.True(t, applied)
+	pullEvents(t, clone, pushPendingOwnEvents(t, raw))
+	for _, s := range []*sqlite.Store{source, clone} {
+		got, err := s.GetNode(t.Context(), "MTIX-1")
+		require.NoError(t, err)
+		require.Equal(t, model.StatusOpen, got.Status)
+		require.Equal(t, &completed, got.ClosedAt, "repair must preserve the rerun winner's explicit timestamp")
+	}
+}

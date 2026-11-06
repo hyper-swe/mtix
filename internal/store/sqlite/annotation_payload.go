@@ -84,7 +84,7 @@ func annotationSnapshotWinner(ctx context.Context, tx *sql.Tx, e *model.SyncEven
    ORDER BY lamport_clock DESC, event_id DESC LIMIT 1`, e.NodeID, id).Scan(&winner)
 	} else {
 		err = tx.QueryRowContext(ctx, `SELECT event_id FROM sync_events WHERE op_type = 'comment'
-   AND (uid = ? OR ((uid IS NULL OR uid = '') AND node_id = ?))
+   AND ((uid = ? AND uid <> '') OR ((uid IS NULL OR uid = '') AND node_id = ?))
    AND json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END, '$.annotation.id') = ?
    ORDER BY lamport_clock DESC, event_id DESC LIMIT 1`, e.UID, e.NodeID, id).Scan(&winner)
 	}

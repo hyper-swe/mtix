@@ -23,7 +23,8 @@ import (
 //
 // New transition events additionally carry the author's stored closed_at.
 // That explicit value (including NULL) overrides table derivation; the
-// closed_at-on-the-originator residual below describes older events only.
+// closed_at-on-the-originator residual below still applies to legacy-shaped
+// workflow writes, including other operations that omit this field.
 //
 // # Workflow events
 //

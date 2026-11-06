@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 )
 
 const cloneWakeBootstrapKey = "meta.sync.clone.wake_bootstrap"
@@ -17,7 +18,7 @@ type cloneWakePosition struct {
 }
 
 func (p cloneWakePosition) witness() string {
-	return fmt.Sprintf("%q/%d/%q", p.generation, p.tail, p.eventID)
+	return strconv.Quote(p.generation) + "/" + strconv.FormatInt(p.tail, 10) + "/" + strconv.Quote(p.eventID)
 }
 
 // WithCloneWakeBootstrap applies a clone batch and seeds its floors atomically

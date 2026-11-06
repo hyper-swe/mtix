@@ -16,6 +16,20 @@ import (
 
 // These tests apply real sync events; the named identity/sequence fault cases
 // corrupt journal positions to exercise the durable stream witness.
+func TestCloneWakeBootstrap_WitnessEncoding_RetainsStoredForm(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		position cloneWakePosition
+		want     string
+	}{
+		{"ordinary", cloneWakePosition{generation: "0", tail: 2, eventID: "event-id"}, `"0"/2/"event-id"`},
+		{"escaped", cloneWakePosition{generation: "g/x", tail: 12, eventID: "a\"/\n"}, `"g/x"/12/"a\"/\n"`},
+		{"empty", cloneWakePosition{generation: "0"}, `"0"/0/""`},
+	} {
+		t.Run(tt.name, func(t *testing.T) { assert.Equal(t, tt.want, tt.position.witness()) })
+	}
+}
+
 func cloneBootstrapFixture(t *testing.T, harness string) (*Store, *sql.DB) {
 	t.Helper()
 	s, raw := applyTestStore(t)

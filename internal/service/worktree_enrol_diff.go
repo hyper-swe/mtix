@@ -105,13 +105,26 @@ const (
 // boardCmp collects a comparison: the diff, which side each difference is on,
 // and a hash of the values on both sides (never the values themselves).
 type boardCmp struct {
-	diff  BoardDiff
-	kinds map[string]diffKind
-	vals  map[string]string
+	// replicas is set when the two sides are a store and a hub clone: two
+	// replicas, so a gap of replication (closed_at, labels spacing) is not a
+	// difference. The board file and its store are one replica, and a raw
+	// comparison compares nothing away.
+	replicas bool
+	diff     BoardDiff
+	kinds    map[string]diffKind
+	vals     map[string][]string
+	// rowKinds keeps every kind a whole-row difference had under one key: a
+	// store-only and a hub-only dependency from one node share the key, and
+	// merging them to "changed" would hide the store-only one.
+	rowKinds map[string]map[diffKind]bool
+	// superset marks a list-valued field whose first side is wholly contained
+	// in the second: the second side only holds more.
+	superset map[string]bool
 }
 
 func newBoardCmp() *boardCmp {
-	return &boardCmp{diff: BoardDiff{}, kinds: map[string]diffKind{}, vals: map[string]string{}}
+	return &boardCmp{diff: BoardDiff{}, kinds: map[string]diffKind{}, vals: map[string][]string{},
+		rowKinds: map[string]map[diffKind]bool{}, superset: map[string]bool{}}
 }
 
 // add records one difference. a and b are the two sides' values (nil when a
@@ -119,14 +132,22 @@ func newBoardCmp() *boardCmp {
 func (c *boardCmp) add(id, field string, kind diffKind, a, b any) {
 	c.diff.add(id, field)
 	key := id + "\x00" + field
+	origKind := kind
 	if old, ok := c.kinds[key]; ok && old != kind {
 		kind = kindChanged
 	}
 	c.kinds[key] = kind
+	if c.rowKinds[key] == nil {
+		c.rowKinds[key] = map[diffKind]bool{}
+	}
+	c.rowKinds[key][origKind] = true
 	x, _ := json.Marshal(a) //nolint:errchkjson // a decoded JSON value always encodes; the hash only needs stable bytes
 	y, _ := json.Marshal(b) //nolint:errchkjson // as above
 	sum := sha256.Sum256(append(append(x, 0x02), y...))
-	c.vals[key] = hex.EncodeToString(sum[:])
+	// Several rows can share one id and field (dependencies from one node):
+	// each row's hash is kept and the hashes are combined in sorted order, so
+	// neither map order nor an overwrite decides the digest.
+	c.vals[key] = append(c.vals[key], hex.EncodeToString(sum[:]))
 }
 
 // without returns the comparison minus the differences of one kind.
@@ -140,6 +161,7 @@ func (c *boardCmp) without(drop diffKind) *boardCmp {
 			}
 			out.diff.add(id, f)
 			out.kinds[key], out.vals[key] = c.kinds[key], c.vals[key]
+			out.rowKinds[key], out.superset[key] = c.rowKinds[key], c.superset[key]
 		}
 	}
 	return out
@@ -155,6 +177,23 @@ func (c *boardCmp) has(k diffKind) bool {
 	return false
 }
 
+// rowsOnly lists the ids of whole rows of the given kind. Only a whole row
+// (named "(node)", "(dependencies)") is ever recorded as store-only or hub-only;
+// a field is always a change.
+func (c *boardCmp) rowsOnly(k diffKind) []string {
+	var out []string
+	for id, fields := range c.diff {
+		for _, f := range fields {
+			if c.rowKinds[id+"\x00"+f][k] {
+				out = append(out, id)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // signature is one hash over every difference and the values on both sides,
 // in a fixed order. It changes whenever a differing value changes.
 func (c *boardCmp) signature() string {
@@ -165,7 +204,9 @@ func (c *boardCmp) signature() string {
 	sort.Strings(keys)
 	h := sha256.New()
 	for _, k := range keys {
-		_, _ = h.Write([]byte(k + "\x03" + c.vals[k] + "\n"))
+		hashes := append([]string(nil), c.vals[k]...)
+		sort.Strings(hashes)
+		_, _ = h.Write([]byte(k + "\x03" + strings.Join(hashes, "\x04") + "\n"))
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -177,7 +218,11 @@ func (c *boardCmp) signature() string {
 // is not a difference; a repeated identity is one. It reports ids and field
 // names only, never content (MTIX-112.17.16.6).
 func CompareBoardDocs(a, b []byte) (BoardDiff, error) {
-	return CompareBoardDocsWith(a, b, BoardExclusions())
+	c, err := compareReplicas(a, b)
+	if err != nil {
+		return nil, err
+	}
+	return c.diff, nil
 }
 
 // CompareBoardDocsWith is CompareBoardDocs over a chosen exclusion list; tests
@@ -190,7 +235,19 @@ func CompareBoardDocsWith(a, b []byte, exclusions []BoardExclusion) (BoardDiff, 
 	return c.diff, nil
 }
 
+// compareReplicas compares a store with a clone of the hub: the documented
+// exclusions apply, and so do the two replication rules of sameNodeField.
+func compareReplicas(a, b []byte) (*boardCmp, error) {
+	return compareBoardsAs(a, b, BoardExclusions(), true)
+}
+
+// compareBoards compares two exports of one replica (or, with no exclusions, the
+// raw documents): the replication rules of sameNodeField do not apply.
 func compareBoards(a, b []byte, exclusions []BoardExclusion) (*boardCmp, error) {
+	return compareBoardsAs(a, b, exclusions, false)
+}
+
+func compareBoardsAs(a, b []byte, exclusions []BoardExclusion, replicas bool) (*boardCmp, error) {
 	da, err := decodeBoardDoc(a)
 	if err != nil {
 		return nil, fmt.Errorf("read the first board: %w", err)
@@ -212,6 +269,7 @@ func compareBoards(a, b []byte, exclusions []BoardExclusion) (*boardCmp, error) 
 		}
 	}
 	c := newBoardCmp()
+	c.replicas = replicas
 	keys := map[string]bool{}
 	for k := range da {
 		keys[k] = true
@@ -380,60 +438,35 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 		keys[k] = true
 	}
 	for k := range keys {
-		if !sameJSON(ma[k], mb[k]) {
-			name := section + "." + k
-			if section == "nodes" {
-				name = k
-			}
-			c.add(shown, name, kindChanged, ma[k], mb[k])
+		if sameJSON(ma[k], mb[k]) || (c.replicas && section == "nodes" && sameNodeField(k, ma, mb)) {
+			continue
+		}
+		name := section + "." + k
+		if section == "nodes" {
+			name = k
+		}
+		c.add(shown, name, kindChanged, ma[k], mb[k])
+		if contained(ma[k], mb[k]) {
+			c.superset[shown+"\x00"+name] = true
 		}
 	}
 }
 
-// historyDrop lists the keys of a history row that a clone writes for itself:
-// the row's own id, its clock reading, the replica that wrote it, the event it
-// came from, and the actor (a comment applied from an event carries the event's
-// author where the local write carried the command's actor). The row's task,
-// kind, field and old and new values are kept.
-var historyDrop = []string{"id", "ts", "origin", "event_id", "actor"}
-
-// normalizeHistory reduces every history row to what a clone reproduces and
-// puts each list in a fixed order, so rows compare as a multiset. A row present
-// on one side only still differs (MTIX-112.17.16.6, point 4): the old rule
-// dropped history whole and hid rows no hub event holds.
-func normalizeHistory(doc map[string]any) {
-	normalizeHistoryList(doc["history"])
-	nodes, _ := doc["nodes"].([]any)
-	for _, n := range nodes {
-		if m, ok := n.(map[string]any); ok {
-			normalizeHistoryList(m["history"])
-		}
+// sameNodeField reports a node field that differs in form only, in a comparison
+// of a store with a clone of the hub (boardCmp.replicas): labels written with
+// other spacing (review F4), and closed_at when the status is present and the
+// same on both sides. closed_at is a replication gap: a rerun that has pushed
+// everything leaves the stamp set on the store row while the clone has none
+// (ruling r3 point 1). With another status, or none, the stamp stays a
+// difference. Both rules exist only because of replication, so the file rule and
+// a raw comparison never use them (ruling r4 point 2). Remove the closed_at rule
+// when MTIX-112.17.16.19 lands.
+func sameNodeField(k string, a, b map[string]any) bool {
+	switch k {
+	case "labels":
+		return sameLabels(a[k], b[k])
+	case "closed_at":
+		return a["status"] != nil && sameJSON(a["status"], b["status"])
 	}
-}
-
-func normalizeHistoryList(v any) {
-	rows, ok := v.([]any)
-	if !ok {
-		return
-	}
-	keyed := make([]string, len(rows))
-	for i, r := range rows {
-		if m, isMap := r.(map[string]any); isMap {
-			for _, k := range historyDrop {
-				delete(m, k)
-			}
-		}
-		b, _ := json.Marshal(r) //nolint:errchkjson // a decoded JSON value always encodes
-		keyed[i] = string(b)
-	}
-	order := make([]int, len(rows))
-	for i := range order {
-		order[i] = i
-	}
-	sort.SliceStable(order, func(x, y int) bool { return keyed[order[x]] < keyed[order[y]] })
-	sorted := make([]any, len(rows))
-	for i, o := range order {
-		sorted[i] = rows[o]
-	}
-	copy(rows, sorted)
+	return false
 }

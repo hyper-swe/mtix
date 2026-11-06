@@ -87,6 +87,16 @@ func board(t *testing.T, local, hub string) *service.WorktreeBoardError {
 	return &service.WorktreeBoardError{BoardFinding: *f, Report: "/w/.mtix/enroll-diff-x.json"}
 }
 
+// confirmed builds a refusal and checks its rows against the full hub clone.
+func confirmed(t *testing.T, local, bounded, full string) *service.WorktreeBoardError {
+	t.Helper()
+	f, err := service.BoardHubFinding([]byte(local), []byte(bounded))
+	require.NoError(t, err)
+	require.NotNil(t, f)
+	require.NoError(t, f.ConfirmAgainstHub([]byte(local), []byte(full)))
+	return &service.WorktreeBoardError{BoardFinding: *f, Report: "/w/.mtix/enroll-diff-x.json"}
+}
+
 // TestWorktreeBoardError_LocalDifference_NeverPrintsAPullAsTheFix: the printed
 // fixes come in the order keep a copy, re-enter as writes, accept; a pull and
 // sync --fix are named only to say not to run them, and push is named only
@@ -99,7 +109,7 @@ func TestWorktreeBoardError_LocalDifference_NeverPrintsAPullAsTheFix(t *testing.
 	assert.NotContains(t, msg, "then mtix sync --fix")
 	assert.Contains(t, msg, "Do not run mtix sync pull")
 	assert.Contains(t, msg, "overwrites a change that is not journaled")
-	copyAt := strings.Index(msg, "(1) keep a copy: mtix backup /w/.mtix/enrol-copy.db")
+	copyAt := strings.Index(msg, "(1) keep a copy: mtix backup '/w/.mtix/enrol-copy-x.db'")
 	reenter := strings.Index(msg, "(2) re-enter each change")
 	accept := strings.Index(msg, "(3) or, if the difference is meant to be dropped, enroll again with accept-hub ")
 	require.Positive(t, copyAt)

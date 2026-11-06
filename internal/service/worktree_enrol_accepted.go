@@ -21,6 +21,9 @@ type HubAccepted struct {
 	AsideDir   string `json:"aside_dir"`
 	BackupPath string `json:"backup_path"`
 	AcceptedAt string `json:"accepted_at"`
+	// LostLocalReport lists the fields whose locally written value lost to the
+	// hub at its head (MTIX-112.17.16.18); empty when none did.
+	LostLocalReport string `json:"lost_local_report,omitempty"`
 }
 
 // HubAcceptedPath is where the record lives.

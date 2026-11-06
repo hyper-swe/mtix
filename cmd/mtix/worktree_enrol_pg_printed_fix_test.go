@@ -12,7 +12,6 @@ import (
 	"regexp"
 	"testing"
 
-	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -44,25 +43,21 @@ func (f *enrolPGFixture) importMergedTitle(t *testing.T, branchTitle, teammateTi
 	require.NoError(t, err, pushErr.String())
 }
 
-var printedBackup = regexp.MustCompile(`mtix backup (\S+?);`)
+var printedBackup = regexp.MustCompile(`(?m)^  \(1\) keep a copy: (mtix backup .*)$`)
 
-// runPrintedBackup runs the `mtix backup <path>` the refusal prints, for real,
-// in the worktree: the real initApp, then the command body.
-func runPrintedBackup(t *testing.T, root, message string) string {
+// runPrintedBackup runs the printed `mtix backup <path>` line itself, through
+// sh, with the real binary standing in for mtix, in the worktree. It returns the
+// copy it made.
+func runPrintedBackup(t *testing.T, f *enrolPGFixture, message string) string {
 	t.Helper()
 	m := printedBackup.FindStringSubmatch(message)
 	require.Len(t, m, 2, "the refusal prints a backup command with a path: %s", message)
-	identityOperatorState(t)
-	saveAndResetApp(t)
-	old, err := os.Getwd()
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.Chdir(old) })
-	require.NoError(t, os.Chdir(root))
-	require.NoError(t, initApp(&cobra.Command{Use: "backup"}, ""))
-	require.NoError(t, runBackup(m[1]))
-	require.NoError(t, app.store.Close())
-	app.store = nil
-	return m[1]
+	out, err := runShellWithMtix(t, f, m[1])
+	require.NoError(t, err, out)
+	copies, globErr := filepath.Glob(filepath.Join(f.root, ".mtix", "enrol-copy-*.db"))
+	require.NoError(t, globErr)
+	require.Len(t, copies, 1, "the printed command made one copy")
+	return copies[0]
 }
 
 // TestEnrolWorktree_RealHub_PrintedFixesForALocalChange_KeepTheValue_PG proves
@@ -80,7 +75,7 @@ func TestEnrolWorktree_RealHub_PrintedFixesForALocalChange_KeepTheValue_PG(t *te
 	var refusal *service.WorktreeBoardError
 	require.ErrorAs(t, err, &refusal)
 	assert.NotContains(t, err.Error(), "fix: run mtix sync pull")
-	copyPath := runPrintedBackup(t, f.root, err.Error())
+	copyPath := runPrintedBackup(t, f, err.Error())
 	assert.FileExists(t, copyPath)
 	body, err := os.ReadFile(copyPath) //nolint:gosec // G304: the backup the test just made
 	require.NoError(t, err)

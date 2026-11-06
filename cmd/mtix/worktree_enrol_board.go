@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
@@ -199,7 +200,22 @@ func boardHubFinding(ctx context.Context, logger *slog.Logger, root, scratch str
 	if bound.snapshot {
 		return service.BoardSnapshotHubFinding(localBody, cloneBody)
 	}
-	return service.BoardHubFinding(localBody, cloneBody)
+	finding, err := service.BoardHubFinding(localBody, cloneBody)
+	if err != nil || finding == nil || len(finding.StoreOnlyRows()) == 0 {
+		return finding, err
+	}
+	// The bounded clone lacks some rows this store holds. Whether the hub lacks
+	// them too is only known from a clone of the hub at its head; the refusal
+	// words its row advice from that (ruling r2 point 2). The bounded comparison
+	// above is unchanged.
+	full, err := cloneExportWithin(ctx, logger, root, filepath.Join(scratch, "full"), appliedBound{snapshot: true}, hub)
+	if err != nil {
+		return nil, fmt.Errorf("read the hub at its head to word the row advice: %w", err)
+	}
+	if err := finding.ConfirmAgainstHub(localBody, full); err != nil {
+		return nil, err
+	}
+	return finding, nil
 }
 
 // verifyBoardAgainstClone repeats both proofs once the swap happened, on the old
@@ -223,6 +239,40 @@ func verifyBoardAgainstClone(ctx context.Context, logger *slog.Logger, root stri
 		})
 	})
 	return finding, err
+}
+
+// lostLocalValues reads, after the real clone, which nodes the moved-aside
+// store's own journal touched (events that are not mirrored hub events) and
+// compares the whole old-store export with the real clone, at the hub's head,
+// for those nodes. The aside store is only read (MTIX-112.17.16.18).
+func lostLocalValues(ctx context.Context, logger *slog.Logger, root, asideDir string) (*service.LostLocal, error) {
+	var asideBody []byte
+	var own []string
+	err := withBoardStore(logger, root, asideDir, func(aside *sqlite.Store) error {
+		events, e := aside.LocalEvents(ctx)
+		if e != nil {
+			return fmt.Errorf("read the journal of the old store: %w", e)
+		}
+		own = service.OwnEntities(ownEvents(events))
+		if len(own) == 0 {
+			return nil
+		}
+		asideBody, e = exportBytes(ctx, aside)
+		return e
+	})
+	if err != nil || len(own) == 0 {
+		return nil, err
+	}
+	var cloneBody []byte
+	err = withBoardStore(logger, root, worktreeDataDir(root), func(clone *sqlite.Store) error {
+		var e error
+		cloneBody, e = exportBytes(ctx, clone)
+		return e
+	})
+	if err != nil {
+		return nil, err
+	}
+	return service.FindLostLocal(asideBody, cloneBody, own)
 }
 
 // preflightBoard proves the local board is all derivable from the hub before the
@@ -260,11 +310,17 @@ func withScratch(_ *slog.Logger, root string, fn func(scratch string) error) (re
 	if err := os.MkdirAll(base, 0o700); err != nil {
 		return fmt.Errorf("create the enrolment directory: %w", err)
 	}
-	stale, err := filepath.Glob(filepath.Join(base, "preflight-*"))
+	// The directory is listed, not globbed: the worktree's own path may hold
+	// glob characters such as a bracket (review F13).
+	entries, err := os.ReadDir(base)
 	if err != nil {
 		return fmt.Errorf("list stale scratch directories: %w", err)
 	}
-	for _, d := range stale {
+	for _, e := range entries {
+		if !e.IsDir() || !strings.HasPrefix(e.Name(), "preflight-") {
+			continue
+		}
+		d := filepath.Join(base, e.Name())
 		if rmErr := removeScratchTree(d); rmErr != nil {
 			return fmt.Errorf("remove the stale scratch directory %s: %w", d, rmErr)
 		}
@@ -294,4 +350,14 @@ func removeScratchTree(dir string) error {
 		err = errors.Join(err, os.Remove(child))
 	}
 	return errors.Join(err, os.Remove(dir))
+}
+
+// ownEvents maps the journal rows to what the owner check reads: the node, the
+// status (a mirrored hub event is not own) and the payload (a link's target).
+func ownEvents(events []sqlite.LocalEvent) []service.OwnEvent {
+	raw := make([]service.OwnEvent, len(events))
+	for i, ev := range events {
+		raw[i] = service.OwnEvent{NodeID: ev.NodeID, Op: ev.Op, Status: ev.Status, Payload: ev.Payload}
+	}
+	return raw
 }

@@ -62,9 +62,7 @@ func enrolInterruptedFix(mtixDir string, marker *service.EnrolMarker) string {
 // single quote closed, escaped and reopened. Nothing inside is expanded, so a
 // path holding a dollar sign, a backtick or a quote is one literal word.
 // Go's %q is not shell quoting: sh expands a dollar sign inside double quotes.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
+func shellQuote(s string) string { return service.ShellQuote(s) }
 
 // registerEnrolHubAcceptedDoctor adds board.enrol-hub-accepted while an
 // enrolment that took the hub's version of a differing board is not cleared:
@@ -92,15 +90,29 @@ func registerEnrolHubAcceptedDoctor(svc *service.DoctorService, mtixDir string) 
 			return service.DoctorResult{Status: service.DoctorWarn, Data: data, Fix: "rm " + recPath,
 				Detail: "an accept-hub record names an old store (" + rec.AsideDir + ") that no longer exists, so the enrolment it describes did not complete or the store was cleared; the record is stale"}
 		}
+		if rec.LostLocalReport != "" {
+			data["lost_local_report"] = rec.LostLocalReport
+		}
 		return service.DoctorResult{
 			Status: service.DoctorWarn,
-			Detail: "this worktree was enrolled on the hub's version of a board that differed from it; the old store is in " + rec.AsideDir +
-				" (backup " + rec.BackupPath + ") and the node ids and field names that differed are in " + rec.Report +
-				"; keep what you need from them, then clear this warning",
-			Fix:  "rm " + recPath,
-			Data: data,
+			Detail: enrolAcceptedDetail(rec) + "; keep what you need from them, then clear this warning",
+			Fix:    "rm " + recPath,
+			Data:   data,
 		}
 	}})
+}
+
+// enrolAcceptedDetail words the warning of an accept-hub record, a lost-value
+// record, or both.
+func enrolAcceptedDetail(rec *service.HubAccepted) string {
+	var parts []string
+	if rec.Report != "" && rec.Report != rec.LostLocalReport {
+		parts = append(parts, "this worktree was enrolled on the hub's version of a board that differed from it; the node ids and field names that differed are in "+rec.Report)
+	}
+	if rec.LostLocalReport != "" {
+		parts = append(parts, "this worktree was enrolled with the hub's later value where the value written here lost; the node ids and field names are in "+rec.LostLocalReport)
+	}
+	return strings.Join(parts, "; and ") + "; the old store is in " + rec.AsideDir + " (backup " + rec.BackupPath + ")"
 }
 
 // registerEnrolDoctorChecks registers both worktree enrolment rows.

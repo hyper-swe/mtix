@@ -144,6 +144,8 @@ func (w *enrolWorld) ports() service.WorktreePorts {
 			return w.step("carry")
 		},
 		Enroll: func(context.Context, service.EnrollmentRequest) error { return w.step("enrol") },
+		// The check is required; by default nothing is lost and it records no call.
+		LostLocal: func(context.Context, string, string) (*service.LostLocal, error) { return nil, nil },
 		Enrolled: func(context.Context, string) (bool, error) {
 			if w.enrolled != nil {
 				return w.enrolled()
@@ -427,7 +429,7 @@ func TestEnrolWorktree_NeverDiscardLocal(t *testing.T) {
 		assert.NotContains(t, strings.ToLower(typ.Field(i).Name), "discard")
 		assert.NotContains(t, strings.ToLower(typ.Field(i).Name), "reconcile")
 	}
-	assert.Equal(t, []string{"Snapshot", "HubMissing", "PreflightBoard", "VerifyBoard", "Backup", "Clone", "ImportCarry", "Enroll", "Enrolled"}, names,
+	assert.Equal(t, []string{"Snapshot", "HubMissing", "PreflightBoard", "VerifyBoard", "Backup", "Clone", "ImportCarry", "Enroll", "LostLocal", "Enrolled"}, names,
 		"a new port must be reviewed against the no-discard rule")
 	files, err := filepath.Glob("worktree_enrol*.go")
 	require.NoError(t, err)

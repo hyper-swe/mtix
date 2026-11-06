@@ -53,6 +53,28 @@ func TestRegisterEnrolDoctorChecks_AcceptHubRecord_ProducesTheWarningRow(t *test
 	assert.Contains(t, row.Detail, aside)
 }
 
+// TestRegisterEnrolDoctorChecks_LostLocalRecord_WarnsAndNamesTheReport: a record
+// of a locally written value that lost to the hub (MTIX-112.17.16.18) is a
+// warning row that names the lost-value report, the old store and the backup.
+func TestRegisterEnrolDoctorChecks_LostLocalRecord_WarnsAndNamesTheReport(t *testing.T) {
+	mtixDir := filepath.Join(t.TempDir(), ".mtix")
+	aside := filepath.Join(mtixDir, "data.pre-enrol-T")
+	require.NoError(t, os.MkdirAll(aside, 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(mtixDir, "enroll.d"), 0o700))
+	require.NoError(t, os.WriteFile(service.HubAcceptedPath(mtixDir),
+		[]byte(`{"report":"/lost.json","aside_dir":"`+aside+`","backup_path":"/b.db","accepted_at":"2026-11-05T00:00:00Z","lost_local_report":"/lost.json"}`), 0o600))
+
+	row := doctorRow(t, mtixDir, "board.enrol-hub-accepted")
+
+	require.NotNil(t, row)
+	assert.Equal(t, service.DoctorWarn, row.Status)
+	assert.Contains(t, row.Detail, "/lost.json")
+	assert.Contains(t, row.Detail, "value written here lost")
+	assert.NotContains(t, row.Detail, "differed from it", "only the lost-value report exists")
+	assert.Contains(t, row.Detail, aside)
+	assert.Equal(t, "/lost.json", row.Data["lost_local_report"])
+}
+
 // TestRegisterEnrolDoctorChecks_StaleAcceptRecord_WarnsItIsStale: the record names
 // an old store that no longer exists (a recovery put the original back, or it
 // was cleared); the row says so and the fix removes the record.

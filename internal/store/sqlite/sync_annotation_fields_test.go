@@ -113,3 +113,32 @@ func TestSyncAnnotationFields_Resolution_KeepsResolverEventAuthor(t *testing.T) 
 	require.Equal(t, "original-author", p.AuthorID)
 	require.Empty(t, p.To, "a resolution sends no new addressed message")
 }
+
+// MTIX-112.17.16.20 tracks legacy identity migration. Old creation payloads
+// omitted the source annotation ID, so a new resolution retains both rows.
+// Pin this accepted residual without guessing identity from comment text.
+func TestSyncAnnotationFields_LegacyIdentityResidual_MTIX112171620(t *testing.T) {
+	source, raw := mutationTestStore(t)
+	mustCreateNode(t, source, "MTIX-1", "")
+	note := model.Annotation{ID: "original-legacy-ulid", Author: "sender", Text: "old note", Addressee: "worker", CreatedAt: time.Date(2026, 11, 6, 1, 2, 3, 123000000, time.UTC)}
+	require.NoError(t, source.AppendAnnotation(t.Context(), "MTIX-1", note))
+	require.NoError(t, source.ResolveAnnotation(t.Context(), "MTIX-1", note.ID, true))
+	events := pushPendingOwnEvents(t, raw)
+	var old map[string]any
+	require.NoError(t, json.Unmarshal(events[1].Payload, &old))
+	delete(old, "annotation") // Wire shape emitted by a pre-metadata writer.
+	var err error
+	events[1].Payload, err = json.Marshal(old)
+	require.NoError(t, err)
+	clone, _ := mutationTestStore(t)
+	pullEvents(t, clone, events)
+	pullEvents(t, clone, events)
+	got, err := clone.GetNode(t.Context(), "MTIX-1")
+	require.NoError(t, err)
+	legacy := note
+	legacy.ID = events[1].EventID
+	legacy.CreatedAt = time.UnixMilli(events[1].WallClockTS).UTC()
+	resolved := note
+	resolved.Resolved = true
+	require.ElementsMatch(t, []model.Annotation{legacy, resolved}, got.Annotations, "accepted residual: unresolved legacy row and resolved source-ID row; nothing dropped")
+}

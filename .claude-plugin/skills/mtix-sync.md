@@ -24,6 +24,14 @@ cannot reconstruct those missing values. Upgrade participating clients before
 relying on the new metadata; older readers ignore it. This change does not repair
 already-applied history or normalize away differences during verification.
 
+An addressed comment created before annotation metadata was carried has a
+different annotation ID on its source and clone. Resolving it with a newer
+client leaves one unresolved legacy row and one resolved source-ID row on the
+clone; both retain the text, author and addressee. Old events still apply, but
+this change does not provide pre-upgrade convergence. Legacy identity migration
+is tracked by MTIX-112.17.16.20. Do not guess which rows to merge from matching
+text or timestamps.
+
 ## CLI read freshness
 
 CLI board reads retry a busy local sync lock briefly, with a total wait budget of

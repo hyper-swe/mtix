@@ -16,7 +16,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
-// addressedPushTimeout bounds each addressed-send push, including CLI children.
+// addressedPushTimeout bounds one in-process push of an addressed send.
 const addressedPushTimeout = 5 * time.Minute
 
 // Defaults for waiting out a push that holds the push lock: the child retries
@@ -52,7 +52,6 @@ type addressedRunOptions struct {
 	Now       func() time.Time
 	HeldTries int
 	HeldWait  time.Duration
-	Timeout   time.Duration       // nonpositive means addressedPushTimeout
 	Wait      func(time.Duration) // injected pause between lock probes; nil means time.Sleep
 	// Push runs one push; nil means runSyncPush. Tests inject it.
 	Push func(ctx context.Context, stderr io.Writer, opts transport.Options) error
@@ -80,12 +79,6 @@ func (o addressedRunOptions) pause() {
 // outcome operator-locally. Output goes to stderr only; the outcome is what a
 // later command and doctor show (ADR-007 D21, MTIX-112.20.2).
 func runAddressedSendPush(ctx context.Context, stderr io.Writer, o addressedRunOptions) error {
-	bound := o.Timeout
-	if bound <= 0 {
-		bound = addressedPushTimeout
-	}
-	ctx, cancel := context.WithTimeout(ctx, bound)
-	defer cancel()
 	var pushErr error
 	if hubConfigured(app.mtixDir) {
 		pushErr = pushWaitingForLock(ctx, stderr, o)

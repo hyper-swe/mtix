@@ -34,8 +34,6 @@ const (
 type HookClaim struct {
 	Hook string
 	Seq  int64
-	// EventID pins the journal identity observed by the stale-claim scan.
-	EventID string
 }
 
 // ClaimHookDispatch attempts to claim (hook, seq) for firing. It returns true
@@ -54,16 +52,74 @@ type HookClaim struct {
 // A stale 'claimed' ROW below the floor remains reclaimable: crash recovery
 // is keyed on the row existing, not on the floor.
 func (s *Store) ClaimHookDispatch(ctx context.Context, hook string, seq int64, lease time.Duration) (bool, error) {
-	won, _, err := s.claimHookDispatch(ctx, hook, JournalEvent{Seq: seq}, lease, false)
-	return won, err
+	now := time.Now().UTC()
+	cutoff := now.Add(-lease).Format(time.RFC3339)
+	var won bool
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		// Reclaim branch: take over a stale claim (crashed trigger).
+		res, err := tx.ExecContext(ctx, `
+			UPDATE hook_dispatch_ledger SET fired_at = ?
+			 WHERE hook_name = ? AND event_seq = ?
+			   AND outcome = ? AND fired_at < ?`,
+			now.Format(time.RFC3339), hook, seq, OutcomeClaimed, cutoff)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n > 0 {
+			won = true
+			return nil
+		}
+		// Any surviving row — terminal or in-lease claim — means we lose.
+		var exists int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*) FROM hook_dispatch_ledger
+			 WHERE hook_name = ? AND event_seq = ?`, hook, seq).Scan(&exists); err != nil {
+			return err
+		}
+		if exists > 0 {
+			return nil
+		}
+		// Fresh claim: refused at/below the floor (dispatched + pruned).
+		var floor sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `
+			SELECT cursor FROM hook_dispatch_cursor WHERE id = 1`).Scan(&floor); err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if floor.Valid && seq <= floor.Int64 {
+			return nil
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO hook_dispatch_ledger (hook_name, event_seq, fired_at, outcome)
+			VALUES (?, ?, ?, ?)`,
+			hook, seq, now.Format(time.RFC3339), OutcomeClaimed); err != nil {
+			return err
+		}
+		won = true
+		return nil
+	})
+	if err != nil {
+		return false, fmt.Errorf("claim hook dispatch (%s, %d): %w", hook, seq, err)
+	}
+	return won, nil
 }
 
 // RecordHookDispatchOutcome finalizes a claimed row with how the fire ended.
 // Recording onto a row another trigger has since reclaimed is harmless — the
 // last writer's outcome stands; both fired, which at-least-once permits.
 func (s *Store) RecordHookDispatchOutcome(ctx context.Context, hook string, seq int64, outcome string) error {
-	_, err := s.recordHookDispatchOutcome(ctx, hook, JournalEvent{Seq: seq}, outcome, false)
-	return err
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `
+			UPDATE hook_dispatch_ledger SET outcome = ?, fired_at = ?
+			 WHERE hook_name = ? AND event_seq = ?`,
+			outcome, time.Now().UTC().Format(time.RFC3339), hook, seq)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("record hook dispatch outcome (%s, %d): %w", hook, seq, err)
+	}
+	return nil
 }
 
 // StaleHookClaims returns every 'claimed' row older than lease — triggers that
@@ -73,9 +129,9 @@ func (s *Store) RecordHookDispatchOutcome(ctx context.Context, hook string, seq 
 func (s *Store) StaleHookClaims(ctx context.Context, lease time.Duration) ([]HookClaim, error) {
 	cutoff := time.Now().Add(-lease).UTC().Format(time.RFC3339)
 	rows, err := s.readDB.QueryContext(ctx, `
-		SELECT l.hook_name, l.event_seq, COALESCE(e.event_id, '')
-        FROM hook_dispatch_ledger l LEFT JOIN sync_events e ON e.rowid = l.event_seq
-        WHERE l.outcome = ? AND l.fired_at < ? ORDER BY l.event_seq ASC`, OutcomeClaimed, cutoff)
+		SELECT hook_name, event_seq FROM hook_dispatch_ledger
+		 WHERE outcome = ? AND fired_at < ?
+		 ORDER BY event_seq ASC`, OutcomeClaimed, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("stale hook claims: %w", err)
 	}
@@ -83,7 +139,7 @@ func (s *Store) StaleHookClaims(ctx context.Context, lease time.Duration) ([]Hoo
 	var out []HookClaim
 	for rows.Next() {
 		var c HookClaim
-		if err := rows.Scan(&c.Hook, &c.Seq, &c.EventID); err != nil {
+		if err := rows.Scan(&c.Hook, &c.Seq); err != nil {
 			return nil, fmt.Errorf("scan stale hook claim: %w", err)
 		}
 		out = append(out, c)
@@ -95,7 +151,22 @@ func (s *Store) StaleHookClaims(ctx context.Context, lease time.Duration) ([]Hoo
 // below the lowest open ('claimed') ledger row so a crashed trigger's event
 // stays inside the scan window until reclaimed. Monotonic: never rewinds.
 func (s *Store) AdvanceHookScanFloorClamped(ctx context.Context, target int64) error {
-	err := s.WithTx(ctx, func(tx *sql.Tx) error { return advanceHookScanFloorTx(ctx, tx, target) })
+	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		var lowestOpen sql.NullInt64
+		if err := tx.QueryRowContext(ctx, `
+			SELECT MIN(event_seq) FROM hook_dispatch_ledger WHERE outcome = ?`,
+			OutcomeClaimed).Scan(&lowestOpen); err != nil {
+			return err
+		}
+		floor := target
+		if lowestOpen.Valid && lowestOpen.Int64-1 < floor {
+			floor = lowestOpen.Int64 - 1
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO hook_dispatch_cursor (id, cursor) VALUES (1, ?)
+			ON CONFLICT(id) DO UPDATE SET cursor = MAX(cursor, excluded.cursor)`, floor)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("advance hook scan floor to %d: %w", target, err)
 	}
@@ -139,19 +210,11 @@ func (s *Store) JournalTail(ctx context.Context) (int64, error) {
 // (FR-20 §8). Monotonic like every floor advance; a no-op on a live store
 // whose floor already tracks the tail.
 func (s *Store) InitHookScanFloorAtTail(ctx context.Context) error {
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		var tail int64
-		// Read the tail under the same writer transaction as the floor write,
-		// so replace cannot rewind the journal between the two (FR-20 §8).
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(rowid),0) FROM sync_events`).Scan(&tail); err != nil {
-			return err
-		}
-		return advanceHookScanFloorTx(ctx, tx, tail)
-	})
+	tail, err := s.JournalTail(ctx)
 	if err != nil {
-		return fmt.Errorf("initialize hook scan floor: %w", err)
+		return err
 	}
-	return nil
+	return s.AdvanceHookScanFloorClamped(ctx, tail)
 }
 
 // ReadJournalEventAt returns the single journal event at seq (ok=false when it

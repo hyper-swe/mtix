@@ -355,7 +355,7 @@ func TestRunAnnotate_NoPromptSvc_ReturnsError(t *testing.T) {
 	defer func() { app = old }()
 	app = appContext{}
 
-	err := runAnnotate("PROJ-1", "note text", "")
+	err := runAnnotate("PROJ-1", "note text")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "not in an mtix project")
 }

@@ -29,6 +29,11 @@ type EnrollmentRequest struct {
 	Path, Mode, Source string
 	// MigrateLegacy removes the board's 0.5.x per-project service before enrolling (ADR-007 D11).
 	MigrateLegacy bool
+	// AcceptHub lets a worktree enrolment take the hub's version of a board that
+	// differs from it. It is the digest printed in the refusal and the diff
+	// report the operator read; the enrolment goes on only while the current
+	// difference has that digest (MTIX-112.17.16.6). Empty means not accepted.
+	AcceptHub string
 }
 
 // HostEnrollmentOptions supplies checkout opening and observation using that checkout's secrets.

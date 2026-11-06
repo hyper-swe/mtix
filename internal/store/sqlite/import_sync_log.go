@@ -224,7 +224,7 @@ func discardUnsharedEvents(ctx context.Context, tx *sql.Tx, data *ExportData, as
 	}
 	// MTIX-112.2: the freed seqs are reused by the next events; no ack or
 	// cursor may outlive the events it covered.
-	return trimReplaceBookkeepingToJournal(ctx, tx)
+	return trimInboxToJournal(ctx, tx)
 }
 
 // droppedEventIDs selects the ids of the pending events of the node bound as

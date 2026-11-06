@@ -6,10 +6,8 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -166,49 +164,4 @@ func daemonOwnerSerialRound(t *testing.T, dir string, round int, children []*dae
 	}
 	_, err := os.ReadFile(filepath.Join(dir, daemonPIDFilename))
 	require.ErrorIs(t, err, os.ErrNotExist, "matching native owner cleanup removes its marker")
-}
-
-// startUnrelatedLiveProcess starts a long-running non-mtix process and returns
-// its pid. It stands in for the program that inherits a recorded daemon pid
-// after a reboot.
-func startUnrelatedLiveProcess(t *testing.T) int {
-	t.Helper()
-	cmd := exec.Command("sleep", "300")
-	require.NoError(t, cmd.Start())
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill() //nolint:errcheck // test cleanup of a child we own
-		_ = cmd.Wait()         //nolint:errcheck // exit status of a killed child is expected
-	})
-	return cmd.Process.Pid
-}
-
-// TestStartDaemonOwnership_ReusedLivePID_FreeLock_StartsAndOwnsPIDFile pins
-// MTIX-237: the 0.5.4 daemons gated startup on "is the recorded pid alive", so
-// a pid reused by an unrelated live process made every start print "already
-// running" and exit 0, and a keep-alive service respawned it forever. The OS
-// lock is the only authority: with the lock free the daemon must start,
-// whatever live process the diagnostic pid file names.
-func TestStartDaemonOwnership_ReusedLivePID_FreeLock_StartsAndOwnsPIDFile(t *testing.T) {
-	for _, label := range []string{"mtix daemon", "mtix sync daemon"} {
-		t.Run(label, func(t *testing.T) {
-			dir := filepath.Join(t.TempDir(), ".mtix")
-			require.NoError(t, os.MkdirAll(filepath.Join(dir, "data"), 0o755))
-			reused := startUnrelatedLiveProcess(t)
-			pidPath := filepath.Join(dir, daemonPIDFilename)
-			require.NoError(t, os.WriteFile(pidPath, []byte(strconv.Itoa(reused)), 0o600))
-
-			var stderr bytes.Buffer
-			owner, err := startDaemonOwnership(&stderr, label, dir)
-			require.NoError(t, err)
-			require.NotNil(t, owner, "a free lock means this process owns the board")
-			t.Cleanup(func() { require.NoError(t, owner.release()) })
-
-			require.NotContains(t, stderr.String(), "already running")
-			require.Empty(t, stderr.String())
-			body, err := os.ReadFile(pidPath)
-			require.NoError(t, err)
-			require.Equal(t, strconv.Itoa(os.Getpid()), string(body),
-				"the new owner republishes its own pid over the reused one")
-		})
-	}
 }

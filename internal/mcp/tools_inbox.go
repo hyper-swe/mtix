@@ -54,11 +54,16 @@ func registerInboxTool(reg *ToolRegistry, svc *service.InboxService) {
 			return nil, fmt.Errorf("parse inbox args: %w", err)
 		}
 
-		res, err := svc.InboxRead(ctx, p.Agent, service.InboxReadOptions{})
+		events, err := svc.InboxList(ctx, p.Agent)
 		if err != nil {
 			return nil, err
 		}
-		return inboxResult(p.Agent, res)
+
+		text, err := renderInboxEnvelope(p.Agent, events)
+		if err != nil {
+			return nil, err
+		}
+		return SuccessResult(text), nil
 	})
 }
 
@@ -101,11 +106,19 @@ func callInboxWait(ctx context.Context, args json.RawMessage, svc *service.Inbox
 		secs = clampInboxWaitSeconds(*p.TimeoutSeconds)
 	}
 
-	res, err := svc.InboxReadWait(ctx, p.Agent, time.Duration(secs)*time.Second, service.InboxReadOptions{})
+	events, err := svc.InboxWait(ctx, p.Agent, time.Duration(secs)*time.Second)
 	if err != nil {
 		return nil, err
 	}
-	return inboxResult(p.Agent, res)
+	if events == nil {
+		events = []service.InboxEvent{} // marshal an empty [] rather than null on timeout
+	}
+
+	text, err := renderInboxEnvelope(p.Agent, events)
+	if err != nil {
+		return nil, err
+	}
+	return SuccessResult(text), nil
 }
 
 func registerInboxAckTool(reg *ToolRegistry, svc *service.InboxService) {

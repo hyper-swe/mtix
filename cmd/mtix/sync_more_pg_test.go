@@ -109,8 +109,6 @@ func TestCheckSecretsFileMode_ModeTooLooseIsRejected(t *testing.T) {
 	secretsPath := filepath.Join(app.mtixDir, "secrets")
 	require.NoError(t, os.WriteFile(secretsPath,
 		[]byte("postgres://u:p@h/d"), 0o644)) //nolint:gosec // deliberately too-loose for the test
-	// os.WriteFile applies the process umask, so force the mode explicitly (MTIX-238).
-	require.NoError(t, os.Chmod(secretsPath, 0o644)) //nolint:gosec // deliberately too-loose for the test
 	ok, detail := checkSecretsFileMode(app.mtixDir)
 	require.False(t, ok, "0644 secrets file should be rejected")
 	require.Contains(t, detail, "0600")

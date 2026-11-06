@@ -36,9 +36,6 @@ func registerPermissionDoctor(svc *service.DoctorService) error {
 		checks = append(checks, service.DoctorCheck{ID: "agents.quarantined", Run: func(ctx context.Context) service.DoctorResult {
 			return permissionQuarantineCheck(ctx, config.permissions, config.board)
 		}})
-		checks = append(checks, service.DoctorCheck{ID: "inbox.held", Run: func(ctx context.Context) service.DoctorResult {
-			return inboxHeldCheck(ctx, config.permissions, config.board)
-		}})
 		checks = append(checks, service.DoctorCheck{ID: "agents.denied", Run: func(ctx context.Context) service.DoctorResult {
 			return permissionDeniedCheck(ctx, config.permissions, config.board)
 		}})

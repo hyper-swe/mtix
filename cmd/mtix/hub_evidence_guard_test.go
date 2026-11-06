@@ -176,14 +176,10 @@ func TestCollectHubEvidence_RefusedDSN_CountsTransientlyAndMarksOnlyByContent(t 
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("sync.dsn: x\n"), 0o644))
 		}, false, true},
 		{"a DSN in a secrets file with the wrong mode", func(t *testing.T, dir string) {
-			p := filepath.Join(dir, transport.SecretsFilename)
-			require.NoError(t, os.WriteFile(p, []byte("postgres://hub.invalid/mtix\n"), 0o644))
-			require.NoError(t, os.Chmod(p, 0o644)) //nolint:gosec // deliberately too-loose; umask-proof (MTIX-238)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, transport.SecretsFilename), []byte("postgres://hub.invalid/mtix\n"), 0o644))
 		}, true, true},
 		{"an empty secrets file with the wrong mode", func(t *testing.T, dir string) {
-			p := filepath.Join(dir, transport.SecretsFilename)
-			require.NoError(t, os.WriteFile(p, nil, 0o644))
-			require.NoError(t, os.Chmod(p, 0o644)) //nolint:gosec // deliberately too-loose; umask-proof (MTIX-238)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, transport.SecretsFilename), nil, 0o644))
 		}, false, true},
 		{"nothing", func(*testing.T, string) {}, false, false},
 	}

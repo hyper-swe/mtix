@@ -233,7 +233,7 @@ This is the baseline standard for all PROJ work, aligned with DO-178C, IEC 62304
 
 ## Emergency Procedures
 
-Comments use `mtix_annotate` with `id`, `text`, and `author`; set `to` only when addressing another agent. The CLI equivalents are `mtix annotate <id> "<text>" --to <agent>` and `mtix comment <id> "<text>" --to <agent>`; both land in that agent's inbox (only `comment` takes `--await-reply`).
+Comments use `mtix_annotate` with `id`, `text`, and `author`; set `to` only when addressing another agent.
 
 ### Data Inconsistency Detected
 1. Run `mtix verify` to check content hash integrity
@@ -332,8 +332,6 @@ These are **operator/admin** actions, not part of the normal agent loop. Recogni
 - **Hub privileges.** `mtix sync doctor` shows a `hub-privileges` check. A **WARN** (exit 0) means roles other than the owner can use the sync tables, or a TRUNCATE guard is missing or disabled; that can be fine when the database is reachable only from a private network, and it never blocks sync. It is a **FAIL** only in strict mode (`sync.keep_roles` set). To restrict access the table owner runs `mtix sync harden` (a dry run that lists every role it would change), and only after the user approves that role list, `mtix sync harden --apply --keep-role <role>`. **Never** pass `--apply` without that approval, and never run `mtix sync harden` from a hook, a push or the daemon.
 
 <!-- AUTO-GENERATED: WAKE_ROUTINE -->
-Held inbox events: on a hub or relay board, inbox reads (CLI, session hook, MCP) return only events for ids your operator confirmed and report the rest as a count on stderr (`N held: ask your operator ...`). Tell your operator; never try to read held bodies. A wait that returns nothing exits 5: re-arm it. `mtix doctor` row `inbox.held` prints the fix.
-
 ## Read-only inbox counts
 
 Use `mtix inbox --agent <agent-id> --count` for pending work, or
@@ -440,8 +438,6 @@ Wake status: `mtix comment --to <agent>` and `mtix inbox status --agent <agent> 
 fix; the message is always in the inbox. `wake.confirm_window` (default 30 seconds) sets when a nudge reads as `unconfirmed`. The doctor
 `wake.listener.*` rows give exact fixes. The ledger-backed states are seeded-only until a delivery route is built; approving a held wake does not yet send
 a fresh nudge (MTIX-112.40.10). See the multi-agent skill.
-
-Need an answer: send with `mtix comment <id> "<text>" --to <agent> --await-reply=<duration>` (MCP `mtix_annotate` with `to` and `await_reply`). Default 1h, at most 8h. Your host then contacts the hub every 60 seconds until that agent replies or the time passes; when you are the recipient, answer and ack promptly. A reply window keeps a scale-to-zero hub awake (about 60 contacts an hour, up to 8 hours), so use plain `--to` when no answer is needed; limits and verification are in the sync skill and `mtix doctor` row `sync.hub-contact`.
 
 
 On an opened local board, `wake.ledger` reports retained rows and protocol refusal;

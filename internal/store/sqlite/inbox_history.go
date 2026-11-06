@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"runtime"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -158,23 +158,22 @@ func CountUnackedInboxFile(ctx context.Context, dbPath string) (int64, error) {
 	if info.Size() == 0 {
 		return 0, fmt.Errorf("count unacknowledged inbox events: %s is 0 bytes, not a database", dbPath)
 	}
-	n, err := countUnackedRO(ctx, dbPath, "mode=ro")
+	n, err := countUnackedRO(ctx, "file:"+fileURIPath(dbPath)+"?mode=ro")
 	if err != nil {
 		// A WAL database needs a writable -shm to be read normally. When the
 		// file or its directory is read-only, read the main file as it is
 		// (immutable ignores an unmerged -wal, so the count can be low).
 		var immErr error
-		if n, immErr = countUnackedRO(ctx, dbPath, "mode=ro", "immutable=1"); immErr != nil {
+		if n, immErr = countUnackedRO(ctx, "file:"+fileURIPath(dbPath)+"?mode=ro&immutable=1"); immErr != nil {
 			return 0, err
 		}
 	}
 	return n, nil
 }
 
-// countUnackedRO opens path with the given URI parameters and counts; it never
-// writes.
-func countUnackedRO(ctx context.Context, path string, params ...string) (int64, error) {
-	db, err := openSQLite(path, params...)
+// countUnackedRO opens uri and counts; it never writes.
+func countUnackedRO(ctx context.Context, uri string) (int64, error) {
+	db, err := sql.Open("sqlite", uri)
 	if err != nil {
 		return 0, fmt.Errorf("open read-only: %w", err)
 	}
@@ -182,10 +181,9 @@ func countUnackedRO(ctx context.Context, path string, params ...string) (int64, 
 	return countUnackedInbox(ctx, db)
 }
 
-// fileURIPath escapes the characters that end a file: URI path for the
-// running OS (fileURIPathFor, MTIX-112.2.4).
+// fileURIPath escapes the characters that end a file: URI path.
 func fileURIPath(path string) string {
-	return fileURIPathFor(path, runtime.GOOS)
+	return strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23").Replace(path)
 }
 
 func countUnackedInbox(ctx context.Context, db *sql.DB) (int64, error) {

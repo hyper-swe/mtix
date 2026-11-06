@@ -13,9 +13,6 @@ type Delivery struct {
 	Hook      Hook
 	Event     Event
 	EventJSON []byte
-	// JournalEventID binds database-backed adapters to the observed journal row.
-	// It is not added to the external adapter payload.
-	JournalEventID string
 	// Exec is the verified launch plan, required by the exec adapter.
 	Exec *ExecPlan
 	// Wake is present only for an explicit wake attempt, not ordinary hook delivery.

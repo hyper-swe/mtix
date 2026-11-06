@@ -31,9 +31,6 @@ type ToolSet struct {
 	// OnAddressedSend requests a push after an addressed annotation commits
 	// (MTIX-112.20.2); nil keeps the tool silent about pushing.
 	OnAddressedSend AddressedSendHook
-	// OnReplyWindow records the sender's reply window after an annotation sent
-	// with await_reply (MTIX-112.20.3); nil makes await_reply a no-op window.
-	OnReplyWindow ReplyWindowHook
 }
 
 // RegisterAllTools registers every MCP tool category on reg. It is the one
@@ -44,7 +41,7 @@ func RegisterAllTools(reg *ToolRegistry, s ToolSet) {
 	RegisterNodeTools(reg, s.Node, WithPrimaryProject(s.Primary))
 	RegisterWorkflowTools(reg, s.Node, s.Background,
 		WithPrimaryProject(s.Primary), WithAuthor(s.Author))
-	RegisterContextTools(reg, s.Context, s.Prompt, WithAddressedSendHook(s.OnAddressedSend), WithReplyWindowHook(s.OnReplyWindow))
+	RegisterContextTools(reg, s.Context, s.Prompt, WithAddressedSendHook(s.OnAddressedSend))
 	RegisterDepTools(reg, s.Dependency)
 	RegisterInboxTools(reg, s.Inbox)
 	RegisterSessionTools(reg, s.Session, s.Agent)

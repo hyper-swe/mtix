@@ -27,7 +27,7 @@ func TestShowHelp_LabelTable_MatchesPrintedLabelsInOrder(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NoError(t, app.store.ClaimNode(ctx, node.ID, "agent-x"))
-	captureStdout(t, func() { require.NoError(t, runAnnotate(node.ID, "note", "")) })
+	captureStdout(t, func() { require.NoError(t, runAnnotate(node.ID, "note")) })
 	for _, history := range []bool{false, true} {
 		out := captureStdout(t, func() {
 			require.NoError(t, runShowWith(node.ID, showOptions{history: history, historyLimit: 50}))

@@ -1,0 +1,216 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
+package service
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/hyper-swe/mtix/internal/model"
+)
+
+// boardShown bounds how many node ids the refusal prints.
+const boardShown = 10
+
+// BoardReason says which proof of the enrolment rule failed.
+type BoardReason string
+
+const (
+	// BoardFileDiffers means .mtix/tasks.json is not what the local store exports.
+	BoardFileDiffers BoardReason = "file-differs"
+	// BoardHubDiffers means the local store is not what a clone of the hub holds
+	// when the clone is built from only the events this store has applied: the
+	// store holds something no hub event gives it, or the hub holds an event the
+	// store has not applied.
+	BoardHubDiffers BoardReason = "hub-differs"
+)
+
+// BoardFinding is a failed proof: nothing is enrolled while one exists.
+type BoardFinding struct {
+	Reason BoardReason
+	// Diff maps each differing node id to the names of the fields that differ.
+	Diff BoardDiff
+	// cmp says which side holds each difference and hashes the values on both.
+	cmp *boardCmp
+}
+
+// HubRowsOnly reports whether the only differences are rows the hub clone
+// holds and the store lacks: the store holds nothing the clone lacks and no
+// field it holds differently. Only then is it safe to say a pull loses
+// nothing (MTIX-112.17.16.6, ruling r5 point 1).
+func (f BoardFinding) HubRowsOnly() bool {
+	return f.Reason == BoardHubDiffers && f.cmp != nil && !f.cmp.has(kindStoreOnly) && !f.cmp.has(kindChanged)
+}
+
+// IDs returns the differing ids, sorted.
+func (f BoardFinding) IDs() []string { return f.Diff.IDs() }
+
+// Digest identifies this exact difference: the reason, each differing id, the
+// field names and a hash of the values on both sides, so a change of a value
+// the operator did not read changes the digest. An accept-hub request names it
+// (MTIX-112.17.16.6). The report itself stays ids and field names.
+func (f BoardFinding) Digest() string {
+	h := sha256.New()
+	_, _ = h.Write([]byte(string(f.Reason) + "\n"))
+	for _, id := range f.IDs() {
+		_, _ = h.Write([]byte(id + "\x00"))
+		for _, field := range f.Diff[id] { // add keeps the names sorted
+			_, _ = h.Write([]byte(field + "\x01"))
+		}
+		_, _ = h.Write([]byte("\n"))
+	}
+	if f.cmp != nil {
+		_, _ = h.Write([]byte(f.cmp.signature()))
+	}
+	return hex.EncodeToString(h.Sum(nil))[:16]
+}
+
+// WorktreeBoardError is the refusal when the worktree's local board is not
+// provably all on the hub (MTIX-112.17.16.6). Enrolling would swap the store
+// for the hub clone, and the next write would rewrite tasks.json from it.
+type WorktreeBoardError struct {
+	BoardFinding
+	// Report is the path of the diff report written under .mtix.
+	Report string
+	// StaleAccept is set when the operator named a digest and the difference
+	// now has another one: the board changed after the report they read.
+	StaleAccept bool
+}
+
+// Error names the reason, the count, the first ids, the report and the fix.
+func (e *WorktreeBoardError) Error() string {
+	ids := e.IDs()
+	shown, more := ids, ""
+	if len(shown) > boardShown {
+		shown, more = shown[:boardShown], fmt.Sprintf(" and %d more", len(ids)-boardShown)
+	}
+	list := fmt.Sprintf("%d node(s): %s%s", len(ids), strings.Join(shown, ", "), more)
+	report := "report (node ids and field names, no content): " + e.Report
+	if e.Reason == BoardFileDiffers {
+		return "tasks.json is not what this worktree's store exports (" + list + "); enrolment refused and nothing changed.\n" + report + "\n" +
+			"fix: keep a copy of .mtix/tasks.json if it holds work you need, run mtix sync --fix in this worktree (it rewrites tasks.json from the store), then enroll again; " +
+			"work that exists only in the copy is in no store and on no hub, so re-create it with mtix commands after the enrolment"
+	}
+	return e.hubMessage(list, report)
+}
+
+// hubMessage words a hub difference. A pull is printed only when the store is
+// merely missing hub rows; every local difference gets the keep-a-copy,
+// re-enter, accept sequence and the plain warning that a pull overwrites an
+// unjournaled change (MTIX-112.17.16.6, ruling r5 points 1, 2, 3 and 5).
+func (e *WorktreeBoardError) hubMessage(list, report string) string {
+	stale := ""
+	if e.StaleAccept {
+		stale = "the digest you named is not this difference's: the board or the hub changed after the report you read, so nothing was accepted.\n"
+	}
+	head := "this worktree's board differs from the hub as this store last applied it (" + list + "); enrolment refused and nothing changed.\n" + stale + report + "\n"
+	if e.HubRowsOnly() {
+		return head + "the hub holds events this store has not applied, and the store holds nothing the hub lacks. " +
+			"fix: run mtix sync pull, then mtix sync --fix (it rewrites tasks.json from the store), then enroll again"
+	}
+	copyPath := filepath.Join(filepath.Dir(e.Report), "enrol-copy.db")
+	return head + "the store holds something the hub clone lacks or holds differently: local work that is not on the hub. " +
+		"Do not run mtix sync pull or mtix sync --fix: a pull overwrites a change that is not journaled, and it is lost for good. " +
+		"fix, in this order: " +
+		"(1) keep a copy: mtix backup " + copyPath + "; " +
+		"(2) re-enter each change the report names as an ordinary mtix command in this worktree, so it journals, run mtix sync push, then enroll again; " +
+		"(3) or, if the difference is meant to be dropped, enroll again with accept-hub " + e.Digest() +
+		"; the old store stays in an aside directory next to a backup, and doctor warns until you clear it"
+}
+
+// Unwrap lets callers match model.ErrConflict.
+func (e *WorktreeBoardError) Unwrap() error { return model.ErrConflict }
+
+// boardReport is the diff report file: ids and field names, never content.
+type boardReport struct {
+	Reason    BoardReason         `json:"reason"`
+	Digest    string              `json:"digest"`
+	CreatedAt string              `json:"created_at"`
+	Count     int                 `json:"count"`
+	Nodes     map[string][]string `json:"nodes"`
+}
+
+// writeBoardReport writes the diff report under .mtix and returns its path.
+func writeBoardReport(mtixDir string, at time.Time, f *BoardFinding) (string, error) {
+	path := filepath.Join(mtixDir, "enroll-diff-"+at.UTC().Format("20060102T150405Z")+".json")
+	body, err := json.MarshalIndent(boardReport{Reason: f.Reason, Digest: f.Digest(), CreatedAt: at.UTC().Format("2006-01-02T15:04:05Z"), Count: len(f.Diff), Nodes: f.Diff}, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode the diff report: %w", err)
+	}
+	if err := writeFileAtomically(path, append(body, '\n')); err != nil {
+		return "", fmt.Errorf("write the diff report: %w", err)
+	}
+	return path, nil
+}
+
+// boardGate turns a proof's outcome into a decision. A failed comparison is an
+// error, never a pass. A finding is written to a report and refused, unless it
+// is a hub difference and the operator named that difference's digest: then the
+// report path is kept in res for doctor and the enrolment goes on.
+func (s *WorktreeEnrolment) boardGate(mtixDir, accept string, res *WorktreeEnrolResult, f *BoardFinding, err error) error {
+	if err != nil {
+		return fmt.Errorf("compare the local board with the hub: %w", err)
+	}
+	if f == nil || len(f.Diff) == 0 {
+		return nil
+	}
+	path, wErr := writeBoardReport(mtixDir, s.o.Clock(), f)
+	if wErr != nil {
+		return wErr
+	}
+	if accept != "" && f.Reason == BoardHubDiffers && accept == f.Digest() {
+		res.HubDiffReport = path
+		return nil
+	}
+	return &WorktreeBoardError{BoardFinding: *f, Report: path, StaleAccept: accept != "" && f.Reason == BoardHubDiffers}
+}
+
+// BoardFileFinding compares the board file's bytes with the local store's
+// export over everything the export carries, with no exclusions: the file and
+// the store are the same replica, so a hub clone's limits do not apply to
+// them. It returns nil when they hold the same thing.
+func BoardFileFinding(file, localExport []byte) (*BoardFinding, error) {
+	c, err := compareBoards(file, localExport, nil)
+	if err != nil || len(c.diff) == 0 {
+		return nil, err
+	}
+	return &BoardFinding{Reason: BoardFileDiffers, Diff: c.diff, cmp: c}, nil
+}
+
+// BoardHubFinding compares the local store's export with the export of a clone
+// built from the hub events this store has applied (events at or below its pull
+// cursor and events it originated); nil when they hold the same thing. Equal
+// means every local state is derivable from hub events.
+func BoardHubFinding(localExport, boundedCloneExport []byte) (*BoardFinding, error) {
+	return boardHubFinding(localExport, boundedCloneExport, false)
+}
+
+// BoardSnapshotHubFinding is the hub rule for a store that came from a
+// tasks.json snapshot (it never pulled and holds no journal row): its cursor
+// says nothing, so it is compared with the FULL hub clone. Rows only the hub
+// holds are not a difference here, because the enrolment replaces the store with
+// that clone and loses nothing by it; anything the store holds that the clone
+// lacks or holds differently is (ruling r5 point 8).
+func BoardSnapshotHubFinding(localExport, fullCloneExport []byte) (*BoardFinding, error) {
+	return boardHubFinding(localExport, fullCloneExport, true)
+}
+
+func boardHubFinding(localExport, cloneExport []byte, ignoreHubOnly bool) (*BoardFinding, error) {
+	c, err := compareBoards(localExport, cloneExport, BoardExclusions())
+	if err != nil {
+		return nil, err
+	}
+	if ignoreHubOnly {
+		c = c.without(kindHubOnly)
+	}
+	if len(c.diff) == 0 {
+		return nil, nil
+	}
+	return &BoardFinding{Reason: BoardHubDiffers, Diff: c.diff, cmp: c}, nil
+}

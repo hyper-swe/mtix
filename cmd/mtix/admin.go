@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -294,6 +295,12 @@ func reportImportResult(result *sqlite.ImportResult, writerVersion string) {
 	fmt.Printf("Import complete: %d created, %d updated, %d skipped, %d deps\n",
 		result.NodesCreated, result.NodesUpdated,
 		result.NodesSkipped, result.DepsImported)
+	if result.Journaled > 0 { // MTIX-112.17.16.16: the changes wait in the sync journal
+		fmt.Printf("Journaled %d sync events for the changes; mtix sync push sends them to the hub\n", result.Journaled)
+	}
+	if len(result.JournalLocalOnly) > 0 {
+		fmt.Printf("Local only (no sync event restores a deleted task): %s\n", strings.Join(result.JournalLocalOnly, ", "))
+	}
 	if n := result.HistoryAdded + result.HistorySkipped + result.HistoryConflicts + result.HistorySkippedLegacyKey; n > 0 {
 		fmt.Printf("History: %d added, %d already present, %d conflicts, %d skipped (legacy key)\n",
 			result.HistoryAdded, result.HistorySkipped, result.HistoryConflicts, result.HistorySkippedLegacyKey)

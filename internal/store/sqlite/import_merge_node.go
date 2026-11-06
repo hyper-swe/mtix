@@ -27,7 +27,7 @@ func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 	var touched []*exportNode // nodes the merge created or updated, rolled up once all are written (FR-5.7)
 	for i := range data.Nodes {
 		res := settled[data.Nodes[i].ID]
-		action, mergeErr := mergeImportNode(ctx, tx, &data.Nodes[i], fileCarriesAllColumns, res)
+		action, mergeErr := mergeImportNode(ctx, tx, &data.Nodes[i], fileCarriesAllColumns, mergeControl{res, policy.journal})
 		if mergeErr != nil {
 			return result, mergeErr
 		}
@@ -51,6 +51,9 @@ func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 	}
 
 	for _, d := range data.Dependencies {
+		if err := policy.journal.noteDep(ctx, tx, &d); err != nil {
+			return result, err
+		}
 		if err := insertExportDep(ctx, tx, &d); err != nil {
 			return result, fmt.Errorf("insert dep %s->%s: %w", d.FromID, d.ToID, err)
 		}
@@ -105,7 +108,8 @@ func markRollUp(action importAction, local, merged *exportNode) importAction {
 // 2.0.0 carries none of the 2.0.0 columns, so for those the local values
 // stand (keepLocalNodeColumns).
 func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarriesAllColumns bool,
-	res *WorkflowConflict) (importAction, error) {
+	ctl mergeControl) (importAction, error) {
+	res := ctl.res
 	var existingHash sql.NullString
 	err := tx.QueryRowContext(ctx,
 		"SELECT content_hash FROM nodes WHERE id = ?", n.ID,
@@ -115,6 +119,7 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 		if insertErr := insertExportNode(ctx, tx, n); insertErr != nil {
 			return 0, fmt.Errorf("insert node %s: %w", n.ID, insertErr)
 		}
+		ctl.journal.noteCreated(n)
 		return importActionCreated, nil
 	}
 	if err != nil {
@@ -145,6 +150,7 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	if existingHash.Valid && existingHash.String == n.ContentHash {
 		write := unchangedWrite{streams: streamsChanged, workflow: res != nil && res.Choice == WorkflowTheirs}
 		action, err := mergeUnchangedContent(ctx, tx, &merged, local.UID, write)
+		ctl.journal.noteChanged(&local, &merged) // MTIX-112.17.16.16: plans only the values that differ
 		return markRollUp(action, &local, &merged), err
 	}
 
@@ -154,6 +160,7 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	if carryErr := carryIfAdopted(ctx, tx, &merged, &local); carryErr != nil {
 		return 0, carryErr
 	}
+	ctl.journal.noteChanged(&local, &merged) // MTIX-112.17.16.16: plans only the values that differ
 	return markRollUp(importActionUpdated, &local, &merged), nil
 }
 

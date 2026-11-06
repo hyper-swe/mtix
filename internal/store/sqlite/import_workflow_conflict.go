@@ -105,6 +105,9 @@ func (e *WorkflowConflictError) Unwrap() []error {
 type workflowPolicy struct {
 	resolution WorkflowResolution
 	now        time.Time
+	// journal records what a merge changes for journaling; nil when the
+	// store does not sync (MTIX-112.17.16.16).
+	journal *mergeJournal
 }
 
 // withWorkflowResolution makes the import settle workflow conflicts with r

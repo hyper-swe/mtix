@@ -170,7 +170,7 @@ func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode I
 		if mode == ImportModeReplace {
 			_, applyErr = replaceAllData(ctx, tx, &dry, false)
 		} else {
-			_, applyErr = mergeAllData(ctx, tx, &dry, workflowPolicy{workflow, s.clock()})
+			_, applyErr = mergeAllData(ctx, tx, &dry, workflowPolicy{resolution: workflow, now: s.clock()})
 		}
 		if applyErr != nil {
 			return applyErr

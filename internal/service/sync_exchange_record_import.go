@@ -43,11 +43,20 @@ func (s *SyncService) applyReceivedImport(ctx context.Context, ri *receivedImpor
 	if ri.assumeSynced {
 		opts = append(opts, sqlite.AsSyncedStore())
 	}
+	// MTIX-112.17.16.16: the tasks the hub knows that this import changes; the
+	// import journals nothing, so their new values stay local until a push.
+	localOnly, knownErr := s.store.HubKnownNodes(ctx, ri.diff.Updated)
+	if knownErr != nil {
+		return fmt.Errorf("auto-import: %w", knownErr)
+	}
 	importRes, importErr := s.store.Import(ctx, ri.written, sqlite.ImportModeReplace, false, opts...)
 	if importErr != nil {
 		return fmt.Errorf("auto-import: %w", importErr)
 	}
-	s.noticeImported(ri.mtixDir, ri.diff, backupPath) // FR-15.2k: never silent
+	if recErr := s.store.RecordLocalOnlyImports(ctx, localOnly); recErr != nil {
+		s.logger.Warn("record local-only imports failed", "error", recErr)
+	}
+	s.noticeImported(ri.mtixDir, ri.diff, backupPath, localOnly) // FR-15.2k: never silent
 	s.noticeResolved(ri.resolution)
 	s.noticeHistoryImport(importRes)
 	s.noticeOlderWriter(ri.incoming.MtixVersion) // MTIX-95.31.19.9: once per imported file

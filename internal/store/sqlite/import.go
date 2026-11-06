@@ -86,6 +86,11 @@ type ImportResult struct {
 	// Warnings are human-readable notices about the import that do not fail
 	// it, such as history entries that conflicted or were skipped.
 	Warnings []string `json:"warnings,omitempty"`
+	// Journaled counts the sync events a merge into a store that syncs wrote
+	// for its changes; JournalLocalOnly names the tasks whose change no event
+	// carries, so they stay local (MTIX-112.17.16.16).
+	Journaled        int      `json:"journaled,omitempty"`
+	JournalLocalOnly []string `json:"journal_local_only,omitempty"`
 }
 
 // ValidateExport runs the checks every import makes before it writes
@@ -170,7 +175,7 @@ func (s *Store) Import(
 				applyErr = insertExportHistory(ctx, tx, data, &result, s.clock())
 			}
 		} else {
-			result, applyErr = mergeAllData(ctx, tx, data, workflowPolicy{cfg.workflow, s.clock()})
+			result, applyErr = s.mergeAndJournal(ctx, tx, data, &cfg)
 		}
 		if applyErr != nil {
 			return applyErr

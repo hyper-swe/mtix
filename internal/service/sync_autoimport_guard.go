@@ -466,7 +466,7 @@ func plural(n int, one, many string) string {
 // noticeImported prints the one line that says an auto-import applied a
 // changed .mtix/tasks.json, what it changed and where the database before
 // it is (FR-15.2k, MTIX-95.31.2).
-func (s *SyncService) noticeImported(mtixDir string, diff *sqlite.ReplaceDiff, backupPath string) {
+func (s *SyncService) noticeImported(mtixDir string, diff *sqlite.ReplaceDiff, backupPath string, localOnly []string) {
 	shown := backupPath
 	if rel, err := filepath.Rel(filepath.Dir(mtixDir), backupPath); err == nil {
 		shown = rel
@@ -475,4 +475,26 @@ func (s *SyncService) noticeImported(mtixDir string, diff *sqlite.ReplaceDiff, b
 		"mtix: imported the changed .mtix/tasks.json: nodes %d added, %d updated, %d removed; "+
 			"dependencies %d added, %d removed (local database backed up to %s)\n",
 		len(diff.Added), len(diff.Updated), len(diff.Removed), len(diff.DepsAdded), len(diff.DepsRemoved), shown)
+	s.noticeLocalOnly(localOnly)
+}
+
+// noticeLocalOnly says which tasks the hub already knows that the import
+// changed without journaling: their new values are local only, and a later
+// pull of a hub edit may replace them (MTIX-112.17.16.16). The ids are
+// bounded (maxNamedNodes); mtix doctor lists the same tasks.
+func (s *SyncService) noticeLocalOnly(ids []string) {
+	if len(ids) == 0 {
+		return
+	}
+	shown := ids
+	if len(shown) > sqlite.MaxNamedNodes {
+		shown = shown[:sqlite.MaxNamedNodes]
+	}
+	more := ""
+	if rest := len(ids) - len(shown); rest > 0 {
+		more = fmt.Sprintf(" and %d more", rest)
+	}
+	fmt.Fprintf(s.notices, "mtix: %s the hub already knows changed only locally (%s%s): these values were not sent to the hub "+
+		"and may be replaced on the next pull; run mtix doctor for the list\n",
+		plural(len(ids), "task", "tasks"), strings.Join(shown, ", "), more)
 }

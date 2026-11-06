@@ -40,6 +40,9 @@ type DoctorCheck struct {
 	Fix            string                       `json:"fix,omitempty"`
 	Findings       []transport.PrivilegeFinding `json:"findings,omitempty"`
 	Reply          *service.ReplyStatus         `json:"reply,omitempty"`
+	// LocalOnly names, bounded, the tasks an automatic import changed that the
+	// hub knows and whose change stayed local (MTIX-112.17.16.16).
+	LocalOnly []string `json:"local_only,omitempty"`
 }
 
 // DoctorReport aggregates the health checks per FR-18 / MTIX-15.7.3.

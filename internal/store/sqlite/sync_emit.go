@@ -68,8 +68,11 @@ type emitParams struct {
 // wire cap is still written, and reported to the context's PayloadWarnings
 // collector, if any (afterEmit, warnOversizedPayload, MTIX-95.12).
 func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
-	if err := enforceQueueLimit(ctx, tx); err != nil {
-		return err
+	// An import that checked the cap for all its events skips the per-event scan (checkQueueRoom).
+	if checked, _ := ctx.Value(queueCheckedKey{}).(bool); !checked {
+		if err := enforceQueueLimit(ctx, tx); err != nil {
+			return err
+		}
 	}
 
 	authorID := sanitizeAuthorID(resolveEmitAuthor(ctx, tx, p.Author))

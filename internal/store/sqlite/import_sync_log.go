@@ -25,6 +25,9 @@ const SyncLogRecovery = "mtix sync push, check that mtix sync status shows pendi
 // maxNamedNodes caps how many node ids a refusal or a doctor check names.
 const maxNamedNodes = 10
 
+// MaxNamedNodes is maxNamedNodes for callers that name tasks in a notice.
+const MaxNamedNodes = maxNamedNodes
+
 // rowQuerier is a *sql.DB or a *sql.Tx.
 type rowQuerier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row

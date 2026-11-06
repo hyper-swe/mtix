@@ -5,13 +5,15 @@ package main
 import (
 	"bytes"
 	"database/sql"
-	"github.com/hyper-swe/mtix/internal/model"
-	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // FR-19.1: a restored row below the cursor remains missing until the real sweep applies it.
@@ -59,42 +61,73 @@ func TestRestoredInbox_PostgresSweepFetchesLateComment(t *testing.T) {
 func TestRestoredInbox_PostgresDivergentRemedies(t *testing.T) {
 	for _, action := range []string{"init", "clone", "discard", "dry-run"} {
 		t.Run(action, func(t *testing.T) {
-			hub := openCmdHub(t)
-			source, file := restoredInboxSource(t)
-			prefix, _, err := source.GetOrComputeLocalFirstEventHash(t.Context())
-			require.NoError(t, err)
-			require.NoError(t, registerProjectOnHub(t.Context(), hub, prefix, strings.Repeat("f", 64)))
-			initTestApp(t)
-			_, err = app.store.Import(t.Context(), file, sqlite.ImportModeMerge, false)
-			require.NoError(t, err)
-			events, err := source.ReadPendingEvents(t.Context(), 100)
-			require.NoError(t, err)
-			require.NoError(t, app.store.WithTx(t.Context(), func(tx *sql.Tx) error { return app.store.IdempotentApply(t.Context(), tx, events[0]) }))
-			before, err := app.store.InboxList(t.Context(), "worker")
-			require.NoError(t, err)
-			require.Len(t, before, 1)
-			var out, diagnostic bytes.Buffer
-			switch action {
-			case "init":
-				err = runSyncInit(t.Context(), &out, &diagnostic, nil, transport.Options{InsecureTLS: true})
-			case "clone":
-				err = runSyncClone(t.Context(), &out, &diagnostic, nil, transport.Options{InsecureTLS: true}, false, 100)
-			case "discard":
-				err = sqlite.DiscardLocal(t.Context(), app.store, app.mtixDir)
-			case "dry-run":
-				_, err = sqlite.DryRunDiscardLocal(t.Context(), app.store)
-			}
+			before := prepareRestoredRemedy(t)
+			text, err := runRestoredRemedy(t, action)
 			require.Error(t, err)
-			text := out.String() + diagnostic.String() + err.Error()
 			require.Contains(t, text, "restored mail")
 			require.Contains(t, text, "new empty directory")
 			require.Contains(t, text, "mtix sync clone")
+			require.Contains(t, text, "mtix inbox --include-held")
 			if action == "init" || action == "clone" {
 				require.NotContains(t, text, "--discard-local")
+			}
+			if action == "init" {
+				assertRestoredMailReadableWhenHeld(t)
 			}
 			after, err := app.store.InboxList(t.Context(), "worker")
 			require.NoError(t, err)
 			require.Equal(t, before, after)
 		})
 	}
+}
+
+func prepareRestoredRemedy(t *testing.T) []sqlite.InboxEvent {
+	t.Helper()
+	hub := openCmdHub(t)
+	source, file := restoredInboxSource(t)
+	prefix, _, err := source.GetOrComputeLocalFirstEventHash(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, registerProjectOnHub(t.Context(), hub, prefix, strings.Repeat("f", 64)))
+	initTestApp(t)
+	_, err = app.store.Import(t.Context(), file, sqlite.ImportModeMerge, false)
+	require.NoError(t, err)
+	events, err := source.ReadPendingEvents(t.Context(), 100)
+	require.NoError(t, err)
+	require.NoError(t, app.store.WithTx(t.Context(), func(tx *sql.Tx) error { return app.store.IdempotentApply(t.Context(), tx, events[0]) }))
+	before, err := app.store.InboxList(t.Context(), "worker")
+	require.NoError(t, err)
+	require.Len(t, before, 1)
+	return before
+}
+
+func runRestoredRemedy(t *testing.T, action string) (string, error) {
+	t.Helper()
+	var out, diagnostic bytes.Buffer
+	var err error
+	switch action {
+	case "init":
+		err = runSyncInit(t.Context(), &out, &diagnostic, nil, transport.Options{InsecureTLS: true})
+	case "clone":
+		err = runSyncClone(t.Context(), &out, &diagnostic, nil, transport.Options{InsecureTLS: true}, false, 100)
+	case "discard":
+		err = sqlite.DiscardLocal(t.Context(), app.store, app.mtixDir)
+	case "dry-run":
+		_, err = sqlite.DryRunDiscardLocal(t.Context(), app.store)
+	}
+	text := out.String() + diagnostic.String()
+	if err != nil {
+		text += err.Error()
+	}
+	return text, err
+}
+
+func assertRestoredMailReadableWhenHeld(t *testing.T) {
+	t.Helper()
+	normal, held, err := runPolicyInbox(t, inboxOptions{Agent: "worker", Env: []string{"PATH=/usr/bin"}})
+	require.NoError(t, err)
+	require.NotContains(t, normal, "private mail")
+	require.Contains(t, held, "1 held")
+	visible, _, err := runPolicyInbox(t, inboxOptions{Agent: "worker", IncludeHeld: true, Env: []string{"PATH=/usr/bin"}})
+	require.NoError(t, err)
+	require.Contains(t, visible, "private mail")
 }

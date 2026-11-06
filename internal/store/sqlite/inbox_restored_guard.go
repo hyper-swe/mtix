@@ -5,11 +5,12 @@ package sqlite
 import (
 	"context"
 	"fmt"
+
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // RestoredInboxRecovery preserves this store while obtaining a separate hub copy.
-const RestoredInboxRecovery = "This store holds restored mail that has no guaranteed hub copy. Keep this store intact. To obtain the hub board, in a new empty directory run 'mtix init PREFIX' with the hub project prefix, configure the same hub credentials via MTIX_SYNC_DSN, then run 'mtix sync clone'. Read the restored mail in the original store. To keep the local board and rewrite its mirror instead, run 'mtix sync --fix'."
+const RestoredInboxRecovery = "This store holds restored mail that has no guaranteed hub copy. Keep this store intact. To obtain the hub board, in a new empty directory run 'mtix init PREFIX' with the hub project prefix, configure the same hub credentials via MTIX_SYNC_DSN, then run 'mtix sync clone'. In an operator terminal, read the restored mail in the original store with 'mtix inbox --include-held --agent AGENT'; hub contact can hold mail for an unregistered recipient. To keep the local board and rewrite its mirror instead, run 'mtix sync --fix'."
 
 func restoredInboxPresent(ctx context.Context, q SyncEventReader) (bool, error) {
 	query, err := restoredInboxQuery(ctx, q, `SELECT 0`, `SELECT EXISTS(SELECT 1 FROM inbox_restored_events)`)

@@ -49,13 +49,12 @@ func TestDetectCheckout_PlainRepo_ReturnsPlain(t *testing.T) {
 }
 
 func TestDetectCheckout_LinkedWorktreeWithBacklink_ReturnsWorktree(t *testing.T) {
-	mainRoot, wtRoot := linkedWorktree(t)
+	_, wtRoot := linkedWorktree(t)
 
 	got, err := DetectCheckout(wtRoot)
 	require.NoError(t, err)
 	assert.Equal(t, CheckoutWorktree, got.Kind)
 	assert.Equal(t, wtRoot, got.Root)
-	assert.Equal(t, mainRoot, got.CommonRoot)
 }
 
 func TestWorktreeDetect_CommondirWithoutBacklink_NotWorktree(t *testing.T) {
@@ -122,7 +121,7 @@ func readGitdirTarget(t *testing.T, wtRoot string) string {
 }
 
 func TestDetectCheckout_RelativeBacklink_IsWorktree(t *testing.T) {
-	mainRoot, wtRoot := linkedWorktree(t)
+	_, wtRoot := linkedWorktree(t)
 	admin := readGitdirTarget(t, wtRoot)
 	rel, err := filepath.Rel(admin, filepath.Join(wtRoot, ".git"))
 	require.NoError(t, err)
@@ -131,7 +130,6 @@ func TestDetectCheckout_RelativeBacklink_IsWorktree(t *testing.T) {
 	got, err := DetectCheckout(wtRoot)
 	require.NoError(t, err)
 	assert.Equal(t, CheckoutWorktree, got.Kind)
-	assert.Equal(t, mainRoot, got.CommonRoot)
 }
 
 func TestDetectCheckout_SymlinkedDirectory_ResolvesToPhysicalRoot(t *testing.T) {

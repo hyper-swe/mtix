@@ -304,18 +304,23 @@ func gitVarint(b []byte) (value uint64, used int, ok bool) {
 // judge applies the store tests to one entry path: the store directory and
 // anything in it, an entry at a parent of the store (a symlink or gitlink
 // replaces the directory), and sparse directory entries that cover either.
-func (w *entryWalker) judge(name string, mode uint32) error {
-	dir := path.Dir(w.store) + "/"
+//
+// Names compare case-insensitively: on a case-insensitive filesystem an entry
+// .MTIX/data/mtix.db is this store, and over-reporting is the safe direction.
+func (w *entryWalker) judge(rawName string, mode uint32) error {
+	name := strings.ToLower(rawName)
+	store := strings.ToLower(w.store)
+	dir := path.Dir(store) + "/"
 	if mode&0o170000 == modeSparseDir && strings.HasSuffix(name, "/") {
-		if strings.HasPrefix(w.store, name) || strings.HasPrefix(name, dir) {
+		if strings.HasPrefix(store, name) || strings.HasPrefix(name, dir) {
 			return unsupported(CauseSparse, "sparse directory %s covers the store", name)
 		}
 		return nil
 	}
 	switch {
-	case name == w.store || strings.HasPrefix(name, dir):
+	case name == store || strings.HasPrefix(name, dir):
 		w.tracked = TrackedStore
-	case w.tracked == TrackedNone && strings.HasPrefix(w.store, name+"/"):
+	case w.tracked == TrackedNone && strings.HasPrefix(store, name+"/"):
 		w.tracked = TrackedAncestor
 	}
 	return nil

@@ -126,6 +126,22 @@ func TestOpenPiWaitBoard_NoResolvedStore_FailsWithoutSearching(t *testing.T) {
 	assert.Nil(t, closeStore)
 }
 
+// legacyBoardCheckout lists a git checkout whose store has no instance id.
+func legacyBoardCheckout(t *testing.T, st *oplocal.State) string {
+	t.Helper()
+	root := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(root, ".git"), 0o755))
+	dataDir := filepath.Join(root, ".mtix", "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	store, err := sqlite.New(dataDir, slog.Default())
+	require.NoError(t, err)
+	_, err = store.WriteDB().ExecContext(t.Context(), "DELETE FROM meta WHERE key='store_instance_id'")
+	require.NoError(t, err)
+	require.NoError(t, store.Close())
+	require.NoError(t, st.ListBoard(t.Context(), "11111111-1111-4111-8111-111111111111", root))
+	return root
+}
+
 // A legacy board (no instance id) has no routing identity: its queue is left
 // alone, with no drain and no alert.
 func TestGlue_ListedLegacyBoard_SessionStartLeavesQueueAlone(t *testing.T) {

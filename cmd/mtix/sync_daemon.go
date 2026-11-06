@@ -124,16 +124,17 @@ func runSyncDaemon(ctx context.Context, stdout, stderr io.Writer,
 	// Same FR-21 §6.6 ordering as `mtix daemon`: publish → ingest →
 	// dispatch, so a hub-and-relay peer converges on both transports in
 	// one pass.
-	pullThenDispatch := func() {
+	pullThenDispatch := func() daemonPullOutcome {
 		drainPendingMirror(ctx, stderr)
-		runOneDaemonPull(ctx, stderr, args, opts)
+		outcome := runOneDaemonPull(ctx, stderr, args, opts)
 		maybeRunRelayPhase(ctx, stderr)
 		if dispatchHooks && app.hooksDisp != nil {
 			app.hooksDisp.Dispatch(ctx)
 		}
+		return outcome
 	}
 
-	return runDaemonPassLoop(ctx, stdout, stderr, daemonLoopPlan{label: "mtix sync daemon", interval: intervalSec, pass: func(bool) { pullThenDispatch() }, controls: control})
+	return runDaemonPassLoop(ctx, stdout, stderr, daemonLoopPlan{label: "mtix sync daemon", interval: intervalSec, pass: func(bool) daemonPullOutcome { return pullThenDispatch() }, controls: control})
 }
 
 // syncDaemonPreflight holds the checks mtix sync daemon makes before it
@@ -154,19 +155,28 @@ func syncDaemonPreflight(stderr io.Writer, args []string) error {
 	return nil
 }
 
-// runOneDaemonPull invokes the same logic as `mtix sync pull` once.
-// Errors are logged but never returned — the daemon survives
-// transient hub outages.
-func runOneDaemonPull(ctx context.Context, stderr io.Writer,
-	args []string, opts transport.Options,
-) {
+// daemonPullControl observes transport and reports under exchange ownership (MTIX-112.20.7).
+type daemonPullControl struct {
+	onConnect func(context.Context)
+	onOutcome func(daemonPullOutcome)
+}
+
+// runOneDaemonPull retains the existing 60s bound and nonfatal logging (MTIX-112.20.7).
+func runOneDaemonPull(ctx context.Context, stderr io.Writer, args []string, opts transport.Options,
+	control ...daemonPullControl,
+) daemonPullOutcome {
 	pullCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	// Discard stdout for daemon pulls; only the parent stderr gets
-	// the per-batch progress line via wrapSyncErr in pull's path.
-	if err := runSyncPull(pullCtx, io.Discard, stderr, args, opts, pullDefaultBatchSize); err != nil {
-		fmt.Fprintf(stderr, "mtix sync daemon: pull error (will retry): %s\n", err)
+	req := syncPullInput{stdout: io.Discard, stderr: stderr, args: args, opts: opts, limit: pullDefaultBatchSize}
+	if len(control) > 0 {
+		req.onConnect = control[0].onConnect
+		req.onOutcome = control[0].onOutcome
 	}
+	outcome, err := executeSyncPull(pullCtx, req)
+	if err != nil {
+		fmt.Fprintf(stderr, "mtix sync daemon: pull error (will retry): %s\n", scrubSyncText(err.Error()))
+	}
+	return outcome
 }
 
 // daemonPIDFileLive is a read-only diagnostic liveness probe. It grants no

@@ -79,9 +79,10 @@ func (l ListenLease) Expired(now time.Time) bool {
 
 // HubContact is the outcome of the most recent scheduled hub contact.
 type HubContact struct {
-	At    time.Time `json:"at"`
-	Route string    `json:"route"`
-	OK    bool      `json:"ok"`
+	At         time.Time `json:"at"`
+	Route      string    `json:"route"`
+	OK         bool      `json:"ok"`
+	ErrorClass string    `json:"error_class,omitempty"`
 }
 
 // BoardKey derives the stable per-board record key from the board's .mtix
@@ -154,7 +155,7 @@ func (s *State) RecordHubContact(key string, c HubContact) error {
 	if err != nil {
 		return err
 	}
-	return s.WriteJSON(name, c)
+	return s.WriteJSON(name, safeHubContact(c))
 }
 
 // ReadHubContact returns the latest scheduled contact; absent means none.
@@ -168,7 +169,7 @@ func (s *State) ReadHubContact(key string) (HubContact, bool, error) {
 	if err != nil || len(reports) != 0 || c.At.IsZero() {
 		return HubContact{}, false, err
 	}
-	return c, true, nil
+	return safeHubContact(c), true, nil
 }
 
 func leaseName(key string, pid int) (string, error) {

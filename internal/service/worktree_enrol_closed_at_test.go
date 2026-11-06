@@ -12,8 +12,8 @@ import (
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
-// closed_at is a replication gap (MTIX-112.17.16.15): a fully pushed rerun
-// leaves closed_at set on the store row while the clone has none. It is
+// Events from before MTIX-112.17.16.15 omit closed_at: a fully pushed rerun
+// can leave closed_at set on the store row while the clone has none. It is
 // normalized only when the status matches on both sides (MTIX-112.17.16.18,
 // ruling r3 point 1); a status difference keeps it a difference.
 func TestCompareBoardDocs_ClosedAt_SameStatus_IsNoDifference(t *testing.T) {

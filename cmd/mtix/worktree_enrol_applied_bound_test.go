@@ -230,9 +230,9 @@ func TestEnrolWorktree_RealPath_LateHubEditBelowTheCursor_IsTreatedAsLocal(t *te
 }
 
 // TestEnrolWorktree_RealPath_AddressedComment_FullyPushed_Enrols: an addressed
-// comment pushed to the hub arrives on a clone without its addressee; the
-// addressee is in the normalized set, so the board enrols. The comment's author,
-// text and place in the order still compare.
+// comment pushed to the hub preserves its addressee on a clone. Events from
+// before MTIX-112.17.16.15 lacked it and still use the addressee exclusion.
+// The comment's author, text and place in the order still compare.
 func TestEnrolWorktree_RealPath_AddressedComment_FullyPushed_Enrols(t *testing.T) {
 	ctx := context.Background()
 	root, writer, hubEvents := worktreeWith(t, func(ctx context.Context, st *sqlite.Store) {
@@ -254,24 +254,45 @@ func TestEnrolWorktree_RealPath_AddressedComment_FullyPushed_Enrols(t *testing.T
 	assert.True(t, *recorded)
 }
 
-// TestEnrolWorktree_RealPath_ResolvedComment_StaysARealDifference: a comment
-// resolved locally does not reach a clone, and a resolved flag is board content:
-// the board refuses and the report names the field.
-func TestEnrolWorktree_RealPath_ResolvedComment_StaysARealDifference(t *testing.T) {
-	ctx := context.Background()
-	root, writer, hubEvents := worktreeWith(t, func(ctx context.Context, st *sqlite.Store) {
-		require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-2", "", 0, 2, "commented")))
-		require.NoError(t, st.AppendAnnotation(ctx, "TEST-2", model.Annotation{ID: "c1", Author: "lane", Text: "x", CreatedAt: mustTime(t, "2026-06-02T00:00:00Z")}))
-		require.NoError(t, st.ResolveAnnotation(ctx, "TEST-2", "c1", true))
-	})
-	require.NoError(t, writer.Close())
-	svc, _ := enrolOverHub(fakeDial(hubOf(hubEvents)))
+// TestEnrolWorktree_RealPath_ResolvedComment_PushedEnrols_OtherwiseRefuses:
+// current pushed resolutions reach a clone. An unjournaled local resolution or
+// a resolution from before MTIX-112.17.16.15 still differs on annotations.
+func TestEnrolWorktree_RealPath_ResolvedComment_PushedEnrols_OtherwiseRefuses(t *testing.T) {
+	for _, mode := range []string{"pushed", "unpushed local state", "pre-.15 events"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx := context.Background()
+			root, writer, hubEvents := worktreeWith(t, func(ctx context.Context, st *sqlite.Store) {
+				require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-2", "", 0, 2, "commented")))
+				require.NoError(t, st.AppendAnnotation(ctx, "TEST-2", model.Annotation{ID: "c1", Author: "lane", Text: "x", CreatedAt: mustTime(t, "2026-06-02T00:00:00Z")}))
+				if mode != "unpushed local state" {
+					require.NoError(t, st.ResolveAnnotation(ctx, "TEST-2", "c1", true))
+				}
+			})
+			if mode == "unpushed local state" {
+				// An import can change the row without a corresponding hub event.
+				_, err := writer.WriteDB().ExecContext(ctx, `UPDATE nodes SET annotations = json_set(annotations, '$[0].resolved', json('true')) WHERE id = 'TEST-2'`)
+				require.NoError(t, err)
+				writeBoardFromStore(t, root, writer)
+			}
+			if mode == "pre-.15 events" {
+				hubEvents = preReplicatedFieldsEvents(t, hubEvents)
+			}
+			require.NoError(t, writer.Close())
+			svc, recorded := enrolOverHub(fakeDial(hubOf(hubEvents)))
 
-	_, err := svc.EnrolWorktree(ctx, enrolRequest(root))
+			_, err := svc.EnrolWorktree(ctx, enrolRequest(root))
 
-	var refusal *service.WorktreeBoardError
-	require.ErrorAs(t, err, &refusal)
-	assert.Contains(t, refusal.Diff["TEST-2"], "annotations")
+			if mode == "pushed" {
+				require.NoError(t, err)
+				assert.True(t, *recorded)
+				return
+			}
+			var refusal *service.WorktreeBoardError
+			require.ErrorAs(t, err, &refusal)
+			assert.Contains(t, refusal.Diff["TEST-2"], "annotations")
+			assert.False(t, *recorded)
+		})
+	}
 }
 
 // TestEnrolWorktree_RealPath_AgentOnlyInTheBoardFile_NoExclusionExcuses: tasks.json

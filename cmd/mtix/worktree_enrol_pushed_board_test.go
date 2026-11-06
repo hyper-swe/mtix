@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -110,13 +111,14 @@ func TestEnrolWorktree_RealPath_FullyPushedBoard_Enrols(t *testing.T) {
 }
 
 // TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference: on the same
-// pushed board the unfiltered comparison of the store with its bounded clone
-// differs on every excluded field, so each entry of the set is needed, and the
-// set hides all of it.
+// pushed board with events from before MTIX-112.17.16.15, the unfiltered
+// comparison of the store with its bounded clone differs on every excluded
+// field, so each entry of the set is needed, and the set hides all of it.
 func TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference(t *testing.T) {
 	ctx := context.Background()
 	root, writer, hubEvents := worktreeWith(t, func(ctx context.Context, st *sqlite.Store) { pushedWork(ctx, t, st) })
 	require.NoError(t, writer.Close())
+	hubEvents = preReplicatedFieldsEvents(t, hubEvents)
 	hub := hubOf(hubEvents)
 	var local, clone []byte
 	require.NoError(t, withScratch(slog.Default(), root, func(scratch string) error {
@@ -203,4 +205,23 @@ func assertNothingChangedExceptReport(t *testing.T, root string, storeBefore map
 	assert.Equal(t, board, fileBytes(t, boardFilePath(root)))
 	_, statErr := os.Lstat(filepath.Join(root, ".mtix", "enroll.d", "in-progress.json"))
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+// preReplicatedFieldsEvents models the wire shape before MTIX-112.17.16.15.
+// Copy events so the original journal fixtures retain their current payloads.
+func preReplicatedFieldsEvents(t *testing.T, events []*model.SyncEvent) []*model.SyncEvent {
+	t.Helper()
+	out := make([]*model.SyncEvent, 0, len(events))
+	for _, event := range events {
+		var payload map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(event.Payload, &payload))
+		delete(payload, "annotation")
+		delete(payload, "closed_at")
+		copied := *event
+		var err error
+		copied.Payload, err = json.Marshal(payload)
+		require.NoError(t, err)
+		out = append(out, &copied)
+	}
+	return out
 }

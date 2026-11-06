@@ -56,7 +56,7 @@ func TestCloneFloor_DiscardWhileWaitingForWriter_UsesCurrentTail(t *testing.T) {
 	waits := app.store.WriteDB().Stats().WaitCount
 	done := make(chan struct{})
 	var stderr bytes.Buffer
-	go func() { defer close(done); initCloneHookFloor(ctx, &stderr, false) }()
+	go func() { defer close(done); initCloneHookFloor(ctx, &stderr) }()
 	defer func() { release(); <-done }()
 	require.Eventually(t, func() bool { return app.store.WriteDB().Stats().WaitCount > waits }, 5*time.Second, time.Millisecond)
 	require.NoError(t, sqlite.DiscardLocal(ctx, other, app.mtixDir))

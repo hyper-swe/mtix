@@ -9,6 +9,23 @@ import (
 	"fmt"
 )
 
+// initHookScanFloorAtTailTx lets clone seed floors in the batch transaction,
+// using the same writer snapshot and claim clamp as first-fill initialization.
+func initHookScanFloorAtTailTx(ctx context.Context, tx *sql.Tx, seedWakes bool) error {
+	var tail int64
+	// Tail observation and every floor write share this writer transaction.
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(rowid),0) FROM sync_events`).Scan(&tail); err != nil {
+		return err
+	}
+	if err := advanceHookScanFloorTx(ctx, tx, tail); err != nil {
+		return err
+	}
+	if !seedWakes {
+		return nil
+	}
+	return seedWakeProgressAtTailTx(ctx, tx, tail)
+}
+
 // seedWakeProgressAtTailTx shares the hook bootstrap writer snapshot (FR-20,
 // MTIX-112.2.2.1). Only existing below-tail progress rises; unread history stays
 // in the inbox, and holds, epochs, dirty leases, ownership and budgets stay intact.

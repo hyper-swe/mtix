@@ -148,21 +148,15 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 		return wrapSyncErr(stderr, stage, err)
 	}
 
-	initCloneHookFloor(ctx, stderr, !hasEvents)
+	initCloneHookFloor(ctx, stderr)
 	return finishClone(ctx, stdout, stderr, pulled, batches)
 }
 
 // initCloneHookFloor retains the hook floor on every completed clone (FR-20 §8).
-// Only an empty starting journal also seeds automatic wake progress; a nonempty
-// resume preserves unread mail eligibility (MTIX-112.2.2.1.3).
-func initCloneHookFloor(ctx context.Context, stderr io.Writer, bootstrap bool) {
-	var err error
-	if bootstrap {
-		err = app.store.InitHookScanFloorAtTail(ctx)
-	} else {
-		err = app.store.InitHookOnlyScanFloorAtTail(ctx)
-	}
-	if err != nil {
+// Automatic floors were seeded with verified batches; completion must not cover
+// fresh local mail appended after the last batch (MTIX-112.2.2.1.4).
+func initCloneHookFloor(ctx context.Context, stderr io.Writer) {
+	if err := app.store.InitHookOnlyScanFloorAtTail(ctx); err != nil {
 		warnSync(stderr, "mtix sync clone: hook floor init", err)
 	}
 }
@@ -218,12 +212,12 @@ func cloneLoop(ctx context.Context, stderr io.Writer,
 	}
 	// An event quarantined as an orphan whose task's creation came later in
 	// this clone applies now and leaves the quarantine (MTIX-95.37.1).
-	retried, err := retryQuarantinedEvents(ctx, newPullIngest(io.Discard), store, batchSize)
+	retried, err := retryCloneQuarantinedEvents(ctx, store, batchSize)
 	if err != nil {
 		return totalPulled, batches, fmt.Errorf("quarantine retry: %w", err)
 	}
 	totalPulled += retried.applied
-	if err := store.WithTx(ctx, func(tx *sql.Tx) error { return writePullCursor(ctx, tx, page.at) }); err != nil {
+	if err := finishClonePullCursor(ctx, store, page.at); err != nil {
 		return totalPulled, batches, fmt.Errorf("pull cursor write: %w", err)
 	}
 	return totalPulled, batches, nil
@@ -254,7 +248,7 @@ func applyBatchReport(ctx context.Context, in pullIngest, store *sqlite.Store, e
 		in.apply = store.IdempotentApply
 	}
 	var orphans []cloneHeld
-	err := store.WithTx(ctx, func(tx *sql.Tx) error {
+	err := store.WithCloneWakeBootstrap(ctx, func(tx *sql.Tx) error {
 		orphans = nil
 		for _, e := range events {
 			local, err := sqlite.LocalLamport(ctx, tx)

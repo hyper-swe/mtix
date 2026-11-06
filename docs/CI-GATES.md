@@ -49,16 +49,16 @@ macOS job is red. The script runs in two places.
    immediately before EVERY merge (merge train and admin merges alike). The
    command runs the copy of the script and its expected-job list on
    `origin/main` as fetched at merge time, never the PR branch's or a stale
-   local copy, from any checkout of the repository (replace `<PR>`):
+   local copy, from the repository root (replace `<PR>`):
 
    <!-- merge-gate-command -->
    ```
-   ( git fetch origin main && d=$(mktemp -d) &&
-     git archive origin/main scripts/main-macos-health.sh scripts/main-macos-expected-jobs.txt | tar -x -C "$d" &&
+   ( d=; git fetch origin main && d=$(mktemp -d) &&
+     git archive FETCH_HEAD scripts/main-macos-health.sh scripts/main-macos-expected-jobs.txt | tar -x -C "$d" &&
      GITHUB_REPOSITORY=hyper-swe/mtix PR_LABELS="$(gh pr view <PR> --json labels --jq '[.labels[].name]')" \
        bash "$d/scripts/main-macos-health.sh"; rc=$?
-     rm -f "$d/scripts/main-macos-health.sh" "$d/scripts/main-macos-expected-jobs.txt"
-     rmdir "$d/scripts" "$d"; exit "$rc" )
+     if [ -n "$d" ]; then rm -f "$d/scripts/main-macos-health.sh" "$d/scripts/main-macos-expected-jobs.txt"
+       rmdir "$d/scripts" "$d"; fi; exit "$rc" )
    ```
 
    Exit 0 is the only go. A red, unknown or failing result (non-zero exit, API

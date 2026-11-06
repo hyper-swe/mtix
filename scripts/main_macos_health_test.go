@@ -130,7 +130,10 @@ func runHealth(t *testing.T, files map[string]string, labels string, args ...str
 		_ = cmd.Process.Kill()
 		t.Fatal("main-macos-health.sh hung")
 	}
-	reqs, _ := os.ReadFile(filepath.Join(fix, "requests.log"))
+	reqs, reqErr := os.ReadFile(filepath.Join(fix, "requests.log"))
+	if reqErr != nil {
+		require.ErrorIs(t, reqErr, os.ErrNotExist, "a failed read must not look like no requests")
+	}
 	left, readErr := os.ReadDir(tmp)
 	require.NoError(t, readErr)
 	return hResult{string(out), err, string(reqs), len(left)}
@@ -187,6 +190,11 @@ func healthCases() []healthCase {
 		{"jobs of two attempts: green re-run beside a red attempt 1 row", map[string]string{"runs.json": hRuns(push("12", "completed", "success", 2)), "jobs-12-a2.json": hJobsAttempt(red, 1) + hJobsAttempt(green, 2)}, true, "judged main run 12", "12", ""},
 		{"jobs of two attempts: red re-run beside a green attempt 1 row", map[string]string{"runs.json": hRuns(push("12", "completed", "failure", 2)), "jobs-12-a2.json": hJobsAttempt(green, 1) + hJobsAttempt(red, 2)}, false, "=failure", "12", ""},
 		{"cancelled re-run with its own failed job is red even over a green attempt 1", map[string]string{"runs.json": hRuns(push("12", "completed", "cancelled", 2)), "jobs-12-a2.json": red, "jobs-12-a1.json": green}, false, "run 12 (cancelled re-run)", "12", ""},
+		{"dedupe: higher attempt rows listed first, green re-run", map[string]string{"runs.json": hRuns(push("12", "completed", "success", 2)), "jobs-12-a2.json": hJobsAttempt(green, 2) + hJobsAttempt(red, 1)}, true, "judged main run 12", "12", ""},
+		{"dedupe: higher attempt rows listed first, red re-run", map[string]string{"runs.json": hRuns(push("12", "completed", "failure", 2)), "jobs-12-a2.json": hJobsAttempt(red, 2) + hJobsAttempt(green, 1)}, false, "=failure", "12", ""},
+		{"walk: failure plus cancelled in attempt 2 is red over green attempt 1", map[string]string{"runs.json": hRuns(push("12", "in_progress", "", 3)), "jobs-12-a2.json": hJobs(map[string]string{healthExpected[1]: "cancelled", healthExpected[3]: "failure"}), "jobs-12-a1.json": green}, false, "=failure", "12", ""},
+		{"walk: missing job in attempt 2 is red over green attempt 1", map[string]string{"runs.json": hRuns(push("12", "in_progress", "", 3)), "jobs-12-a2.json": hJobs(nil, healthExpected[6]), "jobs-12-a1.json": green}, false, "missing expected macOS jobs", "12", ""},
+		{"walk: skipped job in attempt 2 is red over green attempt 1", map[string]string{"runs.json": hRuns(push("12", "in_progress", "", 3)), "jobs-12-a2.json": hJobs(map[string]string{healthExpected[1]: "skipped"}), "jobs-12-a1.json": green}, false, "=skipped", "12", ""},
 		{"garbage runs fails closed", map[string]string{"runs.json": `not json`}, false, "cannot read main CI state", "", ""},
 		{"empty runs fails closed", map[string]string{"runs.json": ``}, false, "cannot read main CI state", "", ""},
 		{"null workflow_runs fails closed", map[string]string{"runs.json": `{"workflow_runs":null}`}, false, "cannot read main CI state", "", ""},
@@ -279,11 +287,9 @@ func TestMainMacOSHealth_ExpectedList_MissingOrEmptyFailsClosed(t *testing.T) {
 	}
 }
 
-// TestMainMacOSHealth_MergeCommand_RunsThePinnedMainCopy executes the exact
-// merge-time command from docs/CI-GATES.md in a clone whose working tree holds
-// a hostile script that exits 0: the command must still judge origin/main's
-// copy, so a red main blocks.
-func TestMainMacOSHealth_MergeCommand_RunsThePinnedMainCopy(t *testing.T) {
+// mergeGate extracts the exact merge-time command from docs/CI-GATES.md.
+func mergeGate(t *testing.T) string {
+	t.Helper()
 	doc, err := os.ReadFile("../docs/CI-GATES.md")
 	require.NoError(t, err)
 	_, after, ok := strings.Cut(string(doc), "<!-- merge-gate-command -->")
@@ -297,35 +303,120 @@ func TestMainMacOSHealth_MergeCommand_RunsThePinnedMainCopy(t *testing.T) {
 	}
 	command := strings.Join(lines, "\n")
 	require.NotContains(t, command, "$PWD")
-	command = strings.ReplaceAll(command, "<PR>", "1")
+	return strings.ReplaceAll(command, "<PR>", "1")
+}
 
-	origin, clone := t.TempDir(), filepath.Join(t.TempDir(), "clone")
-	script, err := os.ReadFile("main-macos-health.sh")
-	require.NoError(t, err)
+func mergeGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	c := exec.Command("git", args...)
+	c.Dir = dir
+	c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	out, err := c.CombinedOutput()
+	require.NoError(t, err, string(out))
+}
+
+// mergeCommit writes the gate script and the expected list into repo and commits.
+func mergeCommit(t *testing.T, repo, script string) {
+	t.Helper()
 	list, err := os.ReadFile("main-macos-expected-jobs.txt")
 	require.NoError(t, err)
-	gitRun := func(dir string, args ...string) {
-		c := exec.Command("git", args...)
-		c.Dir = dir
-		c.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
-		out, runErr := c.CombinedOutput()
-		require.NoError(t, runErr, string(out))
-	}
-	gitRun(origin, "init", "-q", "-b", "main")
-	require.NoError(t, os.MkdirAll(filepath.Join(origin, "scripts"), 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(origin, "scripts", "main-macos-health.sh"), script, 0o700))
-	require.NoError(t, os.WriteFile(filepath.Join(origin, "scripts", "main-macos-expected-jobs.txt"), list, 0o600))
-	gitRun(origin, "add", "-A")
-	gitRun(origin, "commit", "-q", "-m", "main")
-	gitRun(filepath.Dir(clone), "clone", "-q", origin, clone)
-	require.NoError(t, os.WriteFile(filepath.Join(clone, "scripts", "main-macos-health.sh"), []byte("#!/bin/bash\nexit 0\n"), 0o700))
+	require.NoError(t, os.MkdirAll(filepath.Join(repo, "scripts"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "scripts", "main-macos-health.sh"), []byte(script), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(repo, "scripts", "main-macos-expected-jobs.txt"), list, 0o600))
+	mergeGit(t, repo, "add", "-A")
+	mergeGit(t, repo, "commit", "-q", "-m", "c")
+}
 
-	red := hJobs(map[string]string{"test-go-cmd (macos-latest, shard 3)": "failure"})
+// mergeRun runs the merge command in dir with a stub gh and extra environment.
+func mergeRun(t *testing.T, dir string, env ...string) (string, error) {
+	t.Helper()
 	fix, bin := t.TempDir(), t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(bin, "gh"), []byte(healthStub), 0o700))
+	cmd := exec.Command("bash", "-c", mergeGate(t))
+	cmd.Dir = dir
+	cmd.Env = append(append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "FIX="+fix), env...)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+const (
+	stalePin = "#!/bin/bash\necho STALECOPY\nexit 0\n"
+	freshPin = "#!/bin/bash\necho FRESHCOPY\nexit 3\n"
+	hostile  = "#!/bin/bash\necho HOSTILECOPY\nexit 0\n"
+)
+
+// mergeSetup builds origin (stale script), a clone, then moves origin to the
+// fresh script and leaves the clone on a branch that commits a hostile one.
+func mergeSetup(t *testing.T) (origin, clone string) {
+	t.Helper()
+	origin, clone = t.TempDir(), filepath.Join(t.TempDir(), "clone")
+	mergeGit(t, origin, "init", "-q", "-b", "main")
+	mergeCommit(t, origin, stalePin)
+	mergeGit(t, filepath.Dir(clone), "clone", "-q", origin, clone)
+	mergeCommit(t, origin, freshPin)
+	mergeGit(t, clone, "checkout", "-q", "-b", "pr")
+	mergeCommit(t, clone, hostile)
+	return origin, clone
+}
+
+// TestMainMacOSHealth_MergeCommand_RunsMainAsFetchedAtMergeTime executes the
+// exact command from docs/CI-GATES.md in a clone whose local origin/main is
+// stale and whose checked out branch commits a hostile script that exits 0:
+// the command must fetch and run origin's current copy.
+func TestMainMacOSHealth_MergeCommand_RunsMainAsFetchedAtMergeTime(t *testing.T) {
+	_, clone := mergeSetup(t)
+	out, err := mergeRun(t, clone)
+	require.Error(t, err, out)
+	require.Contains(t, out, "FRESHCOPY")
+	require.NotContains(t, out, "STALECOPY")
+	require.NotContains(t, out, "HOSTILECOPY")
+}
+
+func TestMainMacOSHealth_MergeCommand_NarrowedRefspecStillRunsFreshMain(t *testing.T) {
+	_, clone := mergeSetup(t)
+	mergeGit(t, clone, "config", "remote.origin.fetch", "+refs/heads/other:refs/remotes/origin/other")
+	out, err := mergeRun(t, clone)
+	require.Error(t, err, out)
+	require.Contains(t, out, "FRESHCOPY")
+	require.NotContains(t, out, "STALECOPY")
+}
+
+func TestMainMacOSHealth_MergeCommand_FailedFetchRunsNothingAndDeletesNothing(t *testing.T) {
+	origin, clone := mergeSetup(t)
+	mergeGit(t, clone, "fetch", "-q", "origin", "main") // leaves a usable FETCH_HEAD behind
+	mergeGit(t, clone, "remote", "set-url", "origin", filepath.Join(origin, "gone"))
+	keep := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(keep, "scripts"), 0o700))
+	sentinel := filepath.Join(keep, "scripts", "main-macos-health.sh")
+	require.NoError(t, os.WriteFile(sentinel, []byte("sentinel"), 0o600))
+	out, err := mergeRun(t, clone, "d="+keep)
+	require.Error(t, err, out)
+	for _, marker := range []string{"STALECOPY", "FRESHCOPY", "HOSTILECOPY"} {
+		require.NotContains(t, out, marker)
+	}
+	require.FileExists(t, sentinel, "a failed fetch must not clean up a caller's directory")
+	// A failed fetch must leave no ref to archive: the earlier successful fetch's FETCH_HEAD is gone.
+	probe := exec.Command("git", "rev-parse", "-q", "--verify", "FETCH_HEAD")
+	probe.Dir = clone
+	require.Error(t, probe.Run(), "a failed fetch must not leave a usable FETCH_HEAD")
+}
+
+// TestMainMacOSHealth_MergeCommand_RealScriptBlocksARedMain runs the real
+// script through the command from a clone holding a hostile working copy.
+func TestMainMacOSHealth_MergeCommand_RealScriptBlocksARedMain(t *testing.T) {
+	script, err := os.ReadFile("main-macos-health.sh")
+	require.NoError(t, err)
+	origin, clone := t.TempDir(), filepath.Join(t.TempDir(), "clone")
+	mergeGit(t, origin, "init", "-q", "-b", "main")
+	mergeCommit(t, origin, string(script))
+	mergeGit(t, filepath.Dir(clone), "clone", "-q", origin, clone)
+	require.NoError(t, os.WriteFile(filepath.Join(clone, "scripts", "main-macos-health.sh"), []byte(hostile), 0o700))
+	fix, bin := t.TempDir(), t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(bin, "gh"), []byte(healthStub), 0o700))
+	red := hJobs(map[string]string{"test-go-cmd (macos-latest, shard 3)": "failure"})
 	require.NoError(t, os.WriteFile(filepath.Join(fix, "runs.json"), []byte(hRuns(hRun{"11", "push", "completed", "failure", 1})), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(fix, "jobs-11-a1.json"), []byte(red), 0o600))
-	cmd := exec.Command("bash", "-c", command)
+	cmd := exec.Command("bash", "-c", mergeGate(t))
 	cmd.Dir = clone
 	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "FIX="+fix)
 	out, runErr := cmd.CombinedOutput()

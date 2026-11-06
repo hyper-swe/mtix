@@ -21,6 +21,10 @@ import (
 // re-derive workflow state from the log, so ingest and repair cannot
 // disagree.
 //
+// New transition events additionally carry the author's stored closed_at.
+// That explicit value (including NULL) overrides table derivation; the
+// closed_at-on-the-originator residual below describes older events only.
+//
 // # Workflow events
 //
 // claim, unclaim, transition_status and defer. Together they write one
@@ -356,12 +360,13 @@ func lookupWorkflowRule(op model.OpType, from, to model.Status) (workflowRule, b
 // the table.
 type workflowInput struct {
 	op          model.OpType
-	from, to    model.Status // transition_status payload
-	agentID     string       // claim payload
-	deferUntil  *time.Time   // defer payload; nil means none
-	eventAt     time.Time    // the event's time: eventTime of its wall_clock_ts (MTIX-95.26)
-	updatedAt   string       // the caller's updated_at value (apply time)
-	localWinner bool         // status repair only: this replica emitted the event (MTIX-95.6)
+	from, to    model.Status    // transition_status payload
+	agentID     string          // claim payload
+	deferUntil  *time.Time      // defer payload; nil means none
+	eventAt     time.Time       // the event's time: eventTime of its wall_clock_ts (MTIX-95.26)
+	updatedAt   string          // the caller's updated_at value (apply time)
+	closedAt    *workflowColumn // carried completion state; nil for legacy events
+	localWinner bool            // status repair only: this replica emitted the event (MTIX-95.6)
 }
 
 // workflowColumn is one resolved column write: write says whether the column
@@ -409,13 +414,17 @@ func resolveWorkflowWrite(in workflowInput) (w workflowWrite, known bool) {
 	if in.localWinner && rule.to == model.StatusDeferred {
 		deferUntil = workflowColumn{} // keep this replica's own wake time
 	}
+	closedAt := resolveColumn(rule.closedAt, in.eventAt.UTC().Format(time.RFC3339))
+	if in.closedAt != nil {
+		closedAt = *in.closedAt
+	}
 	return workflowWrite{
 		status:         rule.to,
 		updatedAt:      in.updatedAt,
 		assignee:       resolveColumn(rule.assignee, in.agentID),
 		agentState:     resolveColumn(rule.agentState, string(model.AgentStateWorking)),
 		previousStatus: resolveColumn(rule.previousStatus, string(in.from)),
-		closedAt:       resolveColumn(rule.closedAt, in.eventAt.UTC().Format(time.RFC3339)),
+		closedAt:       closedAt,
 		progress:       resolveColumn(rule.progress, 1.0),
 		deferUntil:     deferUntil,
 	}, true

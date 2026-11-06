@@ -130,17 +130,11 @@ func (s *Store) SetAnnotations(ctx context.Context, nodeID string, annotations [
 			return nil
 		}
 
-		commentBody, commentAuthor, commentTo := newCommentForSyncEvent(prevJSON.String, annotations)
+		payload, eventAuthor := annotationPayload(prevJSON.String, annotations, commentMeta{})
 		return s.emitPayload(ctx, tx, emitParams{
-			NodeID:      nodeID,
-			ProjectCode: projectPrefixFromNodeID(nodeID),
-			OpType:      model.OpComment,
-			Author:      commentAuthor,
-		}, &model.CommentPayload{
-			AuthorID: commentAuthor,
-			Body:     commentBody,
-			To:       commentTo,
-		})
+			NodeID: nodeID, ProjectCode: projectPrefixFromNodeID(nodeID),
+			OpType: model.OpComment, Author: eventAuthor,
+		}, payload)
 	})
 }
 
@@ -188,17 +182,24 @@ func (s *Store) AppendAnnotation(ctx context.Context, nodeID string, annotation 
 //
 // Returns ErrNotFound if the node or the annotation does not exist.
 func (s *Store) ResolveAnnotation(ctx context.Context, nodeID, annotationID string, resolved bool) error {
-	return s.mutateAnnotations(ctx, nodeID, func(current []model.Annotation) ([]model.Annotation, error) {
+	err := s.mutateAnnotations(ctx, nodeID, func(current []model.Annotation) ([]model.Annotation, error) {
 		next := make([]model.Annotation, len(current))
 		copy(next, current)
 		for i := range next {
 			if next[i].ID == annotationID {
+				if next[i].Resolved == resolved {
+					return nil, errAnnotationAlreadyPresent
+				}
 				next[i].Resolved = resolved
 				return next, nil
 			}
 		}
 		return nil, fmt.Errorf("annotation %s on node %s: %w", format.EventID(annotationID), nodeID, model.ErrNotFound)
 	}, "", commentMeta{})
+	if errors.Is(err, errAnnotationAlreadyPresent) {
+		return nil
+	}
+	return err
 }
 
 // mutateAnnotations loads a node's annotations, applies change and stores the
@@ -249,14 +250,14 @@ func (s *Store) mutateAnnotations(ctx context.Context, nodeID string,
 			return fmt.Errorf("set annotations for %s: %w", nodeID, execErr)
 		}
 
-		body, author, to := newCommentForSyncEvent(prevJSON.String, next)
+		payload, eventAuthor := annotationPayload(prevJSON.String, next, meta)
 		return s.emitPayload(ctx, tx, emitParams{
 			NodeID:      nodeID,
 			ProjectCode: projectPrefixFromNodeID(nodeID),
 			OpType:      model.OpComment,
-			Author:      author,
+			Author:      eventAuthor,
 			EventID:     eventID,
-		}, &model.CommentPayload{AuthorID: author, Body: body, To: to, Hop: addressedStoredHop(to, meta.Hop), ReplyBy: addressedReplyBy(to, meta.ReplyBy)})
+		}, payload)
 	})
 }
 

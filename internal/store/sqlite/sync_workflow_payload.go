@@ -44,9 +44,10 @@ import (
 // workflowPayload is what the workflow payload rule reads from one event's
 // payload. Only the fields of the event's op are set.
 type workflowPayload struct {
-	from, to   model.Status // transition_status
-	agentID    string       // claim
-	deferUntil *time.Time   // defer; nil when the defer has no until
+	from, to   model.Status    // transition_status
+	agentID    string          // claim
+	deferUntil *time.Time      // defer; nil when the defer has no until
+	closedAt   *workflowColumn // nil for old events; otherwise the stored timestamp or NULL
 }
 
 // decodeWorkflowPayload applies the workflow payload rule to one workflow
@@ -63,7 +64,11 @@ func decodeWorkflowPayload(op model.OpType, payload []byte) (workflowPayload, er
 		if p.To == "" {
 			return workflowPayload{}, fmt.Errorf("%s payload has no to-status: %w", op, model.ErrInvalidInput)
 		}
-		return workflowPayload{from: p.From, to: p.To}, nil
+		closedAt, err := decodeClosedAtSnapshot(p.ClosedAt)
+		if err != nil {
+			return workflowPayload{}, malformedPayload(op, err)
+		}
+		return workflowPayload{from: p.From, to: p.To, closedAt: closedAt}, nil
 	case model.OpClaim:
 		var p model.ClaimPayload
 		if err := json.Unmarshal(payload, &p); err != nil {
@@ -105,7 +110,7 @@ func workflowInputForApply(e *model.SyncEvent, applyTime time.Time) (workflowInp
 		return workflowInput{}, false
 	}
 	return workflowInput{
-		op: e.OpType, from: p.from, to: p.to, agentID: p.agentID, deferUntil: p.deferUntil,
+		op: e.OpType, from: p.from, to: p.to, agentID: p.agentID, deferUntil: p.deferUntil, closedAt: p.closedAt,
 		eventAt: eventTime(e.WallClockTS, applyTime), updatedAt: applyTime.Format(time.RFC3339),
 	}, true
 }

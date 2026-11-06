@@ -6,6 +6,24 @@ description: "Set up, use, verify and recover the MTIX sync hub, the shared Post
 
 The hub is a Postgres database that you and your teammates' agents push task changes to and pull each other's changes from. Each machine keeps its own local store; the hub carries the event log between them. This skill is the full runbook: requirements, setup from zero, daily use, verification, troubleshooting and recovery. The short routine is in the managed SYNC section of `CLAUDE.md` and `AGENTS.md`.
 
+## Replicated annotation and workflow data
+
+New comment events carry the annotation identity, creation time, addressee and
+resolved state. Push then pull (or clone a fresh checkout) preserves these fields;
+resolving or unresolving updates the original annotation and does not deliver a
+second addressed message. Concurrent snapshots of one annotation use the largest
+Lamport clock, then event ID, so late delivery cannot undo a newer resolution.
+Exports retain the addressee and resolved state as real annotation data.
+
+New status-transition events carry the stored `closed_at`, including an explicit
+null. Rerun invalidation and reset therefore retain the same completion time as
+the source checkout instead of deriving a different value from the rerun event.
+Events without this optional metadata still apply with their legacy behavior.
+Older events that never recorded resolution or original annotation identity
+cannot reconstruct those missing values. Upgrade participating clients before
+relying on the new metadata; older readers ignore it. This change does not repair
+already-applied history or normalize away differences during verification.
+
 ## CLI read freshness
 
 CLI board reads retry a busy local sync lock briefly, with a total wait budget of

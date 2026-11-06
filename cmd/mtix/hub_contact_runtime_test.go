@@ -205,7 +205,7 @@ func TestBuildDaemonPass_ContactFalse_NoPullButLocalWorkRuns(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var drains, pulls, relays, dispatches int
 			pass := buildDaemonPass(tt.hub, daemonPassSteps{
-				drain: func() { drains++ }, pull: func() { pulls++ },
+				drain: func() { drains++ }, pull: func() daemonPullOutcome { pulls++; return daemonPullOutcome{attempted: true, ok: true} },
 				relay: func() { relays++ }, dispatch: func() { dispatches++ },
 			})
 			pass(tt.contact)
@@ -223,7 +223,7 @@ func TestRunScheduledPass_LockNotAcquired_DoesNotMarkContact(t *testing.T) {
 	sched := fixedScheduler(service.ContactInputs{
 		Mode: service.HubContactMode{Kind: service.HubContactActivity}, LastActivity: schedT0})
 	contacted, ran := 0, 0
-	plan := daemonLoopPlan{sched: sched, pass: func(bool) { ran++ }, onContact: func() { contacted++ }}
+	plan := daemonLoopPlan{sched: sched, pass: func(bool) daemonPullOutcome { ran++; return daemonPullOutcome{attempted: true, ok: true} }, onContact: func(daemonPullOutcome) { contacted++ }}
 	runScheduledPass(context.Background(), io.Discard, plan, daemonPassControl{})
 	require.Zero(t, ran, "the contended pass does no work")
 	require.Zero(t, contacted, "a pass that did not run must not count as a contact")

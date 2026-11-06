@@ -81,7 +81,11 @@ func doctorSyncRows(report DoctorReport) []service.DoctorResult {
 		if !strings.HasPrefix(id, "sync.") {
 			id = "sync." + id
 		}
-		rows = append(rows, service.DoctorResult{ID: id, Status: status, Detail: check.Detail, Fix: check.Fix})
+		row := service.DoctorResult{ID: id, Status: status, Detail: check.Detail, Fix: check.Fix}
+		if check.LastContact != nil {
+			row.Data = map[string]any{"last_contact": check.LastContact}
+		}
+		rows = append(rows, row)
 	}
 	return rows
 }

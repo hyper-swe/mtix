@@ -140,8 +140,8 @@ func (s *hubContactSource) liveLeaseList() ([]oplocal.ListenLease, error) {
 }
 
 // recordContact stores the outcome of one scheduled contact for doctor.
-func (s *hubContactSource) recordContact(at time.Time, route string) error {
-	if err := s.state.RecordHubContact(s.key(), oplocal.HubContact{At: at, Route: route, OK: true}); err != nil {
+func (s *hubContactSource) recordContact(at time.Time, route string, outcome daemonPullOutcome) error {
+	if err := s.state.RecordHubContact(s.key(), oplocal.HubContact{At: at, Route: route, OK: outcome.ok, ErrorClass: outcome.class}); err != nil {
 		return fmt.Errorf("record hub contact: %w", err)
 	}
 	return nil

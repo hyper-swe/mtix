@@ -145,12 +145,17 @@ func TestAttachVerbActivity_GlueOnlyForSessionStartAndPrompt(t *testing.T) {
 
 func TestRecordGlueActivity_RecordsForStartAndNothingForWait(t *testing.T) {
 	src := hubSourceFixture(t, "")
-	t.Chdir(filepath.Dir(src.mtixDir))
-	recordGlueActivity(attach.VerbWait)
+	t.Chdir(t.TempDir()) // the working directory is not where the board is: the resolved root is
+	root := filepath.Dir(src.mtixDir)
+	recordGlueActivity(attach.VerbWait, root)
 	_, present, err := src.state.ReadHubActivity(src.key())
 	require.NoError(t, err)
 	require.False(t, present, "the wait verb must record nothing")
-	recordGlueActivity(attach.VerbSessionStart)
+	recordGlueActivity(attach.VerbSessionStart, "")
+	_, present, err = src.state.ReadHubActivity(src.key())
+	require.NoError(t, err)
+	require.False(t, present, "no resolved store root means nothing is recorded, and no board is searched for")
+	recordGlueActivity(attach.VerbSessionStart, root)
 	got, present, err := src.state.ReadHubActivity(src.key())
 	require.NoError(t, err)
 	require.True(t, present)

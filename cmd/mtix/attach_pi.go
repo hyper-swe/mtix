@@ -50,13 +50,15 @@ func productionAttachAdapters() map[string]attach.Adapter {
 	return adapters
 }
 
-// openPiWaitBoard opens the board of the working directory without creating anything: a
-// directory with no initialized board is inert and the wait fails with one line.
-func openPiWaitBoard(context.Context) (service.PiWaitStore, func() error, error) {
-	mtixDir, err := findMtixDir()
-	if err != nil {
-		return nil, nil, fmt.Errorf("no mtix board here: %w", err)
+// openPiWaitBoard opens the store the glue predicate resolved and judged, without creating
+// anything. It never looks for a board of its own: a context without a resolved store
+// root fails with one line.
+func openPiWaitBoard(ctx context.Context) (service.PiWaitStore, func() error, error) {
+	root, ok := attach.StoreRootFrom(ctx)
+	if !ok {
+		return nil, nil, fmt.Errorf("no resolved mtix board for this wait")
 	}
+	mtixDir := filepath.Join(root, ".mtix")
 	dbDir := filepath.Join(mtixDir, "data")
 	if info, statErr := os.Stat(dbDir); statErr != nil || !info.IsDir() {
 		return nil, nil, fmt.Errorf("the board at %s has no data directory", mtixDir)

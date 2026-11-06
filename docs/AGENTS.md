@@ -233,7 +233,7 @@ This is the baseline standard for all PROJ work, aligned with DO-178C, IEC 62304
 
 ## Emergency Procedures
 
-Comments use `mtix_annotate` with `id`, `text`, and `author`; set `to` only when addressing another agent.
+Comments use `mtix_annotate` with `id`, `text`, and `author`; set `to` only when addressing another agent. The CLI equivalents are `mtix annotate <id> "<text>" --to <agent>` and `mtix comment <id> "<text>" --to <agent>`; both land in that agent's inbox (only `comment` takes `--await-reply`).
 
 ### Data Inconsistency Detected
 1. Run `mtix verify` to check content hash integrity

@@ -68,8 +68,8 @@ func TestStrict_KnownSlotBehindALinkChainPastTheLimitIsNotKnown(t *testing.T) {
 		require.Error(t, err, "the slot needs an approval, it is not pinned: %s", name)
 		// The program is refused before strict judgement: either reason is a
 		// refusal, and the link-expansion refusal is pinned on its own below.
-		require.Regexp(t, "strict program mode|exceeds the link expansion limit", err.Error())
-		require.Contains(t, err.Error(), "exceeds the link expansion limit", "refused for the right reason: %s", name)
+		require.Regexp(t, "strict program mode|could not be judged", err.Error())
+		require.Contains(t, err.Error(), "could not be judged", "refused for the right reason: %s", name)
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // All workflow emitters pass here, including raw callers and future callers.
@@ -21,7 +23,7 @@ func captureWorkflowSnapshot(ctx context.Context, tx *sql.Tx, p emitParams) (emi
 	fields := map[string]json.RawMessage{}
 	if len(p.Payload) > 0 {
 		if err := json.Unmarshal(p.Payload, &fields); err != nil {
-			return p, fmt.Errorf("decode emitted workflow payload: %w", err)
+			return p, fmt.Errorf("decode emitted workflow payload: %w: %w", err, model.ErrInvalidInput)
 		}
 	}
 	at, err := readClosedAtSnapshot(ctx, tx, p.NodeID)

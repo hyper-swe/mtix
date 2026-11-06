@@ -109,3 +109,27 @@ func TestReplicatedFieldsR2_EmptyIdentityRawEmitRollsBack(t *testing.T) {
 		})
 	}
 }
+
+func TestReplicatedFieldsR2_MalformedWorkflowEmitRollsBack(t *testing.T) {
+	for _, op := range model.AllOpTypes {
+		if !isWorkflowOp(op) {
+			continue
+		}
+		for _, raw := range []string{"[", "[]", "42"} {
+			t.Run(fmt.Sprint(op, raw), func(t *testing.T) {
+				s, db := applyTestStore(t)
+				require.NoError(t, applyOnce(t, s, makeApplyEvent(t, model.OpCreateNode, "MTIX-1", "author", 1, &model.CreateNodePayload{Title: "task"})))
+				count := countEvents(t, db)
+				err := s.WithTx(t.Context(), func(tx *sql.Tx) error {
+					if _, err := tx.Exec("UPDATE nodes SET title=? WHERE id=?", "must roll back", "MTIX-1"); err != nil {
+						return err
+					}
+					return emitEvent(t.Context(), tx, emitParams{NodeID: "MTIX-1", OpType: op, Payload: json.RawMessage(raw)})
+				})
+				require.ErrorIs(t, err, model.ErrInvalidInput)
+				require.Equal(t, "task", readNodeColumn(t, db, "MTIX-1", "title"))
+				require.Equal(t, count, countEvents(t, db))
+			})
+		}
+	}
+}

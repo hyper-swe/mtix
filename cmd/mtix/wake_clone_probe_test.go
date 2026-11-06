@@ -58,14 +58,31 @@ func TestInitCloneHookFloor_WriterFailure_WarnsForBothFloors(t *testing.T) {
 
 func TestInitCloneHookFloor_UnreadableTail_WarnsWithoutAdvancing(t *testing.T) {
 	initTestApp(t)
-	require.NoError(t, app.store.ReadDB().Close())
+	_, err := app.nodeSvc.CreateNode(t.Context(), &service.CreateNodeRequest{Project: "TEST", Title: "existing", Creator: "sender"})
+	require.NoError(t, err)
+	require.NoError(t, app.store.InitHookScanFloorAtTail(t.Context()))
+	_, err = app.store.WriteDB().ExecContext(t.Context(), `DROP TABLE sync_events`)
+	require.NoError(t, err)
 	var stderr bytes.Buffer
 	initCloneHookFloor(t.Context(), &stderr, false)
 	assert.Contains(t, stderr.String(), "mtix sync clone: hook floor init")
-	assert.Contains(t, stderr.String(), "journal tail")
-	assert.Contains(t, stderr.String(), "database is closed")
+	assert.Contains(t, stderr.String(), "no such table")
 	var floor int64
 	require.NoError(t, app.store.WriteDB().QueryRowContext(t.Context(),
 		`SELECT COALESCE(MAX(cursor),0) FROM hook_dispatch_cursor`).Scan(&floor))
-	assert.Zero(t, floor)
+	assert.Equal(t, int64(1), floor, "a failed writer-tail read must preserve the prior floor")
+}
+
+func TestInitCloneHookFloor_NonemptyUsesWriterSnapshot(t *testing.T) {
+	initTestApp(t)
+	_, err := app.nodeSvc.CreateNode(t.Context(), &service.CreateNodeRequest{Project: "TEST", Title: "existing", Creator: "sender"})
+	require.NoError(t, err)
+	require.NoError(t, app.store.ReadDB().Close())
+	var stderr bytes.Buffer
+	initCloneHookFloor(t.Context(), &stderr, false)
+	assert.Empty(t, stderr.String(), "hook floor initialization uses the writer snapshot even without a reader")
+	var floor int64
+	require.NoError(t, app.store.WriteDB().QueryRowContext(t.Context(),
+		`SELECT COALESCE(MAX(cursor),0) FROM hook_dispatch_cursor`).Scan(&floor))
+	assert.Equal(t, int64(1), floor)
 }

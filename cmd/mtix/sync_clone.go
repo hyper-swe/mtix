@@ -152,14 +152,21 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 	return finishClone(ctx, stdout, stderr, pulled, batches)
 }
 
-// initCloneHookFloor seeds shared progress only when this clone started with an
-// empty journal (FR-20 §8, MTIX-112.2.2.1.3). A nonempty resume must retain the
-// automatic eligibility of unread mail already present before the command.
+// initCloneHookFloor retains the hook floor on every completed clone (FR-20 §8).
+// Only an empty starting journal also seeds automatic wake progress; a nonempty
+// resume preserves unread mail eligibility (MTIX-112.2.2.1.3).
 func initCloneHookFloor(ctx context.Context, stderr io.Writer, bootstrap bool) {
-	if !bootstrap {
-		return
+	var err error
+	if bootstrap {
+		err = app.store.InitHookScanFloorAtTail(ctx)
+	} else {
+		var tail int64
+		tail, err = app.store.JournalTail(ctx)
+		if err == nil {
+			err = app.store.AdvanceHookScanFloorClamped(ctx, tail)
+		}
 	}
-	if err := app.store.InitHookScanFloorAtTail(ctx); err != nil {
+	if err != nil {
 		warnSync(stderr, "mtix sync clone: hook floor init", err)
 	}
 }

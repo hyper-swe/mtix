@@ -47,11 +47,12 @@ func restoreSalvageCoverage(ctx context.Context, db *sql.DB, records []salvageMa
 			unreadable++
 		}
 		if i, exists := positions[r.e.EventID]; exists {
+			res.InboxIncomplete = true
 			if !sameInboxContent(j.Events[i], r.e) {
 				res.Notes = append(res.Notes, "conflicting duplicate inbox identity omitted; first readable database copy retained")
 				continue
 			}
-			res.Notes = append(res.Notes, "duplicate inbox identity combined; acknowledgment coverage retained")
+			res.Notes = append(res.Notes, "duplicate inbox identity combined; acknowledgment coverage retained; journal incomplete, lost record count unknown")
 			if !j.Events[i].Acked && r.e.Acked {
 				j.Events[i].Acked, j.Events[i].AckedAt = true, r.e.AckedAt
 			}
@@ -66,22 +67,33 @@ func restoreSalvageCoverage(ctx context.Context, db *sql.DB, records []salvageMa
 	}
 }
 
-// salvageInboxAck reads coverage by source rowid and validates its time (FR-19.1, MTIX-112.2.1).
+// salvageInboxAck binds recipient coverage to the full source row (FR-19.1).
 func salvageInboxAck(ctx context.Context, db *sql.DB, event *inboxJournalEvent, seq int64) error {
-	// A damaged uniqueness index can leave duplicate IDs. Coverage belongs to
-	// the exact readable source row, whose sequence is never transported.
+	var point inboxJournalEvent
+	var pointSeq int64
+	var op string
+	var acked bool
+	var ackedAt string
+	// Read identity and coverage together; damaged rowid routing must never let
+	// one event borrow another event's selective acknowledgment or cursor coverage.
 	err := db.QueryRowContext(ctx, `SELECT
+ e.event_id,e.project_prefix,e.node_id,COALESCE(e.uid,''),e.author_id,e.payload,e.created_at,e.rowid,e.op_type,
  (k.event_seq IS NOT NULL OR e.rowid<=COALESCE(c.cursor,0)),COALESCE(k.acked_at,'')
- FROM sync_events e LEFT JOIN agent_inbox_ack k ON k.event_seq=e.rowid
+ FROM sync_events e NOT INDEXED LEFT JOIN agent_inbox_ack k ON k.event_seq=e.rowid
  AND k.agent_id=json_extract(e.payload,'$.to')
  LEFT JOIN agent_inbox_cursor c ON c.agent_id=json_extract(e.payload,'$.to')
- WHERE e.rowid=?`, seq).Scan(&event.Acked, &event.AckedAt)
+ WHERE e.rowid=?`, seq).Scan(&point.EventID, &point.Project, &point.NodeID, &point.UID, &point.Author, &point.Payload, &point.CreatedAt, &pointSeq, &op, &acked, &ackedAt)
+	expected := *event
+	expected.Acked, expected.AckedAt = false, ""
+	if err == nil && (point != expected || pointSeq != seq || op != "comment") {
+		err = fmt.Errorf("journal coverage row does not match recovered event identity")
+	}
 	if err == nil {
+		event.Acked, event.AckedAt = acked, ackedAt
 		err = validateInboxEvent(*event)
 	}
 	if err != nil {
-		event.Acked = false
-		event.AckedAt = ""
+		event.Acked, event.AckedAt = false, ""
 		return fmt.Errorf("read salvage acknowledgment: %w", err)
 	}
 	return nil

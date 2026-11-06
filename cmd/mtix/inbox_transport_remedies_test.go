@@ -4,12 +4,14 @@ package main
 
 import (
 	"database/sql"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 func TestRecover_ExistingProjectProtectsPrivateFile(t *testing.T) {

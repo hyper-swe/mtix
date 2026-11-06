@@ -3,13 +3,15 @@
 package sqlite_test
 
 import (
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 func TestImport_TailEventRetained_PreservesDestinationAck(t *testing.T) {

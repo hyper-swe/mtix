@@ -8,9 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 func TestImport_RestoredInbox_DoesNotImplyHubContact(t *testing.T) {

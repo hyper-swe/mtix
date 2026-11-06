@@ -7,14 +7,16 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"fmt"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // FR-19.1: a readable but incomplete identity index is not a recovery boundary.

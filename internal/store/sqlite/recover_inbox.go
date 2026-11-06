@@ -5,6 +5,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -62,8 +63,9 @@ func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult) (
 			err = fmt.Errorf("close salvage journal: %w", closeErr)
 		}
 	}()
+	integrityErr := checkInboxIntegrity(ctx, db)
 	journal, err = salvageInboxRows(ctx, db, res)
-	return journal, err
+	return journal, errors.Join(err, integrityErr)
 }
 
 // mergeRecoveredInbox unions compatible identities and ack coverage (FR-19.1, MTIX-112.2.1).
@@ -80,6 +82,7 @@ func mergeRecoveredInbox(dst, src *InboxJournal, res *RecoverResult) {
 			continue
 		}
 		if !sameInboxContent(dst.Events[i], event) {
+			res.InboxIncomplete = true
 			res.Notes = append(res.Notes, "conflicting inbox event in supplied export skipped; database copy retained")
 			continue
 		}

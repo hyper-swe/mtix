@@ -5,8 +5,9 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestSalvageInbox_CancelledContext_ReturnsCancellation(t *testing.T) {

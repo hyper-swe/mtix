@@ -4,8 +4,9 @@
 package main
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewExportCmd_BoardOnlyPrivateTarget_ExplainsJournalExclusion(t *testing.T) {

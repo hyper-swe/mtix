@@ -5,14 +5,15 @@ package main
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/assert"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 func TestRunInbox_RestoredMail_ShownWithoutIncludeHeld(t *testing.T) {

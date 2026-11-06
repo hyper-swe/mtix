@@ -6,9 +6,10 @@ package sqlite_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 )
 
 func TestImportReconcile_JournalCollision_RefusesBeforeBackup(t *testing.T) {

@@ -4,10 +4,12 @@ package sqlite_test
 
 import (
 	"database/sql"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestImportReconcile_NoncommentInboxCollision_RejectsBeforeBackup(t *testing.T) {

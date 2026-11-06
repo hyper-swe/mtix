@@ -3,10 +3,12 @@
 package service_test
 
 import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
-	"testing"
 )
 
 func TestAutoImport_RestoredInboxRefusalAndPendingNoticeStaySafe(t *testing.T) {

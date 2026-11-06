@@ -8,9 +8,10 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 )
 
 // FR-19.1: real PG init/clone must not infer divergence or recommend deleting restored mail.

@@ -3,12 +3,14 @@
 package sqlite_test
 
 import (
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 	"io"
 	"log/slog"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 func TestRecover_DamagedDuplicateIdentity_ProducesValidArtifact(t *testing.T) {
@@ -30,5 +32,6 @@ func TestRecover_DamagedDuplicateIdentity_ProducesValidArtifact(t *testing.T) {
 	result, err := sqlite.Recover(t.Context(), path, filepath.Join(t.TempDir(), "missing.json"), "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	require.NoError(t, err)
 	require.Equal(t, 3, result.Export.NodeCount)
+	require.True(t, result.InboxIncomplete, "duplicate identity is evidence of damage")
 	require.NoError(t, sqlite.ValidateExport(result.Export), "readable duplicates must be reconciled or reported/omitted, not make the whole salvage unimportable")
 }

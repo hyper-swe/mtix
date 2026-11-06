@@ -6,10 +6,11 @@ package publisher_test
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/relay/publisher"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 )
 
 func TestPublishPending_RestoredInbox_PublishesOnlyLocalEvents(t *testing.T) {

@@ -18,12 +18,19 @@ type salvageInboxRow struct {
 }
 
 // A table scan can see cells hidden by damaged rowid routing. Keep its readable
-// prefix in physical arrival order, then append rows only the verified walk sees.
+// rows in physical arrival order, then append rows only the verified walk sees (FR-19.1).
 func collectSalvageInboxRows(ctx context.Context, db *sql.DB) ([]salvageInboxRow, error) {
 	records, scanErr := scanSalvageInboxRows(ctx, db)
 	scanRows := make(map[salvageInboxRow]bool, len(records))
+	identities := make(map[string]bool, len(records))
+	duplicateIdentity := false
 	for _, row := range records {
+		duplicateIdentity = duplicateIdentity || identities[row.mail.e.EventID]
+		identities[row.mail.e.EventID] = true
 		scanRows[row] = true
+	}
+	if duplicateIdentity {
+		scanErr = errors.Join(scanErr, fmt.Errorf("duplicate journal identity detected before recipient filtering; journal incomplete, lost record count unknown"))
 	}
 	walk := inboxRowidWalk{next: 1}
 	mismatch := false
@@ -50,19 +57,37 @@ func collectSalvageInboxRows(ctx context.Context, db *sql.DB) ([]salvageInboxRow
 	return records, err
 }
 
+// scanSalvageInboxRows retains rows after a column conversion failure (FR-19.1).
 func scanSalvageInboxRows(ctx context.Context, db *sql.DB) (records []salvageInboxRow, err error) {
+	// A sequential scan can recover cells hidden by a corrupt rowid seek path.
 	rows, err := db.QueryContext(ctx, salvageInboxScanSQL)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("open sequential journal scan: %w", err)
 	}
-	defer func() { err = errors.Join(err, rows.Close()) }()
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close sequential journal scan: %w", closeErr))
+		}
+	}()
+	failed := 0
+	var firstErr error
 	for rows.Next() {
 		var row salvageInboxRow
 		e := &row.mail.e
-		if err := rows.Scan(&e.EventID, &e.Project, &e.NodeID, &e.UID, &e.Author, &e.Payload, &e.CreatedAt, &row.mail.seq, &row.op); err != nil {
-			return records, err
+		if scanErr := rows.Scan(&e.EventID, &e.Project, &e.NodeID, &e.UID, &e.Author, &e.Payload, &e.CreatedAt, &row.mail.seq, &row.op); scanErr != nil {
+			failed++
+			if firstErr == nil {
+				firstErr = scanErr
+			}
+			continue
 		}
 		records = append(records, row)
 	}
-	return records, rows.Err()
+	if failed > 0 {
+		err = fmt.Errorf("sequential journal scan: %d unreadable row(s): %w", failed, firstErr)
+	}
+	if readErr := rows.Err(); readErr != nil {
+		err = errors.Join(err, fmt.Errorf("iterate sequential journal scan: %w", readErr))
+	}
+	return records, err
 }

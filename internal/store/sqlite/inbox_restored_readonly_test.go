@@ -4,13 +4,14 @@
 package sqlite
 
 import (
-	"github.com/hyper-swe/mtix/internal/model"
 	"log/slog"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // FR-19.1: legacy read-only databases have no restored marker table and cannot migrate.

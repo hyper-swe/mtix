@@ -101,3 +101,27 @@ func TestWakeBootstrap_DoesNotLowerProgressAlreadyAboveTail(t *testing.T) {
 	assertBootstrapWakeMarks(t, f, mark)
 	assert.Equal(t, metadata, wakeReplaceMetadata(t, f.raw))
 }
+
+func TestWakeBootstrap_SeedsBothAutomaticHarnesses(t *testing.T) {
+	for _, harness := range []string{"pi", "claude"} {
+		t.Run(harness, func(t *testing.T) {
+			f := newWakeReplaceState(t, "above", false)
+			_, err := f.store.RegisterSessionAtomic(t.Context(), sqlite.RegistrationKey{AgentID: "worker", HostID: "kept-host", UID: "1000"},
+				func(reg *sqlite.Registration, _ int64) (*sqlite.Registration, error) {
+					reg.Harness = harness
+					return reg, nil
+				})
+			require.NoError(t, err)
+			before, err := f.store.ListRegistrations(t.Context(), "kept-host", "1000")
+			require.NoError(t, err)
+			require.Len(t, before, 1)
+			require.Less(t, before[0].HighWater, f.dropped)
+			require.NoError(t, f.store.InitHookScanFloorAtTail(t.Context()))
+			after, err := f.store.ListRegistrations(t.Context(), "kept-host", "1000")
+			require.NoError(t, err)
+			require.Len(t, after, 1)
+			assert.Equal(t, f.dropped, after[0].HighWater, "both automatic harnesses skip first-fill history")
+			assert.Equal(t, harness, after[0].Harness)
+		})
+	}
+}

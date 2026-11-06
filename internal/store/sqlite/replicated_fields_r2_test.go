@@ -169,3 +169,30 @@ func TestReplicatedFieldsR2_BackfillZeroAndPreEpochCreation(t *testing.T) {
 		})
 	}
 }
+
+func TestReplicatedFieldsR2_BackfillMissingTimeUsesExactNodeTime(t *testing.T) {
+	source, db := mutationTestStore(t)
+	mustCreateNode(t, source, "MTIX-1", "")
+	at := time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.FixedZone("offset", 19800))
+	_, err := db.Exec("UPDATE nodes SET created_at=?, annotations=? WHERE id=?", at.Format(time.RFC3339Nano), `[{"text":"legacy note"}]`, "MTIX-1")
+	require.NoError(t, err)
+	_, err = db.Exec("DELETE FROM sync_events")
+	require.NoError(t, err)
+	_, err = source.Backfill(t.Context(), false)
+	require.NoError(t, err)
+	events := pushPendingOwnEvents(t, db)
+	for _, e := range events {
+		if e.OpType == model.OpComment {
+			var payload model.CommentPayload
+			require.NoError(t, json.Unmarshal(e.Payload, &payload))
+			require.NotNil(t, payload.Annotation)
+			require.Equal(t, at.Format(time.RFC3339Nano), payload.Annotation.CreatedAt.Format(time.RFC3339Nano))
+		}
+	}
+	clone, _ := mutationTestStore(t)
+	pullEvents(t, clone, events)
+	got, err := clone.GetNode(t.Context(), "MTIX-1")
+	require.NoError(t, err)
+	require.Len(t, got.Annotations, 1)
+	require.Equal(t, at.Format(time.RFC3339Nano), got.Annotations[0].CreatedAt.Format(time.RFC3339Nano))
+}

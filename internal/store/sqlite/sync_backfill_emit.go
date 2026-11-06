@@ -48,7 +48,7 @@ func emitBackfillForNode(ctx context.Context, tx *sql.Tx, nr backfillNodeRow, re
 	}
 
 	annCount, annErr := emitBackfillAnnotations(ctx, tx, n.ID, n.Project,
-		n.Creator, nr.annotations, wallTS)
+		n.Creator, nr.annotations, n.CreatedAt)
 	if annErr != nil {
 		return fmt.Errorf("emit annotations for %s: %w", n.ID, annErr)
 	}
@@ -176,10 +176,10 @@ func emitBackfillUpdateField(ctx context.Context, tx *sql.Tx, nodeID, project, f
 }
 
 // emitBackfillAnnotations walks the JSON array stored in nodes.annotations
-// and emits one `annotate` event per entry. Each annotation's
-// wall_clock_ts is preserved from the source entry if present;
-// otherwise falls back to the node's created_at.
-func emitBackfillAnnotations(ctx context.Context, tx *sql.Tx, nodeID, project, creator, rawJSON string, fallbackTS int64) (int, error) {
+// and emits one comment event per entry. Metadata retains the original time;
+// missing or invalid time uses the already-parsed node creation time directly.
+// The envelope uses a nonnegative wall clock independently of that metadata.
+func emitBackfillAnnotations(ctx context.Context, tx *sql.Tx, nodeID, project, creator, rawJSON string, fallbackAt time.Time) (int, error) {
 	if rawJSON == "" || rawJSON == "[]" || rawJSON == "null" {
 		return 0, nil
 	}
@@ -197,14 +197,14 @@ func emitBackfillAnnotations(ctx context.Context, tx *sql.Tx, nodeID, project, c
 		if err != nil {
 			return count, fmt.Errorf("allocate backfill annotation identity: %w", err)
 		}
-		value, at := backfillAnnotationPayload(entry, eventID, fallbackTS)
+		value, at := backfillAnnotationPayload(entry, eventID, fallbackAt)
 		payload, err := model.EncodePayload(value)
 		if err != nil {
 			return count, fmt.Errorf("build comment payload for %s: %w", nodeID, err)
 		}
 		wallTS := at.UnixMilli()
 		if wallTS < 0 {
-			wallTS = fallbackTS
+			wallTS = fallbackAt.UnixMilli()
 		} // The envelope must be nonnegative; metadata keeps the original time.
 		if err := emitEvent(ctx, tx, emitParams{NodeID: nodeID, ProjectCode: project, OpType: model.OpComment, Author: creator, Payload: payload, WallClockTS: wallTS, EventID: eventID}); err != nil {
 			return count, fmt.Errorf("emit comment for %s: %w", nodeID, err)
@@ -216,7 +216,7 @@ func emitBackfillAnnotations(ctx context.Context, tx *sql.Tx, nodeID, project, c
 
 // Payload attribution comes from the annotation, independently of the event
 // envelope author. Only absent original identity/time needs a fallback.
-func backfillAnnotationPayload(entry map[string]any, eventID string, fallbackTS int64) (*model.CommentPayload, time.Time) {
+func backfillAnnotationPayload(entry map[string]any, eventID string, fallbackAt time.Time) (*model.CommentPayload, time.Time) {
 	id, _ := entry["id"].(string)
 	if id == "" {
 		id = eventID
@@ -225,7 +225,7 @@ func backfillAnnotationPayload(entry map[string]any, eventID string, fallbackTS 
 	author, _ := entry["author"].(string)
 	addressee, _ := entry["addressee"].(string)
 	resolved, _ := entry["resolved"].(bool)
-	at := time.UnixMilli(fallbackTS).UTC()
+	at := fallbackAt
 	if raw, ok := entry["created_at"].(string); ok {
 		if parsed, parseErr := time.Parse(time.RFC3339Nano, raw); parseErr == nil {
 			at = parsed

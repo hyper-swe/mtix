@@ -8,6 +8,7 @@ package main
 import (
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -27,31 +28,40 @@ func laneRow(t *testing.T, agent, harness, lane string) sqlite.AttachPending {
 
 // The printed command is built from the queued registration, so running it
 // keeps the harness (a bare register would record it as unknown).
-func TestStrandedRegisterFix_BuiltFromQueuedRows_KeepsAgentHarnessAndLane(t *testing.T) {
+func TestStrandedRegisterFix_BuiltFromQueuedRows_KeepsAgentAndHarnessAndRunsInTheStoreRoot(t *testing.T) {
 	rows := []sqlite.AttachPending{
 		laneRow(t, "sb", "pi", "/work/lane one"),
 		{Kind: "list", Payload: laneRow(t, "sb", "pi", "/work/lane one").Payload}, // the list row repeats the registration
 		laneRow(t, "other", "unknown", "/work/two"),
 	}
 	assert.Equal(t,
-		"cd '/work/lane one' && mtix agent register 'sb' --harness 'pi' ; cd '/work/two' && mtix agent register 'other'"+
+		"cd '/work/store' && mtix agent register 'sb' --harness 'pi' ; cd '/work/store' && mtix agent register 'other'"+
 			"   # run from a normal shell outside any sandbox, so the host lists the board; add --session <handle> if the session was registered with one",
-		strandedRegisterFix(rows))
+		strandedRegisterFix("/work/store", rows))
+	assert.NotContains(t, strandedRegisterFix("/work/store", rows), "lane one", "the queued lane path is never printed")
+}
+
+// Two rows that differ only in the lane they name are one registration.
+func TestStrandedRegisterFix_SameRegistrationFromTwoLanes_PrintsOneCommand(t *testing.T) {
+	got := strandedRegisterFix("/work/store", []sqlite.AttachPending{
+		laneRow(t, "sb", "pi", "/work/lane-a"),
+		laneRow(t, "sb", "pi", "/work/lane-b"),
+	})
+	assert.Equal(t, 1, strings.Count(got, "mtix agent register"), got)
 }
 
 func TestStrandedRegisterFix_HostilePayloads_AreSkippedNeverPrinted(t *testing.T) {
 	rows := []sqlite.AttachPending{
 		laneRow(t, "x; rm -f /", "pi", "/work"),
-		laneRow(t, "ok", "pi", "relative/path"),
-		laneRow(t, "ok", "pi", "/work/../etc"),
+		laneRow(t, "", "pi", "/work"),
 		{Kind: "lane", Payload: "not json"},
 	}
-	got := strandedRegisterFix(rows)
+	got := strandedRegisterFix("/work/store", rows)
 	assert.Equal(t, "mtix agent register <agent-id> --harness <harness>   # run it for the agent that registered, from a normal shell in this checkout (outside any sandbox), so the host lists the board", got)
 	assert.NotContains(t, got, "rm -f")
 
-	hostileHarness := strandedRegisterFix([]sqlite.AttachPending{laneRow(t, "ok", "pi; id", "/work")})
-	assert.Equal(t, "cd '/work' && mtix agent register 'ok'   # run from a normal shell outside any sandbox, so the host lists the board; add --session <handle> if the session was registered with one", hostileHarness)
+	hostileHarness := strandedRegisterFix("/work/store", []sqlite.AttachPending{laneRow(t, "ok", "pi; id", "/work")})
+	assert.Equal(t, "cd '/work/store' && mtix agent register 'ok'   # run from a normal shell outside any sandbox, so the host lists the board; add --session <handle> if the session was registered with one", hostileHarness)
 }
 
 // An unlisted linked worktree that holds its own store and queue is a board of

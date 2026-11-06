@@ -58,14 +58,15 @@ func TestAcceptQueuedRows_ForeignOwnerKindOrLane_AreRejectedByCount(t *testing.T
 		{"own list row at the root", mk("list", key, root, root), true},
 		{"other board key", mk("lane", "K-other", root, root+"/lane"), false},
 		{"other board path", mk("lane", key, "/work/victim", root+"/lane"), false},
-		{"lane in another board", mk("lane", key, root, "/work/victim"), false},
-		{"lane in a sibling with the same prefix", mk("lane", key, root, root+"-evil"), false},
-		{"lane climbing out", mk("lane", key, root, root+"/../victim"), false},
+		{"lane in another board is never used, so it cannot steer", mk("lane", key, root, "/work/victim"), true},
+		{"lane that is not a path is never used", mk("lane", key, root, "lane"), true},
 		{"unknown kind", mk("exec", key, root, root+"/lane"), false},
 		{"oversized payload", mk("lane", key, root, root+"/lane+"+strings.Repeat("l", 4100)), false},
 		{"oversized payload that is valid json", sqlite.AttachPending{Kind: "lane", BoardKey: key, Path: root, Payload: mk("lane", key, root, root+"/lane").Payload + strings.Repeat(" ", 4097)}, false},
-		{"lane that is not a clean path", mk("lane", key, root, root+"/a/../lane"), false},
-		{"lane that is not absolute", mk("lane", key, root, "lane"), false},
+		{"payload of exactly the cap", sqlite.AttachPending{Kind: "lane", BoardKey: key, Path: root, Payload: mk("lane", key, root, root+"/lane").Payload + strings.Repeat(" ", 4096-len(mk("lane", key, root, root+"/lane").Payload))}, true},
+		{"payload one byte over the cap", sqlite.AttachPending{Kind: "lane", BoardKey: key, Path: root, Payload: mk("lane", key, root, root+"/lane").Payload + strings.Repeat(" ", 4097-len(mk("lane", key, root, root+"/lane").Payload))}, false},
+		{"payload with a field the drain does not know", sqlite.AttachPending{Kind: "lane", BoardKey: key, Path: root, Payload: `{"agent_id":"a","harness":"pi","lane_path":"/x","extra":"y"}`}, false},
+		{"payload with trailing data", sqlite.AttachPending{Kind: "lane", BoardKey: key, Path: root, Payload: `{"agent_id":"a","harness":"pi","lane_path":"/x"} {}`}, false},
 		{"agent id that is not plain", withAgent(t, mk("lane", key, root, root+"/lane"), "x; rm -f /"), false},
 		{"row with no board key", mk("lane", "", root, root+"/lane"), false},
 		{"payload that is not json", sqlite.AttachPending{Kind: "lane", BoardKey: key, Path: root, Payload: "nope"}, false},
@@ -107,6 +108,30 @@ func TestDoctorGlueStrandedQueue_ForgedRowNamingAListedBoard_IsRejectedAndPrints
 	assert.Contains(t, row.Detail, "1 queued row(s) rejected")
 }
 
+// The review's symlink scenario: a symlink inside the hostile board points at a
+// listed victim board, and a row names it as the lane. The printed command is
+// built from the store root alone, so nothing can steer it out of the store.
+func TestDoctorGlueStrandedQueue_SymlinkAndNestedBoardLanes_CannotSteerThePrintedFix(t *testing.T) {
+	saveAndResetApp(t)
+	st := testutil.OperatorState(t)
+	victim := listedBoardCheckout(t, st)
+	hostile := t.TempDir()
+	initStoreAt(t, hostile)
+	link := filepath.Join(hostile, "lnk")
+	require.NoError(t, os.Symlink(victim, link))
+	nested := filepath.Join(hostile, "sub")
+	initStoreAt(t, nested)
+	enqueueRow(t, hostile, ownedLaneRow(t, hostile, "evil", "pi", link))
+	enqueueRow(t, hostile, ownedLaneRow(t, hostile, "evil2", "pi", nested))
+	row := strandedRowFor(t, hostile)
+
+	assert.Contains(t, row.Fix, "cd '"+hostile+"' && mtix agent register 'evil' --harness 'pi'")
+	assert.Contains(t, row.Fix, "cd '"+hostile+"' && mtix agent register 'evil2' --harness 'pi'")
+	assert.NotContains(t, row.Fix, victim)
+	assert.NotContains(t, row.Fix, link)
+	assert.NotContains(t, row.Fix, nested)
+}
+
 func TestDoctorGlueStrandedQueue_ValidAndForgedRows_PrintOnlyTheValidCommand(t *testing.T) {
 	saveAndResetApp(t)
 	st := testutil.OperatorState(t)
@@ -116,15 +141,17 @@ func TestDoctorGlueStrandedQueue_ValidAndForgedRows_PrintOnlyTheValidCommand(t *
 	lane := filepath.Join(hostile, "lane")
 	require.NoError(t, os.MkdirAll(lane, 0o755))
 	enqueueRow(t, hostile, ownedLaneRow(t, hostile, "good", "pi", lane))
-	forged := ownedLaneRow(t, hostile, "evil", "pi", victim) // this store's key and path, a lane in another board
+	forged := ownedLaneRow(t, hostile, "evil", "pi", victim)
+	forged.BoardKey = "another-board-key" // a row for another board, written into this queue
 	enqueueRow(t, hostile, forged)
 	row := strandedRowFor(t, hostile)
 
-	assert.Contains(t, row.Fix, "cd '"+lane+"' && mtix agent register 'good' --harness 'pi'")
+	assert.Contains(t, row.Fix, "cd '"+hostile+"' && mtix agent register 'good' --harness 'pi'")
+	assert.NotContains(t, row.Fix, lane+"'")
 	assert.NotContains(t, row.Fix, victim)
 	assert.NotContains(t, row.Fix, "evil")
-	assert.Contains(t, row.Detail, "1 queued row(s) rejected")
 	assert.Contains(t, row.Detail, "1 attach queue row(s)")
+	assert.Contains(t, row.Detail, "1 queued row(s) rejected")
 }
 
 // strandedRowFor runs the production doctor deps in an unlisted board and
@@ -146,7 +173,7 @@ func strandedRowFor(t *testing.T, root string) (row struct{ Fix, Detail string }
 // An unlisted board whose rows all fail the owner test has nothing to
 // register: the row says so and prints the generic text, not a command.
 func TestStrandedRegisterFix_NoTrustedRows_IsTheGenericText(t *testing.T) {
-	assert.Contains(t, strandedRegisterFix(nil), "mtix agent register <agent-id> --harness <harness>")
+	assert.Contains(t, strandedRegisterFix("/work/store", nil), "mtix agent register <agent-id> --harness <harness>")
 }
 
 // A board listed with an instance id whose store was recreated (a new instance

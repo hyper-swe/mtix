@@ -29,6 +29,22 @@ const (
 	ReasonIndexUnsupported = "index-unsupported"
 )
 
+// Causes of an identity-mismatch or no-checkout decline on a listed board;
+// doctor prints one explanation and remedy per cause.
+const (
+	// CauseStoreChanged: both the listing and the store carry an identity and
+	// they differ (the store was recreated or replaced).
+	CauseStoreChanged = "store-changed"
+	// CauseListingNoID: the listing records no identity for a store that has one.
+	CauseListingNoID = "listing-no-id"
+	// CauseStoreUnreadable: the store cannot be read as a plain store (a
+	// symlinked or missing store directory, or a read failure).
+	CauseStoreUnreadable = "store-unreadable"
+	// CauseListedCheckout: the board is listed but its .git entry is not a
+	// valid checkout.
+	CauseListedCheckout = "listed-checkout-invalid"
+)
+
 // boardStoreRel is the store file relative to a checkout root.
 const boardStoreRel = ".mtix/data/mtix.db"
 
@@ -62,8 +78,8 @@ type GlueDecision struct {
 	// CheckoutRoot is the root of the git checkout holding StoreRoot ("" when
 	// the store is not in a checkout); doctor builds its git commands from it.
 	CheckoutRoot string
-	// Cause refines a tracked-store or index-unsupported decline (a Cause or
-	// Tracked constant) so doctor can print one remedy per cause.
+	// Cause refines a tracked-store, index-unsupported, identity-mismatch or
+	// no-checkout decline (a Cause or Tracked constant) so doctor can print one remedy per cause.
 	Cause string
 }
 
@@ -99,7 +115,7 @@ func EvaluateGlue(ctx context.Context, deps PredicateDeps, dir string) GlueDecis
 	base := GlueDecision{StoreRoot: root, Line: NotAttachedLine}
 	co, err := DetectCheckout(root)
 	if err != nil || co.Kind == CheckoutInvalid {
-		return base.declined(ReasonNoCheckout, "")
+		return base.declined(ReasonNoCheckout, listedCheckoutCause(ctx, deps, root))
 	}
 	base.CheckoutRoot = co.Root
 	boards, err := deps.Boards(ctx)
@@ -111,6 +127,20 @@ func EvaluateGlue(ctx context.Context, deps PredicateDeps, dir string) GlueDecis
 		return base.declined(ReasonUnlisted, "")
 	}
 	return judgeStore(ctx, deps, base, co, ids, key)
+}
+
+// listedCheckoutCause is CauseListedCheckout when root is a listed or enrolled
+// board (so doctor can say its .git entry stopped being a checkout), and ""
+// otherwise or when the registry cannot be read.
+func listedCheckoutCause(ctx context.Context, deps PredicateDeps, root string) string {
+	boards, err := deps.Boards(ctx)
+	if err != nil {
+		return ""
+	}
+	if _, _, found := recordedInstances(boards, root); found {
+		return CauseListedCheckout
+	}
+	return ""
 }
 
 // nearestStoreRoot returns the parent of the nearest .mtix at or above the
@@ -144,12 +174,12 @@ func nearestStoreRoot(dir string) string {
 func judgeStore(ctx context.Context, deps PredicateDeps, base GlueDecision, co Checkout, ids []string, key string) GlueDecision {
 	actual, err := readStoreID(ctx, deps, base.StoreRoot)
 	if err != nil {
-		return base.declined(ReasonIdentityMismatch, "")
+		return base.declined(ReasonIdentityMismatch, CauseStoreUnreadable)
 	}
 	legacy := false
 	for _, id := range ids {
 		if id != actual {
-			return base.declined(ReasonIdentityMismatch, "")
+			return base.declined(ReasonIdentityMismatch, identityCause(id))
 		}
 		legacy = legacy || id == ""
 	}
@@ -166,6 +196,15 @@ func judgeStore(ctx context.Context, deps PredicateDeps, base GlueDecision, co C
 	base.Act, base.Reason, base.Line = true, ReasonAttached, ""
 	base.BoardRoot, base.BoardKey = base.StoreRoot, key
 	return base
+}
+
+// identityCause names why a recorded id differs from the store's: the listing
+// records none (registering again records it), or both exist and differ.
+func identityCause(recorded string) string {
+	if recorded == "" {
+		return CauseListingNoID
+	}
+	return CauseStoreChanged
 }
 
 // recordedInstances returns the instance ids of every listed or enrolled

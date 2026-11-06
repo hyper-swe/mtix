@@ -76,7 +76,7 @@ func registerAttachDoctorChecks(ctx context.Context, svc *service.DoctorService,
 	for _, h := range harnesses {
 		checks = append(checks, glueDoctorCheck(deps, h))
 	}
-	for _, build := range []func(context.Context, attachDoctorDeps) (service.DoctorCheck, bool){trackedStoreCheck, strandedQueueCheck, storeIdentityCheck} {
+	for _, build := range []func(context.Context, attachDoctorDeps) (service.DoctorCheck, bool){trackedStoreCheck, strandedQueueCheck, storeIdentityCheck, checkoutCheck} {
 		if check, ok := build(ctx, deps); ok {
 			checks = append(checks, check)
 		}

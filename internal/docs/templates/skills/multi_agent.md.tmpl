@@ -145,15 +145,31 @@ Doctor shows these rows only when they apply:
   them. An unknown index version or extension, an oversize index or a SHA-256
   repository cannot be read by this build: upgrade mtix.
 - `glue.store-identity`: the board you are in is listed on this host, but its
-  store has a different `store_instance_id` than the listing records (the store
-  was recreated or replaced, for example rebuilt from an export), so glue stays
-  off and every verb prints the not-attached line. Reading that identity opens
-  the store read-only and never creates a file next to it (no WAL or shm); a
-  store left with only one of those two files cannot be read that way and is
-  declined too. No mtix command re-lists a board under a new store identity.
-  Recovery: put the original store file (`.mtix/data/mtix.db`) back from a
-  backup or from the previous copy of the checkout, then run `mtix doctor`
-  again until the row is gone.
+  store does not match the listing, so glue stays off and every verb prints
+  the not-attached line. The row's detail says which case it is. (1) The
+  listing records no store identity for a store that has one: run `mtix agent
+  register <agent-id>` from a normal shell in the checkout; it records the
+  identity and glue acts. Restoring a store is not needed. (2) The store cannot
+  be read as a plain store (`.mtix` or `.mtix/data` is a symlink or missing, or
+  the store file could not be read): make both real directories that hold the
+  store file. A store that was just being opened or closed by another mtix
+  process clears on its own; a lone `mtix.db-wal` or `mtix.db-shm` file left
+  behind by a crash goes away after any normal mtix command (for example `mtix
+  doctor`), which replays it. (3) Both identities exist and differ (the store
+  was recreated or replaced, for example rebuilt from an export): no mtix
+  command re-lists a board under a new store identity, so put the original
+  store file (`.mtix/data/mtix.db`) back from a backup or from the previous
+  copy of the checkout. Reading the identity creates no file next to the store
+  (no WAL or shm); it tries up to three times, 15 ms apart, before it declines,
+  so a busy store is not declined by chance. Run `mtix doctor` again until the
+  row is gone.
+- `glue.checkout`: the board you are in is listed on this host, but the `.git`
+  entry above it is not a valid checkout (a linked worktree whose record was
+  pruned, a main checkout that moved, or a damaged `.git` file), so glue stays
+  off. The row names the `.git` entry and prints `git worktree repair <path>`;
+  run it from the main checkout (if the worktree record was pruned, re-create
+  the worktree with `git worktree add`), then run `mtix doctor` again. A
+  directory that is not listed gets no such row.
 - `glue.stranded-queue`: in an attached board, a `session-start` drains the
   board's pending attach queue (rows queued by a registration inside a sandbox)
   through the same validation the host dispatcher uses; a row naming another
@@ -163,13 +179,14 @@ Doctor shows these rows only when they apply:
   its own and needs its own listing), and glue never lists a board by itself,
   because repository content must not activate a host. The row appears when
   the board you are in is not listed but its store holds such rows; the fix is
-  printed from the queued rows, one command per registration: `cd <lane> &&
-  mtix agent register <agent-id> --harness <harness>`, run from a normal shell
-  outside any sandbox. It keeps each agent's harness; a bare `mtix agent
+  printed from the queued rows, one command per registration: `cd <store root>
+  && mtix agent register <agent-id> --harness <harness>`, run from a normal
+  shell outside any sandbox. The lane a queued row names is never used, so a
+  symlink or a nested board cannot steer the command out of this store. It keeps each agent's harness; a bare `mtix agent
   register <agent-id>` would record the harness as unknown. Add `--session
   <handle>` if the session was registered with one. Queued rows
   are untrusted: only a row that carries this store's own board key and path
-  and a lane inside this store reaches the printed command; any other row is
+  and a plain agent id reaches the printed command; any other row is
   counted as rejected in the row's detail, no command is built from it, and the
   row prints the generic command with placeholders. The glue path never imports
   `tasks.json` and never triggers hooks, whatever `sync.auto_sync` says.

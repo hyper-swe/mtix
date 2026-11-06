@@ -9,9 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/hyper-swe/mtix/internal/attach"
 	"github.com/hyper-swe/mtix/internal/service"
@@ -55,12 +55,22 @@ func productionPendingRows(ctx context.Context, d attach.GlueDecision) (queuedRo
 // board id, which own no rows.
 func queueOwnerKey(ctx context.Context) string {
 	instance, err := app.store.StoreInstanceID(ctx)
-	if err != nil || instance == "" {
+	if err != nil {
 		return ""
 	}
-	ids, err := service.ReadBoardIDs(app.mtixDir)
+	ids, idErr := service.ReadBoardIDs(app.mtixDir)
+	return ownerKey(instance, ids, idErr)
+}
+
+// ownerKey picks the routing key from the store instance id and the result of
+// reading the board id file: the one committed board id, else the instance id
+// when there is no board id file; "" for a legacy store (no instance id), an
+// ambiguous board id or one that cannot be read.
+func ownerKey(instance string, ids []string, idErr error) string {
 	switch {
-	case err != nil && !errors.Is(err, os.ErrNotExist):
+	case instance == "":
+		return ""
+	case idErr != nil && !errors.Is(idErr, os.ErrNotExist):
 		return ""
 	case len(ids) > 1:
 		return ""
@@ -72,11 +82,11 @@ func queueOwnerKey(ctx context.Context) string {
 
 // acceptQueuedRows splits rows into those this store owns and a count of the
 // rest, applying the same owner test the drain does (board key and path equal
-// this store's, a known kind, a bounded strict payload) plus that the lane
-// lies inside the store. Nothing is built from a rejected row.
+// this store's, a known kind, a bounded strict payload, a plain agent id).
+// Nothing is built from a rejected row, and the lane a row names is not used.
 func acceptQueuedRows(rows []sqlite.AttachPending, key, storeRoot string) (valid []sqlite.AttachPending, rejected int) {
 	for _, row := range rows {
-		if key == "" || row.BoardKey != key || row.Path != storeRoot || !ownedLane(row, storeRoot) {
+		if key == "" || row.BoardKey != key || row.Path != storeRoot || !ownedLane(row) {
 			rejected++
 			continue
 		}
@@ -86,8 +96,10 @@ func acceptQueuedRows(rows []sqlite.AttachPending, key, storeRoot string) (valid
 }
 
 // ownedLane reports whether row is a lane or list row with a well formed
-// payload whose agent id is plain and whose lane directory is inside storeRoot.
-func ownedLane(row sqlite.AttachPending, storeRoot string) bool {
+// payload (one strict JSON object, under the size cap) whose agent id is plain. The lane
+// path in the payload is not judged because it is never used: the printed fix
+// runs in the store root alone.
+func ownedLane(row sqlite.AttachPending) bool {
 	if (row.Kind != "lane" && row.Kind != "list") || len(row.Payload) > maxQueuedPayload {
 		return false
 	}
@@ -97,9 +109,6 @@ func ownedLane(row sqlite.AttachPending, storeRoot string) bool {
 	if dec.Decode(&q) != nil || !queuedAgentID.MatchString(q.AgentID) {
 		return false
 	}
-	if !filepath.IsAbs(q.LanePath) || filepath.Clean(q.LanePath) != q.LanePath {
-		return false
-	}
-	rel, err := filepath.Rel(storeRoot, q.LanePath)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+	_, trailing := dec.Token() // the payload must end after its one object
+	return errors.Is(trailing, io.EOF)
 }

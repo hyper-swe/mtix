@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // StoreInstanceID returns the creation identity, or empty for an unenrolled legacy store.
@@ -61,6 +63,18 @@ func (s *Store) readAttachMeta(ctx context.Context, key string) (string, bool, e
 	return value, true, nil
 }
 
+// The identity read tries a few times, a short pause apart (three tries,
+// 30 ms of waiting at most), because a lone side file or a busy result is seen
+// while another process opens or closes the store and clears within moments.
+// The bound is small: a hook waits for it.
+const (
+	readAttempts = 3
+	retryPause   = 15 * time.Millisecond
+)
+
+// errTransientRead marks a read failure that may clear if tried again.
+var errTransientRead = errors.New("transient store read")
+
 // openStoreReadOnly opens the database file at dbPath so that nothing can be
 // written through it and a missing file is never created (MTIX-112.19.8).
 func openStoreReadOnly(dbPath string) (*sql.DB, error) {
@@ -68,17 +82,41 @@ func openStoreReadOnly(dbPath string) (*sql.DB, error) {
 }
 
 // ReadStoreInstanceIDFile returns store_instance_id from the database file at
-// dbPath without writing or creating anything, not even the WAL and shm side
-// files a read-only SQLite open of a WAL database would create, for callers
+// dbPath without creating any file, not even the WAL and shm side files a
+// read-only SQLite open of a WAL database would create (a store in use may
+// update its own shm content), for callers
 // that must not open a Store (and so must not migrate, create or write). The
 // result is empty for a legacy store with no identity. A missing, empty or
 // non-database file is an error, never a new database. A store with no side
 // files is fully contained in the database file and is read immutable (no
 // locks, no side files); a store in use (WAL and shm both present) is read
 // read-only through them; a WAL without its shm, or the reverse, cannot be
-// read without creating a file, so it is refused and the caller declines
-// (MTIX-112.19.8).
-func ReadStoreInstanceIDFile(ctx context.Context, dbPath string) (id string, retErr error) {
+// read without creating a file, so it is refused and the caller declines. A
+// lone side file or a busy result is tried again (readAttempts tries,
+// retryPause apart) before it is refused, since another process opening or
+// closing the store clears it within moments (MTIX-112.19.8).
+func ReadStoreInstanceIDFile(ctx context.Context, dbPath string) (string, error) {
+	var lastErr error
+	for attempt := 0; attempt < readAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return "", fmt.Errorf("read store identity: %w", ctx.Err())
+			case <-time.After(retryPause):
+			}
+		}
+		id, err := readStoreInstanceIDOnce(ctx, dbPath)
+		if err == nil || !errors.Is(err, errTransientRead) {
+			return id, err
+		}
+		lastErr = err
+	}
+	return "", lastErr
+}
+
+// readStoreInstanceIDOnce is one try of ReadStoreInstanceIDFile. An error that
+// may clear on its own (a lone side file, a busy store) wraps errTransientRead.
+func readStoreInstanceIDOnce(ctx context.Context, dbPath string) (id string, retErr error) {
 	info, err := os.Stat(dbPath)
 	if err != nil {
 		return "", fmt.Errorf("read store identity: %w", err)
@@ -105,9 +143,19 @@ func ReadStoreInstanceIDFile(ctx context.Context, dbPath string) (id string, ret
 		return "", nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("read store identity: %w", err)
+		return "", transientIfBusy(fmt.Errorf("read store identity: %w", err))
 	}
 	return value, nil
+}
+
+// transientIfBusy marks err as retryable when SQLite reports the store busy or
+// locked (another process is opening or closing it).
+func transientIfBusy(err error) error {
+	msg := strings.ToLower(err.Error())
+	if strings.Contains(msg, "sqlite_busy") || strings.Contains(msg, "database is locked") || strings.Contains(msg, "sqlite_locked") {
+		return fmt.Errorf("%w: %w", errTransientRead, err)
+	}
+	return err
 }
 
 // sideFileFreeParams picks the read-only DSN parameters that cannot create a
@@ -127,7 +175,7 @@ func sideFileFreeParams(dbPath string) ([]string, error) {
 	case wal && shm:
 		return readOnlyDSNParams(), nil
 	}
-	return nil, fmt.Errorf("read store identity: %s has a WAL or shm file without the other, which cannot be read without creating a file", dbPath)
+	return nil, fmt.Errorf("%w: read store identity: %s has a WAL or shm file without the other, which cannot be read without creating a file", errTransientRead, dbPath)
 }
 
 // sideFilePresent reports whether the side file at path exists.

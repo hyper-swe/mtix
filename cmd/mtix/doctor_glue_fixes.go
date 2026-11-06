@@ -115,23 +115,26 @@ type queuedLane struct {
 }
 
 // strandedRegisterFix builds the exact command that lists the board from a
-// normal shell and keeps each queued registration as it was: its agent id, its
-// harness (a bare register would record the harness as unknown) and the lane
-// directory it registered from. Rows are untrusted state: a field that is not a
-// plain id or an absolute path is skipped, and every value is quoted.
-func strandedRegisterFix(rows []sqlite.AttachPending) string {
+// normal shell and keeps each queued registration's agent id and harness (a
+// bare register would record the harness as unknown). The command always runs
+// in storeRoot, the store doctor itself resolved: the lane directory a queued
+// row names is never used, so a symlink, a path trick or a forged lane cannot
+// steer the command anywhere else. Rows are untrusted state: an agent id that
+// is not plain is skipped and every value is quoted (MTIX-112.19.8).
+func strandedRegisterFix(storeRoot string, rows []sqlite.AttachPending) string {
 	seen := map[queuedLane]bool{}
 	var cmds []string
 	for _, row := range rows {
 		var q queuedLane
-		if json.Unmarshal([]byte(row.Payload), &q) != nil || seen[q] {
+		if json.Unmarshal([]byte(row.Payload), &q) != nil || !queuedAgentID.MatchString(q.AgentID) {
+			continue
+		}
+		q.LanePath = ""
+		if seen[q] {
 			continue
 		}
 		seen[q] = true
-		if !queuedAgentID.MatchString(q.AgentID) || !filepath.IsAbs(q.LanePath) || filepath.Clean(q.LanePath) != q.LanePath {
-			continue
-		}
-		cmd := "cd " + shellQuote(q.LanePath) + " && mtix agent register " + shellQuote(q.AgentID)
+		cmd := "cd " + shellQuote(storeRoot) + " && mtix agent register " + shellQuote(q.AgentID)
 		if queuedHarness.MatchString(q.Harness) && q.Harness != "unknown" {
 			cmd += " --harness " + shellQuote(q.Harness)
 		}

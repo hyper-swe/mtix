@@ -32,8 +32,11 @@ func (w *inboxRowidWalk) read(ctx context.Context, db *sql.DB) (salvageMail, str
 			break
 		}
 		if err == nil {
-			w.advance(row.seq)
-			return row, op, true
+			err = w.verifyRow(ctx, db, row, op)
+			if err == nil {
+				w.advance(row.seq)
+				return row, op, true
+			}
 		}
 		if ctx.Err() != nil {
 			w.err = errors.Join(w.err, ctx.Err())
@@ -84,4 +87,24 @@ func (w *inboxRowidWalk) resultError() error {
 		return w.err
 	}
 	return errors.Join(w.err, fmt.Errorf("journal incomplete: %d unreadable rowid positions probed; lost record count unknown (at most this many within the probed range)", w.failed))
+}
+
+// A damaged btree may return a successful seek outside its requested range.
+// Only a matching point read authorizes skipping a healthy sparse gap.
+func (w *inboxRowidWalk) verifyRow(ctx context.Context, db *sql.DB, row salvageMail, op string) error {
+	if row.seq < w.next {
+		return fmt.Errorf("journal rowid moved backward from %d to %d; lost record count unknown", w.next, row.seq)
+	}
+	var point salvageMail
+	var pointOp string
+	e := &point.e
+	err := db.QueryRowContext(ctx, `SELECT event_id,project_prefix,node_id,COALESCE(uid,''),
+ author_id,payload,created_at,rowid,op_type FROM sync_events NOT INDEXED WHERE rowid=?`, row.seq).Scan(&e.EventID, &e.Project, &e.NodeID, &e.UID, &e.Author, &e.Payload, &e.CreatedAt, &point.seq, &pointOp)
+	if err != nil {
+		return fmt.Errorf("journal seek rowid %d failed point-read verification: %w", row.seq, err)
+	}
+	if point != row || pointOp != op {
+		return fmt.Errorf("journal seek rowid %d disagrees with point read; lost record count unknown", row.seq)
+	}
+	return nil
 }

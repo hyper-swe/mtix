@@ -20,7 +20,7 @@ type inboxFaultConn struct {
 }
 
 func (c *inboxFaultConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	if query != exportInboxJournalSQL && query != salvageInboxSQL {
+	if query != exportInboxJournalSQL && query != salvageInboxSQL && query != salvageInboxScanSQL {
 		return c.snapshotNativeConn.QueryContext(ctx, query, args)
 	}
 	if c.stage == "query" {

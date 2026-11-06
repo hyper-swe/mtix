@@ -18,19 +18,15 @@ type salvageMail struct {
 	seq int64
 }
 
-// salvageInboxRows uses one rowid path through readable rows and damaged ranges.
+// salvageInboxRows unions a verified rowid walk and a readable table-scan prefix.
 func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (*InboxJournal, error) {
 	journal := &InboxJournal{Version: 1, Events: []inboxJournalEvent{}}
-	walk := inboxRowidWalk{next: 1}
+	rows, readErr := collectSalvageInboxRows(ctx, db)
 	var records []salvageMail
 	loss := inboxLoss{}
-	for {
-		row, op, ok := walk.read(ctx, db)
-		if !ok {
-			break
-		}
-		if op == "comment" && loss.keep(row.e) {
-			records = append(records, row)
+	for _, row := range rows {
+		if row.op == "comment" && loss.keep(row.mail.e) {
+			records = append(records, row.mail)
 		}
 	}
 	notes := loss.notes()
@@ -39,7 +35,7 @@ func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (*Inb
 	}
 	res.Notes = append(res.Notes, notes...)
 	restoreSalvageCoverage(ctx, db, records, journal, res)
-	return journal, walk.resultError()
+	return journal, readErr
 }
 
 // restoreSalvageCoverage combines duplicate identities by recipient coverage (FR-19.1, MTIX-112.2.1).

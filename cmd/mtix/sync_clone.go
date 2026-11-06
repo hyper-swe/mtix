@@ -119,12 +119,12 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 		return wrapSyncErr(stderr, "dsn", err)
 	}
 
-	if !resume {
-		if hasEvents, hErr := localHasEvents(ctx, app.store); hErr != nil {
-			return wrapSyncErr(stderr, "local probe", hErr)
-		} else if hasEvents {
-			return errCloneLocalNotEmpty()
-		}
+	hasEvents, hErr := localHasEvents(ctx, app.store)
+	if hErr != nil {
+		return wrapSyncErr(stderr, "local probe", hErr)
+	}
+	if hasEvents && !resume {
+		return errCloneLocalNotEmpty()
 	}
 
 	connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
@@ -148,14 +148,23 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 		return wrapSyncErr(stderr, stage, err)
 	}
 
-	// A clone bootstraps a store with HISTORY: initialize the hook scan floor
-	// at the journal tail so hooks never treat cloned history as a backlog of
-	// fresh events to fire on (FR-20 §8 — no wake storm on a new machine).
-	if err := app.store.InitHookScanFloorAtTail(ctx); err != nil {
+	initCloneHookFloor(ctx, stderr, !hasEvents)
+	return finishClone(ctx, stdout, stderr, pulled, batches)
+}
+
+// initCloneHookFloor retains the hook floor on every completed clone (FR-20 §8).
+// Only an empty starting journal also seeds automatic wake progress; a nonempty
+// resume preserves unread mail eligibility (MTIX-112.2.2.1.3).
+func initCloneHookFloor(ctx context.Context, stderr io.Writer, bootstrap bool) {
+	var err error
+	if bootstrap {
+		err = app.store.InitHookScanFloorAtTail(ctx)
+	} else {
+		err = app.store.InitHookOnlyScanFloorAtTail(ctx)
+	}
+	if err != nil {
 		warnSync(stderr, "mtix sync clone: hook floor init", err)
 	}
-
-	return finishClone(ctx, stdout, stderr, pulled, batches)
 }
 
 // cloneLoop drives the pull-and-apply iteration from the keyset position

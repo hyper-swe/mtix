@@ -30,6 +30,10 @@ func (s *Store) claimWake(ctx context.Context, key model.WakeKey, lease time.Dur
 	}
 	var result model.WakeAttempt
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		matches, err := wakeEventMatches(ctx, tx, key)
+		if err != nil || !matches {
+			return err
+		}
 		previous, outcome, found, err := readWakeAttempt(ctx, tx, key)
 		if err != nil {
 			return err

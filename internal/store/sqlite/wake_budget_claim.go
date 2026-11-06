@@ -29,6 +29,11 @@ func (s *Store) ClaimWakeBudget(ctx context.Context, key model.WakeKey, lease ti
 	}
 	var result model.WakeBudgetResult
 	err := s.withWriteTx(ctx, func(tx *sql.Tx) error {
+		matches, err := wakeEventMatches(ctx, tx, key)
+		if err != nil || !matches {
+			result.Replaced = !matches && err == nil
+			return err
+		}
 		proposal, err := s.wakeBudgetProposal(ctx, tx, key, lease)
 		if err != nil {
 			return fmt.Errorf("read local wake accounting proposal: %w", err)

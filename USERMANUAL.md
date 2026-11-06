@@ -1030,6 +1030,11 @@ The guarantee covers the journal of one store (`.mtix/data/mtix.db`). Its exact 
 - **Per store.** The journal and the acknowledgements live in one store. An event reaches another checkout only through sync. Acknowledgements are not synced: a new checkout made with `mtix sync clone` lists every addressed event as unacknowledged, including events the first checkout already acknowledged. Delivery is at least once, so handle inbox work idempotently. Carrying acknowledgements to a new checkout is planned work (MTIX-112.17.16).
 - **Export, import and recover.** `tasks.json`, `mtix export` and `mtix recover` carry tickets and annotations, not the journal. Importing them into another store starts with an empty inbox there. `mtix export` prints how many unacknowledged events the store holds; `mtix recover` prints the count it can read from the damaged database, or says it could not count. A journal transport is a separate ticket (MTIX-112.2.1).
 - **`mtix import --mode replace`.** On a store that never synced, a replace removes the events of every ticket the file lacks. It asks for the ticket count, typed at a terminal, and lists the number of unacknowledged inbox events first; that number is the most the replace can remove. A store that has synced refuses a replace that would drop a task its sync log holds; a replace that keeps every task proceeds and removes no event. When a replace does remove events, the acknowledgement and delivery rows for event numbers above the newest surviving event are removed in the same step, and any agent cursor above that event is lowered to it (cursors are lowered, not removed; an agent whose cursor is already at or below it keeps it), so mail addressed afterwards shows as unread. The same transaction removes hook dispatch ledger rows above the surviving journal tail and lowers a hook scan cursor above it (to zero for an empty journal); surviving hook dispatch state is retained. A hook pass already in progress checks event identity before claiming, recording inbox deliveries and finalizing. Before advancing its scan, it also checks whether replace lowered the cursor it read; a pass that missed reused events stops there, and otherwise advances only through events whose identities still match. Recovery of a missing event only removes an existing expired claim; it cannot recreate one at a reused number. Hook crash recovery remains at least once. A merge import never removes events.
+- **Wakes after replace.** Fresh addressed events at reused event numbers remain eligible for live wake. The same replace transaction removes wake claims above the surviving journal tail and lowers scan, registration and lease marks above it to that tail (zero for an empty journal). Lower marks and surviving claims stay unchanged, along with registration epochs, pending holds, ownership of a running lease and budget usage already recorded. A scan snapshot cannot claim a different event under a reused number or move a wake mark for an event removed by replace. A wake attempt claimed before replace may finish; wake crash retries remain at least once. Discarding local sync history performs the same wake reconciliation against the empty journal. Returned-mail budget accounting has a separate limitation: reused event numbers can still be treated as already returned (MTIX-112.2.2.1.1).
+
+- **Automatic wakes on a first fill.** A clean bootstrap is a pull, clone or first relay ingest that starts with an empty journal and completes its first fill and shared floor initialization. Existing automatic scanner and pi wake marks move to the populated journal tail alongside the hook-dispatch floor. **Every addressed event up to that tail is bootstrap history for automatic wakes, including mail no checkout has seen.** It remains unread in the inbox but gets no automatic wake; initializing the floors spends no wake budget. Addressed mail appended after the floor is set remains eligible for an automatic wake. A `mtix sync clone --resume` that starts with a non-empty journal moves only the hook-dispatch floor toward the journal tail, clamped below outstanding hook claims. Every event covered by that floor gets no hook delivery, including local mail written before the resume. The mail stays in the inbox: the floor does not acknowledge it. Existing automatic wake progress and unread-mail eligibility are preserved. The explicit session-hook waiter keeps its unread-backlog behavior and may wake on any unread mail, including this history.
+
+- **Discard recovery limits.** The automatic first-fill floor does not cover an interrupted fill, a journaled local write before the pull, a scan during a multi-batch fill, or a floor-initialization warning. History can then wake again and spend wake budget; unacknowledged-wake backoff can hold later mail. A pull or `mtix sync clone --resume` with an already non-empty journal does not rerun bootstrap floor initialization. These wake-floor limits do not drop inbox events: complete `mtix sync pull` to retrieve remaining hub mail, and use `mtix inbox --agent <id>` to read it. Handle and acknowledge inbox mail to clear unacknowledged-wake backoff. Discard/pull recovery is tracked in MTIX-112.2.2.1.2; automatic wakes from history after an interrupted first clone of a fresh store are tracked in MTIX-112.2.2.1.4.
 - **`mtix sync reconcile --discard-local`.** It deletes the whole journal and the acknowledgements, with the local tasks and unpushed changes. Run `mtix sync push` first and check that `mtix sync status` shows pending 0. It asks for the ticket count, typed at a terminal, lists the unacknowledged inbox events first, and saves a snapshot of the database before the delete.
 - **Backups.** A backup copy of the database keeps the journal and the acknowledgements together, with the same event numbers. Restoring an older copy brings back its older state: events acknowledged after the copy was made are unacknowledged again, and events addressed after it are not in it.
 - **Deleting the database** (or the `.mtix` directory) deletes the inbox.
@@ -3841,8 +3846,15 @@ directory of the process that dispatches it. Launch rules:
   the environment or stdin, not as project-file arguments. The copy's path is
   `$0` for the script, and the original path is in `MTIX_HOOK_SCRIPT_PATH`.
 - An argument that names an existing project file that was not approved is
-  refused, and so is an argument outside the project that is a link to such a
-  file, even a link whose target does not exist yet.
+  refused, and so is an argument outside the project that is any link into the
+  project, not only a link to a file, even a link whose target does not exist
+  yet. Locations are judged by their fully resolved physical path. A path
+  that reaches the project root by another route is treated like the plain
+  path: pinned if approved, refused if not. A path that goes through a link
+  from outside into a subdirectory of the project is refused. A per-process
+  route through the working directory or root of the reading process is
+  refused, because the launched hook runs from the project root; a route to a
+  file or descriptor, such as a standard stream, is an ordinary outside path. If a path cannot be resolved, the launch is refused.
 - URLs, plain words, directories and paths that do not exist pass unchanged
   unless they are in the script position.
 
@@ -3858,8 +3870,13 @@ file inside the project is refused, so name that script by its project path.
 Programs outside the project are not part of the approval, so upgrading an
 interpreter needs no new review.
 
-Residual: a file that appears at a non-script position between the launch check
-and the moment the interpreter opens it is not covered, because only files that
+Residual: the check follows symbolic links only. A hard link to an approved or
+unapproved file looks like an ordinary file, and a directory mounted inside the
+project from elsewhere is judged by its location in the project, and a
+project subdirectory mounted outside the project is not recognised as part of
+it. Keep such entries out of hook arguments. A file that appears at a non-script position
+between the launch check and the moment the interpreter opens it is not
+covered, because only files that
 existed at approval are pinned there.
 
 Program review notice: when you approve an exec hook whose program is neither

@@ -15,6 +15,9 @@ type WakeKey struct {
 	UID      string
 	EventSeq int64
 	Epoch    int64
+	// EventID pins an inbox snapshot to its journal event when rowids are reused.
+	// It is internal metadata; empty retains the legacy sequence-only API.
+	EventID string `json:"-"`
 }
 
 // WakeAttempt carries the durable fence issued to the winning claimant.

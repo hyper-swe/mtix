@@ -55,11 +55,11 @@ type ClaudeHookClaims interface {
 // ClaudeHookDeps are the injected collaborators of ClaudeHook.
 type ClaudeHookDeps struct {
 	Key        WakeLeaseKey
-	Register   func(ctx context.Context) error                                                   // session-start only
-	Epoch      func(ctx context.Context) (int64, error)                                          // the registration epoch
-	Wakeable   func(ctx context.Context) (bool, string, error)                                   // the wake policy (A12)
-	Wait       func(ctx context.Context, skip func(seq int64) bool) ([]sqlite.InboxEvent, error) // inbox wait that ignores skipped events
-	Render     func(events []sqlite.InboxEvent) (string, error)                                  // the quoted envelope
+	Register   func(ctx context.Context) error                                                                 // session-start only
+	Epoch      func(ctx context.Context) (int64, error)                                                        // the registration epoch
+	Wakeable   func(ctx context.Context) (bool, string, error)                                                 // the wake policy (A12)
+	Wait       func(ctx context.Context, skip func(event sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) // inbox wait that ignores skipped events
+	Render     func(events []sqlite.InboxEvent) (string, error)                                                // the quoted envelope
 	Leases     ClaudeHookLeases
 	Claims     ClaudeHookClaims
 	Log        *ClaudeHookLog
@@ -290,8 +290,8 @@ func (h *ClaudeHook) renewOnce(ctx context.Context, r *leaseRenewer, holder stri
 // wait, so a re-arm blocks until NEW mail arrives and one event wakes the
 // session once. res.soft is a failure that did not stop the wake.
 func (h *ClaudeHook) wakeOnce(ctx context.Context) (ClaudeHookResult, error) {
-	seen := map[int64]bool{}
-	skip := func(seq int64) bool { return seen[seq] }
+	seen := map[hookEventIdentity]bool{}
+	skip := func(e sqlite.InboxEvent) bool { return seen[hookEventIdentity{e.Seq, e.EventID}] }
 	for {
 		events, err := h.d.Wait(ctx, skip)
 		if err != nil {
@@ -320,10 +320,16 @@ func (h *ClaudeHook) wakeOnce(ctx context.Context) (ClaudeHookResult, error) {
 	}
 }
 
-func unseenEvents(events []sqlite.InboxEvent, seen map[int64]bool) []sqlite.InboxEvent {
+// hookEventIdentity keeps a lost claim from hiding replacement mail (FR-20, MTIX-112.2.2.1).
+type hookEventIdentity struct {
+	seq int64
+	id  string
+}
+
+func unseenEvents(events []sqlite.InboxEvent, seen map[hookEventIdentity]bool) []sqlite.InboxEvent {
 	var fresh []sqlite.InboxEvent
 	for _, e := range events {
-		if !seen[e.Seq] {
+		if !seen[hookEventIdentity{e.Seq, e.EventID}] {
 			fresh = append(fresh, e)
 		}
 	}
@@ -332,17 +338,17 @@ func unseenEvents(events []sqlite.InboxEvent, seen map[int64]bool) []sqlite.Inbo
 
 // claimEvents claims each event once; a lost claim is remembered in seen. On a
 // claim error it stops and returns the claims won so far, which the caller delivers.
-func (h *ClaudeHook) claimEvents(ctx context.Context, events []sqlite.InboxEvent, epoch int64, seen map[int64]bool) ([]sqlite.InboxEvent, []model.WakeAttempt, error) {
+func (h *ClaudeHook) claimEvents(ctx context.Context, events []sqlite.InboxEvent, epoch int64, seen map[hookEventIdentity]bool) ([]sqlite.InboxEvent, []model.WakeAttempt, error) {
 	var won []sqlite.InboxEvent
 	var attempts []model.WakeAttempt
 	for _, e := range events {
-		key := model.WakeKey{AgentID: h.d.Key.AgentID, HostID: h.d.Key.HostID, UID: h.d.Key.UID, EventSeq: e.Seq, Epoch: epoch}
+		key := model.WakeKey{AgentID: h.d.Key.AgentID, HostID: h.d.Key.HostID, UID: h.d.Key.UID, EventSeq: e.Seq, Epoch: epoch, EventID: e.EventID}
 		attempt, claimed, cerr := h.d.Claims.ClaimWake(ctx, key, h.d.ClaimLease)
 		if cerr != nil {
 			return won, attempts, fmt.Errorf("claim wake for event %d: %w", e.Seq, cerr)
 		}
 		if !claimed {
-			seen[e.Seq] = true
+			seen[hookEventIdentity{e.Seq, e.EventID}] = true
 			continue
 		}
 		won = append(won, e)

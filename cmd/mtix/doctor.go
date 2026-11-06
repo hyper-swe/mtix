@@ -26,8 +26,11 @@ not checked on a relay-only board. WARN and INFO are advisory: exit 0 when no
 check fails, or 2 when any check reports FAIL.
 
 --json emits an array with id, status, detail and fix for each check; a check may add
-a data object of machine-readable numbers (the history.size row does), and rows
+a data object of machine-readable details (the history.size row does), and rows
 without one have exactly the four fields.
+The sync.hub-contact row carries its last outcome under data.last_contact
+(at, route, ok and failure-only error_class); it reads operator-local state
+and adds no hub contact.
 --fix performs only explicitly registered non-grant repairs and rechecks them.
 Grant commands are printed for you to run yourself; they are never executed.
 Without --fix, operator-local files, including attach artifacts, stay unchanged.

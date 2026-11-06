@@ -140,8 +140,8 @@ func (s *hubContactSource) liveLeaseList() ([]oplocal.ListenLease, error) {
 }
 
 // recordContact stores the outcome of one scheduled contact for doctor.
-func (s *hubContactSource) recordContact(at time.Time, route string) error {
-	if err := s.state.RecordHubContact(s.key(), oplocal.HubContact{At: at, Route: route, OK: true}); err != nil {
+func (s *hubContactSource) recordContact(at time.Time, route string, outcome daemonPullOutcome) error {
+	if err := s.state.RecordHubContact(s.key(), oplocal.HubContact{At: at, Route: route, OK: outcome.ok, ErrorClass: outcome.class}); err != nil {
 		return fmt.Errorf("record hub contact: %w", err)
 	}
 	return nil
@@ -200,17 +200,15 @@ func attachVerbActivity(verb string) (oplocal.ActivityKind, bool) {
 	return "", false
 }
 
-// recordGlueActivity records glue activity for the board found from the
-// working directory; no board means nothing to record.
-func recordGlueActivity(verb string) {
+// recordGlueActivity records glue activity for the board whose store root the
+// glue predicate resolved; it never looks for a board of its own. An empty
+// root means nothing to record.
+func recordGlueActivity(verb, storeRoot string) {
 	kind, ok := attachVerbActivity(verb)
-	if !ok {
+	if !ok || storeRoot == "" {
 		return
 	}
-	dir, err := findMtixDir()
-	if err != nil {
-		return
-	}
+	dir := filepath.Join(storeRoot, ".mtix")
 	// Best effort: glue must never fail, so the error is only logged.
 	if err := recordHubActivityAt(dir, kind, utcNow); err != nil && app.logger != nil {
 		app.logger.Debug("hub glue activity not recorded", "error", err)

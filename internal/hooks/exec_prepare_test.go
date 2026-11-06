@@ -86,6 +86,7 @@ func newFixture(t *testing.T, command string, opts fixtureOptions) prepareFixtur
 		command = strings.ReplaceAll(command, "{A}", alias)
 	}
 	command = strings.ReplaceAll(command, "{L}", logical)
+	command = strings.ReplaceAll(command, "{N}", filepath.Base(root))
 	match := "{events: [comment.addressed]}"
 	if opts.toAgent != "" {
 		match = "{events: [comment.addressed], to-agent: " + opts.toAgent + "}"

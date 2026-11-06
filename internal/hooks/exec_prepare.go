@@ -166,7 +166,7 @@ func launchProgram(hook string, in *hookInputs, arg string) (string, error) {
 	}
 	if target, _, inside := projectPath(in.logical, in.root, resolved); inside {
 		if target == "" {
-			return "", fmt.Errorf("exec launch refused for hook %q: program %q exceeds the link expansion limit", hook, arg)
+			return "", fmt.Errorf("exec launch refused for hook %q: program %q could not be judged (link limit, unreadable path or per-process link into the project)", hook, arg)
 		}
 		return "", fmt.Errorf("exec launch refused for hook %q: %q resolves to %q inside the project; name the script by its project path", hook, arg, target)
 	}

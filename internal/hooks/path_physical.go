@@ -27,8 +27,9 @@ type physicalPath struct {
 	// that lands inside it anywhere but at the root itself.
 	Foreign bool
 	// Complete is false when no physical answer exists: the link budget ran
-	// out, a link or file could not be read, or a link is not stable
-	// (per-process links). Callers refuse an incomplete answer.
+	// out, a link or file could not be read, or the path goes through a
+	// per-process link that lands in the project. Callers refuse an
+	// incomplete answer.
 	Complete bool
 }
 
@@ -57,10 +58,6 @@ func physicalLocation(root, path string) physicalPath {
 // observeLink classes one link met on the way: where the link sits, and where
 // it lands.
 func (p *physicalPath) observeLink(root, link string) {
-	if unstableLink(link) {
-		p.Complete = false
-		return
-	}
 	if _, inside, decided := rootRelative(root, filepath.Dir(link)); !decided {
 		p.Complete = false
 		return
@@ -73,6 +70,14 @@ func (p *physicalPath) observeLink(root, link string) {
 	switch {
 	case !complete || !decided:
 		p.Complete = false
+	case unstableLink(link) && dependsOnProcessDirectory(link):
+		// The launched hook runs from the project root, which may not be
+		// this process's directory, so the route cannot be judged here.
+		p.Complete = false
+	case inside && unstableLink(link):
+		// A per-process link can land elsewhere in the launched process
+		// than here, so a route into the project cannot be pinned.
+		p.Complete = false
 	case inside && rel != ".":
 		p.Foreign = true
 	}
@@ -80,10 +85,9 @@ func (p *physicalPath) observeLink(root, link string) {
 
 // rootRelative reports where path lies under root by file identity: some
 // existing ancestor of path is the same file as root, and rel is the rest of
-// the path below that ancestor ("." for the root itself). A string comparison
-// alone is wrong on a case-insensitive volume or through another path to the
-// root (FR-19.2). decided is false when identity could not be read, which
-// callers treat as inside.
+// the path below that ancestor ("." for the root itself). decided is false
+// when identity could not be read; callers that must fail closed refuse an
+// undecided answer (FR-19.2).
 func rootRelative(root, path string) (rel string, inside, decided bool) {
 	rootInfo, err := os.Stat(root)
 	if err != nil {
@@ -110,10 +114,16 @@ func rootRelative(root, path string) (rel string, inside, decided bool) {
 	}
 }
 
-// underRoot reports whether path is the project root or lies under it by file
-// identity. An undecidable answer is reported as not inside; callers that must
-// fail closed use rootRelative.
-func underRoot(root, path string) bool {
-	_, inside, _ := rootRelative(root, path)
-	return inside
+// dependsOnProcessDirectory reports whether a per-process link names a
+// directory by absolute path (the working directory or root of whoever reads
+// it). Such a link lands elsewhere in the launched hook than in this process.
+// A link to another per-process directory by relative number, and links to
+// files or descriptors, do not.
+func dependsOnProcessDirectory(link string) bool {
+	target, err := os.Readlink(link)
+	if err != nil || !filepath.IsAbs(target) {
+		return err != nil
+	}
+	info, err := os.Stat(link)
+	return err != nil || info.IsDir()
 }

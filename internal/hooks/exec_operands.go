@@ -344,20 +344,23 @@ func splitOption(arg string) (value, prefix string) {
 // projectPath classifies a path against both the entered (logical) and the
 // resolved project root. resolved follows links through the deepest existing
 // parent, so a path that does not exist yet is judged where it would land.
-// An exhausted link budget returns ("", false, true) to require refusal.
+// A path with no physical answer returns ("", false, true) to require
+// refusal. The spelling can only refuse more: a path that crosses a link from
+// outside into the project is never lexical, so it is never taken for the
+// approved file (FR-19.2).
 func projectPath(logical, root, value string) (resolved string, lexical, inside bool) {
 	if value == "" {
 		return "", false, false
 	}
-	_, in, err := projectScriptLocation(logical, root, value)
-	lexical = err == nil && in
 	phys := physicalLocation(root, value)
 	if !phys.Complete {
 		// No physical answer exists (link budget, unreadable link or file,
-		// per-process link). Mark it for refusal regardless of its lexical
-		// relationship to the project (FR-19.2).
+		// per-process link into the project). Mark it for refusal regardless
+		// of its spelling (FR-19.2).
 		return "", false, true
 	}
+	_, in, err := projectScriptLocation(logical, root, value)
+	lexical = err == nil && in && !phys.Foreign
 	return phys.Resolved, lexical, lexical || phys.Inside
 }
 
@@ -376,7 +379,7 @@ func checkOperands(h Hook, in *hookInputs) error {
 		resolved, lexical, inside := projectPath(in.logical, in.root, value)
 		switch {
 		case inside && resolved == "":
-			return fmt.Errorf("exec launch refused for hook %q: path %q exceeds the link expansion limit", h.Name, arg)
+			return fmt.Errorf("exec launch refused for hook %q: path %q could not be judged (link limit, unreadable path or per-process link into the project); name it by its project path", h.Name, arg)
 		case i == in.script && inside:
 			return fmt.Errorf("exec launch refused for hook %q: script %q is not an approved project file; create it and approve the hook again", h.Name, arg)
 		case inside && !lexical:

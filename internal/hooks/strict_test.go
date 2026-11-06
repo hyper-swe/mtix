@@ -271,7 +271,7 @@ func corruptStrictRecord(t *testing.T, f prepareFixture) {
 	require.Equal(t, 1, hit)
 }
 
-func TestUnderRoot_DecidesByFileIdentityWithoutSkipping(t *testing.T) {
+func TestRootRelative_DecidesWithoutSkippingForEveryShape(t *testing.T) {
 	base, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	root := filepath.Join(base, "project")
@@ -294,10 +294,14 @@ func TestUnderRoot_DecidesByFileIdentityWithoutSkipping(t *testing.T) {
 		"missing path beside the root": {filepath.Join(base, "projectX", "bin"), false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, tc.want, underRoot(root, tc.path))
+			_, inside, decided := rootRelative(root, tc.path)
+			require.True(t, decided)
+			require.Equal(t, tc.want, inside)
 		})
 	}
-	require.False(t, underRoot(filepath.Join(base, "absent-root"), root), "an unreadable root is never reported as containing anything")
+	_, inside, decided := rootRelative(filepath.Join(base, "absent-root"), root)
+	require.False(t, decided, "an unreadable root decides nothing")
+	require.False(t, inside)
 }
 
 // fakeEnv writes an executable named env outside every PATH directory that

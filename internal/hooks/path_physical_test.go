@@ -21,7 +21,7 @@ func outsideDir(t *testing.T) string {
 	return dir
 }
 
-func TestPrepareExec_ApprovedScriptViaEquivalentRootPathIsPinned(t *testing.T) {
+func TestPrepareExec_ApprovedScriptThroughRootLinkIsPinned(t *testing.T) {
 	f := newFixture(t, `[sh, "{A}/scripts/run.sh"]`, fixtureOptions{aliased: true})
 	plan, err := f.approvals.PrepareExec(f.hook(t))
 	require.NoError(t, err)
@@ -32,14 +32,14 @@ func TestPrepareExec_ApprovedScriptViaEquivalentRootPathIsPinned(t *testing.T) {
 	require.Equal(t, prepareScript, string(staged))
 }
 
-func TestPrepareExec_UnapprovedFileViaEquivalentRootPathIsRefused(t *testing.T) {
+func TestPrepareExec_UnapprovedFileThroughRootLinkIsRefused(t *testing.T) {
 	f := newFixture(t, `[sh, "{A}/scripts/later.sh"]`, fixtureOptions{aliased: true})
 	plan, err := f.approvals.PrepareExec(f.hook(t))
 	require.Error(t, err)
 	require.Nil(t, plan)
 }
 
-func TestPrepareExec_ChangedBytesViaEquivalentRootPathAreRefused(t *testing.T) {
+func TestPrepareExec_ChangedBytesThroughRootLinkAreRefused(t *testing.T) {
 	f := newFixture(t, `[sh, "{A}/scripts/run.sh"]`, fixtureOptions{aliased: true})
 	_, err := f.approvals.PrepareExec(f.hook(t))
 	require.NoError(t, err, "the approved bytes launch")

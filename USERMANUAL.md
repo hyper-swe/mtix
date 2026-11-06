@@ -3710,10 +3710,13 @@ directory of the process that dispatches it. Launch rules:
 - An argument that names an existing project file that was not approved is
   refused, and so is an argument outside the project that is any link into the
   project, not only a link to a file, even a link whose target does not exist
-  yet. Locations are compared by their fully resolved physical path, so an
-  alias of the project root, a path spelled through a symbolic link or a
-  procfs route is treated like the plain path. If a path cannot be resolved,
-  the launch is refused.
+  yet. Locations are judged by their fully resolved physical path. A path
+  that reaches the project root by another route is treated like the plain
+  path: pinned if approved, refused if not. A path that goes through a link
+  from outside into a subdirectory of the project is refused. A per-process
+  route through the working directory or root of the reading process is
+  refused, because the launched hook runs from the project root; a route to a
+  file or descriptor, such as a standard stream, is an ordinary outside path. If a path cannot be resolved, the launch is refused.
 - URLs, plain words, directories and paths that do not exist pass unchanged
   unless they are in the script position.
 
@@ -3731,8 +3734,9 @@ interpreter needs no new review.
 
 Residual: the check follows symbolic links only. A hard link to an approved or
 unapproved file looks like an ordinary file, and a directory mounted inside the
-project from elsewhere is judged by its location in the project. Keep such
-entries out of hook arguments. A file that appears at a non-script position
+project from elsewhere is judged by its location in the project, and a
+project subdirectory mounted outside the project is not recognised as part of
+it. Keep such entries out of hook arguments. A file that appears at a non-script position
 between the launch check and the moment the interpreter opens it is not
 covered, because only files that
 existed at approval are pinned there.

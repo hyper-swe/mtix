@@ -348,13 +348,13 @@ while checking cleanup.
    `.mtix/tasks.json` only if export succeeds. In a POSIX shell:
 
    ```sh
-   (umask 077; set -C; mtix export > .mtix/tasks-clean.json) &&
+   (umask 077; set -C; mtix export --board-only > .mtix/tasks-clean.json) &&
      mv .mtix/tasks-clean.json .mtix/tasks.json
    ```
 
    The temporary name must not already exist; the command refuses to overwrite
    it. On failure, keep the original board file and do not publish the partial
-   export. On success, the fresh snapshot has no per-task or top-level history.
+   export. On success, the fresh snapshot has no per-task or top-level history and no inbox journal.
    Do not hand-edit history or its checksum, and do not import an edited snapshot
    expecting it to erase local entries: history import keeps local entries.
 
@@ -641,6 +641,10 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 **Own-event replay.** Before 0.5.4 a pull could re-apply events this machine had already pushed, in the order they arrived, which left a task in an older workflow state: claim, push, `mtix done`, pull, and the task was `in_progress` again. Upgrading stops new damage; it does not change tasks already reverted. Now pull no longer re-applies this client's own events: an event is this client's own when its row is in the local `sync_events` log, and pull acknowledges it instead of applying it. A task already reverted is healed by `mtix sync repair --status`.
 
 ## Recover
+
+On a store holding restored mail, do not use `mtix sync reconcile --discard-local`: it is refused, including its dry run; typed confirmation cannot bypass this guard. Pending 0 does not mean that mail reached the hub. Keep the original store. To obtain the hub board, run `mtix init PREFIX` in a new empty directory, configure the same hub credentials via `MTIX_SYNC_DSN`, then run `mtix sync clone`. Read the restored mail in the original store.
+
+Inbox salvage walks the table by rowid without depending on a secondary index. It probes past damaged ranges, with at most 10,000 failed rowid probes. An unreadable upper bound or an exhausted probe budget produces an explicitly incomplete report naming the limit and rowid reached; lost records are reported as unknown or an upper bound in positions, never as an exact record count. Keep the damaged database and any private export. Recovery adds `.mtix/recovered-*.json` to the existing project `.gitignore` before writing; if it cannot protect the file, it writes no recovered export.
 
 - **Reverted workflow state.** Run `mtix sync pull`, then `mtix sync repair --status` (a dry run that reads and writes only the local store). It lists each task whose state differs from this machine's event log, with the winning event, its time and which machine made it. Pull again just before `--apply`: a repair on a stale log can revert a teammate's newer change on every machine. Ask the user to review the list before you run `mtix sync repair --status --apply`; it writes a verified backup first. Never add `--force`; it also repairs tasks flagged "not a replay; review". Then run `mtix sync push`.
 - **A local store that is lost or damaged.** Back up what remains, make a fresh project directory with `mtix init`, and run `mtix sync clone` there. Clone refuses while the hub holds an event that fails the pull checks, and names it; on the fresh store the recovery is `mtix sync pull`, which quarantines that event. A hub event for a task the clone never creates (an old-number leftover) is quarantined by the clone itself, which prints the count; doctor names them and prints the acknowledge command.

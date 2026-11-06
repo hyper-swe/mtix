@@ -24,7 +24,7 @@ func unackedInboxCount(ctx context.Context) (destroyCount, error) {
 	return destroyCount{Label: unackedInboxLabel, N: int(n)}, nil
 }
 
-// writeExportInboxNote tells the operator, on stderr, that an export does not
+// writeExportInboxNote tells the operator, on stderr, that a mirror export does not
 // carry the inbox. The journal and the acks are per store: tasks.json holds
 // tickets and annotations, so an import into another store starts with an
 // empty inbox.
@@ -32,8 +32,8 @@ func writeExportInboxNote(w io.Writer, n int64) {
 	if n == 0 {
 		return
 	}
-	fmt.Fprintf(w, "note: this store holds %d unacknowledged inbox event(s); the export does not carry them "+
-		"(the event journal is per store and reaches another checkout only through sync, never through tasks.json). "+
+	fmt.Fprintf(w, "note: this store holds %d unacknowledged inbox event(s); this journal-free export does not carry them "+
+		"(tasks.json is journal-free; export to a private file without --board-only to carry addressed mail). "+
 		"List what was addressed to an agent with: mtix inbox --agent <id> --history\n", n)
 }
 
@@ -48,18 +48,17 @@ func exportInboxNoteTo(ctx context.Context, w io.Writer) error {
 }
 
 // writeRecoverInboxNote reports the unread mail in the damaged database
-// (opened read-only) that the recovered file cannot carry, or says the count
-// could not be made.
+// (opened read-only). The salvage report identifies what was recoverable.
 func writeRecoverInboxNote(ctx context.Context, w io.Writer, dbPath string) {
 	n, err := sqlite.CountUnackedInboxFile(ctx, dbPath)
 	if err != nil {
 		fmt.Fprintln(w, "note: unacknowledged inbox events in the damaged database could not be counted; "+
-			"the recovered file carries tickets, not the inbox. Keep the damaged database file if any agent had unread mail.")
+			"read the salvage report for retained and unavailable mail. Keep the damaged database file if recovery is incomplete.")
 		return
 	}
 	if n == 0 {
 		return
 	}
-	fmt.Fprintf(w, "note: the damaged database holds %d unacknowledged inbox event(s); the recovered file does not carry them "+
-		"(the event journal is not part of tasks.json). Keep the damaged database file to read them.\n", n)
+	fmt.Fprintf(w, "note: the damaged database holds %d unacknowledged inbox event(s); read the salvage report for retained and unavailable mail. "+
+		"Ordinary tasks.json does not carry the journal; keep the damaged database if recovery is incomplete.\n", n)
 }

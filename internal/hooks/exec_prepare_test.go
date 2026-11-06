@@ -35,7 +35,7 @@ type fixtureOptions struct {
 	linked     bool              // enter the project through a symlink
 	unapproved bool              // do not approve the hook
 	toAgent    string            // match.to-agent of the hook
-	aliased    bool              // "{A}" names the project through a link kept outside it
+	aliased    bool              // "{A}" is another path to the project root
 }
 
 // newPrepareFixture builds an approved exec hook with the given flow-style

@@ -95,39 +95,70 @@ func buildPlan(h Hook, in *hookInputs, root, copies string, st stager) (*ExecPla
 	if err := checkOperands(h, in); err != nil {
 		return nil, err
 	}
-	plan := &ExecPlan{Dir: root, Resolved: map[string]string{}, Path: FixedHookPath(root)}
-	for i, arg := range h.Exec.Command {
-		if script, ok := in.scripts[i]; ok {
-			staged, err := st.stage(copies, script)
-			if err != nil {
-				return nil, err
-			}
-			if plan.ScriptPath == "" {
-				plan.ScriptPath = script.path
-			}
-			plan.Argv = append(plan.Argv, script.prefix+staged)
-			continue
-		}
-		resolved := arg
-		if i == 0 || i == in.program {
-			var err error
-			if resolved, err = launchProgram(h.Name, in, arg); err != nil {
-				return nil, err
-			}
-			if resolved != arg {
-				plan.Resolved[arg] = resolved
-			}
-		}
-		plan.Argv = append(plan.Argv, resolved)
+	pb := &planBuilder{
+		h: h, in: in, copies: copies, st: st,
+		plan: &ExecPlan{Dir: root, Resolved: map[string]string{}, Path: FixedHookPath(root)},
 	}
-	return plan, nil
+	for i, arg := range h.Exec.Command {
+		if err := pb.addArg(i, arg); err != nil {
+			return nil, err
+		}
+	}
+	return pb.plan, nil
+}
+
+// planBuilder accumulates the argv of an ExecPlan one argument at a time.
+type planBuilder struct {
+	h      Hook
+	in     *hookInputs
+	copies string
+	st     stager
+	plan   *ExecPlan
+}
+
+// addArg appends argument i: a pinned script as its verified copy, the
+// program as its resolved absolute path, anything else unchanged.
+func (pb *planBuilder) addArg(i int, arg string) error {
+	isProgram := i == 0 || i == pb.in.program
+	if isProgram && hasParentSegment(arg) {
+		return parentSegmentError(pb.h.Name, arg)
+	}
+	if script, ok := pb.in.scripts[i]; ok {
+		staged, err := pb.st.stage(pb.copies, script)
+		if err != nil {
+			return err
+		}
+		if pb.plan.ScriptPath == "" {
+			pb.plan.ScriptPath = script.path
+		}
+		pb.plan.Argv = append(pb.plan.Argv, script.prefix+staged)
+		return nil
+	}
+	resolved := arg
+	if isProgram {
+		var err error
+		if resolved, err = launchProgram(pb.h.Name, pb.in, arg); err != nil {
+			return err
+		}
+		if resolved != arg {
+			pb.plan.Resolved[arg] = resolved
+		}
+	}
+	pb.plan.Argv = append(pb.plan.Argv, resolved)
+	return nil
+}
+
+// parentSegmentError refuses a program written with a parent-directory
+// segment, whether or not it lands on a pinned file (FR-19.2).
+func parentSegmentError(hook, arg string) error {
+	return fmt.Errorf("exec launch refused for hook %q: program %q contains a parent-directory segment; write its absolute path without \"..\" or a project-relative path", hook, arg)
 }
 
 // launchProgram makes the program (index 0) absolute and refuses one that
 // resolves into the project.
 func launchProgram(hook string, in *hookInputs, arg string) (string, error) {
 	if hasParentSegment(arg) {
-		return "", fmt.Errorf("exec launch refused for hook %q: program %q contains a parent-directory segment; write its absolute path without \"..\" or a project-relative path", hook, arg)
+		return "", parentSegmentError(hook, arg)
 	}
 	resolved, err := resolveLauncher(in.root, arg)
 	if err != nil {

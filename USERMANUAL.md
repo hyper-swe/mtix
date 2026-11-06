@@ -3708,8 +3708,12 @@ directory of the process that dispatches it. Launch rules:
   the environment or stdin, not as project-file arguments. The copy's path is
   `$0` for the script, and the original path is in `MTIX_HOOK_SCRIPT_PATH`.
 - An argument that names an existing project file that was not approved is
-  refused, and so is an argument outside the project that is a link to such a
-  file, even a link whose target does not exist yet.
+  refused, and so is an argument outside the project that is any link into the
+  project, not only a link to a file, even a link whose target does not exist
+  yet. Locations are compared by their fully resolved physical path, so an
+  alias of the project root, a path spelled through a symbolic link or a
+  procfs route is treated like the plain path. If a path cannot be resolved,
+  the launch is refused.
 - URLs, plain words, directories and paths that do not exist pass unchanged
   unless they are in the script position.
 
@@ -3725,8 +3729,12 @@ file inside the project is refused, so name that script by its project path.
 Programs outside the project are not part of the approval, so upgrading an
 interpreter needs no new review.
 
-Residual: a file that appears at a non-script position between the launch check
-and the moment the interpreter opens it is not covered, because only files that
+Residual: the check follows symbolic links only. A hard link to an approved or
+unapproved file looks like an ordinary file, and a directory mounted inside the
+project from elsewhere is judged by its location in the project. Keep such
+entries out of hook arguments. A file that appears at a non-script position
+between the launch check and the moment the interpreter opens it is not
+covered, because only files that
 existed at approval are pinned there.
 
 Program review notice: when you approve an exec hook whose program is neither

@@ -210,15 +210,19 @@ func TestProjectPath_CaseVariantSpellingIsInsideTheProject(t *testing.T) {
 	require.False(t, outside)
 }
 
-func TestApproveProgram_CaseVariantPathToProjectFileIsRefused(t *testing.T) {
+func TestApproveProgram_CaseVariantPathToProjectFileIsPinned(t *testing.T) {
 	f, variant := caseVariantFixture(t)
 	yaml := "hooks:\n  - name: wake\n    match: {events: [comment.addressed]}\n    deliver: [exec]\n    exec: " + execValue("["+variant+", x]") + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(f.mtixDir, "hooks.yaml"), []byte(yaml), 0o600))
 	require.NoError(t, f.approvals.Approve("wake", true))
 	_, err := f.approvals.ApproveProgram(f.hook(t), true)
-	require.Error(t, err, "strict approval refuses a case-variant spelling of a project file")
-	_, err = f.approvals.PrepareExec(f.hook(t))
-	require.Error(t, err, "launch refuses it too, with strict mode off")
+	require.ErrorContains(t, err, "needs no program approval", "a project file is pinned like any script, so it has no program record")
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	require.NotEqual(t, variant, plan.Argv[0], "the staged copy runs, not the written path")
+	staged, err := os.ReadFile(plan.Argv[0])
+	require.NoError(t, err)
+	require.Equal(t, "#!/bin/sh\n", string(staged))
 }
 
 func TestStrict_PinnedProgramIsRecordedInTheFiringAudit(t *testing.T) {

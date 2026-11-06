@@ -60,24 +60,6 @@ func approvalSnapshot(dir string) (*hookSnapshot, error) {
 
 func splitPath(path string) []string { return strings.Split(path, string(filepath.Separator)) }
 
-func scriptComponents(root, rel string) error {
-	current := root
-	for _, part := range splitPath(rel) {
-		current = filepath.Join(current, part)
-		info, err := os.Lstat(current)
-		if os.IsNotExist(err) {
-			return nil
-		}
-		if err != nil {
-			return fmt.Errorf("script metadata: %w", err)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("script path requires symlink-free components")
-		}
-	}
-	return nil
-}
-
 // scriptInput is one project script's bytes as read for a hook.
 type scriptInput struct {
 	// prefix is the "--opt=" part when the file is an option's value.
@@ -165,19 +147,17 @@ func (in *hookInputs) readArgument(i int, arg string) (scriptInput, bool, error)
 	if i != in.program && i != in.script {
 		value, prefix = splitOption(arg)
 	}
-	rel, inside, err := projectScriptLocation(in.logical, in.root, value)
-	if err != nil {
-		return scriptInput{}, false, err
+	phys := physicalLocation(in.root, value)
+	if !phys.Complete {
+		// No physical answer: nothing is pinned, and launch refuses the path.
+		return scriptInput{}, false, nil
 	}
-	if !inside {
-		rel, inside = physicalScriptLocation(in.root, value)
+	if phys.Linked {
+		return scriptInput{}, false, fmt.Errorf("script path requires symlink-free components")
 	}
-	if inside {
-		if linkErr := scriptComponents(in.root, rel); linkErr != nil {
-			return scriptInput{}, false, linkErr
-		}
-	}
-	content, mode, ok, err := readSnapshotScript(in.root, value, inside)
+	inside := phys.Inside && !phys.Foreign
+	abs := filepath.Join(in.root, phys.Rel)
+	content, mode, ok, err := readSnapshotScript(in.root, value, abs, inside)
 	if err != nil || !ok {
 		return scriptInput{}, false, err
 	}
@@ -187,7 +167,7 @@ func (in *hookInputs) readArgument(i int, arg string) (scriptInput, bool, error)
 	if !inside {
 		return scriptInput{}, false, nil
 	}
-	part := scriptInput{prefix: prefix, path: filepath.Join(in.root, rel), content: content, mode: mode}
+	part := scriptInput{prefix: prefix, path: abs, content: content, mode: mode}
 	in.scripts[i] = part
 	return part, true, nil
 }
@@ -225,27 +205,6 @@ func projectScriptLocation(logicalRoot, root, arg string) (string, bool, error) 
 	return rel, rel != ".." && !filepath.IsAbs(rel) && !slices.Contains(splitPath(rel), ".."), nil
 }
 
-// physicalScriptLocation classes a path the text check called outside by where
-// it physically lands: a path spelled through an alias or a case variant of
-// the project root is pinned like any project file. It uses the same
-// resolution and identity check as the launch-time projectPath. A path whose
-// own last component is a link stays unpinned: a link to a project file keeps
-// being refused rather than adopted.
-func physicalScriptLocation(root, arg string) (string, bool) {
-	path := arg
-	if !filepath.IsAbs(path) {
-		path = root + string(filepath.Separator) + arg
-	}
-	if info, err := os.Lstat(path); err == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", false
-	}
-	resolved, complete := resolveDeepestStatus(path, 0)
-	if !complete {
-		return "", false
-	}
-	return rootRelative(root, resolved)
-}
-
 func (s *hookSnapshot) combinedError() error {
 	var result error
 	for _, err := range s.errors {
@@ -254,15 +213,15 @@ func (s *hookSnapshot) combinedError() error {
 	return result
 }
 
-func readSnapshotScript(root, arg string, inside bool) ([]byte, os.FileMode, bool, error) {
+// readSnapshotScript reads the file an argument names. abs is the physical
+// path that was classified: a project file is read from there, never from a
+// second reading of the written text.
+func readSnapshotScript(root, arg, abs string, inside bool) ([]byte, os.FileMode, bool, error) {
 	if !inside {
 		content, ok := readTrustedScript(root, arg)
 		return content, 0, ok, nil
 	}
-	path := arg
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, path)
-	}
+	path := abs
 	info, err := os.Stat(path)
 	if os.IsNotExist(err) {
 		return nil, 0, false, nil

@@ -5,7 +5,6 @@ package hooks
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -352,56 +351,14 @@ func projectPath(logical, root, value string) (resolved string, lexical, inside 
 	}
 	_, in, err := projectScriptLocation(logical, root, value)
 	lexical = err == nil && in
-	path := value
-	if !filepath.IsAbs(path) {
-		// Not Join: cleaning would apply a parent segment to link text.
-		path = root + string(filepath.Separator) + value
-	}
-	var complete bool
-	resolved, complete = resolveDeepestStatus(path, 0)
-	if !complete {
-		// No physical answer exists within the budget. Mark it for refusal
-		// regardless of its lexical relationship to the project (FR-19.2).
+	phys := physicalLocation(root, value)
+	if !phys.Complete {
+		// No physical answer exists (link budget, unreadable link or file,
+		// per-process link). Mark it for refusal regardless of its lexical
+		// relationship to the project (FR-19.2).
 		return "", false, true
 	}
-	rel, err := filepath.Rel(root, resolved)
-	byName := err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-	return resolved, lexical, lexical || byName || underRoot(root, resolved)
-}
-
-// rootRelative reports where path lies under root by file identity: some
-// existing ancestor of path is the same file as root, and rel is the rest of
-// the path below that ancestor ("." for the root itself). A string comparison
-// alone is wrong on a case-insensitive volume or through an alias of the
-// root, where a different spelling names the same file (FR-19.2). It is the
-// one physical-location check, shared by launch and approval.
-func rootRelative(root, path string) (rel string, ok bool) {
-	rootInfo, err := os.Stat(root)
-	if err != nil {
-		return "", false
-	}
-	var tail []string
-	for current := filepath.Clean(path); ; {
-		if info, statErr := os.Stat(current); statErr == nil && os.SameFile(rootInfo, info) {
-			if len(tail) == 0 {
-				return ".", true
-			}
-			return filepath.Join(tail...), true
-		}
-		parent := filepath.Dir(current)
-		if parent == current {
-			return "", false
-		}
-		tail = append([]string{filepath.Base(current)}, tail...)
-		current = parent
-	}
-}
-
-// underRoot reports whether path is the project root or lies under it by file
-// identity.
-func underRoot(root, path string) bool {
-	_, ok := rootRelative(root, path)
-	return ok
+	return phys.Resolved, lexical, lexical || phys.Inside
 }
 
 // checkOperands refuses a launch that would run, by path, a file that is not

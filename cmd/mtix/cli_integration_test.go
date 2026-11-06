@@ -413,7 +413,7 @@ func TestRunAnnotate_HappyPath_HumanOutput(t *testing.T) {
 	err := runCreate("Annotate Target", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runAnnotate("TEST-1", "Important note", "")
+	err = runAnnotate("TEST-1", "Important note")
 	assert.NoError(t, err)
 }
 
@@ -425,7 +425,7 @@ func TestRunAnnotate_HappyPath_JSONOutput(t *testing.T) {
 	err := runCreate("Annotate JSON", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runAnnotate("TEST-1", "JSON annotation", "")
+	err = runAnnotate("TEST-1", "JSON annotation")
 	assert.NoError(t, err)
 }
 
@@ -438,7 +438,7 @@ func TestRunResolveAnnotation_HappyPath_HumanOutput(t *testing.T) {
 	require.NoError(t, err)
 
 	// Add annotation first to get an annotation ID.
-	err = runAnnotate("TEST-1", "Resolve me", "")
+	err = runAnnotate("TEST-1", "Resolve me")
 	require.NoError(t, err)
 
 	// Try to resolve — the annotation ID format may vary by implementation.
@@ -454,7 +454,7 @@ func TestRunResolveAnnotation_HappyPath_JSONOutput(t *testing.T) {
 	err := runCreate("Resolve JSON", "", "", 3, "", "", "", "", "")
 	require.NoError(t, err)
 
-	err = runAnnotate("TEST-1", "Resolve JSON note", "")
+	err = runAnnotate("TEST-1", "Resolve JSON note")
 	require.NoError(t, err)
 
 	_ = runResolveAnnotation("TEST-1", "annot-placeholder")

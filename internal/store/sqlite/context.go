@@ -179,7 +179,7 @@ func (s *Store) AppendAnnotation(ctx context.Context, nodeID string, annotation 
 		next := make([]model.Annotation, 0, len(current)+1)
 		next = append(next, current...)
 		return append(next, annotation), nil
-	}, "", commentMeta{Hop: annotation.Hop, ReplyBy: annotation.ReplyBy})
+	}, "", annotation.Hop)
 }
 
 // ResolveAnnotation sets the resolved flag of one annotation, identified by
@@ -198,7 +198,7 @@ func (s *Store) ResolveAnnotation(ctx context.Context, nodeID, annotationID stri
 			}
 		}
 		return nil, fmt.Errorf("annotation %s on node %s: %w", format.EventID(annotationID), nodeID, model.ErrNotFound)
-	}, "", commentMeta{})
+	}, "", 0)
 }
 
 // mutateAnnotations loads a node's annotations, applies change and stores the
@@ -206,7 +206,7 @@ func (s *Store) ResolveAnnotation(ctx context.Context, nodeID, annotationID stri
 // single write connection serializes writers; BEGIN IMMEDIATE (see New) makes
 // other processes wait on busy_timeout instead of reading a stale array.
 func (s *Store) mutateAnnotations(ctx context.Context, nodeID string,
-	change func([]model.Annotation) ([]model.Annotation, error), eventID string, meta commentMeta,
+	change func([]model.Annotation) ([]model.Annotation, error), eventID string, hop int64,
 ) error {
 	// MTIX-95.31.19.3: the annotations change is recorded as a value-free history entry.
 	return s.withHistoryTx(ctx, historyScope{id: nodeID}, func(tx *sql.Tx) error {
@@ -256,7 +256,7 @@ func (s *Store) mutateAnnotations(ctx context.Context, nodeID string,
 			OpType:      model.OpComment,
 			Author:      author,
 			EventID:     eventID,
-		}, &model.CommentPayload{AuthorID: author, Body: body, To: to, Hop: addressedStoredHop(to, meta.Hop), ReplyBy: addressedReplyBy(to, meta.ReplyBy)})
+		}, &model.CommentPayload{AuthorID: author, Body: body, To: to, Hop: addressedStoredHop(to, hop)})
 	})
 }
 
@@ -265,20 +265,4 @@ func addressedStoredHop(to string, hop int64) int64 {
 		return 0
 	}
 	return hop
-}
-
-// commentMeta is the additive send metadata that rides the comment event
-// payload and is never stored on the annotation itself.
-type commentMeta struct {
-	Hop     int64
-	ReplyBy string
-}
-
-// addressedReplyBy keeps a reply deadline only on an addressed comment
-// (MTIX-112.20.3): an ordinary comment has nobody to reply.
-func addressedReplyBy(to, replyBy string) string {
-	if to == "" {
-		return ""
-	}
-	return replyBy
 }

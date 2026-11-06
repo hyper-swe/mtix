@@ -246,20 +246,6 @@ Show current work assignment for an agent
 **Usage:** `annotate <id> <text>`
 
 Add an annotation to a node
-
-Add an annotation to a node.
-
-Use --to <agent> to address the annotation at a specific agent: it then takes
-exactly the path of 'mtix comment --to' and lands in that agent's inbox (see
-'mtix inbox'), the same as the MCP mtix_annotate tool with 'to'. Without --to
-the annotation is stored on the node as before. For a reply window use
-'mtix comment --to <agent> --await-reply'.
-
-### Flags
-
-| Flag | Short | Description | Default |
-|------|-------|-------------|---------|
-| `--to` |  | Address the annotation to an agent (delivers to its inbox, like comment --to) |  |
 ---
 
 ## attach
@@ -408,19 +394,10 @@ Use --to <agent> to address the comment at a specific agent; it then lands in
 that agent's inbox (see 'mtix inbox'), which is how a worker gets woken by a
 ruling without a manual relay (FR-19.1).
 
-Use --await-reply [<duration>] with --to when you need an answer: this host
-then keeps contacting the hub every 60 seconds until that agent replies or the
-duration passes (default 1h, at most 8h; for example --await-reply=30m). The
-event carries the deadline, so a recipient host (daemon or host dispatcher)
-holds its pulls for the reply too. A send to an agent registered on this host
-needs no hub contact: it opens no window and holds nothing.
-A reply window keeps a scale-to-zero hub awake for up to 8 h.
-
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
-| `--await-reply` |  | With --to: keep hub pulls going until that agent replies, for the duration (default 1h, max 8h; write --await-reply=30m) |  |
 | `--to` |  | Address the comment to an agent (delivers to its inbox) |  |
 ---
 
@@ -1195,9 +1172,8 @@ the body.
 | `--agent` |  | Agent id whose inbox to read (required) |  |
 | `--all` |  | With --count, print total retained events including acknowledged events | false |
 | `--count` |  | Print pending count without acknowledging or touching sessions | false |
-| `--format` |  | Output: default is the quoted envelope; 'plain' is the old listing; 'prompt' (wake payload) or 'context' (hook injection) |  |
+| `--format` |  | Agent-ready output: 'prompt' (wake payload) or 'context' (hook injection) |  |
 | `--history` |  | List every event ever addressed to the agent with its ack state and time (read-only, local, no hub contact) | false |
-| `--include-held` |  | Also show events the wake policy holds (refused inside an agent harness session) | false |
 | `--timeout` |  | Wait budget in seconds from entry; initial pending read may take longer (0 = no limit; negative refused) | 300 |
 | `--wait` |  | Long-poll: block until an event arrives or --timeout | false |
 

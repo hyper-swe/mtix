@@ -160,7 +160,7 @@ func TestInboxListing_AckHint_PinsBoardRead(t *testing.T) {
 	boardB := newInboxBoard(t, 0)
 	events := boardInbox(t, boardA)
 	require.Len(t, events, 2)
-	out, err := runMtixIn(t, boardB, "-C", boardA, "inbox", "--agent", boardSelectionAgent, "--format", "plain")
+	out, err := runMtixIn(t, boardB, "-C", boardA, "inbox", "--agent", boardSelectionAgent)
 	require.NoError(t, err)
 	last := fmt.Sprint(events[len(events)-1].Seq)
 	assert.Contains(t, out, "ack with: mtix inbox ack "+last+" --agent worker -C '"+boardA+"'\n",

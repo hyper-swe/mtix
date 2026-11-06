@@ -109,7 +109,7 @@ func TestAnnotateThenShow_RoundTrip_ShowsNewAnnotation(t *testing.T) {
 	id := createShowNode(t, "A description")
 
 	captureStdout(t, func() {
-		require.NoError(t, runAnnotate(id, "round-trip verdict", ""))
+		require.NoError(t, runAnnotate(id, "round-trip verdict"))
 	})
 	out := showOutput(t, id)
 
@@ -122,7 +122,7 @@ func TestShowParity_MCPShowReturnsSameAnnotationsAsCLI(t *testing.T) {
 	initTestApp(t)
 	id := createShowNode(t, "A description")
 	for _, text := range []string{"first verdict", "second verdict"} {
-		captureStdout(t, func() { require.NoError(t, runAnnotate(id, text, "")) })
+		captureStdout(t, func() { require.NoError(t, runAnnotate(id, text)) })
 	}
 
 	cliOut := showOutput(t, id)

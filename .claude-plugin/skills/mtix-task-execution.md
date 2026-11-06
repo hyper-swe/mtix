@@ -125,7 +125,7 @@ stored record unchanged.
 
 ## Traceability
 
-Use `mcp__mtix__mtix_annotate` with `id`, `text`, and `author` to record a comment; set `to` only when addressing another agent. The CLI equivalents are `mtix annotate <id> "<text>" --to <agent>` and `mtix comment <id> "<text>" --to <agent>`; both land in that agent's inbox (only `comment` takes `--await-reply`).
+Use `mcp__mtix__mtix_annotate` with `id`, `text`, and `author` to record a comment; set `to` only when addressing another agent.
 
 Every completed task must have an auditable trail:
 1. Session record (who worked on it, when)

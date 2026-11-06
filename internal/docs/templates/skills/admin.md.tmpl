@@ -40,8 +40,8 @@ Existing flat envelope and strict-identity settings remain readable.
 | `wake.live` | `true` | Live wake on/off setting for the scanner |
 | `wake.wakes_per_hour` | unset, unlimited | Enforced by the callable dispatcher: recipient wakes across boards per rolling hour |
 | `wake.per_sender_per_hour` | unset, unlimited | Enforced by the callable dispatcher: admitted events per claimed sender to this recipient across boards, rolling hour |
-| `wake.remote_awake_daily_cap` | unset, unlimited | seconds per UTC day that other senders' reply deadlines may hold this host's hub pulls; holds end when spent |
-| `wake.reply_extensions_per_hour` | unset, unlimited | reply-deadline holds one sender may cause per rolling 60 minutes; the next one does not hold |
+| `wake.remote_awake_daily_cap` | unset, unlimited | stored, not yet enforced: remote-induced awake seconds per day |
+| `wake.reply_extensions_per_hour` | unset, unlimited | stored, not yet enforced: reply-window extensions per hour |
 | `wake.envelope_max_events` | unset, unlimited | Events in one pulled envelope |
 | `wake.envelope_max_body_bytes` | unset, unlimited | Bytes per event body |
 | `wake.envelope_max_total_bytes` | unset, unlimited | Total envelope bytes |

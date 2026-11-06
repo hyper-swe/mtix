@@ -231,13 +231,13 @@ func TestNewDaemonScheduler_NoHub_NilAndHubGetsDaemonInterval(t *testing.T) {
 	app = appContext{mtixDir: src.mtixDir, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	t.Cleanup(func() { app = saved })
 
-	sched, onContact, _, err := newDaemonScheduler(io.Discard, io.Discard, false, 5)
+	sched, onContact, err := newDaemonScheduler(io.Discard, io.Discard, false, 5)
 	require.NoError(t, err)
 	require.Nil(t, sched)
 	require.Nil(t, onContact)
 
 	var out bytes.Buffer
-	sched, onContact, _, err = newDaemonScheduler(&out, io.Discard, true, 60)
+	sched, onContact, err = newDaemonScheduler(&out, io.Discard, true, 60)
 	require.NoError(t, err)
 	require.NotNil(t, sched)
 	require.NotNil(t, onContact)

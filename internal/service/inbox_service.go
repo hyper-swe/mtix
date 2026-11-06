@@ -27,7 +27,6 @@ type InboxService struct {
 	history  InboxHistoryStore
 	wakeAcks WakeAckPublisher
 	reeval   WakeReevaluator
-	policy   InboxPolicy
 }
 
 // InboxEvent is the per-agent event contract per FR-19.4, with unchanged JSON.

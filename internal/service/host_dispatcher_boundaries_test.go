@@ -94,8 +94,6 @@ func TestHostEnrollment_InvalidSecret_GrantsNothing(t *testing.T) {
 			switch kind {
 			case "mode":
 				require.NoError(t, os.WriteFile(secret, []byte("dummy"), 0644))
-				// WriteFile applies the umask; force the loose mode under test (MTIX-238).
-				require.NoError(t, os.Chmod(secret, 0644)) //nolint:gosec // deliberately too-loose for the test
 			case "symlink":
 				target := filepath.Join(t.TempDir(), "other-checkout-secret")
 				require.NoError(t, os.WriteFile(target, []byte("dummy"), 0600))
@@ -221,7 +219,7 @@ func TestHostDispatcher_SecretModeChanged_RefusesPull(t *testing.T) {
 	secret := filepath.Join(f.root, ".mtix", "secrets")
 	require.NoError(t, os.WriteFile(secret, []byte("checkout-secret"), 0600))
 	require.NoError(t, f.hubEnrollment().Enroll(t.Context(), service.EnrollmentRequest{Path: f.root, Mode: "yes", Source: "test"}))
-	require.NoError(t, os.Chmod(secret, 0644)) //nolint:gosec // deliberately too-loose for the test
+	require.NoError(t, os.Chmod(secret, 0644))
 	require.Error(t, f.pass())
 	require.Zero(t, f.dials)
 	require.Zero(t, f.hooks)

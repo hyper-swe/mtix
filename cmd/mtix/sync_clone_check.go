@@ -12,6 +12,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // The clone's checks (MTIX-95.11). `mtix sync clone` stays all-or-nothing
@@ -105,7 +106,15 @@ func preflightClone(ctx context.Context, in pullIngest, hub cursorPuller,
 func checkThenClone(ctx context.Context, stderr io.Writer, pool cursorPuller,
 	since transport.PullCursor, batchSize int,
 ) (pulled, batches int, stage string, err error) {
-	local, clockErr := app.store.LocalLamportClock(ctx)
+	return checkThenCloneInto(ctx, app.store, stderr, pool, since, batchSize)
+}
+
+// checkThenCloneInto is checkThenClone for an explicit store: the worktree
+// enrolment clones into a store that is not the process's own (MTIX-112.17.16).
+func checkThenCloneInto(ctx context.Context, st *sqlite.Store, stderr io.Writer, pool cursorPuller,
+	since transport.PullCursor, batchSize int,
+) (pulled, batches int, stage string, err error) {
+	local, clockErr := st.LocalLamportClock(ctx)
 	if clockErr != nil {
 		return 0, 0, "read local clock", clockErr
 	}
@@ -116,9 +125,9 @@ func checkThenClone(ctx context.Context, stderr io.Writer, pool cursorPuller,
 	// sweep diffs the full hub history (MTIX-95.5); no quarantine (MTIX-95.11).
 	// A resumed clone (a saved keyset position) keeps the orphans earlier
 	// batches quarantined: it never reads those events again (MTIX-95.37.1).
-	if resetErr := resetCloneState(ctx, app.store, since); resetErr != nil {
+	if resetErr := resetCloneState(ctx, st, since); resetErr != nil {
 		return 0, 0, "reset pull state", resetErr
 	}
-	pulled, batches, err = cloneLoop(ctx, stderr, pool, app.store, since, batchSize)
+	pulled, batches, err = cloneLoop(ctx, stderr, pool, st, since, batchSize)
 	return pulled, batches, "clone loop", err
 }

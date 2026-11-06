@@ -556,6 +556,18 @@ func TestVerifyDatabase_NonExistent_ReturnsError(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestEscapeSQLitePath_WithQuotes_Escapes verifies path escaping.
+func TestEscapeSQLitePath_WithQuotes_Escapes(t *testing.T) {
+	result := escapeSQLitePath("path'with'quotes")
+	assert.Equal(t, "path''with''quotes", result)
+}
+
+// TestEscapeSQLitePath_NoQuotes_Unchanged verifies no-op escaping.
+func TestEscapeSQLitePath_NoQuotes_Unchanged(t *testing.T) {
+	result := escapeSQLitePath("/normal/path/file.db")
+	assert.Equal(t, "/normal/path/file.db", result)
+}
+
 // =============================================================================
 // Export internal coverage
 // =============================================================================
@@ -1229,6 +1241,18 @@ func TestBackup_CorruptedFile_DeletesAndReturnsError(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, result.Verified)
 	assert.Greater(t, result.Size, int64(0))
+}
+
+// TestBackup_PathWithQuotes_Escaped verifies path escaping per FR-6.3a.
+func TestBackup_PathWithQuotes_Escaped(t *testing.T) {
+	escaped := escapeSQLitePath("test'path")
+	assert.Equal(t, "test''path", escaped)
+
+	escaped2 := escapeSQLitePath("no_quotes")
+	assert.Equal(t, "no_quotes", escaped2)
+
+	escaped3 := escapeSQLitePath("'''")
+	assert.Equal(t, "''''''", escaped3)
 }
 
 // =============================================================================
@@ -1994,6 +2018,17 @@ func TestVerifyFTS_AfterInsertAndDelete_RemainsConsistent(t *testing.T) {
 	result := &VerifyResult{}
 	require.NoError(t, s.verifyFTS(ctx, result))
 	assert.True(t, result.FTSOK, "FTS should be consistent after delete")
+}
+
+// --- escapeSQLitePath tests ---
+
+// TestEscapeSQLitePath_SingleQuotes_Escaped verifies SQL injection prevention.
+func TestEscapeSQLitePath_SingleQuotes_Escaped(t *testing.T) {
+	assert.Equal(t, "it''s a path", escapeSQLitePath("it's a path"))
+	assert.Equal(t, "normal/path.db", escapeSQLitePath("normal/path.db"))
+	assert.Equal(t, "''start", escapeSQLitePath("'start"))
+	assert.Equal(t, "end''", escapeSQLitePath("end'"))
+	assert.Equal(t, "no quotes", escapeSQLitePath("no quotes"))
 }
 
 // --- parseScannedTimestamps tests ---

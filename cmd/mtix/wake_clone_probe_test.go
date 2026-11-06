@@ -43,19 +43,29 @@ func TestRunSyncClone_UnreadableJournal_RefusesBeforeHub(t *testing.T) {
 	}
 }
 
-func TestInitCloneHookFloor_WriterFailure_WarnsOnlyForBootstrap(t *testing.T) {
+func TestInitCloneHookFloor_WriterFailure_WarnsForBothFloors(t *testing.T) {
 	for _, bootstrap := range []bool{false, true} {
 		t.Run(map[bool]string{false: "nonempty", true: "empty"}[bootstrap], func(t *testing.T) {
 			initTestApp(t)
 			require.NoError(t, app.store.WriteDB().Close())
 			var stderr bytes.Buffer
 			initCloneHookFloor(t.Context(), &stderr, bootstrap)
-			if bootstrap {
-				assert.Contains(t, stderr.String(), "mtix sync clone: hook floor init")
-				assert.Contains(t, stderr.String(), "database is closed")
-			} else {
-				assert.Empty(t, stderr.String(), "a nonempty resume must not even attempt floor initialization")
-			}
+			assert.Contains(t, stderr.String(), "mtix sync clone: hook floor init")
+			assert.Contains(t, stderr.String(), "database is closed")
 		})
 	}
+}
+
+func TestInitCloneHookFloor_UnreadableTail_WarnsWithoutAdvancing(t *testing.T) {
+	initTestApp(t)
+	require.NoError(t, app.store.ReadDB().Close())
+	var stderr bytes.Buffer
+	initCloneHookFloor(t.Context(), &stderr, false)
+	assert.Contains(t, stderr.String(), "mtix sync clone: hook floor init")
+	assert.Contains(t, stderr.String(), "journal tail")
+	assert.Contains(t, stderr.String(), "database is closed")
+	var floor int64
+	require.NoError(t, app.store.WriteDB().QueryRowContext(t.Context(),
+		`SELECT COALESCE(MAX(cursor),0) FROM hook_dispatch_cursor`).Scan(&floor))
+	assert.Zero(t, floor)
 }

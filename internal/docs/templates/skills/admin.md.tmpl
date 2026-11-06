@@ -265,6 +265,16 @@ Doctor shows these rows only when they apply:
   (`git -C <checkout> ls-files | awk 'length($0) > 4096'`); remove or rename
   them. An unknown index version or extension, an oversize index or a SHA-256
   repository cannot be read by this build: upgrade mtix.
+- `glue.store-identity`: the board you are in is listed on this host, but its
+  store has a different `store_instance_id` than the listing records (the store
+  was recreated or replaced, for example rebuilt from an export), so glue stays
+  off and every verb prints the not-attached line. Reading that identity opens
+  the store read-only and never creates a file next to it (no WAL or shm); a
+  store left with only one of those two files cannot be read that way and is
+  declined too. No mtix command re-lists a board under a new store identity.
+  Recovery: put the original store file (`.mtix/data/mtix.db`) back from a
+  backup or from the previous copy of the checkout, then run `mtix doctor`
+  again until the row is gone.
 - `glue.stranded-queue`: in an attached board, a `session-start` drains the
   board's pending attach queue (rows queued by a registration inside a sandbox)
   through the same validation the host dispatcher uses; a row naming another
@@ -278,7 +288,11 @@ Doctor shows these rows only when they apply:
   mtix agent register <agent-id> --harness <harness>`, run from a normal shell
   outside any sandbox. It keeps each agent's harness; a bare `mtix agent
   register <agent-id>` would record the harness as unknown. Add `--session
-  <handle>` if the session was registered with one. The glue path never imports
+  <handle>` if the session was registered with one. Queued rows
+  are untrusted: only a row that carries this store's own board key and path
+  and a lane inside this store reaches the printed command; any other row is
+  counted as rejected in the row's detail, no command is built from it, and the
+  row prints the generic command with placeholders. The glue path never imports
   `tasks.json` and never triggers hooks, whatever `sync.auto_sync` says.
 - `attach.failures`: recent `attach.protocol-skew` and `attach.verb-failure`
   operator alerts from the hidden attach verbs, with counts. These verbs are

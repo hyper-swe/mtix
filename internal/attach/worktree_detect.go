@@ -51,7 +51,7 @@ const (
 // file names an admin directory under <common>/worktrees, that directory's
 // commondir names <common>, and its gitdir back-link names this .git file. A
 // .git file that points straight at a common dir, or a commondir without the
-// back-link, is not a worktree and yields CheckoutNone (MTIX-112.19.8).
+// back-link, is not a worktree and yields CheckoutInvalid (MTIX-112.19.8).
 func DetectCheckout(dir string) (Checkout, error) {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
@@ -145,8 +145,8 @@ func readSmallFile(path string) (string, bool) {
 	return string(raw), true
 }
 
-// sameFile compares two paths after resolving symlinks; unresolvable paths are
-// compared by their cleaned text so a missing path never matches by accident.
+// sameFile compares two paths after resolving symlinks; a path that cannot be
+// resolved never matches, so a missing path never matches by accident.
 func sameFile(a, b string) bool {
 	ra, errA := filepath.EvalSymlinks(a)
 	rb, errB := filepath.EvalSymlinks(b)

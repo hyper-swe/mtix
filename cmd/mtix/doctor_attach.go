@@ -14,7 +14,6 @@ import (
 	"github.com/hyper-swe/mtix/internal/attach"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // attachDoctorDeps feed the attach doctor checks (ADR-007 §7: setup.shim,
@@ -36,7 +35,7 @@ type attachDoctorDeps struct {
 	glue func(ctx context.Context) attach.GlueDecision
 	// pending lists the attach queue rows of the board doctor runs in
 	// (glue.stranded-queue); nil registers no such row.
-	pending func(ctx context.Context, d attach.GlueDecision) ([]sqlite.AttachPending, error)
+	pending func(ctx context.Context, d attach.GlueDecision) (queuedRows, error)
 }
 
 // operatorStateFix is the remedy for unreadable operator state: the hooks
@@ -77,7 +76,7 @@ func registerAttachDoctorChecks(ctx context.Context, svc *service.DoctorService,
 	for _, h := range harnesses {
 		checks = append(checks, glueDoctorCheck(deps, h))
 	}
-	for _, build := range []func(context.Context, attachDoctorDeps) (service.DoctorCheck, bool){trackedStoreCheck, strandedQueueCheck} {
+	for _, build := range []func(context.Context, attachDoctorDeps) (service.DoctorCheck, bool){trackedStoreCheck, strandedQueueCheck, storeIdentityCheck} {
 		if check, ok := build(ctx, deps); ok {
 			checks = append(checks, check)
 		}

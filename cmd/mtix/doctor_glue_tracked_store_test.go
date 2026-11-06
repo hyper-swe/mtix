@@ -92,8 +92,8 @@ func TestDoctorGlueStrandedQueue_UnlistedBoardWithRows_WarnsWithFix(t *testing.T
 			st := testutil.OperatorState(t)
 			deps := attachDoctorTestDeps(t, st, 2)
 			deps.glue = func(context.Context) attach.GlueDecision { return attach.GlueDecision{Reason: tt.reason} }
-			deps.pending = func(context.Context, attach.GlueDecision) ([]sqlite.AttachPending, error) {
-				return make([]sqlite.AttachPending, tt.rows), nil
+			deps.pending = func(context.Context, attach.GlueDecision) (queuedRows, error) {
+				return queuedRows{Valid: make([]sqlite.AttachPending, tt.rows)}, nil
 			}
 			row, ok := attachDoctorRows(t, deps, false)["glue.stranded-queue"]
 			require.Equal(t, tt.want, ok)

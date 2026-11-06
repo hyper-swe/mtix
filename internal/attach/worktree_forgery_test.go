@@ -88,3 +88,41 @@ func TestWorktreeForgery_CommondirFileMissing_IsInvalid(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, CheckoutInvalid, got.Kind)
 }
+
+// commondir and the gitdir back-link are read as plain files: a symlink in
+// their place could point at content elsewhere, so it is refused.
+func TestWorktreeForgery_SymlinkedAdminFiles_AreInvalid(t *testing.T) {
+	for _, name := range []string{"commondir", "gitdir"} {
+		t.Run(name, func(t *testing.T) {
+			wt := forgedWorktree(t, "main/.git/worktrees/wt", "../..")
+			file := filepath.Join(readGitdirTarget(t, wt), name)
+			body, err := os.ReadFile(file)
+			require.NoError(t, err)
+			target := filepath.Join(t.TempDir(), name+".real")
+			writeFile(t, target, string(body)) // identical content, so only the symlink is wrong
+			require.NoError(t, os.Remove(file))
+			require.NoError(t, os.Symlink(target, file))
+			got, err := DetectCheckout(wt)
+			require.NoError(t, err)
+			assert.Equal(t, CheckoutInvalid, got.Kind)
+		})
+	}
+}
+
+// A .git entry that cannot be inspected fails closed. It must not be skipped to
+// find a checkout in a parent directory, which would judge the store by the
+// wrong repository.
+func TestDetectCheckout_UnreadableGitEntry_FailsClosedNotUpward(t *testing.T) {
+	outer := t.TempDir()
+	require.NoError(t, os.MkdirAll(filepath.Join(outer, ".git"), 0o755))
+	inner := filepath.Join(outer, "inner")
+	require.NoError(t, os.MkdirAll(filepath.Join(inner, ".git"), 0o755))
+	require.NoError(t, os.Chmod(inner, 0o600)) // no search permission: inner/.git cannot be inspected
+	t.Cleanup(func() { require.NoError(t, os.Chmod(inner, 0o755)) })
+	if _, err := os.Lstat(filepath.Join(inner, ".git")); err == nil {
+		t.Skip("running with permission to search the directory (root): the entry is readable")
+	}
+	got, err := DetectCheckout(inner)
+	require.NoError(t, err)
+	assert.Equal(t, CheckoutInvalid, got.Kind)
+}

@@ -144,3 +144,54 @@ func TestGlue_ListedLegacyBoard_SessionStartLeavesQueueAlone(t *testing.T) {
 	assert.Len(t, pendingRows(t, root), 1, "a legacy store has nothing to drain")
 	assert.Empty(t, attachAlerts(t, st))
 }
+
+// session-start records activity for the store the predicate resolved, even
+// when the working directory is elsewhere; the wait verb records nothing.
+func TestAttachVerb_RecordsGlueActivityOnTheResolvedStore(t *testing.T) {
+	src := hubSourceFixture(t, "")
+	root := filepath.Dir(src.mtixDir)
+	t.Chdir(t.TempDir())
+	deps := attachTestDeps(src.state, 2, map[string]attach.Adapter{"claude-code": &recordingAdapter{}})
+	deps.glue = func(context.Context) attach.GlueDecision {
+		return attach.GlueDecision{Act: true, BoardRoot: root, StoreRoot: root}
+	}
+	_, _, err := runAttachVerbForTest(t, deps, "wait", "--harness", "claude-code", "--protocol", "2")
+	require.NoError(t, err)
+	_, present, err := src.state.ReadHubActivity(src.key())
+	require.NoError(t, err)
+	require.False(t, present, "the wait verb is not activity")
+
+	_, _, err = runAttachVerbForTest(t, deps, "session-start", "--harness", "claude-code", "--protocol", "2")
+	require.NoError(t, err)
+	got, present, err := src.state.ReadHubActivity(src.key())
+	require.NoError(t, err)
+	require.True(t, present, "session-start must record activity for the resolved store")
+	assert.Equal(t, oplocal.ActivityGlue, got.Kind)
+}
+
+// A working directory that cannot be read means there is nothing to judge: the
+// predicate declines instead of acting.
+func TestGlue_ProductionPredicate_UnreadableWorkingDirectory_Declines(t *testing.T) {
+	st := testutil.OperatorState(t)
+	root := listedBoardCheckout(t, st)
+	gone := filepath.Join(root, "gone")
+	require.NoError(t, os.Mkdir(gone, 0o755))
+	t.Chdir(gone)
+	require.NoError(t, os.Remove(gone))
+	got := productionGluePredicate(t.Context())
+	assert.False(t, got.Act)
+	assert.Equal(t, attach.ReasonNoCheckout, got.Reason)
+}
+
+// The wait opens a store only if its data directory is there: sqlite.New would
+// create one, and the wait must never create a board.
+func TestOpenPiWaitBoard_MissingDataDirectory_FailsAndCreatesNothing(t *testing.T) {
+	root := t.TempDir()
+	require.NoError(t, os.Mkdir(filepath.Join(root, ".mtix"), 0o755))
+	opened, closeStore, err := openPiWaitBoard(attach.WithStoreRoot(t.Context(), root))
+	require.Error(t, err)
+	assert.Nil(t, opened)
+	assert.Nil(t, closeStore)
+	_, statErr := os.Stat(filepath.Join(root, ".mtix", "data"))
+	assert.True(t, os.IsNotExist(statErr), "no data directory may appear")
+}

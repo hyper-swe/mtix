@@ -6,11 +6,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 
 	"github.com/hyper-swe/mtix/internal/attach"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // trackedStoreCheck registers the glue.tracked-store row for the directory
@@ -35,7 +33,9 @@ func trackedStoreCheck(ctx context.Context, deps attachDoctorDeps) (service.Doct
 // strandedQueueCheck registers glue.stranded-queue when this directory's board
 // is not listed on this host but its store holds attach rows queued from a
 // sandbox. The glue never lists a board by itself (repository content must not
-// activate a host), so the rows wait for listing from a normal shell.
+// activate a host), so the rows wait for listing from a normal shell. Rows are
+// untrusted: only rows this store owns reach a printed command, and the rest
+// are reported by count.
 func strandedQueueCheck(ctx context.Context, deps attachDoctorDeps) (service.DoctorCheck, bool) {
 	if deps.glue == nil || deps.pending == nil {
 		return service.DoctorCheck{}, false
@@ -45,29 +45,35 @@ func strandedQueueCheck(ctx context.Context, deps attachDoctorDeps) (service.Doc
 		return service.DoctorCheck{}, false
 	}
 	rows, err := deps.pending(ctx, decision)
-	if err != nil || len(rows) == 0 {
+	if err != nil || len(rows.Valid)+rows.Rejected == 0 {
 		return service.DoctorCheck{}, false
 	}
-	detail := fmt.Sprintf("%d attach queue row(s) from a sandboxed registration wait because this board is not listed on this host; harness glue does not list a board by itself", len(rows))
+	detail := fmt.Sprintf("%d attach queue row(s) from a sandboxed registration wait because this board is not listed on this host; harness glue does not list a board by itself", len(rows.Valid))
+	if rows.Rejected > 0 {
+		detail += fmt.Sprintf("; %d queued row(s) rejected because their board or lane does not belong to this store, and no command is built from them", rows.Rejected)
+	}
 	return service.DoctorCheck{ID: "glue.stranded-queue", Run: func(context.Context) service.DoctorResult {
-		return service.DoctorResult{Status: service.DoctorWarn, Detail: detail, Fix: strandedRegisterFix(rows)}
+		return service.DoctorResult{Status: service.DoctorWarn, Detail: detail, Fix: strandedRegisterFix(rows.Valid)}
 	}}, true
 }
 
-// productionPendingRows reads the attach queue of the store the predicate
-// resolved, and only when it is the board doctor itself opened: doctor never
-// opens a second store to look for rows.
-func productionPendingRows(ctx context.Context, d attach.GlueDecision) ([]sqlite.AttachPending, error) {
-	if app.store == nil || app.mtixDir == "" || d.StoreRoot == "" {
-		return nil, nil
+// storeIdentityCheck registers glue.store-identity when the directory's board
+// is listed but its store has a different identity than the listing records
+// (the store was recreated or replaced). Glue stays off until the listing and
+// the store agree again (MTIX-112.19.8).
+func storeIdentityCheck(ctx context.Context, deps attachDoctorDeps) (service.DoctorCheck, bool) {
+	if deps.glue == nil {
+		return service.DoctorCheck{}, false
 	}
-	opened, err := filepath.EvalSymlinks(filepath.Dir(app.mtixDir))
-	if err != nil || opened != d.StoreRoot {
-		return nil, nil //nolint:nilerr // a board doctor did not open has no rows to report
+	decision := deps.glue(ctx)
+	if decision.Reason != attach.ReasonIdentityMismatch {
+		return service.DoctorCheck{}, false
 	}
-	rows, err := app.store.ListAttachPending(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("list attach queue: %w", err)
-	}
-	return rows, nil
+	const detail = "this board is listed on this host, but its store has a different store identity than the listing records (the store was recreated or replaced), so harness glue does nothing in this checkout"
+	// No mtix command re-lists a board under a new store identity: a listing
+	// keeps the identity it was made with.
+	const fix = "restore the original store file (.mtix/data/mtix.db) from a backup or from the previous copy of this checkout; mtix has no command that re-lists a recreated store, so glue stays off here until the original store is back"
+	return service.DoctorCheck{ID: "glue.store-identity", Run: func(context.Context) service.DoctorResult {
+		return service.DoctorResult{Status: service.DoctorWarn, Detail: detail, Fix: fix}
+	}}, true
 }

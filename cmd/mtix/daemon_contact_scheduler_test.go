@@ -39,7 +39,10 @@ func driveSchedulerPasses(t *testing.T, sched *service.ContactScheduler, n int) 
 	var contacts []bool
 	plan := daemonLoopPlan{
 		label: "test daemon", interval: 5, sched: sched,
-		pass:     func(contact bool) { seen <- contact },
+		pass: func(contact bool) daemonPullOutcome {
+			seen <- contact
+			return daemonPullOutcome{attempted: contact, ok: true}
+		},
 		controls: []daemonPassControl{{ticks: ticks}},
 	}
 	done := make(chan error, 1)
@@ -91,7 +94,7 @@ func TestDaemonPassLoop_SchedulerTimer_TakesCadenceFromScheduler(t *testing.T) {
 		Mode: service.HubContactMode{Kind: service.HubContactActivity}, LastActivity: schedT0})
 	passes := make(chan bool, 8)
 	plan := daemonLoopPlan{label: "t", interval: 3600, sched: sched, localTick: 20 * time.Millisecond,
-		pass: func(c bool) { passes <- c }}
+		pass: func(c bool) daemonPullOutcome { passes <- c; return daemonPullOutcome{attempted: c, ok: true} }}
 	done := make(chan error, 1)
 	go func() { done <- runDaemonPassLoop(ctx, io.Discard, io.Discard, plan) }()
 	for i := 0; i < 3; i++ {
@@ -131,7 +134,7 @@ func TestDaemonPassLoop_LongLocalTick_SchedulerDelayShortensTimer(t *testing.T) 
 		func() (service.ContactInputs, error) { return in, nil })
 	passes := make(chan bool, 8)
 	plan := daemonLoopPlan{label: "t", interval: 3600, sched: sched, localTick: time.Hour,
-		pass: func(c bool) { passes <- c }}
+		pass: func(c bool) daemonPullOutcome { passes <- c; return daemonPullOutcome{attempted: c, ok: true} }}
 	done := make(chan error, 1)
 	go func() { done <- runDaemonPassLoop(ctx, io.Discard, io.Discard, plan) }()
 	for i := 0; i < 3; i++ {

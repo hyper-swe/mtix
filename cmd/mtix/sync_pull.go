@@ -6,7 +6,6 @@ package main
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -98,65 +97,10 @@ retry after the current owner finishes. Other lock acquisition failures are erro
 // applied events.
 func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 	args []string, opts transport.Options, limit int,
-) (err error) {
-	if app.mtixDir == "" {
-		return fmt.Errorf("mtix sync pull: not in an mtix project (run 'mtix init' first)")
-	}
-	if app.store == nil {
-		return fmt.Errorf("mtix sync pull: local store not initialized")
-	}
-	if limit <= 0 {
-		limit = pullDefaultBatchSize
-	}
-	svc := exchangeService(app.store)
-	owner, err := svc.BeginExchangePull(ctx, app.mtixDir)
-	if err != nil {
-		return wrapSyncErr(stderr, "pull sync lock", err)
-	}
-	defer owner.Close()
-	completionAttempted := false
-	defer func() {
-		if err != nil && !completionAttempted {
-			err = errors.Join(err, owner.Incomplete(ctx))
-		}
-	}()
-	in := newPullIngest(stderr)
-	in.receipt = newPullExchangeTracker(svc.MaxImportSize)
-
-	// A pull into an EMPTY journal is a bootstrap: the events it brings in are
-	// history, not fresh work. Detect it before anything is applied (the
-	// quarantine retry below applies events too) so the hook scan floor can
-	// be initialized at the tail afterwards (FR-20 §8 — hooks never fire a
-	// backlog storm on a store's first fill).
-	preTail, tailErr := app.store.JournalTail(ctx)
-	bootstrap := tailErr == nil && preTail == 0
-
-	// Quarantined events are retried at the start of every pull, before the
-	// hub is contacted, so one whose missing node or dependency target has
-	// arrived since applies even when the hub is unreachable (MTIX-95.11).
-	first, err := retryQuarantinedEvents(ctx, in, app.store, limit)
-	if err != nil {
-		return wrapSyncErr(stderr, "quarantine retry", err)
-	}
-	// The retry's events are part of the first fill too; set the floor now,
-	// before a hub failure below can return.
-	initBootstrapHookFloor(ctx, stderr, bootstrap && first.applied > 0)
-
-	res, err := connectAndPull(ctx, in, args, opts, limit)
-	if err != nil {
-		return wrapSyncErr(stderr, res.stage, err)
-	}
-	initBootstrapHookFloor(ctx, stderr, bootstrap && res.pulled+res.retried > 0)
-
-	completionAttempted = true
-	if err := completePullExchange(ctx, owner, in.receipt, res); err != nil {
-		return err
-	}
-	fmt.Fprintf(stdout,
-		"pull complete: %d events applied across %d batches\n", res.pulled, res.batches)
-	printLateEventSweep(stdout, res.sweep)
-	printQuarantineHeld(ctx, stdout, stderr, app.store)
-	return nil
+) error {
+	_, err := executeSyncPull(ctx, syncPullInput{stdout: stdout, stderr: stderr, args: args, opts: opts, limit: limit,
+		onOutcome: func(outcome daemonPullOutcome) { recordExplicitPullContact(stderr, outcome) }})
+	return err
 }
 
 // initBootstrapHookFloor moves the hook scan floor to the journal tail when
@@ -187,6 +131,9 @@ func connectAndPull(ctx context.Context, in pullIngest, args []string,
 	connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
 	defer cancel()
 
+	if in.onConnect != nil {
+		in.onConnect(ctx)
+	}
 	pool, err := transport.New(connectCtx, dsn, opts)
 	if err != nil {
 		noteSyncResult(ctx, app.store, false)

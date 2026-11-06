@@ -29,6 +29,7 @@ import (
 // omitted when empty, so the other checks marshal as before. Skipped marks a
 // check that did not run; it is not a passing or failing diagnosis (MTIX-217).
 type DoctorCheck struct {
+	LastContact    *oplocal.HubContact          `json:"last_contact,omitempty"`
 	Recent         []oplocal.Alert              `json:"recent,omitempty"`
 	PendingExports *service.PendingExportStatus `json:"pending_exports,omitempty"`
 	Name           string                       `json:"name"`
@@ -84,6 +85,10 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            grammar; names each task, its uid and the fix
   Unique node uids       - no two tasks share a uid; names each uid, its tasks
                            and the recovery (see 'mtix verify')
+  sync.hub-contact       - last pull outcome: success or safe failure
+                           class and exact fix; --json includes last_contact
+                           with at, route (poll or explicit pull), ok and failure-only error_class;
+                           this local outcome check contacts no hub
   sync.exchange-record   - local received provenance and recorded omission;
                            this check does not contact the hub
   Held push events       - push holds no event the hub would refuse (such as

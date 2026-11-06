@@ -64,19 +64,23 @@ type TransitionStatusPayload struct {
 // of the previous holder is encoded in the same event so replay produces a
 // single claim transition.
 type ClaimPayload struct {
-	AgentID    string `json:"agent_id"`
-	TTLSeconds int64  `json:"ttl_seconds,omitempty"`
-	Forced     bool   `json:"forced,omitempty"`
+	AgentID    string          `json:"agent_id"`
+	TTLSeconds int64           `json:"ttl_seconds,omitempty"`
+	Forced     bool            `json:"forced,omitempty"`
+	ClosedAt   json.RawMessage `json:"closed_at,omitempty"`
 }
 
-// UnclaimPayload is empty — the act of unclaiming carries no parameters
-// beyond the node_id and author_id already on the SyncEvent envelope.
-type UnclaimPayload struct{}
+// UnclaimPayload optionally carries the source completion-time snapshot.
+// Old events omit it and retain their historical interpretation.
+type UnclaimPayload struct {
+	ClosedAt json.RawMessage `json:"closed_at,omitempty"`
+}
 
 // DeferPayload captures a deferral. Until is nil for indefinite defers.
 type DeferPayload struct {
-	Reason string     `json:"reason,omitempty"`
-	Until  *time.Time `json:"until,omitempty"`
+	Reason   string          `json:"reason,omitempty"`
+	Until    *time.Time      `json:"until,omitempty"`
+	ClosedAt json.RawMessage `json:"closed_at,omitempty"`
 }
 
 // CommentAnnotationState carries annotation identity and mutable resolution.

@@ -104,3 +104,19 @@ func appendLegacyAnnotation(current []model.Annotation, e *model.SyncEvent, p mo
 	}
 	return append(current, model.Annotation{ID: e.EventID, Author: p.AuthorID, Text: p.Body, CreatedAt: at, Addressee: p.To})
 }
+
+// Legacy bulk-seed payloads carry no annotation snapshot. New snapshots must
+// have an identity, even when a caller constructs the raw event directly.
+func validateEmittedAnnotation(p emitParams) error {
+	if p.OpType != model.OpComment || len(p.Payload) == 0 {
+		return nil
+	}
+	var value model.CommentPayload
+	if err := json.Unmarshal(p.Payload, &value); err != nil {
+		return fmt.Errorf("decode emitted comment: %w: %w", err, model.ErrInvalidInput)
+	}
+	if value.Annotation != nil && value.Annotation.ID == "" {
+		return fmt.Errorf("emit annotation snapshot: missing identity: %w", model.ErrInvalidInput)
+	}
+	return nil
+}

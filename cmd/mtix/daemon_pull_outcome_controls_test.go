@@ -24,7 +24,9 @@ func TestBuildDaemonPass_FailedPull_LocalPhasesKeepOrder(t *testing.T) {
 	pass := buildDaemonPass(true, daemonPassSteps{
 		drain: step("drain"), pull: func() daemonPullOutcome {
 			phases = append(phases, "pull")
-			return failedDaemonPull(errors.New("failure"))
+			outcome := failedDaemonPull(errors.New("failure"))
+			outcome.attempted = true
+			return outcome
 		},
 		scan: step("scan"), relay: step("relay"), dispatch: step("dispatch"),
 	})
@@ -49,7 +51,12 @@ func TestRunScheduledPass_CancelledOrFailed_NoFabricatedContactOrBusyLoop(t *tes
 			if cancelled {
 				cancel()
 			}
-			plan := daemonLoopPlan{sched: sched, pass: func(bool) daemonPullOutcome { calls++; return failedDaemonPull(errors.New("failure")) },
+			plan := daemonLoopPlan{sched: sched, pass: func(bool) daemonPullOutcome {
+				calls++
+				outcome := failedDaemonPull(errors.New("failure"))
+				outcome.attempted = true
+				return outcome
+			},
 				onContact: func(o daemonPullOutcome) { records++; require.False(t, o.ok) }}
 			runScheduledPass(ctx, io.Discard, plan, daemonPassControl{})
 			if cancelled {
@@ -71,21 +78,21 @@ func TestDaemonPullErrorClass_TypedCauses_OnlySafeLabels(t *testing.T) {
 		class string
 	}{
 		{context.DeadlineExceeded, "timeout"}, {&net.DNSError{Err: "private-host", IsTimeout: true}, "timeout"},
-		{&net.DNSError{Err: "private-host"}, "unreachable"}, {transport.ErrTLSWeakWithoutFlag, "refused"},
-		{transport.ErrTLSWeakNonLoopback, "refused"}, {transport.ErrTLSUnverified, "refused"},
-		{x509.UnknownAuthorityError{}, "refused"}, {x509.HostnameError{}, "refused"}, {x509.CertificateInvalidError{}, "refused"},
+		{&net.DNSError{Err: "private-host"}, "unreachable"}, {transport.ErrTLSWeakWithoutFlag, "tls"},
+		{transport.ErrTLSWeakNonLoopback, "tls"}, {transport.ErrTLSUnverified, "tls"},
+		{x509.UnknownAuthorityError{}, "tls"}, {x509.HostnameError{}, "tls"}, {x509.CertificateInvalidError{}, "tls"},
 		{errors.New("postgres://private:secret@private.invalid/db"), "pull_failed"},
 	} {
 		require.Equal(t, tc.class, daemonPullErrorClass(tc.err))
 	}
 }
 
-func TestRunOneDaemonPull_CancelledContext_ReportsFailure(t *testing.T) {
+func TestRunOneDaemonPull_ExpiredDeadline_NoContactResult(t *testing.T) {
 	_ = daemonOutcomeFixture(t)
 	ctx, cancel := context.WithDeadline(t.Context(), time.Now().Add(-time.Second))
 	defer cancel()
 	result := runOneDaemonPull(ctx, io.Discard, nil, transport.Options{})
-	require.True(t, result.attempted)
+	require.False(t, result.attempted)
 	require.False(t, result.ok)
 	require.Equal(t, "timeout", result.class)
 }

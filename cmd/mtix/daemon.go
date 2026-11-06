@@ -121,7 +121,9 @@ func runDaemon(ctx context.Context, stdout, stderr io.Writer,
 	// event from another machine all the way to a local wake — and
 	// dispatch needs no knowledge that a relay exists.
 	plan, err := newDaemonPlan(ctx, daemonPlanSpec{stdout: stdout, stderr: stderr, hub: hub, intervalSec: intervalSec, control: control,
-		pull: func() daemonPullOutcome { return runOneDaemonPull(ctx, stderr, args, opts) }})
+		pull: func(report func(daemonPullOutcome)) daemonPullOutcome {
+			return runOneDaemonPull(ctx, stderr, args, opts, daemonPullControl{onOutcome: report})
+		}})
 	if err != nil {
 		return err
 	}
@@ -141,7 +143,7 @@ type daemonPlanSpec struct {
 	hub            bool
 	intervalSec    int
 	control        []daemonPassControl
-	pull           func() daemonPullOutcome // the hub pull; a test stands in for the hub
+	pull           func(func(daemonPullOutcome)) daemonPullOutcome // the hub pull; a test stands in for the hub
 }
 
 // newDaemonPlan builds the daemon's loop plan: the scheduler, the shared reply
@@ -152,7 +154,14 @@ func newDaemonPlan(ctx context.Context, spec daemonPlanSpec) (daemonLoopPlan, er
 	if err != nil {
 		return daemonLoopPlan{}, err
 	}
-	pass := daemonPassFor(ctx, spec.stderr, spec.hub, replies, spec.pull)
+	pull := func() daemonPullOutcome {
+		outcome := spec.pull(onContact)
+		if len(spec.control) > 0 && spec.control[0].afterPull != nil {
+			spec.control[0].afterPull()
+		}
+		return outcome
+	}
+	pass := daemonPassFor(ctx, spec.stderr, spec.hub, replies, pull)
 	return daemonLoopPlan{label: "mtix daemon", interval: spec.intervalSec, pass: pass, controls: spec.control, sched: sched, onContact: onContact, replies: replies}, nil
 }
 
@@ -221,9 +230,10 @@ func daemonPreflight(args []string) (bool, error) {
 // daemonPassControl is optional, instance-scoped cadence/observation input.
 // Commands use no override, so production always retains its timer cadence.
 type daemonPassControl struct {
-	ticks    <-chan time.Time
-	observed func(bool)
-	listen   bool // mtix daemon --listen: serve waiters, exit with the last lease (MTIX-112.20.4)
+	ticks     <-chan time.Time
+	afterPull func() // optional observation after exchange ownership ends (MTIX-112.20.7)
+	observed  func(bool)
+	listen    bool // mtix daemon --listen: serve waiters, exit with the last lease (MTIX-112.20.4)
 }
 
 type daemonLoopPlan struct {
@@ -322,10 +332,11 @@ func runScheduledPass(ctx context.Context, stderr io.Writer, plan daemonLoopPlan
 		contact = plan.sched.Decide().Contact
 	}
 	var outcome daemonPullOutcome
-	acquired := runLockedDaemonPass(ctx, stderr, func() { outcome = plan.pass(contact) })
-	if acquired && contact && outcome.attempted && plan.sched != nil {
+	ran := false
+	acquired := runLockedDaemonPass(ctx, stderr, func() { ran = true; outcome = plan.pass(contact) })
+	if acquired && ran && contact && plan.sched != nil {
 		plan.sched.MarkContact()
-		if plan.onContact != nil {
+		if outcome.attempted && !outcome.reported && plan.onContact != nil {
 			plan.onContact(outcome)
 		}
 	}

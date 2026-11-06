@@ -87,7 +87,7 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            and the recovery (see 'mtix verify')
   sync.hub-contact       - last scheduled daemon pull success or safe failure
                            class and exact fix; --json includes last_contact
-                           with at, route, ok and failure-only error_class;
+                           with at, route (poll or explicit pull), ok and failure-only error_class;
                            this local outcome check contacts no hub
   sync.exchange-record   - local received provenance and recorded omission;
                            this check does not contact the hub

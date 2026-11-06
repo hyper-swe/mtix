@@ -155,20 +155,25 @@ func syncDaemonPreflight(stderr io.Writer, args []string) error {
 	return nil
 }
 
-// runOneDaemonPull invokes the same logic as `mtix sync pull` once. Errors
-// keep their existing logging and nonfatal behavior; only a safe outcome leaves.
-func runOneDaemonPull(ctx context.Context, stderr io.Writer,
-	args []string, opts transport.Options,
+// daemonPullControl observes transport and reports under exchange ownership (MTIX-112.20.7).
+type daemonPullControl struct {
+	onConnect func(context.Context)
+	onOutcome func(daemonPullOutcome)
+}
+
+// runOneDaemonPull retains the existing 60s bound and nonfatal logging (MTIX-112.20.7).
+func runOneDaemonPull(ctx context.Context, stderr io.Writer, args []string, opts transport.Options,
+	control ...daemonPullControl,
 ) daemonPullOutcome {
 	pullCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	outcome := daemonPullOutcome{attempted: true, ok: true}
-	err := runSyncPullObserved(pullCtx, io.Discard, stderr, args, opts, pullDefaultBatchSize,
-		func(cause error) { outcome = failedDaemonPull(cause) })
+	req := syncPullInput{stdout: io.Discard, stderr: stderr, args: args, opts: opts, limit: pullDefaultBatchSize}
+	if len(control) > 0 {
+		req.onConnect = control[0].onConnect
+		req.onOutcome = control[0].onOutcome
+	}
+	outcome, err := executeSyncPull(pullCtx, req)
 	if err != nil {
-		if outcome.ok {
-			outcome = failedDaemonPull(err)
-		}
 		fmt.Fprintf(stderr, "mtix sync daemon: pull error (will retry): %s\n", scrubSyncText(err.Error()))
 	}
 	return outcome

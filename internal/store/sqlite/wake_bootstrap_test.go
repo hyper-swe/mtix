@@ -49,6 +49,7 @@ func TestWakeBootstrap_SeedsExistingProgress_PreservesMetadata(t *testing.T) {
 
 func TestWakeBootstrap_WakeWriteFailure_RollsBackHookAndWakeFloors(t *testing.T) {
 	for _, tt := range []struct{ name, trigger string }{
+		{"hook", `CREATE TRIGGER refuse_wake_seed BEFORE INSERT ON hook_dispatch_cursor BEGIN SELECT RAISE(ABORT,'forced wake bootstrap failure'); END`},
 		{"cursor", `CREATE TRIGGER refuse_wake_seed BEFORE UPDATE ON wake_scan_cursor BEGIN SELECT RAISE(ABORT,'forced wake bootstrap failure'); END`},
 		{"registration", `CREATE TRIGGER refuse_wake_seed BEFORE UPDATE ON agent_registrations BEGIN SELECT RAISE(ABORT,'forced wake bootstrap failure'); END`},
 		{"lease", `CREATE TRIGGER refuse_wake_seed BEFORE UPDATE ON wake_leases BEGIN SELECT RAISE(ABORT,'forced wake bootstrap failure'); END`},

@@ -23,7 +23,7 @@ func TestGoWorkflow_SQLiteShards_CoverBothOSesWithUnchangedFlags(t *testing.T) {
 	require.True(t, ok, "SQLite needs its own test-shard matrix")
 	require.Equal(t, "test-go-sqlite (${{ matrix.os }}, shard ${{ matrix.shard }})", job.Name)
 	require.Equal(t, "${{ matrix.os }}", job.RunsOn)
-	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, job.Strategy.Matrix.OS)
+	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, job.Strategy.Matrix.OS.For("push"))
 	require.Equal(t, []string{"1", "2", "3"}, job.Strategy.Matrix.Shard)
 	require.Empty(t, job.Strategy.Matrix.Include)
 	require.Empty(t, job.Strategy.Matrix.Exclude)

@@ -253,11 +253,7 @@ func lostLocalValues(ctx context.Context, logger *slog.Logger, root, asideDir st
 		if e != nil {
 			return fmt.Errorf("read the journal of the old store: %w", e)
 		}
-		raw := make([]service.OwnEvent, len(events))
-		for i, ev := range events {
-			raw[i] = service.OwnEvent{NodeID: ev.NodeID, Op: ev.Op, Status: ev.Status, Payload: ev.Payload}
-		}
-		own = service.OwnEntities(raw)
+		own = service.OwnEntities(ownEvents(events))
 		if len(own) == 0 {
 			return nil
 		}
@@ -354,4 +350,14 @@ func removeScratchTree(dir string) error {
 		err = errors.Join(err, os.Remove(child))
 	}
 	return errors.Join(err, os.Remove(dir))
+}
+
+// ownEvents maps the journal rows to what the owner check reads: the node, the
+// status (a mirrored hub event is not own) and the payload (a link's target).
+func ownEvents(events []sqlite.LocalEvent) []service.OwnEvent {
+	raw := make([]service.OwnEvent, len(events))
+	for i, ev := range events {
+		raw[i] = service.OwnEvent{NodeID: ev.NodeID, Op: ev.Op, Status: ev.Status, Payload: ev.Payload}
+	}
+	return raw
 }

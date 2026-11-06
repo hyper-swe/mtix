@@ -56,7 +56,7 @@ func TestWorktreeBoardError_RowAdvice_DependencyRowsAreWordedApart(t *testing.T)
 	lacking := confirmed(t, local, bounded, bounded).Error()
 	held := confirmed(t, local, bounded, local).Error()
 
-	assert.Contains(t, lacking, "the hub lacks dependency row(s) from TEST-1: add each again with mtix dep add")
+	assert.Contains(t, lacking, "the hub lacks the dependency row(s) from TEST-1: mtix dep add is refused while this store holds the link")
 	assert.NotContains(t, lacking, "the hub lacks TEST-1")
 	assert.NotContains(t, lacking, "the hub already holds")
 	assert.Contains(t, held, "the hub already holds TEST-1")

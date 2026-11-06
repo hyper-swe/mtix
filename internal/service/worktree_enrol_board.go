@@ -52,6 +52,11 @@ type BoardFinding struct {
 	hubLacks map[string]bool
 	// hubChecked is true once ConfirmAgainstHub ran.
 	hubChecked bool
+	// heldFields and heldSig are set by ConfirmAgainstHub: for each row the hub
+	// already holds, the fields in which the store differs, and a hash of the
+	// values on both sides (see recordHeld).
+	heldFields map[string][]string
+	heldSig    string
 }
 
 // ConfirmAgainstHub checks the whole rows only this store holds (against the
@@ -73,6 +78,7 @@ func (f *BoardFinding) ConfirmAgainstHub(localExport, fullCloneExport []byte) er
 			}
 		}
 	}
+	f.recordHeld(c)
 	f.hubChecked = true
 	return nil
 }
@@ -130,6 +136,7 @@ func (f BoardFinding) Digest() string {
 	if f.cmp != nil {
 		_, _ = h.Write([]byte(f.cmp.signature()))
 	}
+	_, _ = h.Write([]byte("\x03" + f.heldSig))
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
@@ -219,16 +226,21 @@ func (e *WorktreeBoardError) rowAdvice() string {
 			"never mtix update a node the hub lacks (that pushes an event for a task the hub does not hold)")
 	}
 	if ids := e.rowIDs("(dependencies)", true); len(ids) > 0 {
-		parts = append(parts, "the hub lacks dependency row(s) from "+idList(ids)+": add each again with mtix dep add (the nodes themselves are on the hub)")
+		parts = append(parts, "the hub lacks the dependency row(s) from "+idList(ids)+": mtix dep add is refused while this store holds the link (already exists) "+
+			"and a link already in the store cannot be journaled again, so use step (3), then add the link again with mtix dep add in the enrolled worktree")
 	}
 	held := append(e.rowIDs("(node)", false), e.rowIDs("(dependencies)", false)...)
 	if len(held) > 0 {
-		parts = append(parts, "the hub already holds "+idList(held)+": do not create or add them again, that would duplicate them; step (3) gives you the hub's copy")
+		parts = append(parts, e.heldAdvice(held))
 	}
 	if len(parts) == 0 {
 		return ""
 	}
-	return "; " + strings.Join(parts, "; ") + "; a row that is created again stays different on this side until it is accepted, so use step (3) after it"
+	tail := ""
+	if len(e.rowIDs("(node)", true)) > 0 {
+		tail = "; a row that is created again stays different on this side until it is accepted, so use step (3) after it"
+	}
+	return "; " + strings.Join(parts, "; ") + tail
 }
 
 // idList joins ids, bounded by boardShown.
@@ -250,6 +262,9 @@ type boardReport struct {
 	CreatedAt string              `json:"created_at"`
 	Count     int                 `json:"count"`
 	Nodes     map[string][]string `json:"nodes"`
+	// Held lists, for a row the hub already holds, the fields in which the
+	// store differs from the hub: names only.
+	Held map[string][]string `json:"held_fields,omitempty"`
 }
 
 // writeBoardReport writes the diff report under .mtix and returns its path.
@@ -261,7 +276,7 @@ func writeBoardReport(mtixDir string, at time.Time, f *BoardFinding) (string, er
 // reports of one enrolment in the same second never share a file.
 func writeNamedReport(mtixDir, prefix string, at time.Time, f *BoardFinding) (string, error) {
 	path := filepath.Join(mtixDir, prefix+at.UTC().Format("20060102T150405Z")+".json")
-	body, err := json.MarshalIndent(boardReport{Reason: f.Reason, Digest: f.Digest(), CreatedAt: at.UTC().Format("2006-01-02T15:04:05Z"), Count: len(f.Diff), Nodes: f.Diff}, "", "  ")
+	body, err := json.MarshalIndent(boardReport{Reason: f.Reason, Digest: f.Digest(), CreatedAt: at.UTC().Format("2006-01-02T15:04:05Z"), Count: len(f.Diff), Nodes: f.Diff, Held: f.HeldFields()}, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("encode the diff report: %w", err)
 	}

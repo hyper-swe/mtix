@@ -416,7 +416,7 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 		keys[k] = true
 	}
 	for k := range keys {
-		if sameJSON(ma[k], mb[k]) || (section == "nodes" && k == "labels" && sameLabels(ma[k], mb[k])) {
+		if sameJSON(ma[k], mb[k]) || (section == "nodes" && sameNodeField(k, ma, mb)) {
 			continue
 		}
 		name := section + "." + k
@@ -428,4 +428,20 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 			c.superset[shown+"\x00"+name] = true
 		}
 	}
+}
+
+// sameNodeField reports a node field that differs in form only: labels written
+// with other spacing (review F4), and closed_at when the status is present and
+// the same on both sides. closed_at is a replication gap: a rerun that has
+// pushed everything leaves the stamp set on the store row while the clone has
+// none (MTIX-112.17.16.15, ruling r3 point 1). With another status, or none, the
+// stamp stays a difference. Remove the closed_at rule when .15 lands.
+func sameNodeField(k string, a, b map[string]any) bool {
+	switch k {
+	case "labels":
+		return sameLabels(a[k], b[k])
+	case "closed_at":
+		return a["status"] != nil && sameJSON(a["status"], b["status"])
+	}
+	return false
 }

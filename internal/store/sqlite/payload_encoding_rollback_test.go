@@ -148,7 +148,18 @@ func payloadSecondaryCases() []payloadFailureCase {
 }
 
 func allPayloadCases() []payloadFailureCase {
-	return append(append(payloadMutationCases(), payloadUpdateCases()...), payloadSecondaryCases()...)
+	cases := append(append(payloadMutationCases(), payloadUpdateCases()...), payloadSecondaryCases()...)
+	// Transition events now carry the exact stored closed_at. The fixture's
+	// injected clock fixes completion timestamps; other transitions carry NULL.
+	for _, tc := range cases {
+		if p, ok := tc.want.(*model.TransitionStatusPayload); ok {
+			p.ClosedAt = json.RawMessage(`null`)
+			if p.To == model.StatusDone || p.To == model.StatusCancelled {
+				p.ClosedAt = json.RawMessage(`"2026-01-02T03:04:05Z"`)
+			}
+		}
+	}
+	return cases
 }
 
 func TestPayloadEncoding_Failure_RollsBackEveryMutation(t *testing.T) {
@@ -247,7 +258,18 @@ func TestPayloadEncoding_DefaultEncoder_PreservesTypedPayloads(t *testing.T) {
 				tc.prepare(t, s)
 			}
 			before := payloadRows(t, s.readDB, `SELECT event_id FROM sync_events ORDER BY event_id`)
-			expected, err := model.EncodePayload(tc.want)
+			want := tc.want
+			switch p := tc.want.(type) {
+			case *model.ClaimPayload:
+				expectedValue := *p
+				expectedValue.ClosedAt = json.RawMessage(`null`)
+				want = &expectedValue
+			case *model.UnclaimPayload:
+				expectedValue := *p
+				expectedValue.ClosedAt = json.RawMessage(`null`)
+				want = &expectedValue
+			}
+			expected, err := model.EncodePayload(want)
 			require.NoError(t, err)
 			require.NoError(t, tc.run(s))
 			var count int

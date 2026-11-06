@@ -226,7 +226,7 @@ func TestEmit_UnclaimNode(t *testing.T) {
 	evs := readEventsByOp(t, raw, model.OpUnclaim)
 	require.Len(t, evs, 1)
 	require.Equal(t, "agent-1", evs[0].AuthorID)
-	require.JSONEq(t, `{}`, evs[0].Payload, "unclaim payload is empty struct")
+	require.JSONEq(t, `{"closed_at":null}`, evs[0].Payload, "unclaim carries the actual stored completion time")
 }
 
 // --- delete ---

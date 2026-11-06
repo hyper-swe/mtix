@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **CI: pull requests run the full Linux matrix plus one macOS job; the full macOS matrix runs on every push to main and nightly (MTIX-112.17.42).** A PR now has 23 checks and a main push 29. Because PRs no longer cover macOS, a red macOS run on main blocks merges: `scripts/main-macos-health.sh` checks the newest main run, fails closed, runs as an advisory PR check from the base branch and as the merger's enforcing pre-merge command, and the label `main-macos-fix` lets the repairing PR through. `test-go` keeps its name; its job gains read access to Actions. See docs/CI-GATES.md.
 - Doctor keeps unreadable hub-contact history advisory when automatic contact is disabled, prints a pull that replaces the record, and distinguishes historical hub results from pre-dial errors in daemon logs. TLS recovery also covers certificate host names and hub-side certificate or TLS repair (MTIX-112.20.7).
 
 - **Fix: failed daemon pulls no longer appear as successful hub contacts (MTIX-112.20.7).** Doctor `sync.hub-contact` shows the last pull outcome and a safe failure class with its exact recovery command in text and JSON. Outcomes remain operator-local and preserve contact cadence. An explicit successful pull also clears a failure; exchange-lock contention and shutdown preserve the previous contact. Public doctor JSON includes the structured last contact, local TLS failures have their own recovery class, and directly returned daemon errors are scrubbed before logging.

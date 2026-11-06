@@ -9,13 +9,16 @@ import (
 	"fmt"
 )
 
-// trimReplaceBookkeepingToJournal keeps inbox and hook state within the same
+// trimReplaceBookkeepingToJournal keeps inbox, hook and wake state within the same
 // surviving journal boundary, using the replace caller's transaction.
 func trimReplaceBookkeepingToJournal(ctx context.Context, tx *sql.Tx) error {
 	if err := trimInboxToJournal(ctx, tx); err != nil {
 		return err
 	}
-	return trimHookDispatchToJournal(ctx, tx)
+	if err := trimHookDispatchToJournal(ctx, tx); err != nil {
+		return err
+	}
+	return trimWakeToJournal(ctx, tx)
 }
 
 // trimHookDispatchToJournal removes dispatch state for freed rowids in the

@@ -145,13 +145,15 @@ func TestClaudeHookWait_JoinsTheListenerForTheWaitAndSkipsDeliveredMail(t *testi
 		return func() { ended++ }
 	}
 
-	got, err := claudeHookWait(t.Context(), "worker", 0, func(int64) bool { return false }, join)
+	got, err := claudeHookWait(t.Context(), "worker", 0, func(sqlite.InboxEvent) bool { return false }, join)
 	require.NoError(t, err)
 	assert.Len(t, got, 1)
 	assert.Equal(t, 1, joined)
 	assert.Equal(t, 1, ended, "the join ends with the wait")
 
-	got, err = claudeHookWait(t.Context(), "worker", time.Second, func(seq int64) bool { return seq == events[0].Seq }, join)
+	got, err = claudeHookWait(t.Context(), "worker", time.Second, func(event sqlite.InboxEvent) bool {
+		return event.Seq == events[0].Seq && event.EventID == events[0].EventID
+	}, join)
 	require.NoError(t, err)
 	assert.Empty(t, got, "skipped mail does not end the wait; the timeout does")
 	assert.Equal(t, 2, joined)
@@ -295,7 +297,7 @@ func TestClaudeHookWait_SignalOrCancel_EndsQuietlyWithNoEventsAndNoError(t *test
 		cancel()
 	}()
 
-	got, err := claudeHookWait(ctx, "worker", 0, func(int64) bool { return false }, func(string, io.Writer) func() { return func() {} })
+	got, err := claudeHookWait(ctx, "worker", 0, func(sqlite.InboxEvent) bool { return false }, func(string, io.Writer) func() { return func() {} })
 
 	require.NoError(t, err, "a cancelled wait is not an error")
 	assert.Empty(t, got)
@@ -311,7 +313,7 @@ func TestClaudeHookWait_TimeoutZero_WaitsUntilMailArrives(t *testing.T) {
 		})
 	}()
 
-	got, err := claudeHookWait(t.Context(), "worker", 0, func(int64) bool { return false }, func(string, io.Writer) func() { return func() {} })
+	got, err := claudeHookWait(t.Context(), "worker", 0, func(sqlite.InboxEvent) bool { return false }, func(string, io.Writer) func() { return func() {} })
 
 	require.NoError(t, err)
 	assert.Len(t, got, 1, "timeout 0 means no timeout: only mail ends the wait")
@@ -346,7 +348,7 @@ func TestClaudeHookWait_ListInboxFailsFromCancelledContext_NoEventsAndNoError(t 
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel() // the store's list call itself observes the cancel and fails
 
-	got, err := claudeHookWait(ctx, "worker", 0, func(int64) bool { return false }, func(string, io.Writer) func() { return func() {} })
+	got, err := claudeHookWait(ctx, "worker", 0, func(sqlite.InboxEvent) bool { return false }, func(string, io.Writer) func() { return func() {} })
 
 	require.NoError(t, err, "a list that failed because the wait was cancelled is not an error")
 	assert.Empty(t, got)

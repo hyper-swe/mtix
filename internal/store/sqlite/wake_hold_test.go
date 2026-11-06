@@ -58,11 +58,13 @@ func TestHeldWakeCandidates_ExactKeysOwnMarkEpochHostAndFilters(t *testing.T) {
 		require.NoError(t, s.SetAnnotations(ctx, "PROJ-1", notes)) // one journal event per new annotation
 	}
 	seqs := map[string][]int64{}
+	eventIDs := map[int64]string{}
 	for _, agent := range []string{"a", "b", "c"} {
 		events, err := s.InboxList(ctx, agent)
 		require.NoError(t, err)
 		for _, event := range events {
 			seqs[agent] = append(seqs[agent], event.Seq)
+			eventIDs[event.Seq] = event.EventID
 		}
 	}
 	require.Len(t, seqs["a"], 3)
@@ -79,7 +81,7 @@ func TestHeldWakeCandidates_ExactKeysOwnMarkEpochHostAndFilters(t *testing.T) {
 	insert("a", "h", "other-uid", 9, 0, 1)    // another operating-system user
 	insert("a", "other-host", "u", 9, 0, 1)   // another host
 	key := func(agent string, epoch, seq int64) model.WakeKey {
-		return model.WakeKey{AgentID: agent, HostID: "h", UID: "u", EventSeq: seq, Epoch: epoch}
+		return model.WakeKey{AgentID: agent, HostID: "h", UID: "u", EventSeq: seq, Epoch: epoch, EventID: eventIDs[seq]}
 	}
 	all, err := s.HeldWakeCandidates(ctx, "h", "u", "")
 	require.NoError(t, err)

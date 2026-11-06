@@ -52,6 +52,9 @@ type WakeBudgetResult struct {
 	Held     bool
 	// InFlight reports a lost claim whose owner has not recorded an outcome yet.
 	InFlight bool
+	// Replaced means the snapshotted event no longer exists at this sequence.
+	// No admission callback, claim or accounting write ran for this candidate.
+	Replaced bool `json:"-"`
 }
 
 // WakeBudgetCounter is one board's durable recipient counter for diagnostics.

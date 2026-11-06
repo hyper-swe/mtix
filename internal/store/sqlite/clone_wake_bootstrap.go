@@ -34,14 +34,14 @@ func (s *Store) WithCloneWakeBootstrap(ctx context.Context, fn func(*sql.Tx) err
 		if err != nil {
 			return err
 		}
-		if err := fn(tx); err != nil {
-			return err
+		if applyErr := fn(tx); applyErr != nil {
+			return applyErr
 		}
 		if !seed {
 			return nil
 		}
-		if err := initHookScanFloorAtTailTx(ctx, tx, true); err != nil {
-			return err
+		if floorErr := initHookScanFloorAtTailTx(ctx, tx, true); floorErr != nil {
+			return floorErr
 		}
 		after, err := cloneWakePositionTx(ctx, tx)
 		if err != nil {

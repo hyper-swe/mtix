@@ -38,6 +38,7 @@ type DoctorCheck struct {
 	Detail         string                       `json:"detail,omitempty"`
 	Fix            string                       `json:"fix,omitempty"`
 	Findings       []transport.PrivilegeFinding `json:"findings,omitempty"`
+	Reply          *service.ReplyStatus         `json:"reply,omitempty"`
 }
 
 // DoctorReport aggregates the health checks per FR-18 / MTIX-15.7.3.

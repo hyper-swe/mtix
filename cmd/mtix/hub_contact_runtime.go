@@ -92,7 +92,23 @@ func (s *hubContactSource) snapshot() (service.ContactInputs, error) {
 	if in.LiveLease, err = s.liveLeases(); err != nil {
 		return in, fmt.Errorf("%w: leases: %w", service.ErrContactInputs, err)
 	}
+	in.Reply = s.replyInputs()
 	return in, nil
+}
+
+// replyInputs reads the open reply windows and active holds (MTIX-112.20.3).
+// Unreadable reply state means no reply cadence, never a wider one: the
+// cadence then stays exactly what activity alone decides. Doctor shows why.
+func (s *hubContactSource) replyInputs() service.ReplyInputs {
+	st, err := s.state.ReadReplyState(s.key())
+	if err != nil {
+		return service.ReplyInputs{}
+	}
+	pol, err := service.ReadReplyPolicy(s.state)
+	if err != nil {
+		return service.ReplyInputs{}
+	}
+	return service.ReplyInputsFor(st, pol, s.now())
 }
 
 // liveLeases reports whether any lease is live (see liveLeaseList).

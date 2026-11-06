@@ -21,7 +21,7 @@ func (s *WorktreeEnrolment) swap(ctx context.Context, root string, r EnrollmentR
 	if err := s.o.Rename(data, res.AsideDir); err != nil {
 		return errors.Join(fmt.Errorf("move store aside: %w", err), removeEnrolMarker(mtix))
 	}
-	if err := s.seed(ctx, root, snap, res); err != nil {
+	if err := s.seed(ctx, root, r.AcceptHub, snap, res); err != nil {
 		return s.rollback(mtix, res, err)
 	}
 	if err := s.p().Enroll(ctx, r); err != nil {
@@ -30,7 +30,7 @@ func (s *WorktreeEnrolment) swap(ctx context.Context, root string, r EnrollmentR
 	return removeEnrolMarker(mtix)
 }
 
-func (s *WorktreeEnrolment) seed(ctx context.Context, root string, snap *WorktreeSnapshot, res *WorktreeEnrolResult) error {
+func (s *WorktreeEnrolment) seed(ctx context.Context, root string, accept string, snap *WorktreeSnapshot, res *WorktreeEnrolResult) error {
 	p := s.p()
 	if err := p.Clone(ctx, root); err != nil {
 		return fmt.Errorf("clone fresh store from the hub: %w", err)
@@ -39,9 +39,18 @@ func (s *WorktreeEnrolment) seed(ctx context.Context, root string, snap *Worktre
 		return fmt.Errorf("carry inbox state: %w", err)
 	}
 	// The fresh store has no sync.sha256: without one, the first command would
-	// import tasks.json (the old store's export) over the hub clone.
-	if err := recordBoardSeen(filepath.Join(root, ".mtix")); err != nil {
+	// import tasks.json (the old store's export) over the hub clone. The board
+	// is marked seen only after it is checked against the clone itself.
+	mtix := filepath.Join(root, ".mtix")
+	verify := func() error {
+		f, err := p.VerifyBoard(ctx, root, res.AsideDir)
+		return s.boardGate(mtix, accept, res, f, err)
+	}
+	if err := recordBoardSeen(mtix, verify); err != nil {
 		return fmt.Errorf("record the board file as seen: %w", err)
+	}
+	if err := s.recordHubAccepted(mtix, res); err != nil {
+		return err
 	}
 	// A process that held the old store open writes through its descriptor into
 	// the moved-aside directory; if the aside store differs from what was
@@ -71,6 +80,16 @@ func (s *WorktreeEnrolment) afterEnrolFailure(ctx context.Context, root string, 
 	return s.rollback(mtix, res, cause)
 }
 
+// recordHubAccepted writes the accept-hub record when the enrolment took the
+// hub's version of a differing board; doctor warns until the operator clears it.
+func (s *WorktreeEnrolment) recordHubAccepted(mtix string, res *WorktreeEnrolResult) error {
+	if res.HubDiffReport == "" {
+		return nil
+	}
+	return writeHubAccepted(mtix, HubAccepted{Report: res.HubDiffReport, AsideDir: res.AsideDir, BackupPath: res.BackupPath,
+		AcceptedAt: s.o.Clock().UTC().Format("2006-01-02T15:04:05Z")})
+}
+
 // rollback keeps the half-built store aside and puts the original back. If the
 // restore itself fails, the original is intact in the aside directory and the
 // error names it. The marker is removed only after a successful restore.
@@ -86,7 +105,7 @@ func (s *WorktreeEnrolment) rollback(mtix string, res *WorktreeEnrolResult, caus
 	if mvErr := s.o.Rename(res.AsideDir, data); mvErr != nil {
 		return errors.Join(cause, fmt.Errorf("restore store: %w; original store is intact in %s, backup %s", mvErr, res.AsideDir, res.BackupPath))
 	}
-	if rmErr := removeEnrolMarker(mtix); rmErr != nil {
+	if rmErr := errors.Join(removeHubAccepted(mtix), removeEnrolMarker(mtix)); rmErr != nil {
 		return errors.Join(cause, rmErr)
 	}
 	return fmt.Errorf("%w (the original store was restored; backup %s)", cause, res.BackupPath)

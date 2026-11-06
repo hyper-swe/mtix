@@ -73,6 +73,9 @@ func runInit(prefix string) error {
 		return fmt.Errorf("initialize exclusion: %w", ignoreErr)
 	}
 
+	if ignoreErr := addToGitignore(cwd, ".mtix/enroll-diff-*.json"); ignoreErr != nil {
+		return fmt.Errorf("ignore the enrolment diff reports: %w", ignoreErr)
+	}
 	if ignoreErr := addToGitignore(cwd, ".mtix/serve.json"); ignoreErr != nil {
 		return fmt.Errorf("initialize exclusion: %w", ignoreErr)
 	}

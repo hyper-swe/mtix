@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,4 +261,40 @@ func TestEnrolWorktree_HubLookupChunkBoundary_EveryIDChecked(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 3, hubCalls, "1001 ids are asked for in three chunks of at most 500")
+}
+
+// TestEnrolWorktree_CrashAfterTheAcceptRecord_RerunRemovesTheStaleRecord: the
+// process dies after the accept-hub record was written and before the enrolment
+// finished. The recovery puts the original store back, so a record that names
+// the aside directory would warn about an enrolment that did not happen: the
+// recovery removes it.
+func TestEnrolWorktree_CrashAfterTheAcceptRecord_RerunRemovesTheStaleRecord(t *testing.T) {
+	w := newEnrolWorld(t)
+	w.boardFinding = hubDiffers("TEST-7")
+	w.cloneBoardFinding = hubDiffers("TEST-7")
+	ports := w.ports()
+	inner := ports.Snapshot
+	ports.Snapshot = func(ctx context.Context, dir string) (*service.WorktreeSnapshot, error) {
+		if strings.Contains(filepath.Base(dir), "pre-enrol") {
+			panic("simulated crash after the accept record")
+		}
+		return inner(ctx, dir)
+	}
+	w.opts.Ports = ports
+	w.svc = service.NewWorktreeEnrolment(w.opts)
+	require.Panics(t, func() { _, _ = w.runAccepting(hubDiffers("TEST-7").Digest()) })
+	rec, err := service.ReadHubAccepted(w.mtix())
+	require.NoError(t, err)
+	require.NotNil(t, rec, "the record exists at the crash point")
+
+	w2 := w
+	w2.boardFinding, w2.cloneBoardFinding = nil, nil
+	w2.opts.Ports = w.ports()
+	w2.svc = service.NewWorktreeEnrolment(w2.opts)
+	_, err = w2.run()
+
+	require.NoError(t, err)
+	rec, err = service.ReadHubAccepted(w.mtix())
+	require.NoError(t, err)
+	assert.Nil(t, rec, "the recovery removed the record that named the original store's aside directory")
 }

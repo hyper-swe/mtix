@@ -6,8 +6,11 @@ package main
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -36,11 +39,77 @@ func registerEnrolInterruptedDoctor(svc *service.DoctorService, mtixDir string) 
 // enrolInterruptedFix is the exact recovery for the marker. When the store
 // never moved (a crash between the marker and the move) the live store is
 // already in place and only the marker goes; moving it aside would strand it.
+// When it moved and no data directory exists (a crash right after the move)
+// there is no partial store to keep, and moving a missing directory would stop
+// the recovery; otherwise the partial store is kept aside, never deleted.
 func enrolInterruptedFix(mtixDir string, marker *service.EnrolMarker) string {
-	markerPath := filepath.Join(mtixDir, "enroll.d", "in-progress.json")
+	markerPath := shellQuote(filepath.Join(mtixDir, "enroll.d", "in-progress.json"))
 	if !marker.Moved() {
-		return fmt.Sprintf("rm %q", markerPath)
+		return "rm " + markerPath
 	}
 	data := filepath.Join(mtixDir, "data")
-	return fmt.Sprintf("mv %q %q && mv %q %q && rm %q", data, data+".kept-aside", marker.Aside, data, markerPath)
+	aside := shellQuote(marker.Aside)
+	// The original store goes back, so an accept-hub record that names it is
+	// stale: it is removed with the marker (rm -f: there may be none).
+	accepted := shellQuote(service.HubAcceptedPath(mtixDir))
+	if _, err := os.Lstat(data); err != nil {
+		return fmt.Sprintf("mv %s %s && rm %s && rm -f %s", aside, shellQuote(data), markerPath, accepted)
+	}
+	return fmt.Sprintf("mv %s %s && mv %s %s && rm %s && rm -f %s", shellQuote(data), shellQuote(data+".kept-aside"), aside, shellQuote(data), markerPath, accepted)
+}
+
+// shellQuote quotes s for a POSIX shell: single quotes, with each embedded
+// single quote closed, escaped and reopened. Nothing inside is expanded, so a
+// path holding a dollar sign, a backtick or a quote is one literal word.
+// Go's %q is not shell quoting: sh expands a dollar sign inside double quotes.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// registerEnrolHubAcceptedDoctor adds board.enrol-hub-accepted while an
+// enrolment that took the hub's version of a differing board is not cleared:
+// the old store, its backup and the diff report are the only copy of what the
+// hub did not hold (MTIX-112.17.16.6). The fix removes the record once the
+// operator has read the report and kept what they need.
+func registerEnrolHubAcceptedDoctor(svc *service.DoctorService, mtixDir string) error {
+	recPath := shellQuote(service.HubAcceptedPath(mtixDir))
+	rec, err := service.ReadHubAccepted(mtixDir)
+	if err != nil {
+		// A torn record must not take the whole doctor down: it is a row that
+		// fails with the exact fix.
+		return svc.Register(service.DoctorCheck{ID: "board.enrol-hub-accepted", Run: func(context.Context) service.DoctorResult {
+			return service.DoctorResult{Status: service.DoctorFail,
+				Detail: "the accept-hub record cannot be read (" + format.SafeLine(err.Error()) + "); it is a leftover, and the diff report and the old store it named are kept",
+				Fix:    "rm " + recPath}
+		}})
+	}
+	if rec == nil {
+		return nil
+	}
+	return svc.Register(service.DoctorCheck{ID: "board.enrol-hub-accepted", Run: func(context.Context) service.DoctorResult {
+		data := map[string]any{"report": rec.Report, "aside_dir": rec.AsideDir, "backup_path": rec.BackupPath, "accepted_at": rec.AcceptedAt}
+		if _, statErr := os.Lstat(rec.AsideDir); statErr != nil {
+			return service.DoctorResult{Status: service.DoctorWarn, Data: data, Fix: "rm " + recPath,
+				Detail: "an accept-hub record names an old store (" + rec.AsideDir + ") that no longer exists, so the enrolment it describes did not complete or the store was cleared; the record is stale"}
+		}
+		return service.DoctorResult{
+			Status: service.DoctorWarn,
+			Detail: "this worktree was enrolled on the hub's version of a board that differed from it; the old store is in " + rec.AsideDir +
+				" (backup " + rec.BackupPath + ") and the node ids and field names that differed are in " + rec.Report +
+				"; keep what you need from them, then clear this warning",
+			Fix:  "rm " + recPath,
+			Data: data,
+		}
+	}})
+}
+
+// registerEnrolDoctorChecks registers both worktree enrolment rows.
+func registerEnrolDoctorChecks(svc *service.DoctorService, mtixDir string) error {
+	if err := registerEnrolInterruptedDoctor(svc, mtixDir); err != nil {
+		return fmt.Errorf("register enrolment marker check: %w", err)
+	}
+	if err := registerEnrolHubAcceptedDoctor(svc, mtixDir); err != nil {
+		return fmt.Errorf("register accept-hub check: %w", err)
+	}
+	return nil
 }

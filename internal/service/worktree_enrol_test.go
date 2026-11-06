@@ -37,9 +37,15 @@ type enrolWorld struct {
 	calls   []string
 	events  []sqlite.LocalEvent
 	missing []string
-	carry   *sqlite.InboxCarry
-	fail    map[string]error
-	hubConn bool
+	// boardFinding and cloneBoardFinding are what the board preflight and the
+	// post-clone check report (MTIX-112.17.16.6); asideSeen is the moved-aside
+	// directory the post-clone check was given.
+	boardFinding      *service.BoardFinding
+	cloneBoardFinding *service.BoardFinding
+	asideSeen         string
+	carry             *sqlite.InboxCarry
+	fail              map[string]error
+	hubConn           bool
 	// onSnapshot may replace the nth Snapshot result (1-based) to model a writer.
 	onSnapshot func(n int, dataDir string, s *service.WorktreeSnapshot) *service.WorktreeSnapshot
 	snapDirs   []string
@@ -106,6 +112,19 @@ func (w *enrolWorld) ports() service.WorktreePorts {
 				}
 			}
 			return out, nil
+		},
+		PreflightBoard: func(context.Context, string) (*service.BoardFinding, error) {
+			if err := w.step("preflight"); err != nil {
+				return nil, err
+			}
+			return w.boardFinding, nil
+		},
+		VerifyBoard: func(_ context.Context, _, aside string) (*service.BoardFinding, error) {
+			w.asideSeen = aside
+			if err := w.step("verify"); err != nil {
+				return nil, err
+			}
+			return w.cloneBoardFinding, nil
 		},
 		Backup: func(_ context.Context, _, dest string) error {
 			if err := w.step("backup"); err != nil {
@@ -224,7 +243,7 @@ func TestEnrolWorktree_UsedStore_BackedUpMovedAndCloned(t *testing.T) {
 	res, err := w.run()
 	require.NoError(t, err)
 
-	assert.Equal(t, []string{"snapshot", "hub", "backup", "snapshot", "clone", "carry", "snapshot", "enrol"}, w.calls)
+	assert.Equal(t, []string{"snapshot", "hub", "preflight", "backup", "snapshot", "clone", "carry", "verify", "snapshot", "enrol"}, w.calls)
 	assert.Equal(t, filepath.Join(w.root, ".mtix", "data.pre-enrol-20261103T102030Z"), res.AsideDir)
 	old, err := os.ReadFile(filepath.Join(res.AsideDir, "mtix.db"))
 	require.NoError(t, err)
@@ -408,7 +427,7 @@ func TestEnrolWorktree_NeverDiscardLocal(t *testing.T) {
 		assert.NotContains(t, strings.ToLower(typ.Field(i).Name), "discard")
 		assert.NotContains(t, strings.ToLower(typ.Field(i).Name), "reconcile")
 	}
-	assert.Equal(t, []string{"Snapshot", "HubMissing", "Backup", "Clone", "ImportCarry", "Enroll", "Enrolled"}, names,
+	assert.Equal(t, []string{"Snapshot", "HubMissing", "PreflightBoard", "VerifyBoard", "Backup", "Clone", "ImportCarry", "Enroll", "Enrolled"}, names,
 		"a new port must be reviewed against the no-discard rule")
 	files, err := filepath.Glob("worktree_enrol*.go")
 	require.NoError(t, err)

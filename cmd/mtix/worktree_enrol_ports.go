@@ -23,6 +23,34 @@ import (
 // hubIDLookupChunk bounds the ids one hub lookup carries.
 const hubIDLookupChunk = 500
 
+// enrolHub is the hub surface the enrolment uses.
+type enrolHub interface {
+	pullSweepHub
+}
+
+// hubDialer connects to the hub with the worktree's own secrets and returns
+// the connection with the function that closes it. Each port dials for itself,
+// so a hub that changes between two ports is seen by the second.
+type hubDialer func(ctx context.Context, root string) (enrolHub, func(), error)
+
+// dialWorktreeHub is the production dialer: the DSN comes from the worktree's
+// own secrets file, never from the process environment.
+func dialWorktreeHub(opts transport.Options) hubDialer {
+	return func(ctx context.Context, root string) (enrolHub, func(), error) {
+		dsn, err := worktreeDSN(root)
+		if err != nil {
+			return nil, nil, err
+		}
+		connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
+		defer cancel()
+		pool, err := transport.New(connectCtx, dsn, opts)
+		if err != nil {
+			return nil, nil, fmt.Errorf("connect to the hub: %w", err)
+		}
+		return pool, pool.Close, nil
+	}
+}
+
 // newWorktreeEnrolPorts returns the production effects of the hub-board
 // worktree enrolment (MTIX-112.17.16, ADR-007 section 4.2). Every hub call uses
 // the worktree's own secrets file; the process environment DSN is never read.
@@ -31,15 +59,28 @@ const hubIDLookupChunk = 500
 func newWorktreeEnrolPorts(logger *slog.Logger, progress io.Writer, opts transport.Options,
 	enroll func(context.Context, service.EnrollmentRequest) error, enrolled func(context.Context, string) (bool, error),
 ) service.WorktreePorts {
+	return newWorktreeEnrolPortsWith(logger, progress, dialWorktreeHub(opts), enroll, enrolled)
+}
+
+// newWorktreeEnrolPortsWith is newWorktreeEnrolPorts over any hub dialer.
+func newWorktreeEnrolPortsWith(logger *slog.Logger, progress io.Writer, dial hubDialer,
+	enroll func(context.Context, service.EnrollmentRequest) error, enrolled func(context.Context, string) (bool, error),
+) service.WorktreePorts {
 	return service.WorktreePorts{
 		Snapshot: func(ctx context.Context, dataDir string) (*service.WorktreeSnapshot, error) {
 			return snapshotWorktree(ctx, logger, dataDir)
 		},
 		HubMissing: func(ctx context.Context, root string, ids []string) ([]string, error) {
-			return hubMissingIDs(ctx, root, ids, opts)
+			return hubMissingIDs(ctx, root, ids, dial)
+		},
+		PreflightBoard: func(ctx context.Context, root string) (*service.BoardFinding, error) {
+			return preflightBoard(ctx, logger, root, dial)
+		},
+		VerifyBoard: func(ctx context.Context, root, asideDir string) (*service.BoardFinding, error) {
+			return verifyBoardAgainstClone(ctx, logger, root, dial, asideDir)
 		},
 		Backup: func(ctx context.Context, root, dest string) error { return backupWorktree(ctx, logger, root, dest) },
-		Clone:  func(ctx context.Context, root string) error { return cloneWorktree(ctx, logger, progress, root, opts) },
+		Clone:  func(ctx context.Context, root string) error { return cloneWorktree(ctx, logger, progress, root, dial) },
 		ImportCarry: func(ctx context.Context, root string, c *sqlite.InboxCarry, at time.Time) error {
 			return importWorktreeCarry(ctx, logger, root, c, at)
 		},
@@ -111,18 +152,12 @@ func importWorktreeCarry(ctx context.Context, logger *slog.Logger, root string, 
 }
 
 // hubMissingIDs returns the ids the hub does not hold.
-func hubMissingIDs(ctx context.Context, root string, ids []string, opts transport.Options) ([]string, error) {
-	dsn, err := worktreeDSN(root)
+func hubMissingIDs(ctx context.Context, root string, ids []string, dial hubDialer) ([]string, error) {
+	pool, closeHub, err := dial(ctx, root)
 	if err != nil {
 		return nil, err
 	}
-	connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
-	defer cancel()
-	pool, err := transport.New(connectCtx, dsn, opts)
-	if err != nil {
-		return nil, fmt.Errorf("connect to the hub: %w", err)
-	}
-	defer pool.Close()
+	defer closeHub()
 	held := map[string]bool{}
 	for i := 0; i < len(ids); i += hubIDLookupChunk {
 		events, fetchErr := pool.FetchEventsByID(ctx, ids[i:min(i+hubIDLookupChunk, len(ids))])
@@ -145,18 +180,12 @@ func hubMissingIDs(ctx context.Context, root string, ids []string, opts transpor
 // cloneWorktree connects to the hub with the worktree's own secrets and seeds a
 // fresh store at the worktree's data directory through the same checked clone
 // path as `mtix sync clone`.
-func cloneWorktree(ctx context.Context, logger *slog.Logger, progress io.Writer, root string, opts transport.Options) error {
-	dsn, err := worktreeDSN(root)
+func cloneWorktree(ctx context.Context, logger *slog.Logger, progress io.Writer, root string, dial hubDialer) error {
+	pool, closeHub, err := dial(ctx, root)
 	if err != nil {
 		return err
 	}
-	connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
-	defer cancel()
-	pool, err := transport.New(connectCtx, dsn, opts)
-	if err != nil {
-		return fmt.Errorf("connect to the hub: %w", err)
-	}
-	defer pool.Close()
+	defer closeHub()
 	return cloneWorktreeFrom(ctx, logger, progress, root, pool)
 }
 

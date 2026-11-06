@@ -36,6 +36,17 @@ type WorktreePorts struct {
 	// HubMissing returns the ids among ids that the hub does not hold, using the
 	// worktree's own secrets.
 	HubMissing func(ctx context.Context, root string, ids []string) ([]string, error)
+	// PreflightBoard proves, before anything moves, that the local board is all
+	// derivable from the hub (MTIX-112.17.16.6): tasks.json equals what the local
+	// store exports (no exclusions), and the local store's export equals that of
+	// a scratch clone built from only the hub events the store has applied. It
+	// returns nil when proven, a finding naming what is not.
+	PreflightBoard func(ctx context.Context, root string) (*BoardFinding, error)
+	// VerifyBoard repeats both proofs with the moved-aside store (asideDir) as
+	// the local side, against the same applied events; the board is marked seen
+	// only when it returns nil (or the operator accepted the hub's version with
+	// the digest of the difference).
+	VerifyBoard func(ctx context.Context, root, asideDir string) (*BoardFinding, error)
 	// Backup writes a verified backup of the store to dest.
 	Backup func(ctx context.Context, root, dest string) error
 	// Clone seeds a fresh store at <root>/.mtix/data from the hub with the
@@ -64,7 +75,9 @@ type WorktreeEnrolResult struct {
 	AsideDir   string
 	// PartialDir is where a failed attempt's half-built store was kept.
 	PartialDir string
-	Carried    sqlite.InboxCarryResult
+	// HubDiffReport is the diff report path of an accept-hub enrolment.
+	HubDiffReport string
+	Carried       sqlite.InboxCarryResult
 }
 
 // WorktreeEnrolment enrolls a hub-board worktree that already has a store
@@ -109,7 +122,7 @@ func (s *WorktreeEnrolment) EnrolWorktree(ctx context.Context, r EnrollmentReque
 
 func (s *WorktreeEnrolment) validate(r EnrollmentRequest) (string, error) {
 	p := s.o.Ports
-	if p.Snapshot == nil || p.HubMissing == nil || p.Backup == nil || p.Clone == nil || p.ImportCarry == nil || p.Enroll == nil || p.Enrolled == nil {
+	if p.Snapshot == nil || p.HubMissing == nil || p.PreflightBoard == nil || p.VerifyBoard == nil || p.Backup == nil || p.Clone == nil || p.ImportCarry == nil || p.Enroll == nil || p.Enrolled == nil {
 		return "", fmt.Errorf("worktree enrolment ports required: %w", model.ErrInvalidInput)
 	}
 	root, err := canonicalEnrollmentPath(r.Path)

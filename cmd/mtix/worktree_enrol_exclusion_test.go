@@ -18,7 +18,6 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/pushlock"
 )
@@ -83,6 +82,15 @@ func TestSeedFreshStore_StoreAlreadyHoldsEvents_RefusedBeforeAnyPull(t *testing.
 // settled, plus a second open handle: another process that has the store open.
 func writerWorktree(t *testing.T) (root string, writer *sqlite.Store) {
 	t.Helper()
+	root, writer, _ = writerWorktreeOnHub(t)
+	return root, writer
+}
+
+// writerWorktreeOnHub is writerWorktree that also returns the events the hub
+// holds for the store's node: the worktree's journal says they were applied
+// from it, so the hub that serves them proves the node is there.
+func writerWorktreeOnHub(t *testing.T) (root string, writer *sqlite.Store, hubEvents []*model.SyncEvent) {
+	t.Helper()
 	ctx := context.Background()
 	base, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
@@ -97,12 +105,17 @@ func writerWorktree(t *testing.T) (root string, writer *sqlite.Store) {
 	st, err := sqlite.New(worktreeDataDir(root), slog.Default())
 	require.NoError(t, err)
 	require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-1", "", 0, 1, "settled work")))
+	hubEvents, err = readPendingBatch(ctx, st, 100)
+	require.NoError(t, err)
+	for i, e := range hubEvents {
+		e.CreatedAt = offlineEventsPushedAt.Add(time.Duration(i) * time.Second)
+	}
 	_, err = st.WriteDB().ExecContext(ctx, `UPDATE sync_events SET sync_status = 'applied'`)
 	require.NoError(t, err)
 	_, err = service.NewHubMarkService(st).HubConnected(ctx, service.HubEvidence{SecretsDSN: true})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
-	return root, st
+	return root, st, hubEvents
 }
 
 // TestEnrolWorktree_WriterOpenDuringEnrol_EventIsNeverLost: another process that
@@ -111,14 +124,14 @@ func writerWorktree(t *testing.T) (root string, writer *sqlite.Store) {
 // original store back with that event in it, and not record the enrolment.
 func TestEnrolWorktree_WriterOpenDuringEnrol_EventIsNeverLost(t *testing.T) {
 	ctx := context.Background()
-	root, writer := writerWorktree(t)
+	root, writer, hubEvents := writerWorktreeOnHub(t)
 	var recorded bool
-	ports := newWorktreeEnrolPorts(slog.Default(), io.Discard, transport.Options{},
+	hub := hubOf(hubEvents)
+	ports := newWorktreeEnrolPortsWith(slog.Default(), io.Discard, fakeDial(hub),
 		func(context.Context, service.EnrollmentRequest) error { recorded = true; return nil },
 		func(context.Context, string) (bool, error) { return recorded, nil })
-	ports.HubMissing = func(context.Context, string, []string) ([]string, error) { return nil, nil }
 	ports.Clone = func(c context.Context, r string) error {
-		require.NoError(t, withWorktreeStore(slog.Default(), r, func(*sqlite.Store) error { return nil })) // a fresh store
+		require.NoError(t, cloneWorktreeFrom(c, slog.Default(), io.Discard, r, hub)) // the clone the board proof then accepts
 		// The concurrent writer commits an event now.
 		return writer.CreateNode(c, mkPGNode("TEST-2", "", 0, 2, "written during the enrolment"))
 	}

@@ -18,7 +18,6 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -41,60 +40,6 @@ func boardFileHoldingNodes(t *testing.T, mtixDir string, nodes map[string]string
 	body, err := os.ReadFile(filepath.Join(exportDir, "tasks.json"))
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(mtixDir, "tasks.json"), body, 0o600))
-}
-
-// TestEnrolWorktree_RealPath_FirstCommandNeverImportsTasksJSONOverTheClone
-// enrols through EnrolWorktree and the production clone step with a fake hub,
-// then runs the auto-import the first ordinary command runs. The cloned store
-// must stay exactly the hub's: no node from tasks.json, no title rolled back.
-func TestEnrolWorktree_RealPath_FirstCommandNeverImportsTasksJSONOverTheClone(t *testing.T) {
-	cases := []struct {
-		name  string
-		board map[string]string
-		check func(t *testing.T, clone *sqlite.Store)
-	}{
-		{"a node only the file holds", map[string]string{"TEST-7": "only in tasks.json"}, func(t *testing.T, clone *sqlite.Store) {
-			_, err := clone.GetNode(context.Background(), "TEST-7")
-			require.ErrorIs(t, err, model.ErrNotFound, "a node only tasks.json holds is not imported into the hub clone")
-		}},
-		{"a stale title for a cloned node", map[string]string{"TEST-9": "stale title"}, func(t *testing.T, clone *sqlite.Store) {
-			kept, err := clone.GetNode(context.Background(), "TEST-9")
-			require.NoError(t, err)
-			assert.Equal(t, "offline node", kept.Title, "the hub's title is not rolled back to the file's")
-		}},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := context.Background()
-			root, writer := writerWorktree(t)
-			require.NoError(t, writer.Close())
-			boardFileHoldingNodes(t, filepath.Join(root, ".mtix"), tc.board)
-			hub := &fakeLateHub{pullEvents: offlineEvents(t)}
-			var recorded bool
-			ports := newWorktreeEnrolPorts(slog.Default(), io.Discard, transport.Options{},
-				func(context.Context, service.EnrollmentRequest) error { recorded = true; return nil },
-				func(context.Context, string) (bool, error) { return recorded, nil })
-			ports.HubMissing = func(context.Context, string, []string) ([]string, error) { return nil, nil }
-			ports.Clone = func(c context.Context, r string) error {
-				return cloneWorktreeFrom(c, slog.Default(), io.Discard, r, hub)
-			}
-			svc := service.NewWorktreeEnrolment(service.WorktreeEnrolOptions{Ports: ports, Clock: func() time.Time { return time.Date(2026, 11, 5, 1, 2, 3, 0, time.UTC) }})
-
-			_, err := svc.EnrolWorktree(ctx, service.EnrollmentRequest{Path: root, Mode: "yes", Source: "test"})
-			require.NoError(t, err)
-
-			clone, err := sqlite.New(worktreeDataDir(root), slog.Default())
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = clone.Close() })
-			pendingBefore, err := clone.LocalEvents(ctx)
-			require.NoError(t, err)
-			require.NoError(t, service.NewSyncService(clone, slog.Default(), time.Now).AutoImport(ctx, filepath.Join(root, ".mtix")))
-			tc.check(t, clone)
-			pendingAfter, err := clone.LocalEvents(ctx)
-			require.NoError(t, err)
-			assert.Equal(t, pendingBefore, pendingAfter)
-		})
-	}
 }
 
 func TestSeedFreshStore_StoreHoldsANodeButNoEvent_Refused(t *testing.T) {

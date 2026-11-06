@@ -29,7 +29,7 @@ func (s *WorktreeEnrolment) run(ctx context.Context, root string, r EnrollmentRe
 		BackupPath: filepath.Join(mtix, "backups", "pre-enroll-"+stamp+".db"),
 		AsideDir:   filepath.Join(mtix, asideDirPrefix+stamp),
 	}
-	snap, err := s.prepare(ctx, root, res)
+	snap, err := s.prepare(ctx, root, r, res)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +39,7 @@ func (s *WorktreeEnrolment) run(ctx context.Context, root string, r EnrollmentRe
 // prepare holds the push and dispatch locks while it reads the store, refuses
 // local-only events, backs up, writes the marker and re-reads the store; the
 // locks are released only after the last re-check, immediately before the move.
-func (s *WorktreeEnrolment) prepare(ctx context.Context, root string, res *WorktreeEnrolResult) (snap *WorktreeSnapshot, retErr error) {
+func (s *WorktreeEnrolment) prepare(ctx context.Context, root string, r EnrollmentRequest, res *WorktreeEnrolResult) (snap *WorktreeSnapshot, retErr error) {
 	mtix := filepath.Join(root, ".mtix")
 	data := filepath.Join(mtix, "data")
 	if _, err := os.Lstat(res.AsideDir); err == nil {
@@ -56,7 +56,7 @@ func (s *WorktreeEnrolment) prepare(ctx context.Context, root string, res *Workt
 		}
 		retErr = errors.Join(retErr, locks.release())
 	}()
-	if snap, err = s.checkedSnapshot(ctx, root, data); err != nil {
+	if snap, err = s.checkedSnapshot(ctx, root, data, r.AcceptHub, res); err != nil {
 		return nil, err
 	}
 	if mkErr := os.MkdirAll(filepath.Dir(res.BackupPath), 0o700); mkErr != nil {
@@ -80,7 +80,7 @@ func (s *WorktreeEnrolment) prepare(ctx context.Context, root string, res *Workt
 	return snap, nil
 }
 
-func (s *WorktreeEnrolment) checkedSnapshot(ctx context.Context, root, data string) (*WorktreeSnapshot, error) {
+func (s *WorktreeEnrolment) checkedSnapshot(ctx context.Context, root, data string, accept string, res *WorktreeEnrolResult) (*WorktreeSnapshot, error) {
 	snap, err := s.p().Snapshot(ctx, data)
 	if err != nil {
 		return nil, fmt.Errorf("read worktree store: %w", err)
@@ -89,6 +89,14 @@ func (s *WorktreeEnrolment) checkedSnapshot(ctx context.Context, root, data stri
 		return nil, fmt.Errorf("%s is not a hub-board worktree: %w", root, model.ErrInvalidInput)
 	}
 	if err := s.refuseLocalOnly(ctx, root, snap.Events); err != nil {
+		return nil, err
+	}
+	// Anything local the hub lacks, or a board file that is not the store's own
+	// export, would be rewritten away by the first write after the swap: refuse
+	// now, before the backup, the marker or any move. An accepted hub
+	// difference goes on, with its report kept for doctor.
+	finding, pErr := s.p().PreflightBoard(ctx, root)
+	if err := s.boardGate(filepath.Join(root, ".mtix"), accept, res, finding, pErr); err != nil {
 		return nil, err
 	}
 	return snap, nil
@@ -104,6 +112,10 @@ func (s *WorktreeEnrolment) recoverInterrupted(mtix string) error {
 	}
 	if _, statErr := os.Lstat(m.Aside); errors.Is(statErr, os.ErrNotExist) {
 		return removeEnrolMarker(mtix) // died before the move: the original is still in place
+	}
+	// The original store goes back, so an accept-hub record naming it is stale.
+	if err := removeHubAccepted(mtix); err != nil {
+		return err
 	}
 	data := filepath.Join(mtix, "data")
 	if _, statErr := os.Lstat(data); statErr == nil {

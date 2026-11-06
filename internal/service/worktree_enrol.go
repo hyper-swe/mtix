@@ -57,10 +57,11 @@ type WorktreePorts struct {
 	ImportCarry func(ctx context.Context, root string, carry *sqlite.InboxCarry, at time.Time) error
 	// Enroll records the enrolment (HostEnrollment.Enroll).
 	Enroll func(ctx context.Context, r EnrollmentRequest) error
-	// LostLocal is optional. After the real clone it reports the fields whose
-	// value this store wrote itself and that the clone holds differently at the
-	// hub's head; the enrolment goes on with a notice and a doctor record, never
-	// silently (MTIX-112.17.16.18). Nil skips the check.
+	// LostLocal is required. After the real clone it reports the nodes this
+	// store's own journal touched on which the old store and the clone, at the
+	// hub's head, differ; the enrolment goes on with a notice and a doctor
+	// record, never silently (MTIX-112.17.16.18). An unwired port is refused, so
+	// the check can never be skipped without a sign.
 	LostLocal func(ctx context.Context, root, asideDir string) (*LostLocal, error)
 	// Enrolled reports whether the host records the worktree as enrolled; it
 	// decides whether a failed Enroll may be rolled back.
@@ -86,7 +87,8 @@ type WorktreeEnrolResult struct {
 	PartialDir string
 	// HubDiffReport is the diff report path of an accept-hub enrolment.
 	HubDiffReport string
-	// LostLocal names the fields whose locally written value lost to the hub;
+	// LostLocal names the node fields on which the old store and the hub differ
+	// after this store wrote to the node;
 	// LostLocalReport is the report that lists them (ids and field names only).
 	LostLocal       *LostLocal
 	LostLocalReport string
@@ -135,7 +137,7 @@ func (s *WorktreeEnrolment) EnrolWorktree(ctx context.Context, r EnrollmentReque
 
 func (s *WorktreeEnrolment) validate(r EnrollmentRequest) (string, error) {
 	p := s.o.Ports
-	if p.Snapshot == nil || p.HubMissing == nil || p.PreflightBoard == nil || p.VerifyBoard == nil || p.Backup == nil || p.Clone == nil || p.ImportCarry == nil || p.Enroll == nil || p.Enrolled == nil {
+	if p.Snapshot == nil || p.HubMissing == nil || p.PreflightBoard == nil || p.VerifyBoard == nil || p.Backup == nil || p.Clone == nil || p.ImportCarry == nil || p.Enroll == nil || p.Enrolled == nil || p.LostLocal == nil {
 		return "", fmt.Errorf("worktree enrolment ports required: %w", model.ErrInvalidInput)
 	}
 	root, err := canonicalEnrollmentPath(r.Path)

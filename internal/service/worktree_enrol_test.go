@@ -144,6 +144,8 @@ func (w *enrolWorld) ports() service.WorktreePorts {
 			return w.step("carry")
 		},
 		Enroll: func(context.Context, service.EnrollmentRequest) error { return w.step("enrol") },
+		// The check is required; by default nothing is lost and it records no call.
+		LostLocal: func(context.Context, string, string) (*service.LostLocal, error) { return nil, nil },
 		Enrolled: func(context.Context, string) (bool, error) {
 			if w.enrolled != nil {
 				return w.enrolled()

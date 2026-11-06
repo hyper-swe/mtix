@@ -108,10 +108,18 @@ type boardCmp struct {
 	diff  BoardDiff
 	kinds map[string]diffKind
 	vals  map[string][]string
+	// rowKinds keeps every kind a whole-row difference had under one key: a
+	// store-only and a hub-only dependency from one node share the key, and
+	// merging them to "changed" would hide the store-only one.
+	rowKinds map[string]map[diffKind]bool
+	// superset marks a list-valued field whose first side is wholly contained
+	// in the second: the second side only holds more.
+	superset map[string]bool
 }
 
 func newBoardCmp() *boardCmp {
-	return &boardCmp{diff: BoardDiff{}, kinds: map[string]diffKind{}, vals: map[string][]string{}}
+	return &boardCmp{diff: BoardDiff{}, kinds: map[string]diffKind{}, vals: map[string][]string{},
+		rowKinds: map[string]map[diffKind]bool{}, superset: map[string]bool{}}
 }
 
 // add records one difference. a and b are the two sides' values (nil when a
@@ -119,10 +127,15 @@ func newBoardCmp() *boardCmp {
 func (c *boardCmp) add(id, field string, kind diffKind, a, b any) {
 	c.diff.add(id, field)
 	key := id + "\x00" + field
+	origKind := kind
 	if old, ok := c.kinds[key]; ok && old != kind {
 		kind = kindChanged
 	}
 	c.kinds[key] = kind
+	if c.rowKinds[key] == nil {
+		c.rowKinds[key] = map[diffKind]bool{}
+	}
+	c.rowKinds[key][origKind] = true
 	x, _ := json.Marshal(a) //nolint:errchkjson // a decoded JSON value always encodes; the hash only needs stable bytes
 	y, _ := json.Marshal(b) //nolint:errchkjson // as above
 	sum := sha256.Sum256(append(append(x, 0x02), y...))
@@ -143,6 +156,7 @@ func (c *boardCmp) without(drop diffKind) *boardCmp {
 			}
 			out.diff.add(id, f)
 			out.kinds[key], out.vals[key] = c.kinds[key], c.vals[key]
+			out.rowKinds[key], out.superset[key] = c.rowKinds[key], c.superset[key]
 		}
 	}
 	return out
@@ -158,13 +172,14 @@ func (c *boardCmp) has(k diffKind) bool {
 	return false
 }
 
-// rowsOnly lists the ids of whole rows of the given kind: the differences whose
-// field names a row ("(node)", "(dependencies)") rather than a value.
+// rowsOnly lists the ids of whole rows of the given kind. Only a whole row
+// (named "(node)", "(dependencies)") is ever recorded as store-only or hub-only;
+// a field is always a change.
 func (c *boardCmp) rowsOnly(k diffKind) []string {
 	var out []string
 	for id, fields := range c.diff {
 		for _, f := range fields {
-			if strings.HasPrefix(f, "(") && c.kinds[id+"\x00"+f] == k {
+			if c.rowKinds[id+"\x00"+f][k] {
 				out = append(out, id)
 				break
 			}
@@ -401,63 +416,16 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 		keys[k] = true
 	}
 	for k := range keys {
-		if !sameJSON(ma[k], mb[k]) {
-			name := section + "." + k
-			if section == "nodes" {
-				name = k
-			}
-			c.add(shown, name, kindChanged, ma[k], mb[k])
+		if sameJSON(ma[k], mb[k]) || (section == "nodes" && k == "labels" && sameLabels(ma[k], mb[k])) {
+			continue
+		}
+		name := section + "." + k
+		if section == "nodes" {
+			name = k
+		}
+		c.add(shown, name, kindChanged, ma[k], mb[k])
+		if contained(ma[k], mb[k]) {
+			c.superset[shown+"\x00"+name] = true
 		}
 	}
-}
-
-// historyDropKeys lists the keys of a history row that a clone writes for
-// itself: the row's own id, its clock reading, the replica that wrote it, the
-// event it came from, and the actor (a comment applied from an event carries
-// the event's author where the local write carried the command's actor, seen
-// in a real clone). The row's task, kind, field and old and new values are
-// kept. It is a function, not a package variable, so no state is shared.
-func historyDropKeys() []string {
-	return []string{"id", "ts", "origin", "event_id", "actor"}
-}
-
-// normalizeHistory reduces every history row to what a clone reproduces and
-// puts each list in a fixed order, so rows compare as a multiset. A row present
-// on one side only still differs (MTIX-112.17.16.6, point 4): the old rule
-// dropped history whole and hid rows no hub event holds.
-func normalizeHistory(doc map[string]any) {
-	normalizeHistoryList(doc["history"])
-	nodes, _ := doc["nodes"].([]any)
-	for _, n := range nodes {
-		if m, ok := n.(map[string]any); ok {
-			normalizeHistoryList(m["history"])
-		}
-	}
-}
-
-func normalizeHistoryList(v any) {
-	rows, ok := v.([]any)
-	if !ok {
-		return
-	}
-	keyed := make([]string, len(rows))
-	for i, r := range rows {
-		if m, isMap := r.(map[string]any); isMap {
-			for _, k := range historyDropKeys() {
-				delete(m, k)
-			}
-		}
-		b, _ := json.Marshal(r) //nolint:errchkjson // a decoded JSON value always encodes
-		keyed[i] = string(b)
-	}
-	order := make([]int, len(rows))
-	for i := range order {
-		order[i] = i
-	}
-	sort.SliceStable(order, func(x, y int) bool { return keyed[order[x]] < keyed[order[y]] })
-	sorted := make([]any, len(rows))
-	for i, o := range order {
-		sorted[i] = rows[o]
-	}
-	copy(rows, sorted)
 }

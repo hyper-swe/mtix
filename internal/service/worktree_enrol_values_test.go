@@ -87,6 +87,16 @@ func board(t *testing.T, local, hub string) *service.WorktreeBoardError {
 	return &service.WorktreeBoardError{BoardFinding: *f, Report: "/w/.mtix/enroll-diff-x.json"}
 }
 
+// confirmed builds a refusal and checks its rows against the full hub clone.
+func confirmed(t *testing.T, local, bounded, full string) *service.WorktreeBoardError {
+	t.Helper()
+	f, err := service.BoardHubFinding([]byte(local), []byte(bounded))
+	require.NoError(t, err)
+	require.NotNil(t, f)
+	require.NoError(t, f.ConfirmAgainstHub([]byte(local), []byte(full)))
+	return &service.WorktreeBoardError{BoardFinding: *f, Report: "/w/.mtix/enroll-diff-x.json"}
+}
+
 // TestWorktreeBoardError_LocalDifference_NeverPrintsAPullAsTheFix: the printed
 // fixes come in the order keep a copy, re-enter as writes, accept; a pull and
 // sync --fix are named only to say not to run them, and push is named only

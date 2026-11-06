@@ -28,7 +28,10 @@ func (s *WorktreeEnrolment) swap(ctx context.Context, root string, r EnrollmentR
 	if err := s.p().Enroll(ctx, r); err != nil {
 		return s.afterEnrolFailure(ctx, root, res, fmt.Errorf("enroll worktree: %w", err))
 	}
-	return removeEnrolMarker(mtix)
+	if err := removeEnrolMarker(mtix); err != nil {
+		return err
+	}
+	return s.printNotice(res)
 }
 
 func (s *WorktreeEnrolment) seed(ctx context.Context, root string, accept string, snap *WorktreeSnapshot, res *WorktreeEnrolResult) error {
@@ -104,9 +107,6 @@ func (s *WorktreeEnrolment) recordHubAccepted(mtix string, res *WorktreeEnrolRes
 // that notice. A failed check is an error, so the original store goes back; it
 // is never a quiet pass (MTIX-112.17.16.18).
 func (s *WorktreeEnrolment) checkLostLocal(ctx context.Context, root, mtix string, res *WorktreeEnrolResult) error {
-	if s.o.Ports.LostLocal == nil {
-		return nil
-	}
 	lost, err := s.o.Ports.LostLocal(ctx, root, res.AsideDir)
 	if err != nil {
 		return fmt.Errorf("check that the values written here survived the clone: %w", err)
@@ -119,10 +119,17 @@ func (s *WorktreeEnrolment) checkLostLocal(ctx context.Context, root, mtix strin
 		return err
 	}
 	res.LostLocal, res.LostLocalReport = lost, path
-	if s.o.Notice != nil {
-		if _, wErr := io.WriteString(s.o.Notice, res.Notice()); wErr != nil {
-			return fmt.Errorf("print the lost-value notice: %w", wErr)
-		}
+	return nil
+}
+
+// printNotice writes the lost-value notice. It runs only when every check of
+// the enrolment has passed, so it never says enrolled before it is (review F7).
+func (s *WorktreeEnrolment) printNotice(res *WorktreeEnrolResult) error {
+	if s.o.Notice == nil || res.LostLocal == nil {
+		return nil
+	}
+	if _, err := io.WriteString(s.o.Notice, res.Notice()); err != nil {
+		return fmt.Errorf("enrolled, but the lost-value notice could not be printed (the report %s lists the nodes): %w", res.LostLocalReport, err)
 	}
 	return nil
 }

@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"github.com/hyper-swe/mtix/internal/format"
 )
 
 // OwnEvent is one journal row of the store being enrolled, as the lost-value
@@ -19,15 +21,9 @@ type OwnEvent struct {
 	Payload string
 }
 
-// OwnField names a node field that a journal event this store originated wrote.
-type OwnField struct {
-	NodeID string
-	Field  string
-}
-
-// LostLocal is the set of fields whose value this store wrote itself and which
-// the hub clone, at the hub's head, holds differently: a write that lost to
-// later hub events. Ids and field names only, never content.
+// LostLocal is the set of node entities this store's own journal touched on
+// which the old store and the hub clone, at the hub's head, differ: the hub moved
+// on after this store wrote. Ids and field names only, never content.
 type LostLocal struct {
 	Diff BoardDiff
 }
@@ -35,57 +31,45 @@ type LostLocal struct {
 // IDs returns the node ids, sorted.
 func (l LostLocal) IDs() []string { return l.Diff.IDs() }
 
-// ownOpFields maps an op to the export field names it writes. An op that
-// writes no single field (create, delete, links) is absent: a row the hub
-// lacks is refused before the swap, so it cannot be lost here.
-var ownOpFields = map[string][]string{
-	"transition_status": {"status"},
-	"claim":             {"assignee", "status"},
-	"unclaim":           {"assignee"},
-	"defer":             {"status", "defer_until"},
-	"comment":           {"annotations"},
-	"set_acceptance":    {"acceptance"},
-	"set_prompt":        {"prompt"},
-}
-
-// OwnFieldsOf lists the fields that journal events this store originated wrote.
-// An event with status applied was mirrored from the hub when the store pulled
-// it, so it is the hub's write and not this store's.
-func OwnFieldsOf(events []OwnEvent) []OwnField {
-	seen := map[OwnField]bool{}
-	var out []OwnField
-	add := func(id, field string) {
-		f := OwnField{NodeID: id, Field: field}
-		if field != "" && !seen[f] {
-			seen[f] = true
-			out = append(out, f)
+// OwnEntities lists the node ids that journal events this store originated
+// touched: the event's node and, for a link or an unlink, the node it points
+// at. An event with status applied was mirrored from the hub when the store
+// pulled it, so it is the hub's write and not this store's. The check no longer
+// lists op kinds: whatever an own event touched is compared whole
+// (MTIX-112.17.16.18, ruling r2 point 1).
+func OwnEntities(events []OwnEvent) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
 		}
 	}
 	for _, e := range events {
 		if e.Status == "applied" {
 			continue
 		}
-		if e.Op == "update_field" {
-			var p struct {
-				FieldName string `json:"field_name"`
-			}
-			if json.Unmarshal([]byte(e.Payload), &p) == nil {
-				add(e.NodeID, p.FieldName)
-			}
-			continue
+		add(e.NodeID)
+		var p struct {
+			DependsOn string `json:"depends_on_node_id"`
 		}
-		for _, f := range ownOpFields[e.Op] {
-			add(e.NodeID, f)
+		if json.Unmarshal([]byte(e.Payload), &p) == nil {
+			add(p.DependsOn)
 		}
 	}
+	sort.Strings(out)
 	return out
 }
 
-// FindLostLocal compares the moved-aside store's export with the real clone's
-// export (the hub at its head) and returns the fields that this store wrote
-// itself and that differ; nil when there are none. A difference no journal
-// event of this store explains is the hub moving on, not a lost write.
-func FindLostLocal(asideExport, cloneExport []byte, own []OwnField) (*LostLocal, error) {
+// FindLostLocal compares the moved-aside store's whole export with the real
+// clone's export (the hub at its head), using the board comparison and its
+// exclusions, and returns every difference on an entity this store's journal
+// touched: a missing row, a deleted node, a changed field, a changed link. A
+// list field the clone only adds to (a teammate's comment next to this store's
+// own) is not a difference. Nil when there is none. A difference on an entity
+// no own event touched is the hub moving on, not something this store wrote.
+func FindLostLocal(asideExport, cloneExport []byte, own []string) (*LostLocal, error) {
 	if len(own) == 0 {
 		return nil, nil
 	}
@@ -94,15 +78,19 @@ func FindLostLocal(asideExport, cloneExport []byte, own []OwnField) (*LostLocal,
 		return nil, err
 	}
 	mine := map[string]bool{}
-	for _, o := range own {
-		mine[o.NodeID+"\x00"+o.Field] = true
+	for _, id := range own {
+		mine[id] = true
 	}
 	out := BoardDiff{}
 	for id, fields := range c.diff {
+		if !mine[id] {
+			continue
+		}
 		for _, f := range fields {
-			if key := id + "\x00" + f; mine[key] {
-				out.add(id, f)
+			if c.superset[id+"\x00"+f] {
+				continue
 			}
+			out.add(id, f)
 		}
 	}
 	if len(out) == 0 {
@@ -127,7 +115,7 @@ func (r *WorktreeEnrolResult) Notice() string {
 		parts = append(parts, id+" ("+strings.Join(r.LostLocal.Diff[id], ", ")+")")
 	}
 	sort.Strings(parts[:min(len(parts), boardShown)])
-	return "enrolled, but the hub holds a later value for " + fmt.Sprint(len(ids)) + " node(s) than the value this worktree wrote: " + strings.Join(parts, "; ") +
-		". The enrolled store holds the hub's value. Your value is still in the old store " + r.AsideDir + " (backup " + r.BackupPath + "); node ids and field names are in " + r.LostLocalReport +
-		". If you still want it, re-enter it with an ordinary mtix command and push. mtix doctor warns until you clear the record.\n"
+	return "enrolled, but the old store and the hub differ on " + fmt.Sprint(len(ids)) + " node(s) this worktree wrote to: " + strings.Join(parts, "; ") +
+		". The enrolled store holds the hub's version. The old store " + format.SafeLine(r.AsideDir) + " (backup " + format.SafeLine(r.BackupPath) + ") keeps what it held, which may be your value or an earlier hub value; node ids and field names are in " +
+		format.SafeLine(r.LostLocalReport) + ". Look at each one; if you still want a value, re-enter it with an ordinary mtix command and push. mtix doctor warns until you clear the record.\n"
 }

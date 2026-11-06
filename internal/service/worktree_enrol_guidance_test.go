@@ -131,9 +131,9 @@ func TestWorktreeBoardError_ChangedField_NamesOnlyWhatIsKnown(t *testing.T) {
 // row the hub lacks cannot be cleared by updating it; it is created again, or
 // accepted by digest (review r5, whole-row finding).
 func TestWorktreeBoardError_StoreOnlyRow_SaysHowToClearARowAndWarnsAboutUpdate(t *testing.T) {
-	msg := board(t, `{"nodes":[{"id":"TEST-1"},{"id":"TEST-4"}]}`, `{"nodes":[{"id":"TEST-1"}]}`).Error()
-	assert.Contains(t, msg, "a row the hub lacks (TEST-4)")
-	assert.Contains(t, msg, "create it again")
+	msg := confirmed(t, `{"nodes":[{"id":"TEST-1"},{"id":"TEST-4"}]}`, `{"nodes":[{"id":"TEST-1"}]}`, `{"nodes":[{"id":"TEST-1"}]}`).Error()
+	assert.Contains(t, msg, "the hub lacks TEST-4")
+	assert.Contains(t, msg, "mtix create")
 	assert.Contains(t, msg, "never mtix update a node the hub lacks")
 	assert.Contains(t, msg, "accept-hub")
 }
@@ -142,7 +142,9 @@ func TestWorktreeBoardError_StoreOnlyRow_SaysHowToClearARowAndWarnsAboutUpdate(t
 // is printed only when a whole row differs.
 func TestWorktreeBoardError_ChangedFieldOnly_DoesNotMentionRows(t *testing.T) {
 	l, c := titled("branch", "hub")
-	assert.NotContains(t, board(t, l, c).Error(), "a row the hub lacks")
+	msg := board(t, l, c).Error()
+	assert.NotContains(t, msg, "the hub lacks")
+	assert.NotContains(t, msg, "the hub already holds")
 }
 
 // TestWorktreeBoardError_SnapshotStore_PrintsAcceptWithTheCopyFirst: an
@@ -200,48 +202,114 @@ func TestCompareBoardDocs_HistoryKeptKeys_EachOneIsCompared(t *testing.T) {
 	}
 }
 
-// TestFindLostLocal covers the field rule: only fields a journal event of this
-// store wrote, whose value differs from the full clone, are reported.
+// TestFindLostLocal: every difference on an entity the journal touched is
+// reported, whatever the op was; a difference on an untouched entity is the hub
+// moving on.
 func TestFindLostLocal(t *testing.T) {
-	aside := `{"nodes":[{"id":"TEST-1","title":"branch","description":"d1"},{"id":"TEST-2","title":"two"}]}`
-	clone := `{"nodes":[{"id":"TEST-1","title":"teammate 3","description":"d2"},{"id":"TEST-2","title":"two"}]}`
-	own := []service.OwnField{{NodeID: "TEST-1", Field: "title"}, {NodeID: "TEST-2", Field: "title"}}
+	aside := `{"nodes":[{"id":"TEST-1","title":"branch","description":"d1"},{"id":"TEST-2","title":"two"},{"id":"TEST-3","title":"three"}]}`
+	clone := `{"nodes":[{"id":"TEST-1","title":"teammate 3","description":"d2"},{"id":"TEST-2","title":"two"},{"id":"TEST-3","title":"moved on"}]}`
+	own := []string{"TEST-1", "TEST-2"}
 
 	got, err := service.FindLostLocal([]byte(aside), []byte(clone), own)
 
 	require.NoError(t, err)
 	require.NotNil(t, got)
-	assert.Equal(t, service.BoardDiff{"TEST-1": {"title"}}, got.Diff, "description differs but no event of this store wrote it; TEST-2 matches")
+	assert.Equal(t, service.BoardDiff{"TEST-1": {"description", "title"}}, got.Diff, "TEST-2 matches; TEST-3 was touched by no own event")
 
 	none, err := service.FindLostLocal([]byte(aside), []byte(aside), own)
 	require.NoError(t, err)
 	assert.Nil(t, none)
 	noOwn, err := service.FindLostLocal([]byte(aside), []byte(clone), nil)
 	require.NoError(t, err)
-	assert.Nil(t, noOwn, "a difference no event of this store explains is the hub moving on")
+	assert.Nil(t, noOwn, "no own event: nothing this store wrote")
 	_, err = service.FindLostLocal([]byte("{bad"), []byte(clone), own)
 	require.Error(t, err)
 }
 
-// TestOwnFieldsOf maps journal events to export field names.
-func TestOwnFieldsOf(t *testing.T) {
-	ev := func(op, status, payload string) service.OwnEvent {
-		return service.OwnEvent{NodeID: "TEST-1", Op: op, Status: status, Payload: payload}
+// TestFindLostLocal_Rows: a missing node, a deleted node and a changed link are
+// differences too.
+func TestFindLostLocal_Rows(t *testing.T) {
+	aside := `{"nodes":[{"id":"TEST-1","deleted_at":""},{"id":"TEST-2"}],"dependencies":[{"from_id":"TEST-1","to_id":"TEST-2","dep_type":"blocks"}]}`
+	clone := `{"nodes":[{"id":"TEST-1","deleted_at":"2026-06-01T00:00:00Z"}],"dependencies":[]}`
+
+	got, err := service.FindLostLocal([]byte(aside), []byte(clone), []string{"TEST-1", "TEST-2"})
+
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, service.BoardDiff{"TEST-1": {"(dependencies)", "deleted_at"}, "TEST-2": {"(node)"}}, got.Diff)
+}
+
+// TestFindLostLocal_ExcludedFieldsAreNotLoss: a field a clone always stamps for
+// itself (updated_at) is not a difference.
+func TestFindLostLocal_ExcludedFieldsAreNotLoss(t *testing.T) {
+	aside := `{"nodes":[{"id":"TEST-1","title":"a","updated_at":"2026-06-01T00:00:00Z"}]}`
+	clone := `{"nodes":[{"id":"TEST-1","title":"a","updated_at":"2026-06-09T00:00:00Z"}]}`
+
+	got, err := service.FindLostLocal([]byte(aside), []byte(clone), []string{"TEST-1"})
+
+	require.NoError(t, err)
+	assert.Nil(t, got, "the exclusions of the board comparison apply")
+}
+
+// TestFindLostLocal_ListTheCloneOnlyAddsTo_IsNotLoss: this store's comment is on
+// the clone next to a teammate's; a comment missing from the clone is a loss
+// (review F3).
+func TestFindLostLocal_ListTheCloneOnlyAddsTo_IsNotLoss(t *testing.T) {
+	note := func(text string) string { return `{"author":"a","text":"` + text + `"}` }
+	doc := func(notes ...string) string {
+		return `{"nodes":[{"id":"TEST-1","annotations":[` + strings.Join(notes, ",") + `]}]}`
 	}
-	got := service.OwnFieldsOf([]service.OwnEvent{
-		ev("update_field", "pushed", `{"field_name":"title","new_value":"\"x\""}`),
-		ev("update_field", "pending", `{"field_name":"description","new_value":"\"y\""}`),
-		ev("update_field", "applied", `{"field_name":"priority","new_value":"1"}`),
-		ev("transition_status", "pushed", `{}`),
-		ev("set_acceptance", "pushed", `{}`),
-		ev("set_prompt", "pushed", `{}`),
-		ev("comment", "pushed", `{}`),
-		ev("create_node", "pushed", `{}`),
+	own := []string{"TEST-1"}
+
+	both, err := service.FindLostLocal([]byte(doc(note("mine"))), []byte(doc(note("mine"), note("theirs"))), own)
+	require.NoError(t, err)
+	assert.Nil(t, both, "the clone holds mine and theirs")
+	none, err := service.FindLostLocal([]byte(doc()), []byte(doc(note("theirs"))), own)
+	require.NoError(t, err)
+	assert.Nil(t, none, "an empty side is contained")
+	missing, err := service.FindLostLocal([]byte(doc(note("mine"))), []byte(doc(note("theirs"))), own)
+	require.NoError(t, err)
+	require.NotNil(t, missing, "my comment is not on the clone")
+	assert.Equal(t, service.BoardDiff{"TEST-1": {"annotations"}}, missing.Diff)
+	twice, err := service.FindLostLocal([]byte(doc(note("mine"), note("mine"))), []byte(doc(note("mine"))), own)
+	require.NoError(t, err)
+	assert.NotNil(t, twice, "two of mine, one on the clone: one is missing")
+}
+
+// TestCompareBoardDocs_Labels_SameListDifferentSpacing_IsNoDifference: the same
+// labels written with other spacing (review F4); a different list still differs.
+func TestCompareBoardDocs_Labels_SameListDifferentSpacing_IsNoDifference(t *testing.T) {
+	lab := func(v string) string { return `{"nodes":[{"id":"TEST-1","labels":` + v + `}]}` }
+	for _, tc := range []struct{ a, b string }{
+		{`"x,y"`, `"x, y"`}, {`"[\"x\",\"y\"]"`, `"[\"x\", \"y\"]"`}, {`"[]"`, `""`},
+	} {
+		d, err := service.CompareBoardDocs([]byte(lab(tc.a)), []byte(lab(tc.b)))
+		require.NoError(t, err)
+		assert.Empty(t, d, "%s vs %s", tc.a, tc.b)
+	}
+	for _, tc := range []struct{ a, b string }{{`"x,y"`, `"x, z"`}, {`"x,y"`, `"x"`}, {`"x,y"`, `"y, x"`}, {`"x"`, `5`}} {
+		d, err := service.CompareBoardDocs([]byte(lab(tc.a)), []byte(lab(tc.b)))
+		require.NoError(t, err)
+		assert.Equal(t, service.BoardDiff{"TEST-1": {"labels"}}, d, "%s vs %s", tc.a, tc.b)
+	}
+}
+
+// TestOwnEntities: every node an own event touched, link targets included;
+// mirrored hub events are not own.
+func TestOwnEntities(t *testing.T) {
+	ev := func(id, op, status, payload string) service.OwnEvent {
+		return service.OwnEvent{NodeID: id, Op: op, Status: status, Payload: payload}
+	}
+	got := service.OwnEntities([]service.OwnEvent{
+		ev("TEST-3", "create_node", "pushed", `{}`),
+		ev("TEST-3", "update_field", "pending", `{"field_name":"title"}`),
+		ev("TEST-4", "link_dep", "pushed", `{"depends_on_node_id":"TEST-5","dep_type":"blocks"}`),
+		ev("TEST-6", "delete", "pushed", `{}`),
+		ev("TEST-7", "update_field", "applied", `{"field_name":"title"}`),
+		ev("TEST-8", "unlink_dep", "applied", `{"depends_on_node_id":"TEST-9"}`),
+		ev("", "comment", "pushed", `not json`),
 	})
-	assert.ElementsMatch(t, []service.OwnField{
-		{NodeID: "TEST-1", Field: "title"}, {NodeID: "TEST-1", Field: "description"}, {NodeID: "TEST-1", Field: "status"},
-		{NodeID: "TEST-1", Field: "acceptance"}, {NodeID: "TEST-1", Field: "prompt"}, {NodeID: "TEST-1", Field: "annotations"},
-	}, got, "an applied (mirrored hub) event is not this store's write; create_node writes no single field")
+	assert.Equal(t, []string{"TEST-3", "TEST-4", "TEST-5", "TEST-6"}, got)
 }
 
 // TestEnrolWorktree_LostLocalValue_EnrolsWithANoticeAndADoctorRecord is the

@@ -122,3 +122,24 @@ func TestWithScratch_RemovalFailure_IsReported(t *testing.T) {
 	require.ErrorContains(t, err, "stuck")
 	require.NoError(t, os.Chmod(stuck, 0o700)) //nolint:gosec // G302: restore so the temp dir is cleaned
 }
+
+// TestWithScratch_BracketInTheWorktreePath_StillClearsStaleDirectories: the
+// worktree's own path is never read as a glob pattern (review F13). An unclosed
+// bracket used to fail every enrolment; a closed one matched nothing and left
+// the stale copy.
+func TestWithScratch_BracketInTheWorktreePath_StillClearsStaleDirectories(t *testing.T) {
+	for _, name := range []string{"wt[", "wt[a]", "wt[ab"} {
+		t.Run(name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), name)
+			stale := filepath.Join(root, ".mtix", "enroll.d", "preflight-crashed", "clone")
+			require.NoError(t, os.MkdirAll(stale, 0o700))
+			require.NoError(t, os.WriteFile(filepath.Join(stale, "mtix.db"), []byte("hub copy"), 0o600))
+			require.NoError(t, os.MkdirAll(filepath.Join(root, ".mtix", "enroll.d", "keep-me"), 0o700))
+
+			require.NoError(t, withScratch(slog.Default(), root, func(string) error { return nil }))
+
+			assert.NoDirExists(t, filepath.Join(root, ".mtix", "enroll.d", "preflight-crashed"))
+			assert.DirExists(t, filepath.Join(root, ".mtix", "enroll.d", "keep-me"), "only preflight- directories are removed")
+		})
+	}
+}

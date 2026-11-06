@@ -118,8 +118,8 @@ func TestEnrolWorktree_RealBinary_ThreeTeammateEditsAfterReEnter_NoticeNotSilenc
 
 	require.NoError(t, err, "the lost value is a notice, not a refusal")
 	require.NotNil(t, res.LostLocal, "the enrolment must say the value did not survive")
-	assert.Equal(t, service.BoardDiff{"TEST-1": {"title"}}, res.LostLocal.Diff)
-	assert.Contains(t, notice.String(), "TEST-1 (title)")
+	assert.Equal(t, service.BoardDiff{"TEST-1": {"content_hash", "title"}}, res.LostLocal.Diff)
+	assert.Contains(t, notice.String(), "TEST-1 (content_hash, title)")
 	assert.Contains(t, notice.String(), res.AsideDir)
 	assert.FileExists(t, res.LostLocalReport)
 	clone, getErr := f.open(t).GetNode(ctx, "TEST-1")
@@ -137,9 +137,11 @@ func TestEnrolWorktree_RealBinary_ThreeTeammateEditsAfterReEnter_NoticeNotSilenc
 	assert.Equal(t, res.LostLocalReport, rec.LostLocalReport)
 }
 
-// TestEnrolWorktree_RealBinary_ReEnteredValueThatWins_NoNotice: when the
-// teammate made one edit the re-entered write wins the order and nothing is lost.
-func TestEnrolWorktree_RealBinary_ReEnteredValueThatWins_NoNotice(t *testing.T) {
+// TestEnrolWorktree_RealBinary_ReEnteredAfterAPull_WinsAndNothingIsNamed: the
+// store pulls the teammate's edit first, so its clock is ahead and the
+// re-entered write wins the order. One outcome only: no notice, no record, and
+// the clone holds the branch title (review F9).
+func TestEnrolWorktree_RealBinary_ReEnteredAfterAPull_WinsAndNothingIsNamed(t *testing.T) {
 	var notice bytes.Buffer
 	f := newEnrolPGFixture(t)
 	f.notice = &notice
@@ -147,22 +149,18 @@ func TestEnrolWorktree_RealBinary_ReEnteredValueThatWins_NoNotice(t *testing.T) 
 	f.teammateRetitles(t, "teammate 1")
 	_, err := f.enrol()
 	require.Error(t, err)
-	out, runErr := runShellWithMtix(t, f, "mtix update TEST-1 --title 'branch title' && mtix sync push --insecure-tls")
+	out, runErr := runShellWithMtix(t, f, "mtix sync pull --insecure-tls && mtix update TEST-1 --title 'branch title' && mtix sync push --insecure-tls")
 	require.NoError(t, runErr, out)
 	f.writeBoardFromWorktree(t)
 
 	res, err := f.enrol()
 
 	require.NoError(t, err)
-	if res.LostLocal == nil {
-		assert.Empty(t, notice.String())
-		n, getErr := f.open(t).GetNode(context.Background(), "TEST-1")
-		require.NoError(t, getErr)
-		assert.Equal(t, "branch title", n.Title)
-		return
-	}
-	// A tie on the clock may go to the teammate; then it must be said.
-	assert.Contains(t, notice.String(), "TEST-1 (title)")
+	assert.Nil(t, res.LostLocal)
+	assert.Empty(t, notice.String())
+	n, getErr := f.open(t).GetNode(context.Background(), "TEST-1")
+	require.NoError(t, getErr)
+	assert.Equal(t, "branch title", n.Title)
 }
 
 // TestEnrolWorktree_RealHub_RepeatedRefusals_SameDigest: the digest of a

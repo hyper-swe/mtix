@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -45,6 +46,51 @@ type BoardFinding struct {
 	Snapshot bool
 	// cmp says which side holds each difference and hashes the values on both.
 	cmp *boardCmp
+	// hubLacks is set by ConfirmAgainstHub: the whole rows (id, field) the full
+	// hub clone lacks, out of the rows the bounded clone lacks. Until then the
+	// refusal says nothing about what the hub holds.
+	hubLacks map[string]bool
+	// hubChecked is true once ConfirmAgainstHub ran.
+	hubChecked bool
+}
+
+// ConfirmAgainstHub checks the whole rows only this store holds (against the
+// bounded clone) against the full hub clone, the hub at its head. A row the
+// bounded clone lacks may still be on the hub, above the store's pull cursor;
+// only a row the full clone also lacks is one the hub lacks. The bounded
+// comparison itself is unchanged (MTIX-112.17.16.18, ruling r2 point 2).
+func (f *BoardFinding) ConfirmAgainstHub(localExport, fullCloneExport []byte) error {
+	c, err := compareBoards(localExport, fullCloneExport, BoardExclusions())
+	if err != nil {
+		return err
+	}
+	f.hubLacks = map[string]bool{}
+	for id, fields := range c.diff {
+		for _, field := range fields {
+			key := id + "\x00" + field
+			if strings.HasPrefix(field, "(") && c.rowKinds[key][kindStoreOnly] {
+				f.hubLacks[key] = true
+			}
+		}
+	}
+	f.hubChecked = true
+	return nil
+}
+
+// rowIDs lists the ids that have a store-only whole row in the given field,
+// split by whether the full hub clone lacks that row too.
+func (f BoardFinding) rowIDs(field string, hubLacks bool) []string {
+	var out []string
+	if f.cmp == nil {
+		return out
+	}
+	for _, id := range f.cmp.rowsOnly(kindStoreOnly) {
+		key := id + "\x00" + field
+		if f.cmp.rowKinds[key][kindStoreOnly] && f.hubLacks[key] == hubLacks {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // StoreOnlyRows lists the ids of whole rows the store holds and the hub clone
@@ -107,7 +153,7 @@ func (e *WorktreeBoardError) Error() string {
 		shown, more = shown[:boardShown], fmt.Sprintf(" and %d more", len(ids)-boardShown)
 	}
 	list := fmt.Sprintf("%d node(s): %s%s", len(ids), strings.Join(shown, ", "), more)
-	report := "report (node ids and field names, no content): " + e.Report
+	report := "report (node ids and field names, no content): " + format.SafeLine(e.Report)
 	if e.Reason == BoardFileDiffers {
 		return "tasks.json is not what this worktree's store exports (" + list + "); enrolment refused and nothing changed.\n" + report + "\n" +
 			"fix: keep a copy of .mtix/tasks.json if it holds work you need, run mtix sync --fix in this worktree (it rewrites tasks.json from the store), then enroll again; " +
@@ -145,7 +191,8 @@ func (e *WorktreeBoardError) hubMessage(list, report string) string {
 		"fix, in this order:\n" +
 		"  (1) keep a copy: " + copyCmd + "\n" +
 		"  (2) re-enter each changed field the report names as an ordinary mtix command in this worktree, so it journals, run mtix sync push, then enroll again; " +
-		"if the hub holds later edits of that field the enrolment still goes on, names the values it could not keep, and your value stays in the old store" + e.rowAdvice() + "\n" +
+		"a value the store already holds cannot be re-entered (the command succeeds and pushes nothing), so step (3) is the way for those; " +
+		"if the hub holds later edits the enrolment still goes on, names the nodes where the old store and the hub differ, and the old store keeps its version" + e.rowAdvice() + "\n" +
 		"  (3) or, if the difference is meant to be dropped, " + accept + "\n"
 }
 
@@ -157,19 +204,40 @@ func (e *WorktreeBoardError) copyPath() string {
 	return filepath.Join(filepath.Dir(e.Report), "enrol-copy-"+stamp+".db") //nolint:misspell // the copy keeps the "enrol" spelling the aside directory and the CLI wording use (ADR-007 section 4.2)
 }
 
-// rowAdvice says how to clear a whole row only the store holds: updating it
-// would push an event for a task the hub lacks, so it is created again.
+// rowAdvice words the whole rows only this store holds. It speaks only after
+// ConfirmAgainstHub: a row is said to be lacking from the hub only when the full
+// hub clone lacks it, and a row the hub holds is never advised to be created or
+// added again, because that would duplicate it. Node rows and dependency rows
+// are worded apart (review F2).
 func (e *WorktreeBoardError) rowAdvice() string {
-	rows := e.StoreOnlyRows()
-	if len(rows) == 0 {
+	if !e.hubChecked {
 		return ""
 	}
-	more := ""
-	if len(rows) > boardShown {
-		rows, more = rows[:boardShown], fmt.Sprintf(" and %d more", len(rows)-boardShown)
+	var parts []string
+	if ids := e.rowIDs("(node)", true); len(ids) > 0 {
+		parts = append(parts, "the hub lacks "+idList(ids)+": create each again with the ordinary create command (mtix create), "+
+			"never mtix update a node the hub lacks (that pushes an event for a task the hub does not hold)")
 	}
-	return "; for a row the hub lacks (" + strings.Join(rows, ", ") + more + ") create it again with the ordinary create command, " +
-		"never mtix update a node the hub lacks (that pushes an event for a task the hub does not hold), and then use step (3), because the row stays on this side until it is accepted"
+	if ids := e.rowIDs("(dependencies)", true); len(ids) > 0 {
+		parts = append(parts, "the hub lacks dependency row(s) from "+idList(ids)+": add each again with mtix dep add (the nodes themselves are on the hub)")
+	}
+	held := append(e.rowIDs("(node)", false), e.rowIDs("(dependencies)", false)...)
+	if len(held) > 0 {
+		parts = append(parts, "the hub already holds "+idList(held)+": do not create or add them again, that would duplicate them; step (3) gives you the hub's copy")
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return "; " + strings.Join(parts, "; ") + "; a row that is created again stays different on this side until it is accepted, so use step (3) after it"
+}
+
+// idList joins ids, bounded by boardShown.
+func idList(ids []string) string {
+	more := ""
+	if len(ids) > boardShown {
+		ids, more = ids[:boardShown], fmt.Sprintf(" and %d more", len(ids)-boardShown)
+	}
+	return strings.Join(ids, ", ") + more
 }
 
 // Unwrap lets callers match model.ErrConflict.

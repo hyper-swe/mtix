@@ -29,6 +29,9 @@ const (
 	// store holds something no hub event gives it, or the hub holds an event the
 	// store has not applied.
 	BoardHubDiffers BoardReason = "hub-differs"
+	// BoardLocalValueLost means a value this store wrote itself lost to later
+	// hub events: the clone at the hub's head holds another one (MTIX-112.17.16.18).
+	BoardLocalValueLost BoardReason = "local-value-lost"
 )
 
 // BoardFinding is a failed proof: nothing is enrolled while one exists.
@@ -36,8 +39,21 @@ type BoardFinding struct {
 	Reason BoardReason
 	// Diff maps each differing node id to the names of the fields that differ.
 	Diff BoardDiff
+	// Snapshot is set for a store that came from a tasks.json snapshot (it never
+	// pulled and holds no journal row): nothing it holds can be re-entered as a
+	// journaled write, so its refusal prints the accept path.
+	Snapshot bool
 	// cmp says which side holds each difference and hashes the values on both.
 	cmp *boardCmp
+}
+
+// StoreOnlyRows lists the ids of whole rows the store holds and the hub clone
+// lacks (a node, a dependency, a section row), sorted.
+func (f BoardFinding) StoreOnlyRows() []string {
+	if f.cmp == nil {
+		return nil
+	}
+	return f.cmp.rowsOnly(kindStoreOnly)
 }
 
 // HubRowsOnly reports whether the only differences are rows the hub clone
@@ -114,14 +130,46 @@ func (e *WorktreeBoardError) hubMessage(list, report string) string {
 		return head + "the hub holds events this store has not applied, and the store holds nothing the hub lacks. " +
 			"fix: run mtix sync pull, then mtix sync --fix (it rewrites tasks.json from the store), then enroll again"
 	}
-	copyPath := filepath.Join(filepath.Dir(e.Report), "enrol-copy.db")
-	return head + "the store holds something the hub clone lacks or holds differently: local work that is not on the hub. " +
-		"Do not run mtix sync pull or mtix sync --fix: a pull overwrites a change that is not journaled, and it is lost for good. " +
-		"fix, in this order: " +
-		"(1) keep a copy: mtix backup " + copyPath + "; " +
-		"(2) re-enter each change the report names as an ordinary mtix command in this worktree, so it journals, run mtix sync push, then enroll again; " +
-		"(3) or, if the difference is meant to be dropped, enroll again with accept-hub " + e.Digest() +
+	copyCmd := "mtix backup " + ShellQuote(e.copyPath())
+	accept := "enroll again with accept-hub " + e.Digest() +
 		"; the old store stays in an aside directory next to a backup, and doctor warns until you clear it"
+	if e.Snapshot {
+		return head + "this store came from a tasks.json snapshot and has no journal, so a value written again here cannot be made to win. " +
+			"It differs from the hub: the snapshot may hold work the hub lacks, or may be behind the hub.\n" +
+			"fix, in this order:\n" +
+			"  (1) keep a copy: " + copyCmd + "\n" +
+			"  (2) if the difference is meant to be dropped, " + accept + "\n"
+	}
+	return head + "the store differs from the hub clone; the difference may be local work or may be behind the hub, and the report cannot tell which. " +
+		"Do not run mtix sync pull or mtix sync --fix: a pull overwrites a change that is not journaled, and it is lost for good.\n" +
+		"fix, in this order:\n" +
+		"  (1) keep a copy: " + copyCmd + "\n" +
+		"  (2) re-enter each changed field the report names as an ordinary mtix command in this worktree, so it journals, run mtix sync push, then enroll again; " +
+		"if the hub holds later edits of that field the enrolment still goes on, names the values it could not keep, and your value stays in the old store" + e.rowAdvice() + "\n" +
+		"  (3) or, if the difference is meant to be dropped, " + accept + "\n"
+}
+
+// copyPath is the named backup path of this refusal. It carries the report's
+// stamp, because mtix backup refuses a file that exists and a second refusal
+// would otherwise name the first one's copy.
+func (e *WorktreeBoardError) copyPath() string {
+	stamp := strings.TrimSuffix(strings.TrimPrefix(filepath.Base(e.Report), "enroll-diff-"), ".json")
+	return filepath.Join(filepath.Dir(e.Report), "enrol-copy-"+stamp+".db") //nolint:misspell // the copy keeps the "enrol" spelling the aside directory and the CLI wording use (ADR-007 section 4.2)
+}
+
+// rowAdvice says how to clear a whole row only the store holds: updating it
+// would push an event for a task the hub lacks, so it is created again.
+func (e *WorktreeBoardError) rowAdvice() string {
+	rows := e.StoreOnlyRows()
+	if len(rows) == 0 {
+		return ""
+	}
+	more := ""
+	if len(rows) > boardShown {
+		rows, more = rows[:boardShown], fmt.Sprintf(" and %d more", len(rows)-boardShown)
+	}
+	return "; for a row the hub lacks (" + strings.Join(rows, ", ") + more + ") create it again with the ordinary create command, " +
+		"never mtix update a node the hub lacks (that pushes an event for a task the hub does not hold), and then use step (3), because the row stays on this side until it is accepted"
 }
 
 // Unwrap lets callers match model.ErrConflict.
@@ -138,7 +186,13 @@ type boardReport struct {
 
 // writeBoardReport writes the diff report under .mtix and returns its path.
 func writeBoardReport(mtixDir string, at time.Time, f *BoardFinding) (string, error) {
-	path := filepath.Join(mtixDir, "enroll-diff-"+at.UTC().Format("20060102T150405Z")+".json")
+	return writeNamedReport(mtixDir, "enroll-diff-", at, f)
+}
+
+// writeNamedReport writes a report whose file name starts with prefix, so two
+// reports of one enrolment in the same second never share a file.
+func writeNamedReport(mtixDir, prefix string, at time.Time, f *BoardFinding) (string, error) {
+	path := filepath.Join(mtixDir, prefix+at.UTC().Format("20060102T150405Z")+".json")
 	body, err := json.MarshalIndent(boardReport{Reason: f.Reason, Digest: f.Digest(), CreatedAt: at.UTC().Format("2006-01-02T15:04:05Z"), Count: len(f.Diff), Nodes: f.Diff}, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("encode the diff report: %w", err)
@@ -198,7 +252,11 @@ func BoardHubFinding(localExport, boundedCloneExport []byte) (*BoardFinding, err
 // that clone and loses nothing by it; anything the store holds that the clone
 // lacks or holds differently is (ruling r5 point 8).
 func BoardSnapshotHubFinding(localExport, fullCloneExport []byte) (*BoardFinding, error) {
-	return boardHubFinding(localExport, fullCloneExport, true)
+	f, err := boardHubFinding(localExport, fullCloneExport, true)
+	if f != nil {
+		f.Snapshot = true
+	}
+	return f, err
 }
 
 func boardHubFinding(localExport, cloneExport []byte, ignoreHubOnly bool) (*BoardFinding, error) {
@@ -213,4 +271,13 @@ func boardHubFinding(localExport, cloneExport []byte, ignoreHubOnly bool) (*Boar
 		return nil, nil
 	}
 	return &BoardFinding{Reason: BoardHubDiffers, Diff: c.diff, cmp: c}, nil
+}
+
+// ShellQuote quotes s for a POSIX shell: single quotes, with each embedded
+// single quote closed, escaped and reopened. Nothing inside is expanded, so a
+// path holding a dollar sign, a backtick, a space or a quote is one literal
+// word. Go's %q is not shell quoting: sh expands a dollar sign inside double
+// quotes.
+func ShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

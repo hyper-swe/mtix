@@ -427,7 +427,7 @@ func TestEnrolWorktree_NeverDiscardLocal(t *testing.T) {
 		assert.NotContains(t, strings.ToLower(typ.Field(i).Name), "discard")
 		assert.NotContains(t, strings.ToLower(typ.Field(i).Name), "reconcile")
 	}
-	assert.Equal(t, []string{"Snapshot", "HubMissing", "PreflightBoard", "VerifyBoard", "Backup", "Clone", "ImportCarry", "Enroll", "Enrolled"}, names,
+	assert.Equal(t, []string{"Snapshot", "HubMissing", "PreflightBoard", "VerifyBoard", "Backup", "Clone", "ImportCarry", "Enroll", "LostLocal", "Enrolled"}, names,
 		"a new port must be reviewed against the no-discard rule")
 	files, err := filepath.Glob("worktree_enrol*.go")
 	require.NoError(t, err)

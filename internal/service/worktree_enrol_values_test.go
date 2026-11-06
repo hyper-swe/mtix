@@ -99,7 +99,7 @@ func TestWorktreeBoardError_LocalDifference_NeverPrintsAPullAsTheFix(t *testing.
 	assert.NotContains(t, msg, "then mtix sync --fix")
 	assert.Contains(t, msg, "Do not run mtix sync pull")
 	assert.Contains(t, msg, "overwrites a change that is not journaled")
-	copyAt := strings.Index(msg, "(1) keep a copy: mtix backup /w/.mtix/enrol-copy.db")
+	copyAt := strings.Index(msg, "(1) keep a copy: mtix backup '/w/.mtix/enrol-copy-x.db'")
 	reenter := strings.Index(msg, "(2) re-enter each change")
 	accept := strings.Index(msg, "(3) or, if the difference is meant to be dropped, enroll again with accept-hub ")
 	require.Positive(t, copyAt)

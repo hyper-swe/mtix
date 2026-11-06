@@ -34,11 +34,17 @@ type enrolPGFixture struct {
 	ev1      string
 	ev2      string
 	enrolled []service.EnrollmentRequest
+	// notice receives the lost-value notice; dirName is the worktree's directory name.
+	notice  io.Writer
+	dirName string
 }
 
 // seedEnrolHub puts two messages for lane-a on the hub, and builds a used
 // worktree: a store that pulled them, with the first message acked.
-func newEnrolPGFixture(t *testing.T) *enrolPGFixture {
+func newEnrolPGFixture(t *testing.T) *enrolPGFixture { return newEnrolPGFixtureNamed(t, "wt") }
+
+// newEnrolPGFixtureNamed builds the fixture in a worktree directory of the given name.
+func newEnrolPGFixtureNamed(t *testing.T, dirName string) *enrolPGFixture {
 	t.Helper()
 	ctx := context.Background()
 	pool := openCmdHub(t)
@@ -57,7 +63,7 @@ func newEnrolPGFixture(t *testing.T) *enrolPGFixture {
 	_, err = pushLoop(ctx, &seedErr, pool, seed)
 	require.NoError(t, err, seedErr.String())
 
-	f := &enrolPGFixture{pool: pool}
+	f := &enrolPGFixture{pool: pool, dirName: dirName}
 	f.buildWorktree(t, dsn)
 	return f
 }
@@ -76,7 +82,7 @@ func (f *enrolPGFixture) buildWorktree(t *testing.T, dsn string) {
 	require.NoError(t, err)
 	common := filepath.Join(base, "common", ".git")
 	admin := filepath.Join(common, "worktrees", "lane")
-	f.root = filepath.Join(base, "wt")
+	f.root = filepath.Join(base, f.dirName)
 	f.data = filepath.Join(f.root, ".mtix", "data")
 	require.NoError(t, os.MkdirAll(admin, 0o700))
 	require.NoError(t, os.MkdirAll(f.data, 0o700))
@@ -102,7 +108,7 @@ func (f *enrolPGFixture) service() *service.WorktreeEnrolment {
 		f.enrolled = append(f.enrolled, r)
 		return nil
 	}, func(context.Context, string) (bool, error) { return len(f.enrolled) > 0, nil })
-	return service.NewWorktreeEnrolment(service.WorktreeEnrolOptions{Ports: ports})
+	return service.NewWorktreeEnrolment(service.WorktreeEnrolOptions{Ports: ports, Notice: f.notice})
 }
 
 func (f *enrolPGFixture) enrol() (*service.WorktreeEnrolResult, error) {

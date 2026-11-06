@@ -107,11 +107,11 @@ const (
 type boardCmp struct {
 	diff  BoardDiff
 	kinds map[string]diffKind
-	vals  map[string]string
+	vals  map[string][]string
 }
 
 func newBoardCmp() *boardCmp {
-	return &boardCmp{diff: BoardDiff{}, kinds: map[string]diffKind{}, vals: map[string]string{}}
+	return &boardCmp{diff: BoardDiff{}, kinds: map[string]diffKind{}, vals: map[string][]string{}}
 }
 
 // add records one difference. a and b are the two sides' values (nil when a
@@ -126,7 +126,10 @@ func (c *boardCmp) add(id, field string, kind diffKind, a, b any) {
 	x, _ := json.Marshal(a) //nolint:errchkjson // a decoded JSON value always encodes; the hash only needs stable bytes
 	y, _ := json.Marshal(b) //nolint:errchkjson // as above
 	sum := sha256.Sum256(append(append(x, 0x02), y...))
-	c.vals[key] = hex.EncodeToString(sum[:])
+	// Several rows can share one id and field (dependencies from one node):
+	// each row's hash is kept and the hashes are combined in sorted order, so
+	// neither map order nor an overwrite decides the digest.
+	c.vals[key] = append(c.vals[key], hex.EncodeToString(sum[:]))
 }
 
 // without returns the comparison minus the differences of one kind.
@@ -155,6 +158,22 @@ func (c *boardCmp) has(k diffKind) bool {
 	return false
 }
 
+// rowsOnly lists the ids of whole rows of the given kind: the differences whose
+// field names a row ("(node)", "(dependencies)") rather than a value.
+func (c *boardCmp) rowsOnly(k diffKind) []string {
+	var out []string
+	for id, fields := range c.diff {
+		for _, f := range fields {
+			if strings.HasPrefix(f, "(") && c.kinds[id+"\x00"+f] == k {
+				out = append(out, id)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // signature is one hash over every difference and the values on both sides,
 // in a fixed order. It changes whenever a differing value changes.
 func (c *boardCmp) signature() string {
@@ -165,7 +184,9 @@ func (c *boardCmp) signature() string {
 	sort.Strings(keys)
 	h := sha256.New()
 	for _, k := range keys {
-		_, _ = h.Write([]byte(k + "\x03" + c.vals[k] + "\n"))
+		hashes := append([]string(nil), c.vals[k]...)
+		sort.Strings(hashes)
+		_, _ = h.Write([]byte(k + "\x03" + strings.Join(hashes, "\x04") + "\n"))
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -390,12 +411,15 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 	}
 }
 
-// historyDrop lists the keys of a history row that a clone writes for itself:
-// the row's own id, its clock reading, the replica that wrote it, the event it
-// came from, and the actor (a comment applied from an event carries the event's
-// author where the local write carried the command's actor). The row's task,
-// kind, field and old and new values are kept.
-var historyDrop = []string{"id", "ts", "origin", "event_id", "actor"}
+// historyDropKeys lists the keys of a history row that a clone writes for
+// itself: the row's own id, its clock reading, the replica that wrote it, the
+// event it came from, and the actor (a comment applied from an event carries
+// the event's author where the local write carried the command's actor, seen
+// in a real clone). The row's task, kind, field and old and new values are
+// kept. It is a function, not a package variable, so no state is shared.
+func historyDropKeys() []string {
+	return []string{"id", "ts", "origin", "event_id", "actor"}
+}
 
 // normalizeHistory reduces every history row to what a clone reproduces and
 // puts each list in a fixed order, so rows compare as a multiset. A row present
@@ -419,7 +443,7 @@ func normalizeHistoryList(v any) {
 	keyed := make([]string, len(rows))
 	for i, r := range rows {
 		if m, isMap := r.(map[string]any); isMap {
-			for _, k := range historyDrop {
+			for _, k := range historyDropKeys() {
 				delete(m, k)
 			}
 		}

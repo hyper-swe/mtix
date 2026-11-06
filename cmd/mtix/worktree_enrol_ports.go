@@ -79,6 +79,9 @@ func newWorktreeEnrolPortsWith(logger *slog.Logger, progress io.Writer, dial hub
 		VerifyBoard: func(ctx context.Context, root, asideDir string) (*service.BoardFinding, error) {
 			return verifyBoardAgainstClone(ctx, logger, root, dial, asideDir)
 		},
+		LostLocal: func(ctx context.Context, root, asideDir string) (*service.LostLocal, error) {
+			return lostLocalValues(ctx, logger, root, asideDir)
+		},
 		Backup: func(ctx context.Context, root, dest string) error { return backupWorktree(ctx, logger, root, dest) },
 		Clone:  func(ctx context.Context, root string) error { return cloneWorktree(ctx, logger, progress, root, dial) },
 		ImportCarry: func(ctx context.Context, root string, c *sqlite.InboxCarry, at time.Time) error {

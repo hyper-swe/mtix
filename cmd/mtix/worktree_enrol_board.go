@@ -225,6 +225,44 @@ func verifyBoardAgainstClone(ctx context.Context, logger *slog.Logger, root stri
 	return finding, err
 }
 
+// lostLocalValues reads, after the real clone, which fields the moved-aside
+// store wrote itself (its own journal events that are not mirrored hub events)
+// and that the real clone, at the hub's head, holds differently. The aside store
+// is only read (MTIX-112.17.16.18).
+func lostLocalValues(ctx context.Context, logger *slog.Logger, root, asideDir string) (*service.LostLocal, error) {
+	var asideBody []byte
+	var own []service.OwnField
+	err := withBoardStore(logger, root, asideDir, func(aside *sqlite.Store) error {
+		events, e := aside.LocalEvents(ctx)
+		if e != nil {
+			return fmt.Errorf("read the journal of the old store: %w", e)
+		}
+		raw := make([]service.OwnEvent, len(events))
+		for i, ev := range events {
+			raw[i] = service.OwnEvent{NodeID: ev.NodeID, Op: ev.Op, Status: ev.Status, Payload: ev.Payload}
+		}
+		own = service.OwnFieldsOf(raw)
+		if len(own) == 0 {
+			return nil
+		}
+		asideBody, e = exportBytes(ctx, aside)
+		return e
+	})
+	if err != nil || len(own) == 0 {
+		return nil, err
+	}
+	var cloneBody []byte
+	err = withBoardStore(logger, root, worktreeDataDir(root), func(clone *sqlite.Store) error {
+		var e error
+		cloneBody, e = exportBytes(ctx, clone)
+		return e
+	})
+	if err != nil {
+		return nil, err
+	}
+	return service.FindLostLocal(asideBody, cloneBody, own)
+}
+
 // preflightBoard proves the local board is all derivable from the hub before the
 // real store moves. The file rule is checked first, without touching the hub.
 // The hub rule then compares the store's export with that of one scratch clone

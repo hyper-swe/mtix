@@ -17,7 +17,9 @@ type LocalEvent struct {
 	NodeID string
 	Op     string
 	Status string
-	At     time.Time
+	// Payload is the event's JSON payload, which names the field an update wrote.
+	Payload string
+	At      time.Time
 }
 
 // LocalEvents lists every sync_events row, oldest first, for the enrolment's
@@ -25,7 +27,7 @@ type LocalEvent struct {
 func (s *Store) LocalEvents(ctx context.Context) ([]LocalEvent, error) {
 	// Every journal row with its sync status; the caller decides which are local-only.
 	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT event_id, node_id, op_type, sync_status, created_at FROM sync_events ORDER BY rowid`)
+		`SELECT event_id, node_id, op_type, sync_status, payload, created_at FROM sync_events ORDER BY rowid`)
 	if err != nil {
 		return nil, fmt.Errorf("list local events: %w", err)
 	}
@@ -34,7 +36,7 @@ func (s *Store) LocalEvents(ctx context.Context) ([]LocalEvent, error) {
 	for rows.Next() {
 		var e LocalEvent
 		var at string
-		if scanErr := rows.Scan(&e.ID, &e.NodeID, &e.Op, &e.Status, &at); scanErr != nil {
+		if scanErr := rows.Scan(&e.ID, &e.NodeID, &e.Op, &e.Status, &e.Payload, &at); scanErr != nil {
 			return nil, fmt.Errorf("scan local event: %w", scanErr)
 		}
 		if e.At, err = time.Parse(time.RFC3339Nano, at); err != nil {

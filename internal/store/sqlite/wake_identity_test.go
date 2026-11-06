@@ -4,6 +4,7 @@
 package sqlite_test
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
@@ -96,6 +97,49 @@ func TestWakeIdentity_UnreadableJournal_PropagatesCauseWithoutMutation(t *testin
 			var cause interface{ Code() int }
 			require.ErrorAs(t, err, &cause, "the underlying SQLite error remains in the chain")
 			assert.Equal(t, before, wakeIdentityRows(t, f))
+		})
+	}
+}
+
+// replayWakeIdentityElsewhere moves a real removed event through the normal
+// replay path after fresh mail has occupied its old journal sequence.
+func replayWakeIdentityElsewhere(t *testing.T, f wakeReplaceState) model.WakeKey {
+	t.Helper()
+	key := replaceWakeIdentityKey(t, f)
+	old, err := f.store.ReadPendingEvents(t.Context(), 100)
+	require.NoError(t, err)
+	_, err = f.store.Import(t.Context(), f.data, sqlite.ImportModeReplace, false)
+	require.NoError(t, err)
+	addressTo(t, f.store, "worker", "PROJ-3")
+	require.NoError(t, f.store.WithTx(t.Context(), func(tx *sql.Tx) error {
+		for _, event := range old {
+			if event.NodeID == "PROJ-2" {
+				if err := f.store.IdempotentApply(t.Context(), tx, event); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}))
+	var relocated int64
+	require.NoError(t, f.raw.QueryRow(`SELECT rowid FROM sync_events WHERE event_id=?`, key.EventID).Scan(&relocated))
+	require.Greater(t, relocated, key.EventSeq, "the snapshot id really exists elsewhere after replay")
+	var current string
+	require.NoError(t, f.raw.QueryRow(`SELECT event_id FROM sync_events WHERE rowid=?`, key.EventSeq).Scan(&current))
+	require.NotEqual(t, key.EventID, current, "the old sequence now belongs to a different event")
+	_, err = f.raw.Exec(`UPDATE agent_registrations SET pending_hold=0 WHERE host_id=?`, key.HostID)
+	require.NoError(t, err)
+	return key
+}
+
+func TestWakeIdentity_SnapshotIDAtDifferentSequence_RefusesMutation(t *testing.T) {
+	for _, operation := range []string{"claim", "accounted claim", "hold", "advance"} {
+		t.Run(operation, func(t *testing.T) {
+			f := newWakeReplaceState(t, "above", false)
+			key := replayWakeIdentityElsewhere(t, f)
+			before := wakeIdentityRows(t, f)
+			require.NoError(t, refusedWakeOperation(t, f.store, key, operation))
+			assert.Equal(t, before, wakeIdentityRows(t, f), "an id elsewhere cannot authorize writes for this sequence")
 		})
 	}
 }

@@ -65,7 +65,7 @@ type BoardFinding struct {
 // only a row the full clone also lacks is one the hub lacks. The bounded
 // comparison itself is unchanged (MTIX-112.17.16.18, ruling r2 point 2).
 func (f *BoardFinding) ConfirmAgainstHub(localExport, fullCloneExport []byte) error {
-	c, err := compareBoards(localExport, fullCloneExport, BoardExclusions())
+	c, err := compareReplicas(localExport, fullCloneExport)
 	if err != nil {
 		return err
 	}
@@ -229,7 +229,7 @@ func (e *WorktreeBoardError) rowAdvice() string {
 		parts = append(parts, "the hub lacks the dependency row(s) from "+idList(ids)+": mtix dep add is refused while this store holds the link (already exists) "+
 			"and a link already in the store cannot be journaled again, so use step (3), then add the link again with mtix dep add in the enrolled worktree")
 	}
-	held := append(e.rowIDs("(node)", false), e.rowIDs("(dependencies)", false)...)
+	held := uniqueIDs(append(e.rowIDs("(node)", false), e.rowIDs("(dependencies)", false)...))
 	if len(held) > 0 {
 		parts = append(parts, e.heldAdvice(held))
 	}
@@ -343,7 +343,7 @@ func BoardSnapshotHubFinding(localExport, fullCloneExport []byte) (*BoardFinding
 }
 
 func boardHubFinding(localExport, cloneExport []byte, ignoreHubOnly bool) (*BoardFinding, error) {
-	c, err := compareBoards(localExport, cloneExport, BoardExclusions())
+	c, err := compareReplicas(localExport, cloneExport)
 	if err != nil {
 		return nil, err
 	}

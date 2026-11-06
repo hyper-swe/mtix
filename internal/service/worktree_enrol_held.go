@@ -4,6 +4,7 @@
 package service
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -35,17 +36,12 @@ func (f *BoardFinding) recordHeld(c *boardCmp) {
 }
 
 // HeldFields maps each node the hub already holds (though the bounded clone
-// lacked it) to the fields in which this store differs from the hub; empty when
-// the held rows carry the same values. Ids and field names only.
+// lacked it) to the fields in which this store differs from the hub; a node
+// whose row carries the same values has no entry. Ids and field names only.
 func (f BoardFinding) HeldFields() map[string][]string {
 	out := map[string][]string{}
 	for id, fields := range f.heldFields {
 		out[id] = append([]string(nil), fields...)
-	}
-	for id, fields := range out {
-		if len(fields) == 0 {
-			delete(out, id)
-		}
 	}
 	return out
 }
@@ -63,7 +59,7 @@ func (f BoardFinding) heldAdvice(ids []string) string {
 	}
 	out := "the hub already holds " + idList(ids) + ": do not create or add them again, that would duplicate them"
 	if len(named) > 0 {
-		out += "; the value differs there in " + strings.Join(namedFields(named), "; ") + ", and step (3) gives you the hub's value"
+		out += "; the value differs there in " + strings.Join(boundedList(namedFields(named)), "; ") + ", and step (3) gives you the hub's value"
 	}
 	if len(same) > 0 && len(named) > 0 {
 		out += "; " + idList(same) + " hold(s) the same values"
@@ -71,6 +67,29 @@ func (f BoardFinding) heldAdvice(ids []string) string {
 		out += " (with the same values; step (3) gives you the hub's copy)"
 	}
 	return out
+}
+
+// uniqueIDs drops repeated ids, keeping the first place of each: a node row and
+// a dependency row held on one id name the node once.
+func uniqueIDs(ids []string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// boundedList keeps the first boardShown entries and counts the rest, the same
+// limit idList applies to the ids before it.
+func boundedList(entries []string) []string {
+	if len(entries) <= boardShown {
+		return entries
+	}
+	return append(append([]string(nil), entries[:boardShown]...), fmt.Sprintf("and %d more", len(entries)-boardShown))
 }
 
 // namedFields reshapes "ID (a, b)" entries into "ID: a, b" lines.

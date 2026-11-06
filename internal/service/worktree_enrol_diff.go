@@ -105,9 +105,14 @@ const (
 // boardCmp collects a comparison: the diff, which side each difference is on,
 // and a hash of the values on both sides (never the values themselves).
 type boardCmp struct {
-	diff  BoardDiff
-	kinds map[string]diffKind
-	vals  map[string][]string
+	// replicas is set when the two sides are a store and a hub clone: two
+	// replicas, so a gap of replication (closed_at, labels spacing) is not a
+	// difference. The board file and its store are one replica, and a raw
+	// comparison compares nothing away.
+	replicas bool
+	diff     BoardDiff
+	kinds    map[string]diffKind
+	vals     map[string][]string
 	// rowKinds keeps every kind a whole-row difference had under one key: a
 	// store-only and a hub-only dependency from one node share the key, and
 	// merging them to "changed" would hide the store-only one.
@@ -213,7 +218,11 @@ func (c *boardCmp) signature() string {
 // is not a difference; a repeated identity is one. It reports ids and field
 // names only, never content (MTIX-112.17.16.6).
 func CompareBoardDocs(a, b []byte) (BoardDiff, error) {
-	return CompareBoardDocsWith(a, b, BoardExclusions())
+	c, err := compareReplicas(a, b)
+	if err != nil {
+		return nil, err
+	}
+	return c.diff, nil
 }
 
 // CompareBoardDocsWith is CompareBoardDocs over a chosen exclusion list; tests
@@ -226,7 +235,19 @@ func CompareBoardDocsWith(a, b []byte, exclusions []BoardExclusion) (BoardDiff, 
 	return c.diff, nil
 }
 
+// compareReplicas compares a store with a clone of the hub: the documented
+// exclusions apply, and so do the two replication rules of sameNodeField.
+func compareReplicas(a, b []byte) (*boardCmp, error) {
+	return compareBoardsAs(a, b, BoardExclusions(), true)
+}
+
+// compareBoards compares two exports of one replica (or, with no exclusions, the
+// raw documents): the replication rules of sameNodeField do not apply.
 func compareBoards(a, b []byte, exclusions []BoardExclusion) (*boardCmp, error) {
+	return compareBoardsAs(a, b, exclusions, false)
+}
+
+func compareBoardsAs(a, b []byte, exclusions []BoardExclusion, replicas bool) (*boardCmp, error) {
 	da, err := decodeBoardDoc(a)
 	if err != nil {
 		return nil, fmt.Errorf("read the first board: %w", err)
@@ -248,6 +269,7 @@ func compareBoards(a, b []byte, exclusions []BoardExclusion) (*boardCmp, error) 
 		}
 	}
 	c := newBoardCmp()
+	c.replicas = replicas
 	keys := map[string]bool{}
 	for k := range da {
 		keys[k] = true
@@ -416,7 +438,7 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 		keys[k] = true
 	}
 	for k := range keys {
-		if sameJSON(ma[k], mb[k]) || (section == "nodes" && sameNodeField(k, ma, mb)) {
+		if sameJSON(ma[k], mb[k]) || (c.replicas && section == "nodes" && sameNodeField(k, ma, mb)) {
 			continue
 		}
 		name := section + "." + k
@@ -430,12 +452,15 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 	}
 }
 
-// sameNodeField reports a node field that differs in form only: labels written
-// with other spacing (review F4), and closed_at when the status is present and
-// the same on both sides. closed_at is a replication gap: a rerun that has
-// pushed everything leaves the stamp set on the store row while the clone has
-// none (MTIX-112.17.16.15, ruling r3 point 1). With another status, or none, the
-// stamp stays a difference. Remove the closed_at rule when .15 lands.
+// sameNodeField reports a node field that differs in form only, in a comparison
+// of a store with a clone of the hub (boardCmp.replicas): labels written with
+// other spacing (review F4), and closed_at when the status is present and the
+// same on both sides. closed_at is a replication gap: a rerun that has pushed
+// everything leaves the stamp set on the store row while the clone has none
+// (ruling r3 point 1). With another status, or none, the stamp stays a
+// difference. Both rules exist only because of replication, so the file rule and
+// a raw comparison never use them (ruling r4 point 2). Remove the closed_at rule
+// when MTIX-112.17.16.19 lands.
 func sameNodeField(k string, a, b map[string]any) bool {
 	switch k {
 	case "labels":

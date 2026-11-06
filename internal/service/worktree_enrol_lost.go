@@ -73,7 +73,7 @@ func FindLostLocal(asideExport, cloneExport []byte, own []string) (*LostLocal, e
 	if len(own) == 0 {
 		return nil, nil
 	}
-	c, err := compareBoards(asideExport, cloneExport, BoardExclusions())
+	c, err := compareReplicas(asideExport, cloneExport)
 	if err != nil {
 		return nil, err
 	}

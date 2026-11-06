@@ -81,6 +81,39 @@ func historyDropKeys() []string {
 	return []string{"id", "ts", "origin", "event_id", "actor"}
 }
 
+// historyClockFields names the history fields whose old and new values are a
+// clock reading a clone stamps for itself: the deletion time. Only whether the
+// value is set compares, as nodes.deleted_at does (MTIX-112.17.16.18, ruling r4
+// point 1). The match is by field name; every other part of the row is compared.
+func historyClockFields() []string { return []string{"deleted_at"} }
+
+// presenceOfHistoryValue reduces a history value to whether it is set. A value
+// is a JSON text: absent, empty and null are unset.
+func presenceOfHistoryValue(m map[string]any, key string) {
+	v, ok := m[key]
+	if !ok {
+		return
+	}
+	if s, isStr := v.(string); v != nil && (!isStr || (s != "" && s != "null")) {
+		m[key] = "(set)"
+	}
+}
+
+// normalizeHistoryRow drops the keys a clone writes for itself and reduces the
+// clock-valued fields of the row to presence.
+func normalizeHistoryRow(m map[string]any) {
+	for _, k := range historyDropKeys() {
+		delete(m, k)
+	}
+	field, _ := m["field"].(string)
+	for _, clock := range historyClockFields() {
+		if field == clock {
+			presenceOfHistoryValue(m, "old")
+			presenceOfHistoryValue(m, "new")
+		}
+	}
+}
+
 // normalizeHistory reduces every history row to what a clone reproduces and
 // puts each list in a fixed order, so rows compare as a multiset. A row present
 // on one side only still differs (MTIX-112.17.16.6, point 4): the old rule
@@ -103,9 +136,7 @@ func normalizeHistoryList(v any) {
 	keyed := make([]string, len(rows))
 	for i, r := range rows {
 		if m, isMap := r.(map[string]any); isMap {
-			for _, k := range historyDropKeys() {
-				delete(m, k)
-			}
+			normalizeHistoryRow(m)
 		}
 		b, _ := json.Marshal(r) //nolint:errchkjson // a decoded JSON value always encodes
 		keyed[i] = string(b)

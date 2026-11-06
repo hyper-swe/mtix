@@ -69,6 +69,8 @@ const (
 // check and the quarantine's timestamps), the sync.max_lamport_jump bound
 // and the CLI version recorded with a quarantined event.
 type pullIngest struct {
+	// onConnect observes an existing transport attempt, adding no contact (MTIX-112.20.7).
+	onConnect  func(context.Context)
 	receipt    *pullExchangeTracker
 	stderr     io.Writer
 	now        func() time.Time

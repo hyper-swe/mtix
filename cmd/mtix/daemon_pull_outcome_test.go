@@ -24,8 +24,10 @@ type daemonFailureCase struct {
 
 func TestRunDaemon_PullFailure_RecordsRealOutcome(t *testing.T) {
 	cases := []daemonFailureCase{
-		{name: "authentication", code: "28P01", class: "auth", fix: "repair the hub credential in MTIX_SYNC_DSN or .mtix/secrets, then run: mtix sync pull"},
-		{name: "authorization", code: "42501", class: "refused", fix: "ask the hub operator to restore pull permissions and verified TLS configuration, then run: mtix sync pull"},
+		{name: "authentication", code: "28P01", class: "auth", fix: "repair the hub credential in MTIX_SYNC_DSN, MTIX_SYNC_PASSWORD or .mtix/secrets, then run: mtix sync pull"},
+		{name: "authentication class", code: "28000", class: "auth", fix: "repair the hub credential in MTIX_SYNC_DSN, MTIX_SYNC_PASSWORD or .mtix/secrets, then run: mtix sync pull"},
+		{name: "startup unavailable", code: "57P03", class: "unreachable", fix: "restore network reachability to the configured hub, then run: mtix sync pull"},
+		{name: "authorization", code: "42501", class: "refused", fix: "ask the hub operator to restore pull permissions, then run: mtix sync pull"},
 		{name: "unreachable", code: "08006", class: "unreachable", fix: "restore network reachability to the configured hub, then run: mtix sync pull"},
 		{name: "timeout", code: "57014", class: "timeout", fix: "check hub availability and query load, then run: mtix sync pull"},
 		{name: "other", code: "XX000", class: "pull_failed", fix: "run: mtix sync pull; then run: mtix sync doctor"},
@@ -83,6 +85,9 @@ func runOutcomeDaemonOnce(t *testing.T) (string, string) {
 func daemonOutcomeFixture(t *testing.T) *hubContactSource {
 	t.Helper()
 	src := hubSourceFixture(t, "prefix: X\n")
+	canonical, err := canonicalBoardDir(src.mtixDir)
+	require.NoError(t, err)
+	src.mtixDir = canonical
 	store := newDaemonTestStore(t, src.mtixDir)
 	cfg, err := service.NewConfigService(src.configPath())
 	require.NoError(t, err)

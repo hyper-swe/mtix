@@ -2001,17 +2001,18 @@ A normal `mtix sync push` that drains its eligible queue releases the push lock,
 
 ### When the daemon contacts the hub
 
-The `mtix doctor` row `sync.hub-contact` reports the last scheduled daemon pull as success or failure, in text and `--json` (`last_contact.at`, `route`, `ok`, and failure-only `error_class`). This operator-local record never syncs and contains no DSN or raw error. Failed pulls still follow the existing contact cadence; recording and reading the outcome adds no hub connection or timer. A later successful daemon pull clears the failure, and a later failure replaces success. Old successful records remain readable; an old or unknown failed class is shown as `pull_failed`.
+The `mtix doctor` row `sync.hub-contact` reports the last pull outcome in text and `--json`: `data.last_contact` contains `at`, `route` (`poll` for the daemon or `pull` for an explicit command), `ok`, and failure-only `error_class`. `mtix sync doctor --json` carries the same object as `last_contact`. This operator-local record never syncs and contains no DSN or raw error. Recording and reading it adds no hub connection or polling timer. A successful explicit `mtix sync pull` or scheduled daemon pull replaces the failure; a later failed contact replaces success. A blocked exchange lock, a skipped pass, or shutdown during a pull preserves the last real outcome. Daemon scheduling keeps its existing cadence. The most recently completed pull wins, even when a daemon callback finishes after a newer manual recovery.
 
 | Last pull class | Recovery |
 | --- | --- |
-| `auth` | Repair the hub credential in `MTIX_SYNC_DSN` or `.mtix/secrets`, then run `mtix sync pull`. |
-| `refused` | Ask the hub operator to restore pull permissions and verified TLS configuration, then run `mtix sync pull`. |
+| `auth` | Repair the hub credential in `MTIX_SYNC_DSN`, `MTIX_SYNC_PASSWORD` or `.mtix/secrets`, then run `mtix sync pull`. |
+| `refused` | Ask the hub operator to restore pull permissions, then run `mtix sync pull`. |
+| `tls` | Set `sslmode=verify-full` in the configured DSN and supply `sslrootcert` for its trusted CA, then run `mtix sync pull`. |
 | `unreachable` | Restore network reachability to the configured hub, then run `mtix sync pull`. |
 | `timeout` | Check hub availability and query load, then run `mtix sync pull`. |
 | `pull_failed` | Run `mtix sync pull`, then `mtix sync doctor` to diagnose the failure. |
 
-The row prints the corresponding exact fix. Explicit recovery commands can contact the hub; the next successful scheduled daemon pull clears the recorded failure. A hook-mode transient warning still records a failed pull. Skipped passes (manual or idle mode, no hub, or dispatch-lock contention) do not overwrite the last outcome.
+The row prints the corresponding exact fix. These explicit recovery commands can contact the hub. Hook-mode warnings remain failures and never run on to pull completion. In manual mode a historical failed pull is an advisory with the manual recovery; with no hub configured it is a historical note, not a permanent failing check or an instruction to pull from an absent hub. Old records remain readable, and an unknown failed class becomes `pull_failed`. Records from before this fix used `ok: true` for an attempt, so their apparent success is not verified until an explicit or scheduled pull refreshes it.
 
 `mtix daemon` does the local work every pass (pending-export recovery, relay, hook dispatch) and contacts the hub only when `sync.hub_contact` says so:
 

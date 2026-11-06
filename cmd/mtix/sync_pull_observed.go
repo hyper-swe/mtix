@@ -12,86 +12,91 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
 )
 
-// runSyncPullObserved exposes failures before CLI formatting (including hook
-// mode's warning-and-continue) without changing the ordinary pull's behavior.
-func runSyncPullObserved(ctx context.Context, stdout, stderr io.Writer,
-	args []string, opts transport.Options, limit int, onFailure func(error),
-) (err error) {
-	fail := func(stage string, cause error) error {
-		if onFailure != nil {
-			onFailure(cause)
-		}
-		return wrapSyncErr(stderr, stage, cause)
+// syncPullInput groups one invocation without changing CLI arguments (MTIX-112.20.7).
+type syncPullInput struct {
+	stdout, stderr io.Writer
+	args           []string
+	opts           transport.Options
+	limit          int
+	onOutcome      func(daemonPullOutcome)
+	onConnect      func(context.Context)
+}
+
+// pullObserver retains raw causes before hook formatting discards them (MTIX-112.20.7).
+type pullObserver struct {
+	onFinish  func(error)
+	onFailure func(error)
+	onConnect func(context.Context)
+}
+
+// fail preserves existing formatting and hook-mode early-return behavior (MTIX-112.20.7).
+func (o pullObserver) fail(stderr io.Writer, stage string, cause error) error {
+	if o.onFailure != nil {
+		o.onFailure(cause)
 	}
+	return wrapSyncErr(stderr, stage, cause)
+}
+
+// runSyncPullObserved exposes existing pull boundaries without changing its effects (MTIX-112.20.7).
+func runSyncPullObserved(ctx context.Context, req syncPullInput, observer pullObserver) (err error) {
 	if app.mtixDir == "" {
 		return fmt.Errorf("mtix sync pull: not in an mtix project (run 'mtix init' first)")
 	}
 	if app.store == nil {
 		return fmt.Errorf("mtix sync pull: local store not initialized")
 	}
-	if limit <= 0 {
-		limit = pullDefaultBatchSize
+	if req.limit <= 0 {
+		req.limit = pullDefaultBatchSize
 	}
 	svc := exchangeService(app.store)
 	owner, err := svc.BeginExchangePull(ctx, app.mtixDir)
 	if err != nil {
-		return fail("pull sync lock", err)
+		return observer.fail(req.stderr, "pull sync lock", err)
 	}
 	defer owner.Close()
+	// Publish while exchange ownership is held, after incomplete cleanup (MTIX-112.20.7).
+	defer func() {
+		if observer.onFinish != nil {
+			observer.onFinish(err)
+		}
+	}()
 	completionAttempted := false
 	defer func() {
 		if err != nil && !completionAttempted {
 			err = errors.Join(err, owner.Incomplete(ctx))
 		}
 	}()
-	in := newPullIngest(stderr)
+	in := newPullIngest(req.stderr)
 	in.receipt = newPullExchangeTracker(svc.MaxImportSize)
-	res, stopped, err := daemonObservedPullPhases(ctx, stderr, args, opts, limit, in, fail)
+	in.onConnect = observer.onConnect
+	res, stopped, err := daemonObservedPullPhases(ctx, req, in, observer)
 	if stopped {
 		return err
 	}
-
 	completionAttempted = true
 	if err := completePullExchange(ctx, owner, in.receipt, res); err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout,
-		"pull complete: %d events applied across %d batches\n", res.pulled, res.batches)
-	printLateEventSweep(stdout, res.sweep)
-	printQuarantineHeld(ctx, stdout, stderr, app.store)
+	fmt.Fprintf(req.stdout, "pull complete: %d events applied across %d batches\n", res.pulled, res.batches)
+	printLateEventSweep(req.stdout, res.sweep)
+	printQuarantineHeld(ctx, req.stdout, req.stderr, app.store)
 	return nil
 }
 
-// daemonObservedPullPhases keeps quarantine recovery before hub contact and
-// bootstrap hook-floor updates in the same order as ordinary explicit pulls.
-func daemonObservedPullPhases(ctx context.Context, stderr io.Writer, args []string,
-	opts transport.Options, limit int, in pullIngest, fail func(string, error) error,
-) (pullOutcome, bool, error) {
-
-	// A pull into an EMPTY journal is a bootstrap: the events it brings in are
-	// history, not fresh work. Detect it before anything is applied (the
-	// quarantine retry below applies events too) so the hook scan floor can
-	// be initialized at the tail afterwards (FR-20 §8 — hooks never fire a
-	// backlog storm on a store's first fill).
+// daemonObservedPullPhases preserves quarantine-before-contact and hook floors (MTIX-112.20.7).
+func daemonObservedPullPhases(ctx context.Context, req syncPullInput, in pullIngest, observer pullObserver) (pullOutcome, bool, error) {
+	// Bootstrap history is detected before either quarantine retry or hub ingest.
 	preTail, tailErr := app.store.JournalTail(ctx)
 	bootstrap := tailErr == nil && preTail == 0
-
-	// Quarantined events are retried at the start of every pull, before the
-	// hub is contacted, so one whose missing node or dependency target has
-	// arrived since applies even when the hub is unreachable (MTIX-95.11).
-	first, err := retryQuarantinedEvents(ctx, in, app.store, limit)
+	first, err := retryQuarantinedEvents(ctx, in, app.store, req.limit)
 	if err != nil {
-		return pullOutcome{}, true, fail("quarantine retry", err)
+		return pullOutcome{}, true, observer.fail(req.stderr, "quarantine retry", err)
 	}
-	// The retry's events are part of the first fill too; set the floor now,
-	// before a hub failure below can return.
-	initBootstrapHookFloor(ctx, stderr, bootstrap && first.applied > 0)
-
-	res, err := connectAndPull(ctx, in, args, opts, limit)
+	initBootstrapHookFloor(ctx, req.stderr, bootstrap && first.applied > 0)
+	res, err := connectAndPull(ctx, in, req.args, req.opts, req.limit)
 	if err != nil {
-		return res, true, fail(res.stage, err)
+		return res, true, observer.fail(req.stderr, res.stage, err)
 	}
-	initBootstrapHookFloor(ctx, stderr, bootstrap && res.pulled+res.retried > 0)
-
+	initBootstrapHookFloor(ctx, req.stderr, bootstrap && res.pulled+res.retried > 0)
 	return res, false, nil
 }

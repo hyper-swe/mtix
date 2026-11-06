@@ -98,7 +98,9 @@ retry after the current owner finishes. Other lock acquisition failures are erro
 func runSyncPull(ctx context.Context, stdout, stderr io.Writer,
 	args []string, opts transport.Options, limit int,
 ) error {
-	return runSyncPullObserved(ctx, stdout, stderr, args, opts, limit, nil)
+	_, err := executeSyncPull(ctx, syncPullInput{stdout: stdout, stderr: stderr, args: args, opts: opts, limit: limit,
+		onOutcome: func(outcome daemonPullOutcome) { recordExplicitPullContact(stderr, outcome) }})
+	return err
 }
 
 // initBootstrapHookFloor moves the hook scan floor to the journal tail when
@@ -129,6 +131,9 @@ func connectAndPull(ctx context.Context, in pullIngest, args []string,
 	connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
 	defer cancel()
 
+	if in.onConnect != nil {
+		in.onConnect(ctx)
+	}
 	pool, err := transport.New(connectCtx, dsn, opts)
 	if err != nil {
 		noteSyncResult(ctx, app.store, false)

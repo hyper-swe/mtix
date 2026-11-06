@@ -38,7 +38,7 @@ func newDaemonScheduler(stdout, stderr io.Writer, hub bool, intervalSec int) (*s
 	}
 	onContact := func(outcome daemonPullOutcome) {
 		if recErr := src.recordContact(src.now(), "poll", outcome); recErr != nil {
-			fmt.Fprintf(stderr, "mtix daemon: %s\n", recErr)
+			warnSync(stderr, "mtix daemon", recErr)
 		}
 	}
 	return service.NewContactScheduler(src.now, src.snapshot), onContact, daemonReplies(stderr, src), nil

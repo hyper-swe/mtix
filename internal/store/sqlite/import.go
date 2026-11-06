@@ -120,6 +120,9 @@ func ValidateExport(data *ExportData) error {
 	if err := validateExportTimes(data); err != nil {
 		return err
 	}
+	if err := validateInboxJournal(data.InboxJournal); err != nil {
+		return err
+	}
 	return validateExportHistory(data)
 }
 
@@ -151,12 +154,7 @@ func (s *Store) Import(
 	var result ImportResult
 	// MTIX-95.31.19.3: every task the import changes is recorded with origin import.
 	err := s.withHistoryTx(ctx, historyScope{all: true, origin: model.HistoryOriginImport}, func(tx *sql.Tx) error {
-		// MTIX-95.31.4: the store must still be the one the caller checked.
-		if err := s.verifyStoreUnchanged(ctx, tx, cfg); err != nil {
-			return err
-		}
-		// MTIX-187: no task id outside the node id grammar enters the store.
-		if err := refuseInvalidImportIDs(ctx, tx, data); err != nil {
+		if err := s.checkImportState(ctx, tx, data, cfg); err != nil {
 			return err
 		}
 		// MTIX-95.31.4: move each local task the file's task takes the id of.
@@ -174,6 +172,9 @@ func (s *Store) Import(
 		}
 		if applyErr != nil {
 			return applyErr
+		}
+		if err := importInboxJournal(ctx, tx, data.InboxJournal); err != nil {
+			return err
 		}
 		// Rebuild sequences from imported data per FR-7.8.x, in this
 		// transaction: a failure rolls the import back (MTIX-95.31.27).

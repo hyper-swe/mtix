@@ -29,14 +29,26 @@ const recoverNextStep = "Next: review the file, then run 'mtix import --mode rep
 	"terminal; no flag supplies it, so it cannot run unattended."
 
 func newRecoverCmd() *cobra.Command {
-	return &cobra.Command{
+	var fromExport string
+	cmd := &cobra.Command{
 		Use:   "recover",
 		Args:  cobra.NoArgs,
 		Short: "Salvage data from a damaged database into an importable export",
 		Long: `Reads the project database read-only — even when it fails integrity
-checks — salvaging every readable row individually, fills gaps from the
+checks — salvaging readable data with explicit incomplete reports, fills gaps from the
 .mtix/tasks.json mirror, synthesizes placeholders for lost parents, and
 writes an importable export with a fresh checksum to .mtix/.
+
+Readable addressed mail and acknowledgement coverage are recovered too.
+Inbox salvage walks rowids without secondary indexes. After 10,000 failed
+rowid probes it stops and reports the limit and position as incomplete; an
+unreadable upper bound means the lost record count is unknown. Keep the
+original database. The recovered file is private and is added to .gitignore
+before it is written, including in existing projects.
+Use --from-export private-export.json to supplement the database with an
+explicit private export. Ordinary tasks.json does not carry the inbox journal.
+Read the salvage report for missing or unreadable mail. Treat the recovered
+file as private and never commit it.
 
 The damaged database is never modified. After reviewing the salvage
 report, restore with:
@@ -50,14 +62,18 @@ unattended.
 Restore into this project (after moving the damaged database aside) or a fresh
 'mtix init' project.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			_, err := runRecover()
+			_, err := runRecoverFrom(fromExport)
 			return err
 		},
 	}
+	cmd.Flags().StringVar(&fromExport, "from-export", "", "Private explicit export to supplement database salvage (includes inbox journal)")
+	return cmd
 }
 
 // runRecover performs the salvage and returns the output file path.
-func runRecover() (string, error) {
+func runRecover() (string, error) { return runRecoverFrom("") }
+
+func runRecoverFrom(fromExport string) (string, error) {
 	mtixDir, err := findMtixDir()
 	if err != nil {
 		return "", fmt.Errorf("not in an mtix project: %w", err)
@@ -65,6 +81,13 @@ func runRecover() (string, error) {
 
 	dbPath := filepath.Join(mtixDir, "data", "mtix.db")
 	mirrorPath := filepath.Join(mtixDir, "tasks.json")
+	var inboxSource *sqlite.ExportData
+	if fromExport != "" {
+		inboxSource, err = readRecoverExport(fromExport)
+		if err != nil {
+			return "", err
+		}
+	}
 
 	// recover skips initApp (the store may be unopenable), so the app
 	// logger may not exist yet.
@@ -73,7 +96,7 @@ func runRecover() (string, error) {
 		logger = slog.New(slog.NewTextHandler(os.Stderr, nil))
 	}
 
-	res, err := sqlite.Recover(context.Background(), dbPath, mirrorPath, version, logger)
+	res, err := sqlite.Recover(context.Background(), dbPath, mirrorPath, version, sqlite.RecoverOptions{Logger: logger, InboxSources: []*sqlite.ExportData{inboxSource}})
 	if err != nil {
 		return "", err
 	}
@@ -89,6 +112,7 @@ func runRecover() (string, error) {
 
 	printRecoverReport(res, outPath)
 	writeRecoverInboxNote(context.Background(), os.Stdout, dbPath)
+
 	return outPath, nil
 }
 
@@ -96,6 +120,9 @@ func runRecover() (string, error) {
 // O_EXCL plus a counter suffix on collision — a salvage attempt must
 // never silently overwrite an earlier one.
 func writeSalvageFile(mtixDir string, raw []byte) (string, error) {
+	if err := addToGitignore(filepath.Dir(mtixDir), ".mtix/recovered-*.json"); err != nil {
+		return "", fmt.Errorf("protect private recovered export from git: %w", err)
+	}
 	stamp := time.Now().UTC().Format("20060102-150405")
 	for i := 0; i < 100; i++ {
 		name := fmt.Sprintf("recovered-%s.json", stamp)
@@ -103,7 +130,7 @@ func writeSalvageFile(mtixDir string, raw []byte) (string, error) {
 			name = fmt.Sprintf("recovered-%s-%d.json", stamp, i)
 		}
 		outPath := filepath.Join(mtixDir, name)
-		f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		f, err := os.OpenFile(outPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if errors.Is(err, os.ErrExist) {
 			continue
 		}
@@ -124,7 +151,11 @@ func writeSalvageFile(mtixDir string, raw []byte) (string, error) {
 
 // printRecoverReport renders the salvage report for humans and agents.
 func printRecoverReport(res *sqlite.RecoverResult, outPath string) {
-	fmt.Printf("Salvage complete: %d node(s) recovered into %s\n",
+	summary := "Salvage complete"
+	if res.InboxIncomplete {
+		summary = "Partial salvage (inbox journal incomplete)"
+	}
+	fmt.Printf("%s: %d node(s) recovered into %s\n", summary,
 		res.Export.NodeCount, outPath)
 	fmt.Printf("  from database : %d\n", len(res.RecoveredIDs))
 	fmt.Printf("  from mirror   : %d\n", len(res.FromMirror))

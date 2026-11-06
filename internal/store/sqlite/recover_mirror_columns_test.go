@@ -206,7 +206,7 @@ func TestRecover_CommentCellCorrupted_RestoresCommentFromMirror(t *testing.T) {
 	mirrorPath, _ := exportMirrorOf(t, s, nil, false)
 	corruptAndClose(t, s, "annotations")
 
-	res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", slog.Default())
+	res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
 	require.NoError(t, err)
 
 	assert.Contains(t, res.RecoveredIDs, "RC-1", "RC-1 is salvaged from the database")
@@ -279,7 +279,7 @@ func TestRecover_UnreadableColumns_RestoredFromMirror(t *testing.T) {
 			}
 			corruptAndClose(t, s, tt.columns...)
 
-			res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", slog.Default())
+			res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
 			require.NoError(t, err)
 
 			rc1 := recoveredNode(t, res, "RC-1")
@@ -364,7 +364,7 @@ func TestRecover_UnreadableColumnNoUsableMirrorCopy_DropsColumn(t *testing.T) {
 			}
 			corruptAndClose(t, s, "annotations")
 
-			res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", slog.Default())
+			res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
 			require.NoError(t, err)
 
 			assert.Contains(t, res.RecoveredIDs, "RC-1", "the node is still salvaged")

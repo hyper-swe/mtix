@@ -59,7 +59,7 @@ func TestRunAnnotate_UsesProcessAuthorIdentity(t *testing.T) {
 	initTestApp(t)
 	id := seedOneNode(t)
 
-	require.NoError(t, runAnnotate(id, "observed flake on retry"))
+	require.NoError(t, runAnnotate(id, "observed flake on retry", ""))
 
 	node, err := app.store.GetNode(context.Background(), id)
 	require.NoError(t, err)

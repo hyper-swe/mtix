@@ -776,6 +776,12 @@ mtix annotate PROJ-1.1 "Consider rate limiting on this endpoint"
 
 Annotations appear in the context assembly and are visible to agents working on the node.
 
+To address an annotation to another agent, add `--to <agent>`. It then takes the same path as `mtix comment --to`: it lands in that agent's inbox (`mtix inbox`) and prints the same push and wake status lines, and it matches the MCP `mtix_annotate` tool with `to`. An empty `--to` addresses nobody. Without `--to` nothing changes. Only `mtix comment` takes `--await-reply`.
+
+```bash
+mtix annotate PROJ-1.1 "Please review the rate limit" --to reviewer-a
+```
+
 ### Resolve Annotations
 
 When an annotation has been addressed:
@@ -1552,7 +1558,7 @@ runs this program for you. Whether a Stop hook re-arms the waiter after a wake-d
 | `data.soft_delete_retention` | `720h` (30 days) | Time before soft-deleted nodes are purged |
 | `sync.keep_roles` | (none) | Comma-separated hub roles that `mtix sync harden` leaves with their access (see "Hub privileges"); PUBLIC, data-API and `pg_` roles are refused. Setting it turns on strict mode: the doctor's `hub-privileges` check then fails, instead of warning, whenever `mtix sync harden` would report a finding, or when the check cannot run |
 | `sync.hub_contact` | `activity` | When `mtix daemon` contacts the hub: `activity`, `interval:<duration>` (at least 1s) or `manual`. A board created before this key keeps contacting the hub at the daemon's own `--interval` until you set it; `mtix config get sync.hub_contact` shows that. |
-| `sync.push_on_addressed_send` | `true` | Pushes the board's pending events (whole prefix, in order) to the hub right after an addressed `mtix comment --to` or MCP `mtix_annotate` commits. Off under `sync.hub_contact` `manual`, off when `false`, never on a board the host only lists, and only where the checkout has its own hub or relay. A detached child (CLI), or the MCP server or `mtix serve` in-process, does it; the command returns first, and a child that finds the push lock held waits about 20 seconds for it before recording `push_held`. `comment --to` prints a `push:` line (`--json`: `push.state`, `push.reason`); a failure is shown by the next command and by `mtix doctor` row `sync.push-on-send`. |
+| `sync.push_on_addressed_send` | `true` | Pushes the board's pending events (whole prefix, in order) to the hub right after an addressed `mtix comment --to` or MCP `mtix_annotate` commits. Off under `sync.hub_contact` `manual`, off when `false`, never on a board the host only lists, and only where the checkout has its own hub or relay. A detached child (CLI), or the MCP server or `mtix serve` in-process, does it; the command returns first, and a child that finds the push lock held waits about 20 seconds for it before recording `push_held`. Each addressed-send push (the detached CLI child, MCP, or `mtix serve`) that reaches its 5 minute limit is recorded as `timeout` and releases the push lock; the message stays pending for the next push. `comment --to` prints a `push:` line (`--json`: `push.state`, `push.reason`); a failure is shown by the next command and by `mtix doctor` row `sync.push-on-send`. |
 | `sync.listen` | `live` (shipped default: `live`) | `live`: while a waiter (`mtix inbox --wait`) holds a lease and its board listener runs, the lease keeps the daemon contacting the hub every `sync.listen_interval`; `off`: strict activity-only contact. |
 | `sync.listen_interval` | `10s` | Hub contact period while the listen hold is armed (at least 1s). |
 | `sync.listen_max_idle` | `8h` | The hold ends this long after the last real activity (at most 72h). |
@@ -4555,7 +4561,7 @@ change the node's status with the normal commands instead.
 
 ### MCP integration
 
-Use `mtix_discover` to list the tools this build registers. Comments use `mtix_annotate` (`id`, `text`, `author`); `mtix_dep_show` lists a node's active blockers. Tree views and administration use the CLI: `mtix tree <id>`, `mtix verify`, `mtix backup <path>`, `mtix export`, `mtix gc`, and `mtix config get/set`. There is no MCP import tool: use `mtix import <file> --mode merge`. Replace import needs an operator to type the ticket count at an interactive terminal; agents never run it.
+Use `mtix_discover` to list the tools this build registers. Comments use `mtix_annotate` (`id`, `text`, `author`; `to` addresses another agent, like the CLI `mtix annotate <id> "<text>" --to <agent>` or `mtix comment <id> "<text>" --to <agent>`); `mtix_dep_show` lists a node's active blockers. Tree views and administration use the CLI: `mtix tree <id>`, `mtix verify`, `mtix backup <path>`, `mtix export`, `mtix gc`, and `mtix config get/set`. There is no MCP import tool: use `mtix import <file> --mode merge`. Replace import needs an operator to type the ticket count at an interactive terminal; agents never run it.
 
 The `mtix_sync_workflow` MCP tool exposes structured sync-state
 recommendations to LLM agents. State buckets: `solo`,

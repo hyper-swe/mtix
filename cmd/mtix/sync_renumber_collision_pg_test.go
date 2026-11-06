@@ -50,7 +50,7 @@ func collisionOps() []collisionOp {
 			require.NoError(t, runCancel("TEST-1", "not needed", false))
 		}},
 		{"comment", func(t *testing.T) { require.NoError(t, runComment("TEST-1", "A says hi", "")) }},
-		{"annotate", func(t *testing.T) { require.NoError(t, runAnnotate("TEST-1", "A note")) }},
+		{"annotate", func(t *testing.T) { require.NoError(t, runAnnotate("TEST-1", "A note", "")) }},
 		{"child", func(t *testing.T) {
 			require.NoError(t, runCreate("A child", "TEST-1", "", 3, "", "", "", "", ""))
 			require.NoError(t, runUpdate("TEST-1.1", "A child retitled", "", "", "", 0, "", ""))

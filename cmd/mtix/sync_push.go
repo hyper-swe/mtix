@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -31,6 +32,12 @@ const pushBatchSize = 100
 // a non-error message; pending work stays durable. A drained pusher
 // rechecks after unlock, but a non-pusher holder does not drain. --force bypasses the lock for debugging.
 func newSyncPushCmd() *cobra.Command {
+	return newSyncPushCmdWithTimeout(addressedPushTimeout)
+}
+
+// newSyncPushCmdWithTimeout injects the addressed-send bound for command tests.
+// Ordinary manual pushes retain their caller's context (FR-20.8).
+func newSyncPushCmdWithTimeout(bound time.Duration) *cobra.Command {
 	var (
 		insecureTLS bool
 		force       bool
@@ -54,9 +61,10 @@ so git pre-push hooks never block code pushes.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if onSend {
+				push, _ := cmd.Context().Value(addressedPushBodyKey{}).(func(context.Context, io.Writer, transport.Options) error)
 				// MTIX-112.20.2: the detached child of an addressed send.
 				return runAddressedSendPush(cmd.Context(), cmd.ErrOrStderr(), addressedRunOptions{
-					Transport: transport.Options{InsecureTLS: insecureTLS}, Now: utcNow, HeldTries: heldPushTries, HeldWait: heldPushWait})
+					Transport: transport.Options{InsecureTLS: insecureTLS}, Now: utcNow, HeldTries: heldPushTries, HeldWait: heldPushWait, Timeout: bound, Push: push})
 			}
 			return runSyncPush(cmd.Context(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
 				args, transport.Options{InsecureTLS: insecureTLS}, force)
@@ -423,3 +431,6 @@ func markPushed(ctx context.Context, store *sqlite.Store, acceptedIDs []string) 
 		return nil
 	})
 }
+
+// addressedPushBodyKey injects an invocation-local push body for command tests.
+type addressedPushBodyKey struct{}

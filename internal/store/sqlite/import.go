@@ -89,8 +89,16 @@ type ImportResult struct {
 	// Journaled counts the sync events a merge into a store that syncs wrote
 	// for its changes; JournalLocalOnly names the tasks whose change no event
 	// carries, so they stay local (MTIX-112.17.16.16).
-	Journaled        int      `json:"journaled,omitempty"`
-	JournalLocalOnly []string `json:"journal_local_only,omitempty"`
+	Journaled        int               `json:"journaled,omitempty"`
+	JournalLocalOnly []LocalOnlyChange `json:"journal_local_only,omitempty"`
+}
+
+// LocalOnlyChange is a task an import changed in columns no sync event
+// carries, with the names of those columns: they stay on this replica until
+// an edit of the same value journals them (MTIX-112.17.16.16).
+type LocalOnlyChange struct {
+	ID     string   `json:"id"`
+	Fields []string `json:"fields"`
 }
 
 // ValidateExport runs the checks every import makes before it writes

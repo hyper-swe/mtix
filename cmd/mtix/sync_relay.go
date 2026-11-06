@@ -585,7 +585,9 @@ func runRelayCloneImport(ctx context.Context, cmd *cobra.Command, dir string, f 
 			filepath.Join(dir, bootstrap.DirName))
 	}
 	path := filepath.Join(dir, bootstrap.DirName, names[len(names)-1])
-	opts := sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge, Workflow: workflowResolution(f),
+	// NoJournal: the snapshot is a copy of the board the relay already carries;
+	// journaling it would publish the board again under new event ids (MTIX-112.17.16.16).
+	opts := sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge, Workflow: workflowResolution(f), NoJournal: true,
 		HoldPush: holdPushForAdoption} // MTIX-95.31.16: an adopted uid moves pending events under the push lock
 	res, err := bootstrap.ImportSnapshot(ctx, bootstrap.ImportRequest{Store: app.store, Path: path, Options: opts})
 	if res.Report != nil {

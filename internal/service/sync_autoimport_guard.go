@@ -466,7 +466,7 @@ func plural(n int, one, many string) string {
 // noticeImported prints the one line that says an auto-import applied a
 // changed .mtix/tasks.json, what it changed and where the database before
 // it is (FR-15.2k, MTIX-95.31.2).
-func (s *SyncService) noticeImported(mtixDir string, diff *sqlite.ReplaceDiff, backupPath string, localOnly []string) {
+func (s *SyncService) noticeImported(mtixDir string, diff *sqlite.ReplaceDiff, backupPath string, localOnly []sqlite.LocalOnlyImport) {
 	shown := backupPath
 	if rel, err := filepath.Rel(filepath.Dir(mtixDir), backupPath); err == nil {
 		shown = rel
@@ -482,19 +482,28 @@ func (s *SyncService) noticeImported(mtixDir string, diff *sqlite.ReplaceDiff, b
 // changed without journaling: their new values are local only, and a later
 // pull of a hub edit may replace them (MTIX-112.17.16.16). The ids are
 // bounded (maxNamedNodes); mtix doctor lists the same tasks.
-func (s *SyncService) noticeLocalOnly(ids []string) {
-	if len(ids) == 0 {
+func (s *SyncService) noticeLocalOnly(changes []sqlite.LocalOnlyImport) {
+	if len(changes) == 0 {
 		return
 	}
-	shown := ids
+	shown := changes
 	if len(shown) > sqlite.MaxNamedNodes {
 		shown = shown[:sqlite.MaxNamedNodes]
 	}
 	more := ""
-	if rest := len(ids) - len(shown); rest > 0 {
+	if rest := len(changes) - len(shown); rest > 0 {
 		more = fmt.Sprintf(" and %d more", rest)
+	}
+	named := make([]string, 0, len(shown))
+	unsent := false
+	for _, c := range shown {
+		named = append(named, c.ID+": "+strings.Join(c.Fields, ", "))
+		unsent = unsent || len(sqlite.SettleableFields(c.Fields)) < len(c.Fields)
 	}
 	fmt.Fprintf(s.notices, "mtix: %s the hub already knows changed only locally (%s%s): these values were not sent to the hub "+
 		"and may be replaced on the next pull; run mtix doctor for the list\n",
-		plural(len(ids), "task", "tasks"), strings.Join(shown, ", "), more)
+		plural(len(changes), "task", "tasks"), strings.Join(named, "; "), more)
+	if unsent {
+		fmt.Fprint(s.notices, "mtix: weight, estimates, references and metadata are carried by no sync event, so those values never reach the hub\n")
+	}
 }

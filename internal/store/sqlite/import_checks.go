@@ -41,6 +41,16 @@ type importConfig struct {
 	// asSynced makes the replace guards treat the store as synced although it
 	// holds no mark or cursor yet (AsSyncedStore, MTIX-107.31.8).
 	asSynced bool
+	// noJournal makes a merge journal nothing (WithoutJournal).
+	noJournal bool
+}
+
+// WithoutJournal makes a merge journal nothing although the store syncs: the
+// file is a copy of the board the sync already carries (a relay bootstrap
+// snapshot), and journaling it would send the board again under new event
+// ids (MTIX-112.17.16.16).
+func WithoutJournal() ImportOption {
+	return func(c *importConfig) { c.noJournal = true }
 }
 
 // AsSyncedStore makes a replace import treat the store as one that syncs

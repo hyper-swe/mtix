@@ -9,7 +9,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/relay/segment"
 )
 
-// validConfigKeys lists the 45 workspace keys per FR-11.2. Host wake keys
+// validConfigKeys lists the 46 workspace keys per FR-11.2. Host wake keys
 // are supplied separately by model.WakeSettingDefaults (FR-20.3).
 //
 // The sync.relay.* family configures the FR-21 file transport, which is
@@ -36,6 +36,7 @@ var validConfigKeys = map[string]bool{
 	"sync.endpoint":                true,
 	"sync.team_id":                 true,
 	"sync.max_lamport_jump":        true,
+	"sync.max_queue_size":          true, // MTIX-112.17.16.16
 	"sync.auto_sync":               true,
 	"sync.interval":                true,
 	"sync.keep_roles":              true,
@@ -89,6 +90,10 @@ var valueValidators = map[string]func(string) error{
 	},
 	// MTIX-95.31.2: sync.auto_sync accepts true or false in any form;
 	// a mistyped value is refused here rather than read as "on" later.
+	maxQueueSizeKey: func(v string) error {
+		_, err := parseMaxQueueSize(v)
+		return err
+	},
 	"sync.auto_sync": func(v string) error {
 		_, err := parseAutoSync(v)
 		return err
@@ -148,6 +153,7 @@ var configDefaults = map[string]string{
 	"sync.endpoint":                "",
 	"sync.team_id":                 "",
 	"sync.max_lamport_jump":        maxLamportJumpDefault,
+	"sync.max_queue_size":          "0", // unlimited (MTIX-112.17.16.16)
 	"sync.auto_sync":               "true",
 	"sync.interval":                "30s",
 	"sync.keep_roles":              "",

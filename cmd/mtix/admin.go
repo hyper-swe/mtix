@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -299,7 +298,7 @@ func reportImportResult(result *sqlite.ImportResult, writerVersion string) {
 		fmt.Printf("Journaled %d sync events for the changes; mtix sync push sends them to the hub\n", result.Journaled)
 	}
 	if len(result.JournalLocalOnly) > 0 {
-		fmt.Printf("Local only (no sync event restores a deleted task): %s\n", strings.Join(result.JournalLocalOnly, ", "))
+		fmt.Println(localOnlyLine(result.JournalLocalOnly))
 	}
 	if n := result.HistoryAdded + result.HistorySkipped + result.HistoryConflicts + result.HistorySkippedLegacyKey; n > 0 {
 		fmt.Printf("History: %d added, %d already present, %d conflicts, %d skipped (legacy key)\n",
@@ -320,6 +319,12 @@ func importOptions(ctx context.Context, mode sqlite.ImportMode, f importFlags) s
 		Workflow:    workflowResolution(f),
 	}
 	opts.HoldPush = holdPushForAdoption
+	if mode == sqlite.ImportModeMerge {
+		// MTIX-112.17.16.16: hub evidence the store does not record yet (an
+		// exported DSN) makes the merge journal, as refuseSyncedReplace refuses
+		// a replace. On a read error hubGuardCounts answers true, the safe side.
+		opts.AssumeSynced, _ = hubGuardCounts(ctx)
+	}
 	if mode == sqlite.ImportModeMerge && app.syncSvc != nil && app.mtixDir != "" {
 		opts.BeforeWrite = func() error {
 			backup, err := app.syncSvc.BackupBeforeImport(ctx, app.mtixDir)

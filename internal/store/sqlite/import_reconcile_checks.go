@@ -53,6 +53,12 @@ func (s *Store) prepareWrite(ctx context.Context, data *ExportData, opts ImportR
 		}
 	}
 	writeOpts := []ImportOption{renumberLocalFirst(moves), withWorkflowResolution(opts.Workflow)}
+	if opts.AssumeSynced {
+		writeOpts = append(writeOpts, AsSyncedStore())
+	}
+	if opts.NoJournal {
+		writeOpts = append(writeOpts, WithoutJournal())
+	}
 	if opts.BeforeWrite == nil {
 		return writeOpts, nil
 	}

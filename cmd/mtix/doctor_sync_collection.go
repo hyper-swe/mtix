@@ -85,6 +85,12 @@ func doctorSyncRows(report DoctorReport) []service.DoctorResult {
 		if check.LastContact != nil {
 			row.Data = map[string]any{"last_contact": check.LastContact}
 		}
+		if len(check.LocalOnly) > 0 { // MTIX-112.17.16.16: the ids, machine-readable
+			if row.Data == nil {
+				row.Data = map[string]any{}
+			}
+			row.Data["local_only"] = check.LocalOnly
+		}
 		rows = append(rows, row)
 	}
 	return rows

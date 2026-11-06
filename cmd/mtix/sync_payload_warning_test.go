@@ -267,12 +267,13 @@ func decomposeLineOverCap() string {
 	return `{"title":"t","prompt":"` + strings.Repeat("p", validator.MaxPayloadBytes-wrap-8) + `"}` + "\n"
 }
 
-// TestRunImport_OversizedPrompt_NoSyncEventNoWarning pins why `mtix import`
-// (and the automatic import of .mtix/tasks.json, which uses the same store
-// import) carries no wire-cap warning: an import writes tasks without sync
-// events, so nothing it writes is pushed, held or warned about, whatever
-// its field sizes (MTIX-95.12 round 2, review r1 R19).
-func TestRunImport_OversizedPrompt_NoSyncEventNoWarning(t *testing.T) {
+// TestRunImport_OversizedPrompt_JournalsCreateUnderHubEvidence pins that
+// `mtix import` into a store with hub evidence journals the task it creates
+// (MTIX-112.17.16.16), and still carries no wire-cap warning at import time:
+// an over-cap event is held and warned about by the push that meets it
+// (MTIX-95.12 round 2, review r1 R19). The automatic import of
+// .mtix/tasks.json journals nothing.
+func TestRunImport_OversizedPrompt_JournalsCreateUnderHubEvidence(t *testing.T) {
 	ctx := context.Background()
 	setHub(t, true)
 	initTestApp(t)
@@ -296,7 +297,9 @@ func TestRunImport_OversizedPrompt_NoSyncEventNoWarning(t *testing.T) {
 	node, err := app.store.GetNode(ctx, "TEST-1")
 	require.NoError(t, err)
 	require.Len(t, node.Prompt, len(overWireCap()), "the import wrote the task")
-	require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM sync_events`), "an import writes no sync event")
+	// MTIX-112.17.16.16: hub evidence (setHub) makes the merge journal the task it created.
+	require.Equal(t, 1, countTestRows(t, `SELECT COUNT(*) FROM sync_events WHERE op_type = 'create_node' AND node_id = 'TEST-1'`),
+		"an import under hub evidence journals the created task")
 	require.NotNil(t, app.payloadWarnings, "a hub is configured")
 	require.Empty(t, app.payloadWarnings.Drain(), "so there is nothing to warn about")
 }

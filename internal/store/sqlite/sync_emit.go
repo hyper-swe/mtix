@@ -57,6 +57,10 @@ type emitParams struct {
 	// uid can equal its create-event id (ADR-003 §2 / MTIX-30.1). Empty
 	// for all other ops, which generate their own.
 	EventID string
+	// UID, when set on a non-create event, is the uid the event carries
+	// instead of the node's current one: the uid the hub knows the task by
+	// after a merge adopted another (MTIX-112.17.16.16).
+	UID string
 }
 
 // emitEvent inserts one sync_events row inside the caller's transaction.
@@ -207,6 +211,9 @@ func maybeRecordHookOrigin(ctx context.Context, tx *sql.Tx, eventID string) erro
 // uid stays empty and apply falls back to node_id — the transition never
 // forces a value it cannot find.
 func emitUIDFor(ctx context.Context, tx *sql.Tx, p emitParams, eventID string) (string, error) {
+	if p.UID != "" && p.OpType != model.OpCreateNode {
+		return p.UID, nil // the uid the hub knows the task by (emitParams.UID, MTIX-112.17.16.16)
+	}
 	if p.OpType == model.OpCreateNode {
 		existing, err := resolveEmitUID(ctx, tx, p.NodeID)
 		if err != nil {
@@ -396,7 +403,8 @@ func enforceQueueLimit(ctx context.Context, tx *sql.Tx) error {
 	if pending >= cap64 {
 		return fmt.Errorf(
 			"%w: %d events pending (cap=%d). "+
-				"Run: mtix sync push --force, or set sync.max_queue_size to 0",
+				"Run: mtix sync push to send them, or raise the cap with mtix config set sync.max_queue_size <higher> "+
+				"(0 is unlimited)",
 			model.ErrSyncQueueFull, pending, cap64,
 		)
 	}

@@ -35,11 +35,12 @@ func TestAutoImport_SyncedStoreHubKnownTaskChanged_NoticeNamesItLocalOnly(t *tes
 
 	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir))
 
-	assert.Contains(t, f.notices.String(), "1 task the hub already knows changed only locally (PROJ-2)")
+	assert.Contains(t, f.notices.String(), "1 task the hub already knows changed only locally (PROJ-2: title)")
 	assert.Contains(t, f.notices.String(), "may be replaced on the next pull")
 	live, overflow, err := f.store.LocalOnlyImports(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, []string{"PROJ-2"}, localOnlyIDs(live))
+	assert.Equal(t, []string{"title"}, live[0].Fields)
 	assert.Zero(t, overflow)
 }
 
@@ -97,4 +98,58 @@ func localOnlyIDs(in []sqlite.LocalOnlyImport) []string {
 		out = append(out, x.ID)
 	}
 	return out
+}
+
+func depFile(from, to string) struct {
+	FromID    string `json:"from_id"`
+	ToID      string `json:"to_id"`
+	DepType   string `json:"dep_type"`
+	CreatedAt string `json:"created_at"`
+} {
+	return struct {
+		FromID    string `json:"from_id"`
+		ToID      string `json:"to_id"`
+		DepType   string `json:"dep_type"`
+		CreatedAt string `json:"created_at"`
+	}{from, to, "related", "2026-09-24T08:00:00Z"}
+}
+
+// TestAutoImport_DependencyOnlyChange_NamesTheTaskLocalOnly: a teammate's
+// board that differs only in an added dependency names the task whose link
+// the hub lacks, as the notice and the record. A removed link is covered by
+// TestReplaceFieldChanges_NamesTheFieldsAndDependenciesThatDiffer: an
+// auto-import refuses to drop a local link unless the base shows it removed.
+func TestAutoImport_DependencyOnlyChange_NamesTheTaskLocalOnly(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	_, err := f.store.WriteDB().Exec(`UPDATE sync_events SET sync_status = 'pushed'`)
+	require.NoError(t, err)
+	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) {
+		d.Dependencies = append(d.Dependencies, depFile("PROJ-2", "PROJ-1"))
+	}))
+
+	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir))
+
+	assert.Contains(t, f.notices.String(), "(PROJ-2: dependencies)")
+	live, _, err := f.store.LocalOnlyImports(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []sqlite.LocalOnlyImport{{ID: "PROJ-2", Fields: []string{"dependencies"}}}, live)
+}
+
+// TestAutoImport_PendingCreateOnASyncedStore_NamesTheTask: a task whose create
+// is still pending carries its old payload on the next push, so the imported
+// value is named local only like a pushed task's.
+func TestAutoImport_PendingCreateOnASyncedStore_NamesTheTask(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	_, err := f.store.WriteDB().Exec(`UPDATE sync_events SET sync_status = 'pushed' WHERE node_id <> 'PROJ-2'`)
+	require.NoError(t, err)
+	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) {
+		i := nodeIndex(t, d, "PROJ-2")
+		d.Nodes[i].Title, d.Nodes[i].ContentHash = "Retitled upstream", "h-upstream"
+	}))
+
+	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir))
+
+	assert.Contains(t, f.notices.String(), "(PROJ-2: title)")
 }

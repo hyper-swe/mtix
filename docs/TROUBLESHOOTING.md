@@ -368,6 +368,7 @@ The file relay (`sync.relay.dir`) is experimental and opt-in. Run `mtix sync doc
 - `sync.listen_interval`
 - `sync.listen_max_idle`
 - `sync.max_lamport_jump`
+- `sync.max_queue_size`
 - `sync.push_on_addressed_send`
 - `sync.relay.dir`
 - `sync.relay.max_segment_bytes`

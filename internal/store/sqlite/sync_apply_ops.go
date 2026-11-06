@@ -346,6 +346,11 @@ func (a syncApplier) applyComment(ctx context.Context, tx *sql.Tx, e *model.Sync
 	// The event's own time (eventTime, MTIX-95.26), not the apply time, so two
 	// replicas applying the same events in any order write byte-identical rows.
 	at := eventTime(e.WallClockTS, a.clock().UTC())
+	for _, held := range annotations {
+		if held.ID == e.EventID {
+			return nil // the node holds this comment already (an import merge carried it, MTIX-112.17.16.16)
+		}
+	}
 	annotations = append(annotations, model.Annotation{
 		ID: e.EventID, Author: p.AuthorID, Text: p.Body, CreatedAt: at,
 	})

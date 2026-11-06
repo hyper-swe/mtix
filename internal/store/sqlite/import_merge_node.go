@@ -150,7 +150,7 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	if existingHash.Valid && existingHash.String == n.ContentHash {
 		write := unchangedWrite{streams: streamsChanged, workflow: res != nil && res.Choice == WorkflowTheirs}
 		action, err := mergeUnchangedContent(ctx, tx, &merged, local.UID, write)
-		ctl.journal.noteChanged(&local, &merged) // MTIX-112.17.16.16: plans only the values that differ
+		ctl.journal.noteChanged(&local) // MTIX-112.17.16.16: the events come from the stored row
 		return markRollUp(action, &local, &merged), err
 	}
 
@@ -160,7 +160,7 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	if carryErr := carryIfAdopted(ctx, tx, &merged, &local); carryErr != nil {
 		return 0, carryErr
 	}
-	ctl.journal.noteChanged(&local, &merged) // MTIX-112.17.16.16: plans only the values that differ
+	ctl.journal.noteChanged(&local) // MTIX-112.17.16.16: the events come from the stored row
 	return markRollUp(importActionUpdated, &local, &merged), nil
 }
 

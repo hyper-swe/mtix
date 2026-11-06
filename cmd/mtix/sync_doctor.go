@@ -85,7 +85,7 @@ const syncDoctorLong = `Run health checks against the local store and the BYO Po
                            grammar; names each task, its uid and the fix
   Unique node uids       - no two tasks share a uid; names each uid, its tasks
                            and the recovery (see 'mtix verify')
-  sync.hub-contact       - last scheduled daemon pull success or safe failure
+  sync.hub-contact       - last pull outcome: success or safe failure
                            class and exact fix; --json includes last_contact
                            with at, route (poll or explicit pull), ok and failure-only error_class;
                            this local outcome check contacts no hub

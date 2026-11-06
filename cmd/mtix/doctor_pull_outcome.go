@@ -7,8 +7,12 @@ package main
 func attachHubContactOutcome(row *DoctorCheck, src *hubContactSource, hub, manual bool) {
 	c, present, err := src.state.ReadHubContact(src.key())
 	if err != nil {
-		row.Pass = false
-		addRowFix(row, fixOperatorHome)
+		row.Pass = manual || !hub
+		row.Warn = manual && hub
+		row.Detail += "; last hub contact record is unreadable"
+		if hub {
+			addRowFix(row, fixOperatorHome+"; then run: mtix sync pull")
+		}
 		return
 	}
 	if !present {
@@ -16,10 +20,10 @@ func attachHubContactOutcome(row *DoctorCheck, src *hubContactSource, hub, manua
 	}
 	row.LastContact = &c
 	if c.OK {
-		row.Detail += "; last pull succeeded"
+		row.Detail += "; last hub contact succeeded"
 		return
 	}
-	row.Detail += "; last pull failed (" + c.ErrorClass + ")"
+	row.Detail += "; last hub contact failed (" + c.ErrorClass + ")"
 	if !hub {
 		row.Detail += "; historical outcome"
 		return
@@ -41,7 +45,7 @@ func daemonPullFix(class string) string {
 	case "refused":
 		return "ask the hub operator to restore pull permissions, then run: mtix sync pull"
 	case "tls":
-		return "set sslmode=verify-full in the configured DSN and supply sslrootcert for its trusted CA, then run: mtix sync pull"
+		return "set sslmode=verify-full in the configured DSN and supply sslrootcert for its trusted CA; if TLS settings already verify, check that the DSN host matches the certificate and ask the hub operator to renew the certificate or enable TLS; then run: mtix sync pull"
 	case "unreachable":
 		return "restore network reachability to the configured hub, then run: mtix sync pull"
 	case "timeout":

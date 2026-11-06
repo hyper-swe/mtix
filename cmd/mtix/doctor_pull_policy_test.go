@@ -25,9 +25,14 @@ func TestHubContactRow_ManualOrNoHub_HistoricalFailureIsNotPermanentFail(t *test
 			}
 			row := hubContactRow(src, hub, src.now())
 			require.True(t, row.Pass, "a disabled automatic contact is not a permanent failing check")
-			require.Contains(t, row.Detail, "last pull failed")
+			require.Contains(t, row.Detail, "last hub contact failed")
 			require.NotNil(t, row.LastContact, "historical evidence must remain visible")
-			if !hub {
+			if hub {
+				require.True(t, row.Warn)
+				require.Contains(t, row.Fix, "MTIX_SYNC_PASSWORD")
+				require.Contains(t, row.Fix, "mtix sync pull")
+			} else {
+				require.False(t, row.Warn)
 				require.NotContains(t, row.Fix, "mtix sync pull")
 			}
 		})
@@ -48,5 +53,5 @@ func TestRunDaemon_LocalTLSPosture_PrintsLocalRecovery(t *testing.T) {
 	require.Contains(t, row.Detail, "tls")
 	require.Contains(t, row.Fix, "sslmode=verify-full")
 	require.Contains(t, row.Fix, "sslrootcert")
-	require.NotContains(t, row.Fix, "ask the hub operator")
+	require.Contains(t, row.Fix, "if TLS settings already verify")
 }

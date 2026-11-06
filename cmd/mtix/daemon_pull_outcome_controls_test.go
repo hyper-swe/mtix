@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"io"
@@ -77,6 +78,7 @@ func TestDaemonPullErrorClass_TypedCauses_OnlySafeLabels(t *testing.T) {
 		err   error
 		class string
 	}{
+		{io.EOF, "unreachable"}, {tls.AlertError(42), "tls"},
 		{context.DeadlineExceeded, "timeout"}, {&net.DNSError{Err: "private-host", IsTimeout: true}, "timeout"},
 		{&net.DNSError{Err: "private-host"}, "unreachable"}, {transport.ErrTLSWeakWithoutFlag, "tls"},
 		{transport.ErrTLSWeakNonLoopback, "tls"}, {transport.ErrTLSUnverified, "tls"},

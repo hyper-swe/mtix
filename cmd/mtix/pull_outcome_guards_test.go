@@ -35,7 +35,7 @@ func TestSyncPull_HookWarning_DoesNotCompletePull(t *testing.T) {
 	require.Empty(t, stdout.String(), "a hook warning must return before completion output")
 }
 
-func TestRunOneDaemonPull_QuarantineHookWarning_StillReportsFailure(t *testing.T) {
+func TestRunOneDaemonPull_QuarantineHookWarning_ReturnsFailure(t *testing.T) {
 	initTestApp(t)
 	_, _, link := linkDepEvents(t)
 	_, err := applyPullBatch(t.Context(), testIngest(nil), app.store, quarantineSourcePull, []*model.SyncEvent{link})

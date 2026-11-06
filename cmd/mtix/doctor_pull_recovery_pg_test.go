@@ -67,7 +67,7 @@ func TestDoctorCLI_ManualPullFix_ReachesHubAndClearsOutcome(t *testing.T) {
 	require.Zero(t, pull.exit, pull.stderr)
 	after := publicContactRow(t, doctorCLIExecute(t, root, dsn, "doctor", "--json").stdout)
 	require.NotEqual(t, "fail", after.Status, after.Detail)
-	require.Contains(t, after.Detail, "last pull succeeded")
+	require.Contains(t, after.Detail, "last hub contact succeeded")
 	rec, present, err := src.state.ReadHubContact(src.key())
 	require.NoError(t, err)
 	require.True(t, present)

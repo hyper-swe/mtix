@@ -58,12 +58,6 @@ func enrolInterruptedFix(mtixDir string, marker *service.EnrolMarker) string {
 	return fmt.Sprintf("mv %s %s && mv %s %s && rm %s && rm -f %s", shellQuote(data), shellQuote(data+".kept-aside"), aside, shellQuote(data), markerPath, accepted)
 }
 
-// shellQuote quotes s for a POSIX shell: single quotes, with each embedded
-// single quote closed, escaped and reopened. Nothing inside is expanded, so a
-// path holding a dollar sign, a backtick or a quote is one literal word.
-// Go's %q is not shell quoting: sh expands a dollar sign inside double quotes.
-func shellQuote(s string) string { return service.ShellQuote(s) }
-
 // registerEnrolHubAcceptedDoctor adds board.enrol-hub-accepted while an
 // enrolment that took the hub's version of a differing board is not cleared:
 // the old store, its backup and the diff report are the only copy of what the

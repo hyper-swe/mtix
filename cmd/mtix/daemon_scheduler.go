@@ -21,7 +21,7 @@ import (
 // runs (MTIX-112.20.3, newReplyProcessor): the loop ticks it before each
 // scheduling decision and scans after each pull, so a reply closes a sender
 // window and a reply_by event for a local agent starts a hold here too.
-func newDaemonScheduler(stdout, stderr io.Writer, hub bool, intervalSec int) (*service.ContactScheduler, func(), *service.ReplyProcessor, error) {
+func newDaemonScheduler(stdout, stderr io.Writer, hub bool, intervalSec int) (*service.ContactScheduler, func(daemonPullOutcome), *service.ReplyProcessor, error) {
 	if !hub {
 		return nil, nil, nil, nil
 	}
@@ -36,9 +36,9 @@ func newDaemonScheduler(stdout, stderr io.Writer, hub bool, intervalSec int) (*s
 	if _, snapErr := src.snapshot(); snapErr != nil {
 		fmt.Fprintf(stderr, "mtix daemon: hub contact inputs unreadable, no hub contact until fixed (run: mtix doctor): %s\n", snapErr)
 	}
-	onContact := func() {
-		if recErr := src.recordContact(src.now(), "poll"); recErr != nil {
-			fmt.Fprintf(stderr, "mtix daemon: %s\n", recErr)
+	onContact := func(outcome daemonPullOutcome) {
+		if recErr := src.recordContact(src.now(), "poll", outcome); recErr != nil {
+			warnSync(stderr, "mtix daemon", recErr)
 		}
 	}
 	return service.NewContactScheduler(src.now, src.snapshot), onContact, daemonReplies(stderr, src), nil

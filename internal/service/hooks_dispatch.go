@@ -40,12 +40,15 @@ const hookClaimLease = 60 * time.Second
 // AFTER a mutation commits, never blocks or fails the mutation; adapter errors
 // are logged, never propagated.
 type HooksDispatcher struct {
-	store    *sqlite.Store
-	registry *hooks.Registry
-	mtixDir  string
-	logger   *slog.Logger
+	store               *sqlite.Store
+	registry            *hooks.Registry
+	mtixDir             string
+	logger              *slog.Logger
+	identityFenceMisses atomic.Uint64
 	// encodeEvent is per-dispatcher so encoding failures can be exercised in tests.
 	encodeEvent func(any) ([]byte, error)
+	// readJournal is bound per dispatcher so the floor/read boundary can be exercised.
+	readJournal func(context.Context, int64, int) ([]sqlite.JournalEvent, error)
 	approvals   *hooks.Approvals
 
 	// isDaemon marks this dispatcher as the daemon trigger — the only trigger
@@ -75,13 +78,14 @@ func NewHooksDispatcher(store *sqlite.Store, mtixDir string, logger *slog.Logger
 	// a hook can write a human-readable audit trail like FRONTIER-INBOX.md at the
 	// project top level (FR-19.3); the adapter clamps traversal to that base. The
 	// exec adapter is registered with independent per-hook approval decisions.
-	reg := hooks.NewRegistry(
-		&inboxAdapter{store: store},
+	d := &HooksDispatcher{store: store, mtixDir: mtixDir, logger: logger, encodeEvent: json.Marshal, readJournal: store.ReadJournalSince}
+	d.registry = hooks.NewRegistry(
+		&inboxAdapter{store: store, identityFenceMisses: &d.identityFenceMisses},
 		hooks.NewWebhookAdapter(hooks.ProcessOriginSource()),
 		hooks.NewAppendFileAdapter(filepath.Dir(mtixDir)),
 		hooks.NewExecAdapter(),
 	)
-	return &HooksDispatcher{store: store, registry: reg, mtixDir: mtixDir, logger: logger, encodeEvent: json.Marshal}
+	return d
 }
 
 // Dispatch runs one pass of the journal-tail dispatcher (FR-20 §4.2): re-fire
@@ -135,24 +139,16 @@ func (d *HooksDispatcher) dispatchHooks(ctx context.Context) {
 		d.logger.Error("hook dispatch: read scan floor", "error", err)
 		return
 	}
-	events, err := d.store.ReadJournalSince(ctx, floor, 500)
+	events, err := d.readJournal(ctx, floor, 500)
 	if err != nil {
 		d.logger.Error("hook dispatch: read journal", "error", err)
 		return
 	}
 
-	maxSeq := floor
 	for _, je := range events {
-		if je.Seq > maxSeq {
-			maxSeq = je.Seq
-		}
 		d.claimAndFireMatching(ctx, cfg, je, execTrusted, execMode)
 	}
-	if maxSeq > floor {
-		if err := d.store.AdvanceHookScanFloorClamped(ctx, maxSeq); err != nil {
-			d.logger.Error("hook dispatch: advance scan floor", "error", err)
-		}
-	}
+	d.advanceHookSnapshot(ctx, floor, events)
 	if err := d.store.PruneHookDispatchLedger(ctx); err != nil {
 		d.logger.Error("hook dispatch: prune ledger", "error", err)
 	}
@@ -169,10 +165,13 @@ func (d *HooksDispatcher) claimAndFireMatching(ctx context.Context, cfg hooks.Co
 		return // op_type is not a hook trigger (e.g. an unaddressed comment)
 	}
 	for _, h := range cfg.MatchingHooks(evt) {
-		won, err := d.store.ClaimHookDispatch(ctx, h.Name, je.Seq, hookClaimLease)
+		won, matched, err := d.store.ClaimHookDispatchEvent(ctx, h.Name, je, hookClaimLease)
 		if err != nil {
 			d.logger.Error("hook dispatch: claim", "hook", h.Name, "seq", je.Seq, "error", err)
 			continue
+		}
+		if !matched {
+			d.identityFenceMisses.Add(1)
 		}
 		if !won {
 			continue // another trigger owns or already fired this (hook,event)
@@ -207,42 +206,6 @@ func (d *HooksDispatcher) OnCommitDispatch() func() {
 	}
 }
 
-// refireStaleClaims is the crash-recovery leg (FR-20 §7): every 'claimed'
-// ledger row older than the lease is a trigger that died between claim and
-// fire. Deliberately floor-independent — a claim can slip below the floor in a
-// narrow advance race, and this scan is what still finds it. A stale claim
-// whose event or hook no longer exists is closed as an error (with the reason
-// in the audit log) so it cannot park the scan floor forever.
-func (d *HooksDispatcher) refireStaleClaims(ctx context.Context, cfg hooks.Config, execTrusted map[string]hooks.Decision, execMode string) {
-	claims, err := d.store.StaleHookClaims(ctx, hookClaimLease)
-	if err != nil {
-		d.logger.Error("hook dispatch: stale-claim scan", "error", err)
-		return
-	}
-	for _, c := range claims {
-		won, err := d.store.ClaimHookDispatch(ctx, c.Hook, c.Seq, hookClaimLease)
-		if err != nil {
-			d.logger.Error("hook dispatch: reclaim", "hook", c.Hook, "seq", c.Seq, "error", err)
-			continue
-		}
-		if !won {
-			continue // another trigger reclaimed it first
-		}
-		h, found := hookByName(cfg, c.Hook)
-		je, ok, err := d.store.ReadJournalEventAt(ctx, c.Seq)
-		evt := NormalizeEvent(je)
-		if err != nil || !ok || !found || evt.Name == "" {
-			d.logger.Warn("hook dispatch: abandoning stale claim — hook or event no longer resolvable",
-				"hook", c.Hook, "seq", c.Seq, "error", err)
-			d.recordOutcome(ctx, c.Hook, c.Seq, sqlite.OutcomeError)
-			d.logFiring(ctx, hooks.Hook{Name: c.Hook}, evt, "", sqlite.OutcomeError, "stale claim abandoned")
-			continue
-		}
-		d.logger.Info("hook dispatch: re-firing stale claim (crashed trigger)", "hook", c.Hook, "seq", c.Seq)
-		d.finishClaim(ctx, h, evt, je, execTrusted, execMode)
-	}
-}
-
 // finishClaim completes a claim the caller just won: apply the rate limit,
 // fire the adapters, and finalize the ledger row with the aggregate outcome.
 func (d *HooksDispatcher) finishClaim(ctx context.Context, h hooks.Hook, evt hooks.Event, je sqlite.JournalEvent, execTrusted map[string]hooks.Decision, execMode string) {
@@ -250,13 +213,7 @@ func (d *HooksDispatcher) finishClaim(ctx context.Context, h hooks.Hook, evt hoo
 	if !d.rateLimited(ctx, h, evt) {
 		outcome = d.fire(ctx, h, evt, je, execTrusted, execMode)
 	}
-	d.recordOutcome(ctx, h.Name, je.Seq, outcome)
-}
-
-func (d *HooksDispatcher) recordOutcome(ctx context.Context, hook string, seq int64, outcome string) {
-	if err := d.store.RecordHookDispatchOutcome(ctx, hook, seq, outcome); err != nil {
-		d.logger.Error("hook dispatch: record outcome", "hook", hook, "seq", seq, "error", err)
-	}
+	d.recordOutcome(ctx, h.Name, je, outcome)
 }
 
 // hookByName finds a configured hook by its (unique, load-validated) name.
@@ -283,7 +240,7 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 	if !ok {
 		return sqlite.OutcomeError
 	}
-	var anyError, anySkipped, anySkippedPolicy bool
+	var anyError, anySkipped, anySkippedPolicy, anyReplaced bool
 	for _, name := range h.Deliver {
 		if name == hooks.AdapterExec && execMode == hooks.ExecDispatchOff {
 			d.logger.Info("hook dispatch: exec skipped — this host's exec-dispatch policy is 'off'",
@@ -312,27 +269,22 @@ func (d *HooksDispatcher) fire(ctx context.Context, h hooks.Hook, evt hooks.Even
 			continue
 		}
 		if err := adapter.Deliver(ctx, adapterDel); err != nil {
-			if d.recordAdapterFailure(ctx, h, evt, name, err) {
+			switch d.adapterFailureOutcome(ctx, h, evt, name, err) {
+			case outcomeHookDeliveryReplaced:
+				anyReplaced = true
+			case sqlite.OutcomeSkippedUntrusted:
 				anySkipped = true
-			} else {
+			default:
 				anyError = true
 			}
 			continue
 		}
+
 		d.logger.Info("hook dispatch: delivered",
 			"hook", h.Name, "adapter", name, "event", evt.Name, "node", evt.NodeID, "seq", je.Seq)
 		d.logFiring(ctx, h, evt, name, "delivered", detail)
 	}
-	switch {
-	case anyError:
-		return sqlite.OutcomeError
-	case anySkipped:
-		return sqlite.OutcomeSkippedUntrusted
-	case anySkippedPolicy:
-		return sqlite.OutcomeSkippedPolicy
-	default:
-		return sqlite.OutcomeDelivered
-	}
+	return hookDeliveryOutcome(anyError, anySkipped, anySkippedPolicy, anyReplaced)
 }
 
 // recordAdapterFailure logs a failed delivery. A webhook refused by origin
@@ -389,7 +341,7 @@ func (d *HooksDispatcher) encodeDelivery(ctx context.Context, h hooks.Hook, evt 
 		d.logFiring(ctx, h, evt, "", sqlite.OutcomeError, err.Error())
 		return hooks.Delivery{}, false
 	}
-	return hooks.Delivery{Hook: h, Event: evt, EventJSON: eventJSON}, true
+	return hooks.Delivery{Hook: h, Event: evt, EventJSON: eventJSON, JournalEventID: je.EventID}, true
 }
 
 // rateLimited reports whether hook h has already fired the FR-19.6 cap of times
@@ -456,7 +408,8 @@ func NormalizeEvent(je sqlite.JournalEvent) hooks.Event {
 // delivery (FR-19.4). The target is the hook's to-agent; a comment.addressed
 // event falls back to its own addressee. Implements hooks.Adapter.
 type inboxAdapter struct {
-	store *sqlite.Store
+	store               *sqlite.Store
+	identityFenceMisses *atomic.Uint64
 }
 
 func (a *inboxAdapter) Name() string { return hooks.AdapterInbox }
@@ -469,7 +422,17 @@ func (a *inboxAdapter) Deliver(ctx context.Context, d hooks.Delivery) error {
 	if agent == "" {
 		return fmt.Errorf("inbox adapter: hook %q names no to-agent and event has no addressee", d.Hook.Name)
 	}
-	return a.store.RecordInboxDelivery(ctx, agent, d.Event.Seq, d.Hook.Name)
+	matched, err := a.store.RecordInboxDeliveryEvent(ctx, agent, sqlite.JournalEvent{Seq: d.Event.Seq, EventID: d.JournalEventID}, d.Hook.Name)
+	if err != nil {
+		return err
+	}
+	if !matched {
+		if a.identityFenceMisses != nil {
+			a.identityFenceMisses.Add(1)
+		}
+		return errHookDeliveryReplaced
+	}
+	return nil
 }
 
 // SetApprovals supplies explicit operator state for an assembled dispatcher (FR-19).

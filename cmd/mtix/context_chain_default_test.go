@@ -41,7 +41,7 @@ func seedDepth3Context(t *testing.T) string {
 	require.NoError(t, runCreate("Epic", "TEST-1", "", 3, "Epic description", ctxPromptEpic, "", "", ""))
 	require.NoError(t, runCreate("Issue", "TEST-1.1", "", 3, "Issue description", ctxPromptIssue, "", "", ""))
 	require.NoError(t, runCreate("Leaf", "TEST-1.1.1", "", 3, "Leaf description", ctxPromptLeaf, "", "", ""))
-	require.NoError(t, runAnnotate("TEST-1", ctxAnnotation))
+	require.NoError(t, runAnnotate("TEST-1", ctxAnnotation, ""))
 	return "TEST-1.1.1.1"
 }
 

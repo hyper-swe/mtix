@@ -87,11 +87,12 @@ func newDaemonReplyRig(t *testing.T, activityAge time.Duration) *daemonReplyRig 
 		return service.ContactInputs{Mode: service.HubContactMode{Kind: service.HubContactActivity},
 			LastActivity: activity, Reply: src.replyInputs()}, nil
 	})
-	pass := daemonPassFor(t.Context(), io.Discard, true, r.replies, func() {
+	pass := daemonPassFor(t.Context(), io.Discard, true, r.replies, func() daemonPullOutcome {
 		r.pulls = append(r.pulls, r.now)
 		if r.onPull != nil {
 			r.onPull()
 		}
+		return daemonPullOutcome{attempted: true, ok: true}
 	})
 	r.plan = daemonLoopPlan{sched: sched, replies: r.replies, pass: pass}
 	return r

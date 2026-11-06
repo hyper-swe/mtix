@@ -85,18 +85,19 @@ func startListenerWorld(t *testing.T, in service.ContactInputs, hub, relay bool)
 			w.passed <- struct{}{}
 			return done, why
 		},
-		pass: func(contact bool) {
+		pass: func(contact bool) daemonPullOutcome {
 			w.mu.Lock()
 			defer w.mu.Unlock()
 			if contact && hub {
 				w.dials++
 			}
+			return daemonPullOutcome{attempted: contact && hub, ok: true}
 		},
 		controls: []daemonPassControl{{ticks: w.ticks}},
 	}
 	if hub {
 		plan.sched = service.NewContactScheduler(clock, load)
-		plan.onContact = func() {}
+		plan.onContact = func(daemonPullOutcome) {}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -212,7 +213,7 @@ func TestListener_IdleClamp_EndsHubListener(t *testing.T) {
 func TestListener_RelayBoard_IngestsDuringHold(t *testing.T) {
 	relayPasses, pulls := 0, 0
 	pass := buildDaemonPass(false, daemonPassSteps{
-		drain: func() {}, pull: func() { pulls++ }, relay: func() { relayPasses++ }, dispatch: func() {},
+		drain: func() {}, pull: func() daemonPullOutcome { pulls++; return daemonPullOutcome{attempted: true, ok: true} }, relay: func() { relayPasses++ }, dispatch: func() {},
 	})
 	w := startListenerWorld(t, holdInputs(true), false, true)
 	require.True(t, w.tick(time.Hour))

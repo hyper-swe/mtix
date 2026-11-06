@@ -842,7 +842,7 @@ func TestRunPrompt_NonExistent_ReturnsError(t *testing.T) {
 // TestRunAnnotate_NonExistent_ReturnsError verifies annotate for missing node.
 func TestRunAnnotate_NonExistent_ReturnsError(t *testing.T) {
 	initTestApp(t)
-	err := runAnnotate("NONEXIST-1", "annotation")
+	err := runAnnotate("NONEXIST-1", "annotation", "")
 	assert.Error(t, err)
 }
 

@@ -92,6 +92,7 @@ func hubContactRow(src *hubContactSource, hub bool, now time.Time) DoctorCheck {
 		modeText = "interval (grandfathered: the daemon's own --interval)"
 	}
 	row.Detail = "mode " + modeText + "; " + lastActivityText(src, now) + "; " + lastContactText(src, now)
+	attachHubContactOutcome(&row, src)
 	if !hub {
 		row.Detail += "; no hub configured, so the daemon makes no hub contact"
 		return row
@@ -194,7 +195,7 @@ func lastActivityText(src *hubContactSource, now time.Time) string {
 func lastContactText(src *hubContactSource, now time.Time) string {
 	c, present, err := src.state.ReadHubContact(src.key())
 	if err != nil {
-		return "last contact unreadable (" + err.Error() + ")"
+		return "last contact unreadable (operator-local record; run mtix doctor)"
 	}
 	if !present {
 		return "no scheduled contact yet"

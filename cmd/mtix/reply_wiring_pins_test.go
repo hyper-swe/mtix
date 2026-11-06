@@ -77,7 +77,11 @@ func TestNewDaemonPlan_WithHub_CarriesProcessorThroughPassAndLoop(t *testing.T) 
 	require.NoError(t, runAgentRegister("local-agent", sessionOptions{}))
 	pulls := 0
 	plan, err := newDaemonPlan(t.Context(), daemonPlanSpec{stdout: io.Discard, stderr: io.Discard, hub: true, intervalSec: 5,
-		pull: func() { pulls++; pulledReplyEvent(t, "local-agent") }})
+		pull: func() daemonPullOutcome {
+			pulls++
+			pulledReplyEvent(t, "local-agent")
+			return daemonPullOutcome{attempted: true, ok: true}
+		}})
 	require.NoError(t, err)
 	require.NotNil(t, plan.sched)
 	require.NotNil(t, plan.replies, "the loop ticks plan.replies before every decision")

@@ -30,7 +30,7 @@ func TestInboxRetentionInstructions_FullSectionMirrored_ShortSectionManaged(t *t
 			require.Equal(t, want, section, path)
 		}
 		for _, phrase := range []string{"no TTL", "until that agent acknowledges it", "Acknowledgements are not synced", "--history",
-			"removes the per-event acknowledgement rows", "`mtix import --mode replace`", "--discard-local", "tasks.json", "inbox_deliveries", "agent_inbox_ack", "agent_inbox_cursor", "no hub contact", "Apart from the exceptions below", "refuses a replace that would drop a task its sync log holds", "removed in the same step"} {
+			"removes the per-event acknowledgement rows", "`mtix import --mode replace`", "--discard-local", "tasks.json", "inbox_deliveries", "agent_inbox_ack", "agent_inbox_cursor", "no hub contact", "Apart from the exceptions below", "refuses a replace that would drop a task its sync log holds", "removed in the same step", "private-export.json", "never commit", "--from-export", "0.5.4 reader", "no source watermark"} {
 			require.Contains(t, section, phrase, path)
 		}
 	}

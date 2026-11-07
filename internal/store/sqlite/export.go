@@ -34,6 +34,8 @@ const SchemaVersionV1 = "2.0.0"
 // ExportData represents the complete export format per FR-7.8, FR-15.1.
 // The schema_version field (FR-15.2g) enables auto-import compatibility checks.
 type ExportData struct {
+	// InboxJournal is present only in explicit private exports (FR-19.1).
+	InboxJournal  *InboxJournal   `json:"inbox_journal,omitempty"`
 	Version       int             `json:"version"`
 	SchemaVersion string          `json:"schema_version"`
 	ExportedAt    string          `json:"exported_at"`

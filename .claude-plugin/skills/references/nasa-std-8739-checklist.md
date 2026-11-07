@@ -50,7 +50,7 @@ Every anomaly discovered during development must be recorded:
 mtix provides:
 - **Unique identification:** Dot-notation IDs for every work item
 - **Change tracking:** State machine with logged transitions
-- **Baselines:** Export snapshots with checksums (`mtix export > <file>`)
+- **Baselines:** Export snapshots with checksums (`mtix export --board-only > <file>`)
 - **Integrity verification:** Content hash verification (`mtix verify`)
 
 ## Formal Methods

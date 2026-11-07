@@ -92,7 +92,7 @@ mtix claim MTIX-{id} --agent your-name
 # 5. Verify all acceptance criteria are met
 
 # 6. Export and commit
-mtix export                   # Export task state to tasks.json
+mtix export --board-only > .mtix/tasks.json # Export the journal-free board
 git add .mtix/tasks.json      # Include task state in your commit
 git commit -m "feat(store): add null parent validation
 
@@ -100,12 +100,12 @@ Refs: MTIX-42.1.3"
 
 # 7. Mark done
 mtix done MTIX-{id}
-mtix export                   # Re-export after status change
+mtix export --board-only > .mtix/tasks.json # Re-export the journal-free board
 ```
 
 ### Export Before Push
 
-Always run `mtix export` before pushing. This writes the current task state to `.mtix/tasks.json`, which is tracked in git. This ensures:
+Before pushing, use `mtix export --board-only > .mtix/tasks.json` if a fresh board snapshot is needed. Automatic publication also updates this journal-free tracked mirror. Default `mtix export` writes a private snapshot to stdout with addressed inbox mail; never commit that snapshot. Board annotations can still contain private text, so inspect the mirror before committing. The tracked board ensures:
 - Other contributors can see task status without running mtix locally
 - The task state is versioned alongside the code it describes
 - Progress is visible in pull request diffs

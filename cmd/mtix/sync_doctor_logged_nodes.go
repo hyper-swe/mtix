@@ -47,7 +47,11 @@ func appendLoggedNodesCheck(ctx context.Context, r DoctorReport, st *sqlite.Stor
 	if len(missing) == 0 {
 		return appendCheck(r, loggedNodesCheckName, true, "ok")
 	}
+	guide, err := st.InboxSafeRecoveryGuide(ctx, loggedNodesFix)
+	if err != nil {
+		return appendCheck(r, loggedNodesCheckName, false, err.Error())
+	}
 	return appendDoctorCheck(r, DoctorCheck{Name: loggedNodesCheckName, Detail: fmt.Sprintf(
 		"the board lacks %d of the tasks the local sync log creates: %s; a pull cannot restore them",
-		len(missing), sqlite.NameNodes(missing)), Fix: loggedNodesFix})
+		len(missing), sqlite.NameNodes(missing)), Fix: guide})
 }

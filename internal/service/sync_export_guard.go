@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // The kinds of AutoImportRefusal (MTIX-95.31.2).
@@ -42,6 +44,9 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 	if refusal.Synced {
 		// A replace import is refused on a store that syncs (MTIX-107.31).
 		replace, keepFile = syncedReplaceWays, syncedReplaceWays
+	}
+	if refusal.RestoredInbox {
+		replace, keepFile = sqlite.RestoredInboxRecovery, sqlite.RestoredInboxRecovery
 	}
 	switch refusal.Kind {
 	case refusalNewerSchema:

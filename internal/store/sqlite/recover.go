@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -26,12 +27,20 @@ import (
 // ancestors are synthesized as placeholders so the parent foreign-key chain
 // holds.
 type RecoverResult struct {
-	Export       *ExportData
-	RecoveredIDs []string // rows read from the damaged database, by the id each row carries
-	LostIDs      []string // unreadable in the database and absent from the mirror, each id once
-	FromMirror   []string // unreadable or missing in the database, salvaged from the mirror
-	Placeholders []string // synthesized parents for orphaned survivors
-	Notes        []string // human-readable salvage diagnostics
+	// InboxIncomplete means recovery cannot claim that every original mail row survived.
+	InboxIncomplete bool
+	Export          *ExportData
+	RecoveredIDs    []string // rows read from the damaged database, by the id each row carries
+	LostIDs         []string // unreadable in the database and absent from the mirror, each id once
+	FromMirror      []string // unreadable or missing in the database, salvaged from the mirror
+	Placeholders    []string // synthesized parents for orphaned survivors
+	Notes           []string // human-readable salvage diagnostics
+}
+
+// RecoverOptions supplies optional journal sources and logging (FR-19.1).
+type RecoverOptions struct {
+	Logger       *slog.Logger
+	InboxSources []*ExportData
 }
 
 // Recover salvages as much as possible from a damaged database and the
@@ -52,8 +61,23 @@ type RecoverResult struct {
 //
 // Returns an error only when there is nothing to salvage from either
 // source — partial damage yields a partial result plus Notes.
-func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger *slog.Logger) (*RecoverResult, error) {
+func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, options RecoverOptions) (*RecoverResult, error) {
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	// SQLite follows database symlinks when locating the adjacent WAL. Use the
+	// same resolved path for verification and every salvage read (FR-19.1).
+	if resolved, err := filepath.EvalSymlinks(dbPath); err == nil {
+		dbPath = resolved
+	}
+	inboxSources := options.InboxSources
 	res := &RecoverResult{}
+	// Verify WAL bytes before any SQLite read can ignore an invalid suffix.
+	if walErr := checkRecoverWAL(ctx, dbPath); walErr != nil {
+		res.InboxIncomplete = true
+		res.Notes = append(res.Notes, fmt.Sprintf("WAL tail could not be proven: %v; committed records (including tickets and mail) in ignored WAL frames are possibly missing; lost record count unknown. Even a stale tail makes recovery partial and may redeliver already-read mail; keep the database and WAL together.", walErr))
+	}
 	mirrorNotes := &RecoverResult{}
 	mirror := readMirrorSource(mirrorPath, mirrorNotes)
 	db, dbErr := salvageFromDB(ctx, dbPath, res, mirror)
@@ -85,7 +109,12 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, logger
 	// After the placeholders: history of a lost task without a uid is keyed on
 	// its id, and a placeholder parent may now hold that id (MTIX-95.31.19.5).
 	carryRecoveredHistory(nodes, db, mirror.data, res)
-	return finishRecover(res, nodes, db, mtixVersion)
+	result, err := finishRecover(res, nodes, db, mtixVersion)
+	if err != nil {
+		return nil, err
+	}
+	result.Export.InboxJournal = recoverInboxJournal(ctx, dbPath, mirror.data, res, inboxIntegrityTimeout, inboxSources...)
+	return result, nil
 }
 
 // mergeMirrorRows adds to the salvage what only the mirror holds (MTIX-26.5):

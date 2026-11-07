@@ -14,7 +14,19 @@ import (
 // Recovery reads inbox state independently of damaged node indexes. The
 // supplied export can fill events absent from the readable database prefix.
 func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData, res *RecoverResult, limit time.Duration, sourceBefore os.FileInfo, inboxSources ...*ExportData) *InboxJournal {
-	journal, readErr := salvageInboxJournal(ctx, dbPath, res, limit)
+	r := inboxRecoverer{salvage: salvageInboxJournal}
+	return r.recover(ctx, dbPath, mirror, res, limit, sourceBefore, inboxSources...)
+}
+
+// inboxRecoverer carries the salvage read as a field so a test can change the
+// source during that read and prove the size is re-checked after it.
+type inboxRecoverer struct {
+	salvage func(ctx context.Context, path string, res *RecoverResult, limit time.Duration) (*InboxJournal, error)
+}
+
+// recover is recoverInboxJournal with an injectable salvage read.
+func (r inboxRecoverer) recover(ctx context.Context, dbPath string, mirror *ExportData, res *RecoverResult, limit time.Duration, sourceBefore os.FileInfo, inboxSources ...*ExportData) *InboxJournal {
+	journal, readErr := r.salvage(ctx, dbPath, res, limit)
 	checkRecoveredSourceSize(dbPath, sourceBefore, res)
 	if readErr != nil {
 		res.InboxIncomplete = true

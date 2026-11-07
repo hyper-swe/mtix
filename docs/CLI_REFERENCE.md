@@ -1550,9 +1550,7 @@ store opens, use mtix export to preserve readable acknowledgement coverage.
 Zero-byte and one-byte databases are skipped before any SQLite open. The WAL
 alone is not salvaged; it may hold the only copy of committed records. Other
 commands refuse an empty, one-byte or missing database beside a nonempty WAL,
-even when integrity checks are bypassed. Use mtix recover; before restoring,
-copy or move the database and its -wal and -shm together out of the project
-(or the entire data/ directory). Never move only the database. Mirror and
+even when integrity checks are bypassed. Use mtix recover; SQLite treats such a file as empty and deletes its WAL when it opens it, which is why it is skipped. To restore into this project, move the database and its -wal and -shm together out of the project (or move the entire data/ directory); a copy leaves the refused files in place, so restoring here stays refused, and a copy is enough only for restoring into a fresh project. Never move only the database. Mirror and
 private-export fallback remains incomplete. A changed or unverifiable database
 size after salvage also makes completeness unproven and discards coverage.
 WAL headers and frame checksums are checked before opening the store. An

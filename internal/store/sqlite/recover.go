@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -71,6 +72,7 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, option
 	if resolved, err := filepath.EvalSymlinks(dbPath); err == nil {
 		dbPath = resolved
 	}
+	sourceBefore, _ := os.Stat(dbPath)
 	inboxSources := options.InboxSources
 	res := &RecoverResult{}
 	// Verify WAL bytes before any SQLite read can ignore an invalid suffix.
@@ -82,6 +84,9 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, option
 	mirror := readMirrorSource(mirrorPath, mirrorNotes)
 	db, dbErr := salvageFromDB(ctx, dbPath, res, mirror)
 	if dbErr != nil {
+		if errors.Is(dbErr, errEmptyRecoverySource) {
+			res.InboxIncomplete = true
+		}
 		res.Notes = append(res.Notes, fmt.Sprintf("database unusable: %v", dbErr))
 		logger.Warn("recover: database unusable, falling back to mirror", "error", dbErr)
 		db = &dbSalvage{nodes: map[string]exportNode{}}
@@ -102,7 +107,7 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, option
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf(
 			"nothing to salvage: database (%s) and mirror (%s) both unusable: %w",
-			dbPath, mirrorPath, model.ErrNotFound)
+			dbPath, mirrorPath, errors.Join(model.ErrNotFound, dbErr))
 	}
 
 	res.Placeholders = synthesizePlaceholderParents(nodes)
@@ -113,7 +118,7 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, option
 	if err != nil {
 		return nil, err
 	}
-	result.Export.InboxJournal = recoverInboxJournal(ctx, dbPath, mirror.data, res, inboxIntegrityTimeout, inboxSources...)
+	result.Export.InboxJournal = recoverInboxJournal(ctx, dbPath, mirror.data, res, inboxIntegrityTimeout, sourceBefore, inboxSources...)
 	return result, nil
 }
 
@@ -200,8 +205,8 @@ type dbSalvage struct {
 // read is salvaged without it, and the column is listed in the result's
 // unreadable.
 func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult, mirror *mirrorSource) (*dbSalvage, error) {
-	if _, err := os.Stat(dbPath); err != nil {
-		return nil, fmt.Errorf("stat database: %w", err)
+	if err := checkRecoverDatabase(dbPath); err != nil {
+		return nil, err
 	}
 
 	db, err := openSQLite(dbPath, "mode=ro")

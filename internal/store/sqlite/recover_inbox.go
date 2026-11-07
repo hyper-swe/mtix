@@ -7,13 +7,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"time"
 )
 
 // Recovery reads inbox state independently of damaged node indexes. The
 // supplied export can fill events absent from the readable database prefix.
-func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData, res *RecoverResult, limit time.Duration, inboxSources ...*ExportData) *InboxJournal {
+func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData, res *RecoverResult, limit time.Duration, sourceBefore os.FileInfo, inboxSources ...*ExportData) *InboxJournal {
 	journal, readErr := salvageInboxJournal(ctx, dbPath, res, limit)
+	checkRecoveredSourceSize(dbPath, sourceBefore, res)
 	if readErr != nil {
 		res.InboxIncomplete = true
 		if errors.Is(readErr, errInboxIntegrityUnfinished) {
@@ -68,6 +70,9 @@ func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData,
 
 // salvageInboxJournal reads damaged files without writes or index dependence (FR-19.1, MTIX-112.2.1).
 func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult, limit time.Duration) (journal *InboxJournal, err error) {
+	if sourceErr := checkRecoverDatabase(path); sourceErr != nil {
+		return nil, sourceErr
+	}
 	// Apply salvage pragmas on every connection through the shared DSN builder.
 	params := append(readOnlyDSNParams(), "_pragma=cell_size_check(0)")
 	db, err := openSQLite(path, params...)

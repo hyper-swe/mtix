@@ -1547,6 +1547,14 @@ Any unproven result discards all recovered coverage, including supplied-export
 coverage, and can deliver already-read mail again. A five-second check timeout
 does not prove damage: acknowledgement coverage could not be proven. If the
 store opens, use mtix export to preserve readable acknowledgement coverage.
+Zero-byte and one-byte databases are skipped before any SQLite open. The WAL
+alone is not salvaged; it may hold the only copy of committed records. Other
+commands refuse an empty, one-byte or missing database beside a nonempty WAL,
+even when integrity checks are bypassed. Use mtix recover; before restoring,
+copy or move the database and its -wal and -shm together out of the project
+(or the entire data/ directory). Never move only the database. Mirror and
+private-export fallback remains incomplete. A changed or unverifiable database
+size after salvage also makes completeness unproven and discards coverage.
 WAL headers and frame checksums are checked before opening the store. An
 unverifiable tail, even a stale tail, makes recovery partial: committed records
 (including tickets and mail) may be missing and the lost count is unknown.
@@ -1557,7 +1565,7 @@ Keep the database and WAL together.
 Inbox salvage walks rowids without secondary indexes. After 10,000 failed
 rowid probes it stops and reports the limit and position as incomplete; an
 unreadable upper bound means the lost record count is unknown. Keep the
-original database. The recovered file is private and is added to .gitignore
+original database and its -wal and -shm together. The recovered file is private and is added to .gitignore
 before it is written, including in existing projects.
 Use --from-export private-export.json to supplement the database with an
 explicit private export. Ordinary tasks.json does not carry the inbox journal.
@@ -1573,7 +1581,8 @@ When the store holds tickets, the replace import asks for the ticket count,
 typed at an interactive terminal; no flag supplies it, so it cannot run
 unattended.
 
-Restore into this project (after moving the source database aside) or a fresh
+Restore into this project (after moving the entire source data/ directory aside,
+including the database, -wal and -shm together) or a fresh
 'mtix init' project.
 
 ### Flags

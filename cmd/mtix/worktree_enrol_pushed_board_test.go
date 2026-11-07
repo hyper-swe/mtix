@@ -111,14 +111,20 @@ func TestEnrolWorktree_RealPath_FullyPushedBoard_Enrols(t *testing.T) {
 }
 
 // TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference: a pushed board
-// with pre-.15 creation/workflow events differs on activity, creation stamps,
+// with pre-.15 comment creation events differs on activity, creation stamps,
 // annotations and agent registrations before the exclusions hide those fields.
 // Legacy backfill without an addressee now refuses separately.
 func TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference(t *testing.T) {
 	ctx := context.Background()
 	root, writer, hubEvents := worktreeWith(t, func(ctx context.Context, st *sqlite.Store) { pushedWork(ctx, t, st) })
 	require.NoError(t, writer.Close())
-	hubEvents = preReplicatedFieldsEvents(t, hubEvents)
+	// This proof isolates legacy annotation id/time. Keep workflow snapshots:
+	// legacy completion times can differ, and now correctly refuse separately.
+	for i, event := range hubEvents {
+		if event.OpType == model.OpComment {
+			hubEvents[i] = preReplicatedFieldsEvents(t, []*model.SyncEvent{event})[0]
+		}
+	}
 	hub := hubOf(hubEvents)
 	var local, clone []byte
 	require.NoError(t, withScratch(slog.Default(), root, func(scratch string) error {

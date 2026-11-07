@@ -264,6 +264,7 @@ func pullLoop(ctx context.Context, in pullIngest,
 		if err = page.advance(events); err != nil {
 			return applied, batches, fmt.Errorf("pull batch %d: %w", batches+1, err)
 		}
+		in.moreCursorPages = hasMore
 		held, err := applyPullBatch(ctx, in, store, quarantineSourcePull, events)
 		if err != nil {
 			return applied, batches, fmt.Errorf("apply batch %d: %w", batches+1, err)
@@ -379,7 +380,9 @@ func runAfterEach(tx *sql.Tx, e *model.SyncEvent,
 // savePullCursor saves, in the batch transaction tx, the pull cursor after
 // a cursor-pass batch (MTIX-95.4): at the last event whose Lamport clock
 // advancePullCursor accepts against the local clock after the batch. A
-// batch with no such event leaves the saved cursor where it was.
+// batch with no such event leaves the saved cursor where it was. A final
+// cursor page retires first-clone authority with that cursor; intermediate
+// pages keep it. The drain handles a pass with no accepted final cursor.
 func savePullCursor(ctx context.Context, tx *sql.Tx, in pullIngest, events []*model.SyncEvent) error {
 	local, err := sqlite.LocalLamport(ctx, tx)
 	if err != nil {
@@ -389,7 +392,13 @@ func savePullCursor(ctx context.Context, tx *sql.Tx, in pullIngest, events []*mo
 	if !ok {
 		return nil
 	}
-	return writePullCursor(ctx, tx, cursor)
+	if cursorErr := writePullCursor(ctx, tx, cursor); cursorErr != nil {
+		return cursorErr
+	}
+	if in.moreCursorPages {
+		return nil
+	}
+	return sqlite.CompleteCloneWakeBootstrap(ctx, tx)
 }
 
 // readLastPulledClock returns the saved pull cursor (MTIX-95.4; ADR-006
@@ -427,15 +436,12 @@ func readLastPulledClock(ctx context.Context, store *sqlite.Store) (transport.Pu
 
 // writePullCursor saves cursor as the pull cursor, both halves, in tx
 // (MTIX-95.4). Each key is upserted, so a store that lacks the event-id key
-// gains it. Any durable pull cursor revokes unfinished first-clone authority
-// in that same transaction, including ordinary pull recovery.
+// gains it. Completion callers retire first-clone authority in this same
+// transaction only when the clone or ordinary cursor pass reaches its end.
 func writePullCursor(ctx context.Context, tx *sql.Tx, cursor transport.PullCursor) error {
-	if err := upsertMeta(ctx, tx,
+	return upsertMeta(ctx, tx,
 		[2]string{"meta.sync.last_pulled_clock", strconv.FormatInt(cursor.Lamport, 10)},
-		[2]string{"meta.sync.last_pulled_event_id", cursor.EventID}); err != nil {
-		return err
-	}
-	return sqlite.CompleteCloneWakeBootstrap(ctx, tx)
+		[2]string{"meta.sync.last_pulled_event_id", cursor.EventID})
 }
 
 // upsertMeta sets each {key, value} pair in meta, in tx and in order, adding

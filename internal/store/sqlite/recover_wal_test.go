@@ -39,8 +39,8 @@ func TestRecoverWAL_HeaderAndFrameVerification(t *testing.T) {
 			want string
 		}{
 			{"magic", 0, "magic"}, {"version", 4, "version"}, {"page-size", 8, "page size"},
-			{"header-checksum", 24, "header checksum"}, {"salt", 40, "salt"},
-			{"frame-checksum", 48, "frame 0 checksum"}, {"page-data", 100, "frame 0 checksum"},
+			{"header-checksum", 24, "header checksum"}, {"header-checksum-second", 28, "header checksum"}, {"salt", 40, "salt"}, {"salt-second", 44, "salt"},
+			{"frame-checksum", 48, "frame 0 checksum"}, {"frame-checksum-second", 52, "frame 0 checksum"}, {"page-data", 100, "frame 0 checksum"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				bad := bytes.Clone(data)

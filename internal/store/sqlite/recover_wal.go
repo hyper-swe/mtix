@@ -16,10 +16,19 @@ import (
 // checkRecoverWAL checks the log before SQLite can silently ignore a bad suffix
 // (FR-19.1, MTIX-112.48). This parses WAL headers/checksums, never btree pages.
 func checkRecoverWAL(ctx context.Context, path string) (err error) {
-	f, err := os.Open(path + "-wal")
+	// Inspect the path before opening: a FIFO open waits for a writer and
+	// cannot be interrupted by the recovery context (FR-19.1).
+	info, err := os.Lstat(path + "-wal") // #nosec G703 -- Recovery intentionally reads the caller-selected database sidecar; there is no confined root.
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
+	if err != nil {
+		return fmt.Errorf("stat WAL path: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("WAL is not a regular file")
+	}
+	f, err := os.Open(path + "-wal") // #nosec G703 -- Recovery intentionally reads the caller-selected database sidecar; there is no confined root.
 	if err != nil {
 		return fmt.Errorf("open WAL: %w", err)
 	}
@@ -37,7 +46,7 @@ func checkRecoverWAL(ctx context.Context, path string) (err error) {
 	if walErr := verifyRecoverWAL(ctx, io.NewSectionReader(f, 0, before.Size()), before.Size()); walErr != nil {
 		return walErr
 	}
-	after, err := os.Stat(path + "-wal")
+	after, err := os.Stat(path + "-wal") // #nosec G703 -- Recovery intentionally reads the caller-selected database sidecar; there is no confined root.
 	if err != nil {
 		return fmt.Errorf("recheck WAL: %w", err)
 	}

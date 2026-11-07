@@ -46,8 +46,12 @@ coverage, and can deliver already-read mail again. A five-second check timeout
 does not prove damage: acknowledgement coverage could not be proven. If the
 store opens, use mtix export to preserve readable acknowledgement coverage.
 WAL headers and frame checksums are checked before opening the store. An
-unverifiable tail, even a stale tail, makes recovery partial: committed mail
-may be missing and the lost count is unknown. Keep the database and WAL together.
+unverifiable tail, even a stale tail, makes recovery partial: committed records
+(including tickets and mail) may be missing and the lost count is unknown.
+A WAL that is absent, emptied, or shortened exactly on a frame boundary
+(including a header-only log) cannot be distinguished from a shorter healthy log;
+committed records may be missing even under a complete report.
+Keep the database and WAL together.
 Inbox salvage walks rowids without secondary indexes. After 10,000 failed
 rowid probes it stops and reports the limit and position as incomplete; an
 unreadable upper bound means the lost record count is unknown. Keep the

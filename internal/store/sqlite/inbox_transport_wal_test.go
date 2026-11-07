@@ -58,26 +58,10 @@ func crashMailWAL(t *testing.T) (string, []byte, int, int) {
 
 // FR-19.1 / MTIX-112.48: SQLite can silently ignore committed mail after a bad WAL frame.
 func TestRecover_WALReplayLoss_IsIncomplete(t *testing.T) {
-	for _, mode := range []string{"first-checksum", "second-transaction-checksum", "salt", "torn-tail", "header-checksum", "clean", "symlink-first-checksum", "symlink-clean"} {
+	for _, mode := range []string{"first-checksum", "second-transaction-checksum", "second-checksum-word", "second-salt", "salt", "torn-tail", "header-checksum", "clean", "symlink-first-checksum", "symlink-clean"} {
 		t.Run(mode, func(t *testing.T) {
 			path, data, page, second := crashMailWAL(t)
-			expected := 303
-			switch mode {
-			case "first-checksum", "symlink-first-checksum":
-				data[32+24+100] ^= 1
-				expected = 300
-			case "second-transaction-checksum":
-				data[32+second*(24+page)+24+100] ^= 1
-				expected = 301
-			case "salt":
-				data[32+8] ^= 1
-				expected = 300
-			case "torn-tail":
-				data = append(data, byte(1))
-			case "header-checksum":
-				data[24] ^= 1
-				expected = 300
-			}
+			data, expected := damageCrashMailWAL(mode, data, page, second)
 			require.NoError(t, os.WriteFile(path+"-wal", data, 0600))
 			if strings.HasPrefix(mode, "symlink-") {
 				if runtime.GOOS == "windows" {
@@ -103,7 +87,9 @@ func TestRecover_WALReplayLoss_IsIncomplete(t *testing.T) {
 			require.True(t, result.InboxIncomplete, "WAL replay loss must never claim complete salvage")
 			notes := strings.Join(result.Notes, " ")
 			require.Contains(t, notes, "WAL")
-			require.Contains(t, notes, "committed mail")
+			require.Contains(t, notes, "committed records")
+			require.Contains(t, notes, "tickets and mail")
+			require.Contains(t, notes, "Even a stale tail makes recovery partial and may redeliver already-read mail")
 			require.Contains(t, notes, "possibly missing")
 			require.Contains(t, notes, "unknown")
 			for _, event := range result.Export.InboxJournal.Events {
@@ -118,4 +104,32 @@ func TestRecover_WALReplayLoss_IsIncomplete(t *testing.T) {
 			require.Len(t, mail, expected, "every readable committed event is restored unread")
 		})
 	}
+}
+
+// damageCrashMailWAL selects independently observable WAL replay failures.
+func damageCrashMailWAL(mode string, data []byte, page, second int) ([]byte, int) {
+	expected := 303
+	switch mode {
+	case "first-checksum", "symlink-first-checksum":
+		data[32+24+100] ^= 1
+		expected = 300
+	case "second-transaction-checksum":
+		data[32+second*(24+page)+24+100] ^= 1
+		expected = 301
+	case "second-checksum-word":
+		data[32+second*(24+page)+20] ^= 1
+		expected = 301
+	case "second-salt":
+		data[32+second*(24+page)+12] ^= 1
+		expected = 301
+	case "salt":
+		data[32+8] ^= 1
+		expected = 300
+	case "torn-tail":
+		data = append(data, byte(1))
+	case "header-checksum":
+		data[24] ^= 1
+		expected = 300
+	}
+	return data, expected
 }

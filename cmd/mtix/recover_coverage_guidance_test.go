@@ -17,6 +17,8 @@ func TestRecoverHelp_ExplainsUnprovenCoverage(t *testing.T) {
 	require.Contains(t, help, "only when")
 	require.Contains(t, help, "already-read mail")
 	require.Contains(t, help, "mtix export")
+	require.Contains(t, help, "absent, emptied, or shortened exactly on a frame boundary")
+	require.Contains(t, help, "committed records may be missing even under a complete report")
 	require.NotContains(t, help, "acknowledgement coverage are recovered too")
 }
 

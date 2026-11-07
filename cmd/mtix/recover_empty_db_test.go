@@ -49,6 +49,8 @@ func TestRecoverCommand_EmptyDatabase_PreservesSource(t *testing.T) {
 			wal, err := os.ReadFile(path + "-wal")
 			require.NoError(t, err)
 			require.NotEmpty(t, wal)
+			shm, err := os.ReadFile(path + "-shm")
+			require.NoError(t, err)
 			fromExport := ""
 			if mode == "private-export" {
 				file, err := app.store.ExportWithInbox(t.Context(), "", "")
@@ -61,7 +63,7 @@ func TestRecoverCommand_EmptyDatabase_PreservesSource(t *testing.T) {
 			t.Chdir(root)
 			var recovered string
 			output, recoverErr := cliBehaviorOutput(t, func() error { var e error; recovered, e = runRecoverFrom(fromExport); return e })
-			for suffix, before := range map[string][]byte{"": {}, "-wal": wal} {
+			for suffix, before := range map[string][]byte{"": {}, "-wal": wal, "-shm": shm} {
 				after, err := os.ReadFile(path + suffix)
 				require.NoError(t, err, "recover command removed source %s", suffix)
 				require.Equal(t, sha256.Sum256(before), sha256.Sum256(after))
@@ -69,6 +71,10 @@ func TestRecoverCommand_EmptyDatabase_PreservesSource(t *testing.T) {
 			if mode == "no-mirror" {
 				require.ErrorContains(t, recoverErr, "zero-byte")
 				require.Contains(t, recoverErr.Error(), "skipped")
+				require.Contains(t, recoverErr.Error(), "no WAL-only salvage")
+				require.Contains(t, recoverErr.Error(), "-shm")
+				require.Contains(t, recoverErr.Error(), "together")
+				require.Contains(t, recoverErr.Error(), "only copy of committed")
 				return
 			}
 			require.NoError(t, recoverErr)

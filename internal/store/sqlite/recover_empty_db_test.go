@@ -55,8 +55,9 @@ func TestRecover_EmptyDatabase_PreservesSource(t *testing.T) {
 				path = filepath.Join(t.TempDir(), "alias.db")
 				require.NoError(t, os.Symlink(sourcePath, path))
 			}
+			beforeImage := sourceImage(t, sourcePath)
 			result, recoverErr := sqlite.Recover(t.Context(), path, mirror, "test", options)
-			for suffix, before := range map[string][]byte{"": {}, "-wal": wal} {
+			for suffix, before := range beforeImage {
 				after, err := os.ReadFile(sourcePath + suffix)
 				require.NoError(t, err, "source must remain present: %s", suffix)
 				require.Equal(t, sha256.Sum256(before), sha256.Sum256(after), "source bytes changed: %s", suffix)
@@ -65,6 +66,10 @@ func TestRecover_EmptyDatabase_PreservesSource(t *testing.T) {
 				require.Error(t, recoverErr)
 				require.Contains(t, recoverErr.Error(), "zero-byte")
 				require.Contains(t, recoverErr.Error(), "skipped")
+				require.Contains(t, recoverErr.Error(), "no WAL-only salvage")
+				require.Contains(t, recoverErr.Error(), "-shm")
+				require.Contains(t, recoverErr.Error(), "together")
+				require.Contains(t, recoverErr.Error(), "only copy of committed")
 				return
 			}
 			require.NoError(t, recoverErr)
@@ -94,7 +99,7 @@ func TestCountUnackedInboxFile_EmptyDatabase_PreservesWAL(t *testing.T) {
 	path, wal, _, _ := crashMailWAL(t)
 	require.NoError(t, os.WriteFile(path, nil, 0600))
 	_, err := sqlite.CountUnackedInboxFile(t.Context(), path)
-	require.ErrorContains(t, err, "0 bytes")
+	require.ErrorContains(t, err, "empty or one-byte")
 	for suffix, before := range map[string][]byte{"": {}, "-wal": wal} {
 		after, err := os.ReadFile(path + suffix)
 		require.NoError(t, err)

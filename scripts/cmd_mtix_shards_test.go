@@ -30,7 +30,7 @@ func cmdShardFixture(t *testing.T, listing string, exit string) string {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "cmd-mtix-shards.sh"), source, 0o600))
 	require.NoError(t, os.Mkdir(filepath.Join(root, "bin"), 0o750))
-	shim := "#!/usr/bin/env bash\n[ \"$*\" = 'test -list .* ./cmd/mtix/' ] || exit 99\ncat \"$SHARD_TEST_LIST\"\nexit \"$SHARD_TEST_EXIT\"\n"
+	shim := "#!/usr/bin/env bash\n[ \"$*\" = 'test -race -list .* ./cmd/mtix/' ] || exit 99\ncat \"$SHARD_TEST_LIST\"\nexit \"$SHARD_TEST_EXIT\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "bin", "go"), []byte(shim), 0o750)) //nolint:gosec // test stub must be executable
 	require.NoError(t, os.WriteFile(filepath.Join(root, "listing.txt"), []byte(listing), 0o600))
 	t.Setenv("SHARD_TEST_EXIT", exit)
@@ -135,7 +135,7 @@ func TestCmdMtixShards_RealPackage_PartitionsExactly(t *testing.T) {
 	if testing.Short() {
 		t.Skip("compiles cmd/mtix tests; skipped with -short")
 	}
-	listCmd := exec.Command("go", "test", "-list", ".*", "./cmd/mtix/") //nolint:gosec // fixed arguments
+	listCmd := exec.Command("go", "test", "-race", "-list", ".*", "./cmd/mtix/") //nolint:gosec // fixed arguments
 	listCmd.Dir = ".."
 	list, err := listCmd.Output()
 	require.NoError(t, err)

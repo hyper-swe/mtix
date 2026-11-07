@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"os"
@@ -109,14 +110,21 @@ func TestEnrolWorktree_RealPath_FullyPushedBoard_Enrols(t *testing.T) {
 	assert.Empty(t, reports)
 }
 
-// TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference: on the same
-// pushed board the unfiltered comparison of the store with its bounded clone
-// differs on every excluded field, so each entry of the set is needed, and the
-// set hides all of it.
+// TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference: a pushed board
+// with pre-.15 comment creation events differs on activity, creation stamps,
+// annotations and agent registrations before the exclusions hide those fields.
+// Legacy backfill without an addressee now refuses separately.
 func TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference(t *testing.T) {
 	ctx := context.Background()
 	root, writer, hubEvents := worktreeWith(t, func(ctx context.Context, st *sqlite.Store) { pushedWork(ctx, t, st) })
 	require.NoError(t, writer.Close())
+	// This proof isolates legacy annotation id/time. Keep workflow snapshots:
+	// legacy completion times can differ, and now correctly refuse separately.
+	for i, event := range hubEvents {
+		if event.OpType == model.OpComment {
+			hubEvents[i] = preReplicatedFieldsEvents(t, []*model.SyncEvent{event})[0]
+		}
+	}
 	hub := hubOf(hubEvents)
 	var local, clone []byte
 	require.NoError(t, withScratch(slog.Default(), root, func(scratch string) error {
@@ -144,6 +152,45 @@ func TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference(t *testing.T) 
 	filtered, err := service.CompareBoardDocs(local, clone)
 	require.NoError(t, err)
 	assert.Empty(t, filtered)
+}
+
+// Old backfill omitted the addressee; the strict comparison must report it.
+func TestEnrolWorktree_RealPath_LegacyBackfilledAddressee_Refuses(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	root, writer, hubEvents := worktreeWith(t, func(ctx context.Context, st *sqlite.Store) {
+		require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-2", "", 0, 2, "commented")))
+		require.NoError(t, st.AppendAnnotation(ctx, "TEST-2", model.Annotation{ID: "c1", Author: "other", Text: "for you", CreatedAt: now, Addressee: "lane-b"}))
+	})
+	for _, event := range hubEvents {
+		if event.OpType == model.OpComment {
+			payload, err := model.EncodePayload(&model.CommentPayload{AuthorID: "other", Body: "for you"})
+			require.NoError(t, err)
+			event.Payload = payload
+			event.WallClockTS = now.UnixMilli()
+		}
+	}
+	require.NoError(t, writer.Close())
+	hub := hubOf(hubEvents)
+	var local, clone []byte
+	require.NoError(t, withScratch(slog.Default(), root, func(scratch string) error {
+		return withBoardStore(slog.Default(), root, worktreeDataDir(root), func(st *sqlite.Store) (e error) {
+			if local, e = exportBytes(ctx, st); e != nil {
+				return e
+			}
+			clone, e = boundedCloneExport(ctx, slog.Default(), root, scratch, st, hub)
+			return e
+		})
+	}))
+	diff, err := service.CompareBoardDocs(local, clone)
+	require.NoError(t, err)
+	assert.Equal(t, service.BoardDiff{"TEST-2": {"annotations"}}, diff)
+	svc, recorded := enrolOverHub(fakeDial(hub))
+	_, err = svc.EnrolWorktree(ctx, enrolRequest(root))
+	var refusal *service.WorktreeBoardError
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, diff, refusal.Diff)
+	assert.False(t, *recorded)
 }
 
 // TestEnrolWorktree_RealPath_NotReplicatedWork_RefusesNamesItAndAcceptHubGoes:
@@ -203,4 +250,25 @@ func assertNothingChangedExceptReport(t *testing.T, root string, storeBefore map
 	assert.Equal(t, board, fileBytes(t, boardFilePath(root)))
 	_, statErr := os.Lstat(filepath.Join(root, ".mtix", "enroll.d", "in-progress.json"))
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+// preReplicatedFieldsEvents removes snapshots absent from old comment creation
+// and workflow events, preserving the other payload fields (including to).
+// A caller modelling an old resolve must also supply its bulk-placeholder body
+// and empty author_id. Copies preserve the original journal fixtures.
+func preReplicatedFieldsEvents(t *testing.T, events []*model.SyncEvent) []*model.SyncEvent {
+	t.Helper()
+	out := make([]*model.SyncEvent, 0, len(events))
+	for _, event := range events {
+		var payload map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(event.Payload, &payload))
+		delete(payload, "annotation")
+		delete(payload, "closed_at")
+		copied := *event
+		var err error
+		copied.Payload, err = json.Marshal(payload)
+		require.NoError(t, err)
+		out = append(out, &copied)
+	}
+	return out
 }

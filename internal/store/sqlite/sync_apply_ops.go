@@ -346,9 +346,14 @@ func (a syncApplier) applyComment(ctx context.Context, tx *sql.Tx, e *model.Sync
 	// The event's own time (eventTime, MTIX-95.26), not the apply time, so two
 	// replicas applying the same events in any order write byte-identical rows.
 	at := eventTime(e.WallClockTS, a.clock().UTC())
-	annotations = append(annotations, model.Annotation{
-		ID: e.EventID, Author: p.AuthorID, Text: p.Body, CreatedAt: at,
-	})
+	if p.Annotation != nil {
+		annotations, err = applyAnnotationSnapshot(ctx, tx, e, p, annotations)
+		if err != nil {
+			return err
+		}
+	} else {
+		annotations = appendLegacyAnnotation(annotations, e, p, at)
+	}
 	// Sort by (CreatedAt, ID) so the on-disk list order is independent
 	// of apply order. Two replicas converging on the same set of
 	// comments produce byte-identical annotations columns.

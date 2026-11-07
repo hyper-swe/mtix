@@ -7,7 +7,6 @@ package service
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -101,14 +100,15 @@ func TestPendingExports_ProcessWriterHelper(t *testing.T) {
 }
 
 type coalescingWriter struct {
-	cmd    *exec.Cmd
-	cancel context.CancelFunc
-	stdin  io.WriteCloser
-	stdout io.ReadCloser
-	lines  chan string
-	done   chan struct{}
-	err    error
-	stderr bytes.Buffer
+	cmd         *exec.Cmd
+	cancel      context.CancelFunc
+	stdin       io.WriteCloser
+	stdout      io.ReadCloser
+	lines       chan string
+	done        chan struct{}
+	err         error
+	stderr      childDiagnosticOutput
+	diagnostics childDiagnosticOutput
 }
 
 func startCoalescingWriter(t *testing.T, dir string) *coalescingWriter {
@@ -148,17 +148,9 @@ func coalescingWriterEnv() []string {
 }
 
 func (c *coalescingWriter) readAndWait(stdout io.ReadCloser) {
-	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		line := scanner.Text()
-		// Assertion diagnostics can exceed the protocol buffer on early parent
-		// failure. Keep draining them; only our two fixed handshake lines queue.
-		if line == "ready" || line == "marked 32" || line == "snapshot-held" || line == "committed 2" || line == "writer-held" || strings.HasPrefix(line, "force-result ") {
-			c.lines <- line
-		}
-	}
+	readErr := c.readOutput(stdout)
 	close(c.lines)
-	c.err = errors.Join(scanner.Err(), c.cmd.Wait())
+	c.err = errors.Join(readErr, c.cmd.Wait())
 	close(c.done)
 }
 
@@ -169,7 +161,15 @@ func (c *coalescingWriter) awaitSignal(t *testing.T, want string) {
 	for {
 		select {
 		case line, ok := <-c.lines:
-			require.True(t, ok, "child exited before %q", want)
+			if !ok {
+				// Wait joins the stderr copier before either buffer or the exit is read.
+				select {
+				case <-c.done:
+					t.Fatalf("child exited before %q: %v; process: %v\nstderr:\n%s\nstdout:\n%s", want, c.err, c.cmd.ProcessState, c.stderr.String(), c.diagnostics.String())
+				case <-guard.C:
+					t.Fatalf("child output closed before %q but reader/process did not join", want)
+				}
+			}
 			if line == want {
 				return
 			}
@@ -183,7 +183,7 @@ func (c *coalescingWriter) awaitExit(t *testing.T) {
 	t.Helper()
 	select {
 	case <-c.done:
-		require.NoError(t, c.err, "native writer stderr: %s", c.stderr.String())
+		require.NoError(t, c.err, "native writer process: %v\nstderr:\n%s\nstdout:\n%s", c.cmd.ProcessState, c.stderr.String(), c.diagnostics.String())
 	case <-time.After(60 * time.Second):
 		t.Fatal("native writer/readers did not join")
 	}

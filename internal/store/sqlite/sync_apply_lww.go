@@ -161,6 +161,9 @@ func incomingBeats(e *model.SyncEvent, priorLamp, priorTS int64, priorHash strin
 // reaches this call, because the own-event rule in acknowledgeHeldEvent
 // returns first (MTIX-95.2).
 func (a syncApplier) mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+	if upgraded, err := upgradeRestoredInboxEvent(ctx, tx, e); err != nil || upgraded {
+		return err
+	}
 	vcJSON, err := json.Marshal(e.VectorClock)
 	if err != nil {
 		return fmt.Errorf("mirror %s: marshal VC: %w", format.EventID(e.EventID), err)

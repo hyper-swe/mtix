@@ -61,6 +61,9 @@ type auditEvent struct {
 // Atomicity: single tx wrapping every DELETE; rollback on error
 // leaves the local store unchanged.
 func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
+	if guardErr := refuseDiscardRestoredInbox(ctx, s.readDB); guardErr != nil {
+		return guardErr
+	}
 	startedAt := s.clock().UTC()
 	startEvent := auditEvent{
 		Type:      "RECONCILE_START",
@@ -75,6 +78,9 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 	}()
 
 	err = s.WithTx(ctx, func(tx *sql.Tx) error {
+		if guardErr := refuseDiscardRestoredInbox(ctx, tx); guardErr != nil {
+			return guardErr
+		}
 		for _, stmt := range []string{
 			`DELETE FROM sync_conflicts`,
 			`DELETE FROM applied_events`,

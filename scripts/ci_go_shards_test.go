@@ -23,9 +23,10 @@ const shardModule = "github.com/hyper-swe/mtix"
 
 func shardManifests() map[string][]string {
 	return map[string][]string{
-		"sqlite": {shardModule + "/internal/store/sqlite"},
-		"cli":    {shardModule + "/cmd/mtix"},
-		"other":  {shardModule},
+		"sqlite":  {shardModule + "/internal/store/sqlite"},
+		"service": {shardModule + "/internal/service"},
+		"cli":     {shardModule + "/cmd/mtix"},
+		"other":   {shardModule},
 	}
 }
 
@@ -65,7 +66,7 @@ func runShardGuard(root string, args ...string) (string, error) {
 }
 
 func TestGoShards_UnlistedPackage_Fails(t *testing.T) {
-	packages := []string{shardModule, shardModule + "/cmd/mtix", shardModule + "/internal/store/sqlite", shardModule + "/newpackage"}
+	packages := []string{shardModule, shardModule + "/cmd/mtix", shardModule + "/internal/store/sqlite", shardModule + "/internal/service", shardModule + "/newpackage"}
 	root := shardFixture(t, packages, shardManifests())
 	out, err := runShardGuard(root, "check")
 	require.Error(t, err, "the guard accepted an unlisted package: %s", out)
@@ -88,13 +89,15 @@ func TestGoShards_InvalidPartition_Fails(t *testing.T) {
 		{"stale package", func(m map[string][]string) { m["other"] = append(m["other"], shardModule+"/removed") }, "stale packages"},
 		{"empty shard", func(m map[string][]string) { m["sqlite"] = nil }, "missing or empty manifest"},
 		{"missing shard", func(m map[string][]string) { delete(m, "cli") }, "missing or empty manifest"},
+		{"missing service", func(m map[string][]string) { delete(m, "service") }, "missing or empty manifest"},
+		{"service also in other", func(m map[string][]string) { m["other"] = append(m["other"], m["service"]...) }, "duplicate packages"},
 		{"blank entry", func(m map[string][]string) { m["other"] = append(m["other"], "") }, "stale packages"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			manifests := shardManifests()
 			tc.change(manifests)
-			packages := []string{shardModule, shardModule + "/cmd/mtix", shardModule + "/internal/store/sqlite"}
+			packages := []string{shardModule, shardModule + "/cmd/mtix", shardModule + "/internal/store/sqlite", shardModule + "/internal/service"}
 			root := shardFixture(t, packages, manifests)
 			out, err := runShardGuard(root, "check")
 			require.Error(t, err, out)
@@ -110,7 +113,7 @@ func TestGoShards_InvalidInventory_Fails(t *testing.T) {
 		exit     string
 	}{
 		{"empty inventory", nil, "0"},
-		{"go list failure after output", []string{shardModule, shardModule + "/cmd/mtix", shardModule + "/internal/store/sqlite"}, "7"},
+		{"go list failure after output", []string{shardModule, shardModule + "/cmd/mtix", shardModule + "/internal/store/sqlite", shardModule + "/internal/service"}, "7"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("SHARD_TEST_EXIT", tc.exit)
@@ -124,9 +127,9 @@ func TestGoShards_InvalidInventory_Fails(t *testing.T) {
 
 func TestGoShards_ValidPartition_ListsSelectedPackages(t *testing.T) {
 	manifests := shardManifests()
-	packages := []string{shardModule, shardModule + "/cmd/mtix", shardModule + "/internal/store/sqlite", shardModule + "/node_modules/ignored"}
+	packages := []string{shardModule, shardModule + "/cmd/mtix", shardModule + "/internal/store/sqlite", shardModule + "/internal/service", shardModule + "/node_modules/ignored"}
 	root := shardFixture(t, packages, manifests)
-	for _, shard := range []string{"sqlite", "cli", "other"} {
+	for _, shard := range []string{"sqlite", "cli", "service", "other"} {
 		t.Run(shard, func(t *testing.T) {
 			out, err := runShardGuard(root, "list", shard)
 			require.NoError(t, err, out)
@@ -413,7 +416,7 @@ func testShardFixture(t *testing.T, listing string, exit string) string {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "ci-go-shards.sh"), source, 0o600))
 	require.NoError(t, os.Mkdir(filepath.Join(root, "bin"), 0o750))
-	shim := "#!/usr/bin/env bash\n[ \"$1 $2 $3\" = 'test -list .*' ] || exit 99\n[ \"$4\" = ./internal/slow/ ] || exit 98\ncat \"$SHARD_TEST_LIST\"\nexit \"${SHARD_TEST_EXIT:-0}\"\n"
+	shim := "#!/usr/bin/env bash\n[ \"$1 $2 $3 $4\" = 'test -race -list .*' ] || exit 99\n[ \"$5\" = ./internal/slow/ ] || exit 98\ncat \"$SHARD_TEST_LIST\"\nexit \"${SHARD_TEST_EXIT:-0}\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "bin", "go"), []byte(shim), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "listing.txt"), []byte(listing), 0o600))
 	t.Setenv("SHARD_TEST_EXIT", exit)

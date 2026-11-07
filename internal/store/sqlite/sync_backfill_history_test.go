@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -30,15 +31,17 @@ func replayBackfill(t *testing.T, replica *sqlite.Store, events []*model.SyncEve
 
 func TestBackfillHistory_LegacyAnnotations_PreserveBodyCreatorAndEventTime(t *testing.T) {
 	tests := []struct {
-		name, raw string
-		count     int
-		timestamp int64
+		name, raw  string
+		count      int
+		timestamp  int64
+		author, id string
+		resolved   bool
 	}{
-		{"explicit time", `[{"id":"source-id","author":"source-author","text":"Legacy body","kind":"note","resolved":true,"created_at":"2026-01-02T05:04:05Z"}]`, 1, backfillCommentTime.UnixMilli()},
-		{"missing time", `[{"text":"Legacy body"}]`, 1, backfillCreated.UnixMilli()},
-		{"invalid time", `[{"text":"Legacy body","created_at":"not-a-time"}]`, 1, backfillCreated.UnixMilli()},
-		{"empty text", `[{"text":""}]`, 0, 0}, {"non-string text", `[{"text":7}]`, 0, 0},
-		{"empty", ``, 0, 0}, {"list", `[]`, 0, 0}, {"null", `null`, 0, 0},
+		{"explicit time", `[{"id":"source-id","author":"source-author","text":"Legacy body","kind":"note","resolved":true,"created_at":"2026-01-02T05:04:05Z"}]`, 1, backfillCommentTime.UnixMilli(), "source-author", "source-id", true},
+		{"missing time", `[{"text":"Legacy body"}]`, 1, backfillCreated.UnixMilli(), "", "", false},
+		{"invalid time", `[{"text":"Legacy body","created_at":"not-a-time"}]`, 1, backfillCreated.UnixMilli(), "", "", false},
+		{"empty text", `[{"text":""}]`, 0, 0, "", "", false}, {"non-string text", `[{"text":7}]`, 0, 0, "", "", false},
+		{"empty", ``, 0, 0, "", "", false}, {"list", `[]`, 0, 0, "", "", false}, {"null", `null`, 0, 0, "", "", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -58,7 +61,11 @@ func TestBackfillHistory_LegacyAnnotations_PreserveBodyCreatorAndEventTime(t *te
 			for _, event := range events {
 				if event.OpType == model.OpComment {
 					comments++
-					assertBackfillComment(t, event, originalUID, tt.timestamp)
+					expected := model.CommentPayload{AuthorID: tt.author, Body: "Legacy body", Annotation: &model.CommentAnnotationState{ID: tt.id, CreatedAt: time.UnixMilli(tt.timestamp).UTC(), Resolved: tt.resolved}}
+					if expected.Annotation.ID == "" {
+						expected.Annotation.ID = event.EventID
+					}
+					assertBackfillComment(t, event, originalUID, expected)
 				}
 			}
 			require.Equal(t, tt.count, comments)
@@ -69,7 +76,11 @@ func TestBackfillHistory_LegacyAnnotations_PreserveBodyCreatorAndEventTime(t *te
 			require.Len(t, node.Annotations, tt.count)
 			if tt.count == 1 {
 				require.Equal(t, "Legacy body", node.Annotations[0].Text)
-				require.Equal(t, "legacy-owner", node.Annotations[0].Author)
+				require.Equal(t, tt.author, node.Annotations[0].Author)
+				require.Equal(t, tt.resolved, node.Annotations[0].Resolved)
+				if tt.id != "" {
+					require.Equal(t, tt.id, node.Annotations[0].ID)
+				}
 				require.Equal(t, tt.timestamp, node.Annotations[0].CreatedAt.UnixMilli())
 				require.NotEmpty(t, node.Annotations[0].ID)
 			}
@@ -95,7 +106,7 @@ func TestBackfillHistory_StatusAndDependencies_PersistThroughReplica(t *testing.
 			transitions++
 			var payload model.TransitionStatusPayload
 			require.NoError(t, json.Unmarshal(event.Payload, &payload))
-			require.Equal(t, model.TransitionStatusPayload{From: model.StatusOpen, To: model.StatusDone}, payload)
+			require.Equal(t, model.TransitionStatusPayload{From: model.StatusOpen, To: model.StatusDone, ClosedAt: json.RawMessage(`null`)}, payload)
 			require.Equal(t, "TEST-1", event.NodeID)
 			require.Equal(t, backfillUpdated.UnixMilli(), event.WallClockTS)
 			require.Equal(t, "legacy-owner", event.AuthorID)
@@ -112,13 +123,17 @@ func TestBackfillHistory_StatusAndDependencies_PersistThroughReplica(t *testing.
 	replayBackfill(t, replica, events)
 	node, err := replica.GetNode(t.Context(), "TEST-1")
 	require.NoError(t, err)
+	original, err := source.GetNode(t.Context(), "TEST-1")
+	require.NoError(t, err)
+	require.Equal(t, original.Annotations, node.Annotations)
+	require.Equal(t, original.ClosedAt, node.ClosedAt)
 	require.Equal(t, model.StatusDone, node.Status)
 	require.Len(t, node.Annotations, 2)
 	require.Equal(t, backfillNodeUID(t, source, "TEST-1"), node.UID)
 	texts := []string{}
 	for _, annotation := range node.Annotations {
 		texts = append(texts, annotation.Text)
-		require.Equal(t, "legacy-owner", annotation.Author)
+		require.Equal(t, "source-author", annotation.Author)
 		require.Equal(t, backfillCommentTime.UnixMilli(), annotation.CreatedAt.UnixMilli())
 	}
 	require.ElementsMatch(t, []string{"First legacy comment", "Second legacy comment"}, texts)
@@ -152,13 +167,13 @@ func backfillNodeUID(t *testing.T, s *sqlite.Store, id string) string {
 	return uid
 }
 
-func assertBackfillComment(t *testing.T, event *model.SyncEvent, uid string, timestamp int64) {
+func assertBackfillComment(t *testing.T, event *model.SyncEvent, uid string, expected model.CommentPayload) {
 	t.Helper()
 	var payload model.CommentPayload
 	require.NoError(t, json.Unmarshal(event.Payload, &payload))
-	require.Equal(t, model.CommentPayload{AuthorID: "legacy-owner", Body: "Legacy body"}, payload)
+	require.Equal(t, expected, payload)
 	require.Equal(t, "TEST-1", event.NodeID)
 	require.Equal(t, "legacy-owner", event.AuthorID)
-	require.Equal(t, timestamp, event.WallClockTS)
+	require.Equal(t, expected.Annotation.CreatedAt.UnixMilli(), event.WallClockTS)
 	require.Equal(t, uid, event.UID)
 }

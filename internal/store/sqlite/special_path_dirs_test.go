@@ -167,7 +167,7 @@ func TestRecover_SpecialCharDir_SalvagesExactFile(t *testing.T) {
 			insertOneNode(t, s, "TEST-1")
 			require.NoError(t, s.Close())
 
-			res, err := Recover(context.Background(), dbPath, "", "test-version", slog.Default())
+			res, err := Recover(context.Background(), dbPath, "", "test-version", RecoverOptions{Logger: slog.Default()})
 			require.NoError(t, err)
 			assert.Equal(t, []string{"TEST-1"}, res.RecoveredIDs)
 			requireOnlyEntry(t, parent, name)
@@ -247,7 +247,7 @@ func TestNew_TempDirPath_WriteReopenReadOnlyVerifyRecover(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, ok)
 
-	res, err := Recover(ctx, dbPath, "", "test-version", slog.Default())
+	res, err := Recover(ctx, dbPath, "", "test-version", RecoverOptions{Logger: slog.Default()})
 	require.NoError(t, err)
 	assert.Equal(t, []string{"TEST-1"}, res.RecoveredIDs)
 	for _, name := range visibleEntries(t, dir) {

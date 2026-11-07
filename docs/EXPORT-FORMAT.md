@@ -4,10 +4,12 @@
 > [USERMANUAL.md](../USERMANUAL.md) (Backup, Export, and Import); the
 > requirements are FR-7.8 and FR-15 in [REQUIREMENTS.md](../REQUIREMENTS.md).
 
-`mtix export` writes one JSON document, and mtix keeps the same document in
-`.mtix/tasks.json` after every change (the git-tracked board, FR-15). This
-page describes that document: what it carries, how its checksum is
-computed, and how `mtix import` and the automatic import read it back.
+`mtix export` writes a private JSON snapshot to standard output, including an
+optional addressed inbox journal. Automatic `.mtix/tasks.json` publication
+keeps a journal-free board document after every change (FR-15). Use
+`mtix export --board-only` for a journal-free baseline; board annotations may
+still contain private text. This page describes both documents, their
+checksums, and how explicit and automatic import read them back.
 
 The current format is `schema_version` **2.0.0**, written by mtix 0.5.4 and
 later. mtix 0.5.3 and earlier wrote 1.0.0. With the experimental
@@ -430,3 +432,45 @@ The provenance reader is bounded, validates format/hash/identity/count/time/owne
 Diagnostic categories are fixed and bounded at both storage and reporting boundaries. Unknown stored or supplied values become `unknown`, without repeating their original text. A failed completed publication retains its specific category instead of becoming an incomplete-pull report. Fetched responses must match their exact requested batch: unexpected, missing, nil or repeated IDs withhold the receipt while existing valid event admission remains unchanged.
 
 Compatible imports whose schema has no defined receipt hash form still import successfully. They preserve any prior receipt and report `unsupported-schema`; no form is guessed. A failure saving that omission remains an error.
+
+
+## Explicit inbox journal transport
+
+Explicit `mtix export > private-export.json` adds optional `inbox_journal`
+with `version: 1`, `events`, and `checksum`. Automatic `.mtix/tasks.json`
+and direct explicit redirection to that mirror omit it. `--board-only` also
+omits it for temporary files and pipes intended for the mirror. Treat explicit and
+recovered exports as private and never commit them. The CLI reports the number
+of addressed events written, uncarried unread deliveries, and unreadable
+comment records; an indeterminate recipient is reported as unknown addressed-mail loss.
+
+Each event carries `event_id`, `project`, `node_id`, optional `uid`, `author`,
+the comment `payload` as a JSON string, `created_at`, `acked`, and optional
+`acked_at`. Invalid-UTF8 event IDs and UIDs also carry `event_id_hex` and
+`uid_hex`, using the existing ID encoding; arbitrary identity bytes are preserved
+(MTIX-187.6). Only directly addressed comments and their recipient coverage are
+included. Source rowids, sync queues, dispatch state and host identity are not
+included. A missing acknowledgement time means the source retained coverage
+but no time, as after cumulative acknowledgement; it is never invented.
+
+The separate SHA-256 checksum covers the Go JSON encoding of the object with
+`version` then `events`, with event fields in the order above. Event array order
+is source journal order. The existing board and IDs checksums are unchanged.
+With `history.export` off, a 0.5.4 reader imports the board and ignores this optional extension, but drops
+it when rewriting; only journal-aware readers preserve mail. Import validates
+the journal before writes and rejects conflicting event identities atomically.
+Coverage is remapped by event identity, never by a source watermark. Existing
+destination coverage remains monotonic. Newly restored records are excluded
+from outbound push, relay publication and local hook replay. Restoration alone
+does not create hub-contact evidence; locally held events retain their existing
+status, clocks, hooks, deliveries and acknowledgments.
+
+`mtix recover --from-export private-export.json` supplements readable database
+mail with an explicit export without replacing the board mirror. Duplicate
+readable event identities are combined when their immutable content matches;
+conflicts retain the first readable database copy and are reported. The recovery report states unavailable data and
+known loss counts; a journal-free mirror cannot recover missing mail.
+
+Inbox salvage checks each rowid seek against a full point read and combines it with readable sequential-scan rows, continuing after a bad column. Before opening the database, recovery verifies the WAL header, frame salts, frame boundaries and rolling checksums. An unverifiable WAL tail, even a stale tail left by normal reuse, makes recovery partial: committed records (including tickets and mail) may be missing, the lost count is unknown, and already-read mail may return unread. Keep the database and its `-wal` file together. It also runs a read-only `PRAGMA integrity_check`, limited to five seconds and 20 reported problems. Damage, duplicate identities, conflicting copies, disagreement between reads, or an unfinished check makes the report incomplete, with loss unknown where it cannot be counted. Acknowledgement coverage is retained only when the integrity check finishes successfully and no part of inbox recovery is incomplete. Any detected damage, unavailable or unfinished check, or other incomplete result discards all recovered acknowledgement coverage, including coverage supplied by a private export. Every recovered event is then exported as unread; the report gives that count. A damaged store, or a store too large or slow for the five-second check, can therefore deliver already-read mail again: repeated wakes are preferable to hidden unread mail. An unfinished five-second check does not prove the store is damaged: acknowledgement coverage could not be proven. If the store opens, use `mtix export` to preserve readable acknowledgement coverage instead of salvage. A complete report means these checks found no damage. A `-wal` file that is absent, emptied, or shortened exactly on a frame boundary (including a header-only log) cannot be distinguished from a shorter healthy log; committed records may be missing even under a complete report. A bit flip in body text inside `sync_events.payload` or a value in `agent_inbox_cursor.cursor` can still leave a structurally valid store and pass the check; without a checksum for those fields, recovery cannot detect the changed text or a raised cursor that hides unread mail. On stores last written by 0.5.4 or earlier that lack `idx_sync_events_comment_addressee`, a change to the recipient `$.to` in `sync_events.payload` can also pass the check, redirect mail or apply another recipient’s cursor; recovery opens read-only and does not add the missing index. Keep independent private exports. It probes past damaged ranges, with at most 10,000 failed rowid probes. An unreadable upper bound or an exhausted probe budget produces an explicitly incomplete report naming the limit and rowid reached; lost records are reported as unknown or an upper bound in positions, never as an exact record count. Keep the source database and any private export. Recovery adds `.mtix/recovered-*.json` to the existing project `.gitignore` before writing; if it cannot protect the file, it writes no recovered export.
+
+On a store holding restored mail, do not use `mtix sync reconcile --discard-local`: it is refused, including its dry run; typed confirmation cannot bypass this guard. Pending 0 does not mean that mail reached the hub. Keep the original store. To obtain the hub board, run `mtix init PREFIX` in a new empty directory, configure the same hub credentials via `MTIX_SYNC_DSN`, then run `mtix sync clone`. In an operator terminal, read the restored mail in the original store with `mtix inbox --include-held --agent AGENT`; hub contact can hold mail for an unregistered recipient.

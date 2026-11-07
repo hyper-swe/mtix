@@ -443,28 +443,35 @@ func TestStatusRepairDiffs_OlderAssigneeUpdate_DoesNotOwnTheColumn(t *testing.T)
 // event carries the winner's wall clock, so a replica that already holds the
 // winner stamps the same closed_at when it applies the repair event.
 func TestRepairNodeStatus_RepairEvent_OtherReplicaKeepsItsClosedAt(t *testing.T) {
-	ctx := context.Background()
-	a, rawA := replicaWithPendingNode(t)
-	require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-a"))
-	require.NoError(t, a.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
-	done := eventIDOf(t, rawA, "MTIX-1", model.OpTransitionStatus)
-	// The done was made on 2026-09-01, well before the repair.
-	_, err := rawA.Exec(`UPDATE sync_events SET wall_clock_ts = ? WHERE event_id = ?`,
-		foreignWallClock().UnixMilli(), done)
-	require.NoError(t, err)
-	b, rawB := mutationTestStore(t)
-	pullEvents(t, b, pushPendingOwnEvents(t, rawA))
-	require.Equal(t, foreignClosedAt, nodeRow(t, rawB, "MTIX-1")["closed_at"])
-	replayClaimAsBefore952(t, rawA, "MTIX-1", "agent-a")
-
-	_, applied, err := a.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
-	require.NoError(t, err)
-	require.True(t, applied)
-	pullEvents(t, b, pushPendingOwnEvents(t, rawA))
-
-	row := nodeRow(t, rawB, "MTIX-1")
-	require.Equal(t, "done", row["status"])
-	require.Equal(t, foreignClosedAt, row["closed_at"], "the other replica keeps the completion time")
+	for _, test := range []struct {
+		name   string
+		legacy bool
+	}{{"metadata", false}, {"legacy", true}} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			a, rawA := replicaWithPendingNode(t)
+			a.SetClock(foreignWallClock)
+			require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			require.NoError(t, a.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
+			done := eventIDOf(t, rawA, "MTIX-1", model.OpTransitionStatus)
+			if test.legacy {
+				_, err := rawA.Exec(`UPDATE sync_events SET wall_clock_ts = ?, payload = json_remove(payload, '$.closed_at') WHERE event_id = ?`, foreignWallClock().UnixMilli(), done)
+				require.NoError(t, err)
+			}
+			b, rawB := mutationTestStore(t)
+			pullEvents(t, b, pushPendingOwnEvents(t, rawA))
+			require.Equal(t, foreignClosedAt, nodeRow(t, rawB, "MTIX-1")["closed_at"])
+			replayClaimAsBefore952(t, rawA, "MTIX-1", "agent-a")
+			a.SetClock(func() time.Time { return foreignWallClock().Add(24 * time.Hour) })
+			_, applied, err := a.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
+			require.NoError(t, err)
+			require.True(t, applied)
+			pullEvents(t, b, pushPendingOwnEvents(t, rawA))
+			row := nodeRow(t, rawB, "MTIX-1")
+			require.Equal(t, "done", row["status"])
+			require.Equal(t, foreignClosedAt, row["closed_at"], "repair preserves carried completion time; legacy events still derive it")
+		})
+	}
 }
 
 // TestStatusRepairDiffs_StoredAssigneeOfNoOlderClaim_Flagged: the stored

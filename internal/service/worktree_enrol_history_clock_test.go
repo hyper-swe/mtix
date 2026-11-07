@@ -78,9 +78,8 @@ func TestBoardHubFinding_HistoryDeletedAtClock_DigestIsStableAcrossRefusals(t *t
 	assert.NotEqual(t, one.Digest(), other.Digest(), "the digest still follows the values that matter")
 }
 
-// The closed_at and labels rules exist because a hub clone is not the store.
-// The file and the store are one replica, so the file rule keeps refusing an
-// edited or removed closed_at and a labels spacing change (ruling r4 point 2).
+// The file rule compares exact completion stamps, including removals, just as
+// the hub rule does. Labels spacing is also exact within the same replica.
 func TestBoardFileFinding_ClosedAtEditedOrRemoved_StaysADifference(t *testing.T) {
 	file := `{"nodes":[{"id":"TEST-1","status":"done","closed_at":"2026-01-01T00:00:01Z"}]}`
 	for name, edited := range map[string]string{

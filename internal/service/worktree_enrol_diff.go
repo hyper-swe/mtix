@@ -456,9 +456,5 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 // sameNodeField reports labels that differ in spacing only between replicas.
 // The board file and its store, and raw comparisons, compare the exact value.
 func sameNodeField(k string, a, b map[string]any) bool {
-	switch k {
-	case "labels":
-		return sameLabels(a[k], b[k])
-	}
-	return false
+	return k == "labels" && sameLabels(a[k], b[k])
 }

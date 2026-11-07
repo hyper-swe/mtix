@@ -3,7 +3,7 @@
 # MTIX-112.17.27: the same guard for the remote bar's package sets, and a
 # test-level hash shard mode for the slow packages (sqlite, service).
 #
-#   bash scripts/ci-go-shards.sh check | list {sqlite|cli|other}             ci.yml shards
+#   bash scripts/ci-go-shards.sh check | list {sqlite|cli|service|other}             ci.yml shards
 #   bash scripts/ci-go-shards.sh bar-check | bar-list {serial|parallel|sharded}
 #       remote bar package sets (scripts/remote-bar-packages/*.txt); cmd/mtix
 #       has its own shards (scripts/cmd-mtix-shards.sh) and is not listed
@@ -21,7 +21,7 @@ die() {
 
 usage() {
 	cat >&2 <<'USAGE'
-usage: bash scripts/ci-go-shards.sh check | list {sqlite|cli|other}
+usage: bash scripts/ci-go-shards.sh check | list {sqlite|cli|service|other}
        bash scripts/ci-go-shards.sh bar-check | bar-list {serial|parallel|sharded}
        bash scripts/ci-go-shards.sh test-check <dir> <N> | test-pattern <dir> <N> <k>
 USAGE
@@ -36,7 +36,7 @@ case "$mode" in
 check | bar-check) [ "$#" -eq 1 ] || usage ;;
 list)
 	[ "$#" -eq 2 ] || usage
-	case "$shard" in sqlite | cli | other) ;; *) usage ;; esac
+	case "$shard" in sqlite | cli | service | other) ;; *) usage ;; esac
 	;;
 bar-list)
 	[ "$#" -eq 2 ] || usage
@@ -127,7 +127,7 @@ check_pg_consumers() {
 # hashed set shows up as a test selected by no shard.
 test_names() {
 	# The list is read from a file so that a failed go test is not hidden by a pipe.
-	go test -list '.*' "./$1/" >"$scratch/listing" || die "cannot list the $1 tests"
+	go test -race -list '.*' "./$1/" >"$scratch/listing" || die "cannot list the $1 tests"
 	grep -E '^(Test|Example|Fuzz)' "$scratch/listing" | grep -vE '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' >"$scratch/odd" || true
 	if [ -s "$scratch/odd" ]; then
 		printf 'go-shards: unsupported test name (cannot be selected by an exact -run pattern):\n' >&2
@@ -164,7 +164,7 @@ case "$mode" in
 check | list)
 	EXCLUDE='^$'
 	: >"$scratch/all"
-	check_packages scripts/ci-go-shards sqlite cli other
+	check_packages scripts/ci-go-shards sqlite cli service other
 	[ "$mode" != list ] || cat "scripts/ci-go-shards/$shard.txt"
 	;;
 bar-check | bar-list)

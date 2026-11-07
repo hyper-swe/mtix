@@ -17,12 +17,14 @@ import (
 
 // BoardExclusion is one part of an export that a clone of the hub may not
 // reproduce, including when replaying events from older clients, and so is left
-// out of the enrolment's comparison (MTIX-112.17.16.6). Path is dotted from the export's top level; a segment that
-// holds a list applies to every element. A path is added only with a test that
-// shows a fully pushed board differing on it (for example,
+// out of the enrolment's comparison (MTIX-112.17.16.6). Path is dotted from the
+// export's top level; a segment that holds a list applies to every element.
+// Pushed-board differences are demonstrated by
 // TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference and
-// TestEnrolWorktree_RealPath_LegacyBackfilledAddressee_NeedsExclusion);
-// a field nobody listed here is always compared.
+// TestEnrolWorktree_RealPath_LegacyBackfilledAddressee_NeedsExclusion.
+// The sessions and dependencies.created_at exclusions have no pushed-board
+// proof; dependency timestamp differences depend on clock timing. A field not
+// listed here is always compared.
 type BoardExclusion struct {
 	Path   string
 	Reason string

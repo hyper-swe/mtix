@@ -231,8 +231,8 @@ func TestEnrolWorktree_RealPath_LateHubEditBelowTheCursor_IsTreatedAsLocal(t *te
 
 // TestEnrolWorktree_RealPath_AddressedComment_FullyPushed_Enrols: current and
 // ordinary old addressed comment events carry to, which the current clone
-// applies. Old backfilled and bulk events omit it and still need the addressee
-// exclusion. The comment's author, text and place in the order still compare.
+// applies. Old backfilled events that omit it now refuse with backup and explicit
+// hub acceptance; the real-Postgres legacy recovery test exercises that path.
 func TestEnrolWorktree_RealPath_AddressedComment_FullyPushed_Enrols(t *testing.T) {
 	for _, legacy := range []bool{false, true} {
 		t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) {

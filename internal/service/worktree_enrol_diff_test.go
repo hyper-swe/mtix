@@ -63,7 +63,7 @@ func TestCompareBoardDocs_WhatDiffers(t *testing.T) {
 		{"created_at and updated_at are metadata", edit(t, `"priority":3,`, `"priority":3,"created_at":"a","updated_at":"b",`), service.BoardDiff{}},
 		{"annotation id and stamp are not compared", edit(t, `{"id":"a1","text":"hello"}`, `{"id":"zz","text":"hello","created_at":"later"}`), service.BoardDiff{}},
 		{"annotation author", edit(t, `{"id":"a1","text":"hello"}`, `{"id":"a1","text":"hello","author":"x"}`), service.BoardDiff{"TEST-1": {"annotations"}}},
-		{"annotation addressee is metadata", edit(t, `{"id":"a1","text":"hello"}`, `{"id":"a1","text":"hello","addressee":"lane-a"}`), service.BoardDiff{}},
+		{"annotation addressee is content", edit(t, `{"id":"a1","text":"hello"}`, `{"id":"a1","text":"hello","addressee":"lane-a"}`), service.BoardDiff{"TEST-1": {"annotations"}}},
 		{"annotation resolved is real", edit(t, `{"id":"a1","text":"hello"}`, `{"id":"a1","text":"hello","resolved":true}`), service.BoardDiff{"TEST-1": {"annotations"}}},
 		{"annotation lost", edit(t, `"annotations":[{"id":"a1","text":"hello"}]`, `"annotations":[]`), service.BoardDiff{"TEST-1": {"annotations"}}},
 		{"annotation order", edit(t, `"annotations":[{"id":"a1","text":"hello"}]`, `"annotations":[{"id":"a1","text":"hello"},{"id":"a2","text":"b"}]`), service.BoardDiff{"TEST-1": {"annotations"}}},
@@ -161,13 +161,15 @@ func TestBoardFindings_NilWhenEqual_ReasonWhenNot(t *testing.T) {
 
 func TestBoardExclusions_EachHasAReasonAndIsASmallNamedSet(t *testing.T) {
 	ex := service.BoardExclusions()
-	assert.LessOrEqual(t, len(ex), 9, "growing the set needs a ruling")
+	assert.LessOrEqual(t, len(ex), 8, "growing the set needs a ruling")
 	paths := map[string]bool{}
 	for _, x := range ex {
 		assert.NotEmpty(t, x.Reason, x.Path)
 		paths[x.Path] = true
 	}
-	for _, never := range []string{"nodes.deleted_at", "nodes.deleted_by", "nodes.defer_until", "nodes.status", "nodes.title", "nodes.annotations.text", "nodes.annotations.author", "nodes.annotations.resolved", "nodes.closed_at"} {
+	assert.True(t, paths["nodes.annotations.id"])
+	assert.True(t, paths["nodes.annotations.created_at"])
+	for _, never := range []string{"nodes.deleted_at", "nodes.deleted_by", "nodes.defer_until", "nodes.status", "nodes.title", "nodes.annotations.text", "nodes.annotations.author", "nodes.annotations.resolved", "nodes.annotations.addressee", "nodes.closed_at"} {
 		assert.False(t, paths[never], never+" can hide user content or a deletion")
 	}
 }
@@ -192,8 +194,8 @@ func TestCompareBoardDocs_DeletedAtComparesAsPresenceNotTime(t *testing.T) {
 
 // TestBoardFileFinding_AppliesNoExclusions: tasks.json and the store are the
 // same replica, so the hub clone's limits never excuse a file difference. Each
-// of these differs only in a part the hub rule leaves out, and the file rule
-// still sees it.
+// field differs in the file rule. The hub rule also compares addressees; the
+// remaining cases exercise fields excluded only between replicas.
 func TestBoardFileFinding_AppliesNoExclusions(t *testing.T) {
 	for name, other := range map[string]string{
 		"activity":             edit(t, `"priority":3,`, `"priority":3,"activity":[{"x":1}],`),
@@ -210,7 +212,12 @@ func TestBoardFileFinding_AppliesNoExclusions(t *testing.T) {
 			assert.Equal(t, service.BoardFileDiffers, file.Reason)
 			hub, err := service.BoardHubFinding([]byte(other), []byte(baseBoard))
 			require.NoError(t, err)
-			assert.Nil(t, hub, "the hub rule leaves the same part out")
+			if name == "annotation addressee" {
+				require.NotNil(t, hub)
+				assert.Contains(t, hub.Diff["TEST-1"], "annotations")
+			} else {
+				assert.Nil(t, hub, "the hub rule leaves the same part out")
+			}
 		})
 	}
 }

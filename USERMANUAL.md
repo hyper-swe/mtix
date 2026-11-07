@@ -3019,6 +3019,20 @@ into a worktree, an agent confirmation and a manual pull never enroll a
 checkout. Existing per-project daemons and listeners retain their duty until
 explicit migration; do not remove them as part of trying the experiment.
 
+Worktree enrollment compares annotation addressees and exact completion times
+(`closed_at`), including a missing value. A fully pushed current-client addressed
+comment and rerun retain those values on the hub clone. Annotation IDs and
+creation times remain excluded because older events may use different ones.
+An old backfill without an addressee or an old workflow event without the
+completion time can therefore refuse, naming `annotations` or `closed_at` in
+the report. Keep the copy using the refusal's printed `mtix backup <path>`
+command. Re-entering a value the store already holds emits nothing; if you
+intend to drop that difference, retry the enrollment service with the printed
+`accept-hub` digest. It keeps the old store in an aside directory and a backup,
+enrolls the hub's values, and reports lost fields on nodes this store's own
+journal touched, with a doctor warning until its record is cleared. This is the
+existing service API; no public enrollment command ships in this build.
+
 A 0.5.x per-project service (the `mtix daemon` unit or a running per-project
 daemon) keeps pull and hook duty for its board until that board is migrated.
 While one is live the host dispatcher runs only the wake scanner for the board:

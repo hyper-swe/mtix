@@ -53,12 +53,12 @@ func writeRecoverInboxNote(ctx context.Context, w io.Writer, dbPath string) {
 	n, err := sqlite.CountUnackedInboxFile(ctx, dbPath)
 	if err != nil {
 		fmt.Fprintln(w, "note: unacknowledged inbox events in the source database could not be counted; "+
-			"read the salvage report for retained and unavailable mail. Keep the source database file if recovery is incomplete.")
+			"read the salvage report for retained and unavailable mail. Keep the source database and its -wal and -shm together if recovery is incomplete.")
 		return
 	}
 	if n == 0 {
 		return
 	}
 	fmt.Fprintf(w, "note: the source database holds %d unacknowledged inbox event(s); read the salvage report for retained and unavailable mail. "+
-		"Ordinary tasks.json does not carry the journal; keep the source database if recovery is incomplete.\n", n)
+		"Ordinary tasks.json does not carry the journal; keep the source database and its -wal and -shm together if recovery is incomplete.\n", n)
 }

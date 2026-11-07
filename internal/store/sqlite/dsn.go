@@ -53,9 +53,15 @@ func sqliteDSN(path string, params ...string) string {
 }
 
 // openSQLite opens the database file at path through sqliteDSN. It is the
-// only sql.Open("sqlite", ...) call in non-test code; a source-scan test
+// only sql.Open("sqlite", ...) call in non-test code, guarded against an
+// empty database beside a WAL (NFR-2.8); a source-scan test
 // (dsn_single_builder_test.go) holds that line.
 func openSQLite(path string, params ...string) (*sql.DB, error) {
+	// Every production open passes here, so one guard covers them all: SQLite
+	// deletes the WAL of an empty or one-byte database when it opens it.
+	if err := guardEmptyDatabaseWAL(path); err != nil {
+		return nil, err
+	}
 	db, err := sql.Open("sqlite", sqliteDSN(path, params...))
 	if err != nil {
 		return nil, fmt.Errorf("sql.Open: %w", err)

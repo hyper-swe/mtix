@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"io"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -101,7 +102,9 @@ func TestRecoverInboxJournal_RejectedExportWithHealthyDatabase_IsIncomplete(t *t
 	s := exchangeSnapshotStore(t)
 	res := &RecoverResult{}
 	invalid := &ExportData{InboxJournal: &InboxJournal{Version: 2}}
-	journal := recoverInboxJournal(t.Context(), s.dbPath, nil, res, inboxIntegrityTimeout, invalid)
+	sourceBefore, statErr := os.Stat(s.dbPath)
+	require.NoError(t, statErr)
+	journal := recoverInboxJournal(t.Context(), s.dbPath, nil, res, inboxIntegrityTimeout, sourceBefore, invalid)
 	require.NotNil(t, journal)
 	require.True(t, res.InboxIncomplete)
 	require.Len(t, res.Notes, 2, "healthy database must not contribute an incidental incomplete flag")

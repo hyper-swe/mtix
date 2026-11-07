@@ -20,8 +20,7 @@ import (
 // out of the enrolment's comparison (MTIX-112.17.16.6). Path is dotted from the
 // export's top level; a segment that holds a list applies to every element.
 // Pushed-board differences are demonstrated by
-// TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference and
-// TestEnrolWorktree_RealPath_LegacyBackfilledAddressee_NeedsExclusion.
+// TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference.
 // The sessions and dependencies.created_at exclusions have no pushed-board
 // proof; dependency timestamp differences depend on clock timing. A field not
 // listed here is always compared.
@@ -54,7 +53,6 @@ func BoardExclusions() []BoardExclusion {
 		{"dependencies.created_at", "apply stamps the clone's own clock on an edge it creates; the edge itself (from, to, type) still compares; it differs only when the two clocks read different seconds"},
 		{"nodes.annotations.id", "for events from before MTIX-112.17.16.15, a locally written comment keeps its local id while a clone uses the event id; comments still compare by author, text and order"},
 		{"nodes.annotations.created_at", "for events from before MTIX-112.17.16.15, a clone takes the event time rather than the annotation's stored creation time, with its own clock as fallback if the event time is out of range; author, text and order still compare"},
-		{"nodes.annotations.addressee", "old backfilled and bulk comment events omit the addressee; ordinary old addressed events carry it; author, text, resolved flag and order still compare"},
 		{"agents", "host-local agent registrations, not board content; the aside store keeps them"},
 		{"sessions", "host-local session registrations, not board content; the aside store keeps them"},
 	}
@@ -110,9 +108,8 @@ const (
 // and a hash of the values on both sides (never the values themselves).
 type boardCmp struct {
 	// replicas is set when the two sides are a store and a hub clone: two
-	// replicas, so a gap of replication (closed_at, labels spacing) is not a
-	// difference. The board file and its store are one replica, and a raw
-	// comparison compares nothing away.
+	// replicas, so labels spacing alone is not a difference. The board file
+	// and its store are one replica, and a raw comparison compares nothing away.
 	replicas bool
 	diff     BoardDiff
 	kinds    map[string]diffKind
@@ -456,21 +453,8 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 	}
 }
 
-// sameNodeField reports a node field that differs in form only, in a comparison
-// of a store with a clone of the hub (boardCmp.replicas): labels written with
-// other spacing (review F4), and closed_at when the status is present and the
-// same on both sides. Events from before MTIX-112.17.16.15 omit closed_at:
-// a fully pushed rerun can leave a stamp on the store row while the clone has none
-// (ruling r3 point 1). With another status, or none, the stamp stays a
-// difference. Both rules exist only because of replication, so the file rule and
-// a raw comparison never use them (ruling r4 point 2). Remove the closed_at rule
-// when MTIX-112.17.16.19 lands.
+// sameNodeField reports labels that differ in spacing only between replicas.
+// The board file and its store, and raw comparisons, compare the exact value.
 func sameNodeField(k string, a, b map[string]any) bool {
-	switch k {
-	case "labels":
-		return sameLabels(a[k], b[k])
-	case "closed_at":
-		return a["status"] != nil && sameJSON(a["status"], b["status"])
-	}
-	return false
+	return k == "labels" && sameLabels(a[k], b[k])
 }

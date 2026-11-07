@@ -39,7 +39,15 @@ checks — salvaging readable data with explicit incomplete reports, fills gaps 
 .mtix/tasks.json mirror, synthesizes placeholders for lost parents, and
 writes an importable export with a fresh checksum to .mtix/.
 
-Readable addressed mail and acknowledgement coverage are recovered too.
+Readable addressed mail is recovered. Acknowledgement coverage is retained
+only when the WAL and integrity checks finish and inbox salvage is complete.
+Any unproven result discards all recovered coverage, including supplied-export
+coverage, and can deliver already-read mail again. A five-second check timeout
+does not prove damage: acknowledgement coverage could not be proven. If the
+store opens, use mtix export to preserve readable acknowledgement coverage.
+WAL headers and frame checksums are checked before opening the store. An
+unverifiable tail, even a stale tail, makes recovery partial: committed mail
+may be missing and the lost count is unknown. Keep the database and WAL together.
 Inbox salvage walks rowids without secondary indexes. After 10,000 failed
 rowid probes it stops and reports the limit and position as incomplete; an
 unreadable upper bound means the lost record count is unknown. Keep the
@@ -50,7 +58,7 @@ explicit private export. Ordinary tasks.json does not carry the inbox journal.
 Read the salvage report for missing or unreadable mail. Treat the recovered
 file as private and never commit it.
 
-The damaged database is never modified. After reviewing the salvage
+The source database is never modified. After reviewing the salvage
 report, restore with:
 
   mtix import --mode replace .mtix/recovered-<timestamp>.json
@@ -59,7 +67,7 @@ When the store holds tickets, the replace import asks for the ticket count,
 typed at an interactive terminal; no flag supplies it, so it cannot run
 unattended.
 
-Restore into this project (after moving the damaged database aside) or a fresh
+Restore into this project (after moving the source database aside) or a fresh
 'mtix init' project.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			_, err := runRecoverFrom(fromExport)

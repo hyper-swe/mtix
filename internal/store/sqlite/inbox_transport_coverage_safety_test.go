@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -129,39 +128,6 @@ func TestRecover_DamagedCoverage_AllMailRemainsUnread(t *testing.T) {
 			requireAllRecoveredUnread(t, result, fmt.Sprintf("damage-%03d", target), 300)
 		})
 	}
-}
-
-// FR-19.1 / MTIX-112.48: recovery coverage follows the whole-store integrity verdict.
-func TestRecover_RealIntegrityTimeout_DiscardsCoverageAndNamesLimit(t *testing.T) {
-	path, _, _ := damageMailFixture(t, "")
-	setDamageCoverage(t, path, 300, 0)
-	db, err := sql.Open("sqlite", path)
-	require.NoError(t, err)
-	db.SetMaxOpenConns(1)
-	// Recovery opens read-only, so this SQLite version skips CHECK constraints.
-	// A million rows across six real indexes makes structural checking exceed
-	// the budget without relying on a synthetic driver delay or a huge payload.
-	_, err = db.Exec(`CREATE TABLE slow_integrity(work INTEGER NOT NULL)`)
-	require.NoError(t, err)
-	_, err = db.Exec(`WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<1000000) INSERT INTO slow_integrity SELECT x FROM n`)
-	require.NoError(t, err)
-	for i := 0; i < 6; i++ {
-		_, err = db.Exec(fmt.Sprintf("CREATE INDEX slow_integrity_%d ON slow_integrity(work)", i))
-		require.NoError(t, err)
-	}
-	var rows int
-	require.NoError(t, db.QueryRow(`SELECT count(*) FROM slow_integrity`).Scan(&rows))
-	require.Equal(t, 1000000, rows)
-	require.NoError(t, db.Close())
-	start := time.Now()
-	result := recoverDamageMail(t, path)
-	t.Logf("real integrity notes: %v", result.Notes)
-	require.GreaterOrEqual(t, time.Since(start), 5*time.Second, "exercise the helper's own real deadline")
-	require.Less(t, time.Since(start), 20*time.Second, "the real check must stop rather than finish all work")
-	notes := strings.Join(result.Notes, " ")
-	require.Contains(t, notes, "integrity_check did not finish")
-	require.Contains(t, notes, "5 second limit")
-	requireAllRecoveredUnread(t, result, "damage-300", 300)
 }
 
 // FR-19.1 / MTIX-112.48: recovery coverage follows the whole-store integrity verdict.

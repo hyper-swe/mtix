@@ -7,15 +7,20 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Recovery reads inbox state independently of damaged node indexes. The
 // supplied export can fill events absent from the readable database prefix.
-func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData, res *RecoverResult, inboxSources ...*ExportData) *InboxJournal {
-	journal, readErr := salvageInboxJournal(ctx, dbPath, res)
+func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData, res *RecoverResult, limit time.Duration, inboxSources ...*ExportData) *InboxJournal {
+	journal, readErr := salvageInboxJournal(ctx, dbPath, res, limit)
 	if readErr != nil {
 		res.InboxIncomplete = true
-		res.Notes = append(res.Notes, fmt.Sprintf("inbox journal partially unreadable or unavailable: %v", readErr))
+		if errors.Is(readErr, errInboxIntegrityUnfinished) {
+			res.Notes = append(res.Notes, fmt.Sprintf("inbox journal acknowledgment coverage could not be proven: %v; the time limit alone does not establish damage. If the store opens, use mtix export to preserve readable acknowledgment coverage.", readErr))
+		} else {
+			res.Notes = append(res.Notes, fmt.Sprintf("inbox journal partially unreadable or unavailable: %v", readErr))
+		}
 	}
 	if journal == nil {
 		journal = &InboxJournal{Version: 1, Events: []inboxJournalEvent{}}
@@ -62,7 +67,7 @@ func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData,
 }
 
 // salvageInboxJournal reads damaged files without writes or index dependence (FR-19.1, MTIX-112.2.1).
-func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult) (journal *InboxJournal, err error) {
+func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult, limit time.Duration) (journal *InboxJournal, err error) {
 	// Apply salvage pragmas on every connection through the shared DSN builder.
 	params := append(readOnlyDSNParams(), "_pragma=cell_size_check(0)")
 	db, err := openSQLite(path, params...)
@@ -74,7 +79,7 @@ func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult) (
 			err = fmt.Errorf("close salvage journal: %w", closeErr)
 		}
 	}()
-	integrityErr := checkInboxIntegrity(ctx, db)
+	integrityErr := checkInboxIntegrity(ctx, db, limit)
 	if integrityErr != nil {
 		res.InboxIncomplete = true
 	}

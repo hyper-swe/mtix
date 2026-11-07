@@ -258,7 +258,7 @@ func TestRecoverCommand_UnackedInbox_NamesCountAfterReport(t *testing.T) {
 	events := envelopeCLIEvents(t, "mail one", "mail two")
 	out, err := cliBehaviorOutput(t, func() error { _, runErr := runRecover(); return runErr })
 	require.NoError(t, err)
-	assert.Contains(t, out, "the damaged database holds 2 unacknowledged inbox event(s)")
+	assert.Contains(t, out, "the source database holds 2 unacknowledged inbox event(s)")
 	assert.Contains(t, out, "Salvage complete")
 
 	for _, e := range events {

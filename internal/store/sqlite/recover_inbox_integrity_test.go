@@ -80,7 +80,7 @@ func TestCheckInboxIntegrity_UnknownOrDamaged_IsNotClean(t *testing.T) {
 				ctx, cancel = context.WithTimeout(t.Context(), 50*time.Millisecond)
 			}
 			defer cancel()
-			err := checkInboxIntegrity(ctx, db)
+			err := checkInboxIntegrity(ctx, db, inboxIntegrityTimeout)
 			if mode == "ok" {
 				require.NoError(t, err)
 			} else {
@@ -88,6 +88,10 @@ func TestCheckInboxIntegrity_UnknownOrDamaged_IsNotClean(t *testing.T) {
 			}
 			if mode == "timeout" {
 				require.True(t, errors.Is(err, context.DeadlineExceeded))
+			}
+			if mode == "iteration" {
+				require.ErrorContains(t, err, "integrity_check failed")
+				require.NotContains(t, err.Error(), "limit")
 			}
 			require.Zero(t, db.Stats().InUse)
 		})

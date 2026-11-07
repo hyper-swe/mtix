@@ -37,6 +37,9 @@ type Plan struct {
 // execute. DiscardLocal renames nothing; the plan reports the count
 // of nodes that would be dropped.
 func DryRunDiscardLocal(ctx context.Context, s *Store) (Plan, error) {
+	if err := refuseDiscardRestoredInbox(ctx, s.readDB); err != nil {
+		return Plan{}, err
+	}
 	var nodeCount int
 	err := s.readDB.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM nodes WHERE deleted_at IS NULL`,

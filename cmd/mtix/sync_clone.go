@@ -76,7 +76,10 @@ does 'mtix sync reconcile --discard-local' come first. It deletes local
 tasks and unpushed changes, so first run 'mtix sync push' and check that
 'mtix sync status' shows pending 0. It then asks for the ticket count,
 typed at an interactive terminal; no flag supplies it, so it cannot run
-unattended. Clone reads the hub's event log twice, once to check it and
+unattended. Stores holding restored mail refuse that discard. Keep the
+original store; in a new empty directory run 'mtix init PREFIX', configure
+the same hub credentials via MTIX_SYNC_DSN, then 'mtix sync clone'.
+Clone reads the hub's event log twice, once to check it and
 once to apply it.
 
 Use --resume to pick up an interrupted clone from the last batch
@@ -124,7 +127,11 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 		return wrapSyncErr(stderr, "local probe", hErr)
 	}
 	if hasEvents && !resume {
-		return errCloneLocalNotEmpty()
+		guide, guideErr := app.store.InboxSafeRecoveryGuide(ctx, errCloneLocalNotEmpty().Error())
+		if guideErr != nil {
+			return guideErr
+		}
+		return fmt.Errorf("%s", guide)
 	}
 
 	connectCtx, cancel := context.WithTimeout(ctx, syncConnectBudget)
@@ -148,21 +155,15 @@ func runSyncClone(ctx context.Context, stdout, stderr io.Writer,
 		return wrapSyncErr(stderr, stage, err)
 	}
 
-	initCloneHookFloor(ctx, stderr, !hasEvents)
+	initCloneHookFloor(ctx, stderr)
 	return finishClone(ctx, stdout, stderr, pulled, batches)
 }
 
 // initCloneHookFloor retains the hook floor on every completed clone (FR-20 §8).
-// Only an empty starting journal also seeds automatic wake progress; a nonempty
-// resume preserves unread mail eligibility (MTIX-112.2.2.1.3).
-func initCloneHookFloor(ctx context.Context, stderr io.Writer, bootstrap bool) {
-	var err error
-	if bootstrap {
-		err = app.store.InitHookScanFloorAtTail(ctx)
-	} else {
-		err = app.store.InitHookOnlyScanFloorAtTail(ctx)
-	}
-	if err != nil {
+// Automatic floors were seeded with verified batches; completion must not cover
+// fresh local mail appended after the last batch (MTIX-112.2.2.1.4).
+func initCloneHookFloor(ctx context.Context, stderr io.Writer) {
+	if err := app.store.InitHookOnlyScanFloorAtTail(ctx); err != nil {
 		warnSync(stderr, "mtix sync clone: hook floor init", err)
 	}
 }
@@ -218,12 +219,12 @@ func cloneLoop(ctx context.Context, stderr io.Writer,
 	}
 	// An event quarantined as an orphan whose task's creation came later in
 	// this clone applies now and leaves the quarantine (MTIX-95.37.1).
-	retried, err := retryQuarantinedEvents(ctx, newPullIngest(io.Discard), store, batchSize)
+	retried, err := retryCloneQuarantinedEvents(ctx, store, batchSize)
 	if err != nil {
 		return totalPulled, batches, fmt.Errorf("quarantine retry: %w", err)
 	}
 	totalPulled += retried.applied
-	if err := store.WithTx(ctx, func(tx *sql.Tx) error { return writePullCursor(ctx, tx, page.at) }); err != nil {
+	if err := finishClonePullCursor(ctx, store, page.at); err != nil {
 		return totalPulled, batches, fmt.Errorf("pull cursor write: %w", err)
 	}
 	return totalPulled, batches, nil
@@ -254,7 +255,7 @@ func applyBatchReport(ctx context.Context, in pullIngest, store *sqlite.Store, e
 		in.apply = store.IdempotentApply
 	}
 	var orphans []cloneHeld
-	err := store.WithTx(ctx, func(tx *sql.Tx) error {
+	err := store.WithCloneWakeBootstrap(ctx, func(tx *sql.Tx) error {
 		orphans = nil
 		for _, e := range events {
 			local, err := sqlite.LocalLamport(ctx, tx)
@@ -280,7 +281,7 @@ func applyBatchReport(ctx context.Context, in pullIngest, store *sqlite.Store, e
 	return orphans, nil
 }
 
-// localHasEvents returns true if sync_events has at least one row.
+// localHasEvents returns true if the replication log has a real event (FR-19.1).
 //
 // We only check sync_events (not nodes / dependencies / applied_events)
 // because sync_events is the canonical replication log for this project:
@@ -292,8 +293,7 @@ func applyBatchReport(ctx context.Context, in pullIngest, store *sqlite.Store, e
 // WithTx opens a write tx, which would unnecessarily lock the DB for
 // a read-only check.
 func localHasEvents(ctx context.Context, store *sqlite.Store) (bool, error) {
-	var n int
-	err := store.QueryRow(ctx, `SELECT COUNT(*) FROM sync_events`).Scan(&n)
+	n, err := store.CountSyncEvents(ctx)
 	if err != nil {
 		return false, err
 	}
@@ -333,8 +333,12 @@ func readCloneCheckpoint(ctx context.Context, store *sqlite.Store, resume bool) 
 		return transport.PullCursor{}, fmt.Errorf("parse checkpoint %q: %w", raw.String, err)
 	}
 	if v < 0 {
+		guide, guideErr := store.InboxSafeRecoveryGuide(ctx, discardLocalGuard)
+		if guideErr != nil {
+			return transport.PullCursor{}, guideErr
+		}
 		return transport.PullCursor{}, fmt.Errorf("checkpoint %q is negative; corrupted state — "+
-			"restore a backup or run 'mtix sync pull' on a fresh store. %s", raw.String, discardLocalGuard)
+			"restore a backup or run 'mtix sync pull' on a fresh store. %s", raw.String, guide)
 	}
 	return transport.PullCursor{Lamport: v, EventID: eventID}, nil
 }

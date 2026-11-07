@@ -23,7 +23,6 @@ github.com/hyper-swe/mtix/internal/relay/publisher
 github.com/hyper-swe/mtix/internal/relay/retention
 github.com/hyper-swe/mtix/internal/relay/segment
 github.com/hyper-swe/mtix/internal/relay/tick
-github.com/hyper-swe/mtix/internal/service
 github.com/hyper-swe/mtix/internal/store
 github.com/hyper-swe/mtix/internal/store/postgres/migrations
 github.com/hyper-swe/mtix/internal/store/postgres/transport

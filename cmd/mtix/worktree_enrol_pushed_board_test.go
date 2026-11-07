@@ -110,10 +110,10 @@ func TestEnrolWorktree_RealPath_FullyPushedBoard_Enrols(t *testing.T) {
 	assert.Empty(t, reports)
 }
 
-// TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference: on the same
-// pushed board with events from before MTIX-112.17.16.15, the unfiltered
-// comparison of the store with its bounded clone differs on every excluded
-// field, so each entry of the set is needed, and the set hides all of it.
+// TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference: a pushed board
+// with pre-.15 creation/workflow events differs on activity, creation stamps,
+// annotations and agent registrations before the exclusions hide those fields.
+// The legacy-backfill test separately proves the addressee exclusion.
 func TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference(t *testing.T) {
 	ctx := context.Background()
 	root, writer, hubEvents := worktreeWith(t, func(ctx context.Context, st *sqlite.Store) { pushedWork(ctx, t, st) })
@@ -146,6 +146,55 @@ func TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference(t *testing.T) 
 	filtered, err := service.CompareBoardDocs(local, clone)
 	require.NoError(t, err)
 	assert.Empty(t, filtered)
+}
+
+// TestEnrolWorktree_RealPath_LegacyBackfilledAddressee_NeedsExclusion: old
+// backfill sent the annotation's text and the node creator, but omitted to.
+// A bounded clone of that pushed board differs when only the addressee
+// exclusion is removed; the complete exclusion set lets it enrol.
+func TestEnrolWorktree_RealPath_LegacyBackfilledAddressee_NeedsExclusion(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+	root, writer, hubEvents := worktreeWith(t, func(ctx context.Context, st *sqlite.Store) {
+		require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-2", "", 0, 2, "commented")))
+		require.NoError(t, st.AppendAnnotation(ctx, "TEST-2", model.Annotation{ID: "c1", Author: "other", Text: "for you", CreatedAt: now, Addressee: "lane-b"}))
+	})
+	for _, event := range hubEvents {
+		if event.OpType == model.OpComment {
+			payload, err := model.EncodePayload(&model.CommentPayload{AuthorID: "other", Body: "for you"})
+			require.NoError(t, err)
+			event.Payload = payload
+			event.WallClockTS = now.UnixMilli()
+		}
+	}
+	require.NoError(t, writer.Close())
+	hub := hubOf(hubEvents)
+	var local, clone []byte
+	require.NoError(t, withScratch(slog.Default(), root, func(scratch string) error {
+		return withBoardStore(slog.Default(), root, worktreeDataDir(root), func(st *sqlite.Store) (e error) {
+			if local, e = exportBytes(ctx, st); e != nil {
+				return e
+			}
+			clone, e = boundedCloneExport(ctx, slog.Default(), root, scratch, st, hub)
+			return e
+		})
+	}))
+	var withoutAddressee []service.BoardExclusion
+	for _, exclusion := range service.BoardExclusions() {
+		if exclusion.Path != "nodes.annotations.addressee" {
+			withoutAddressee = append(withoutAddressee, exclusion)
+		}
+	}
+	diff, err := service.CompareBoardDocsWith(local, clone, withoutAddressee)
+	require.NoError(t, err)
+	assert.Equal(t, service.BoardDiff{"TEST-2": {"annotations"}}, diff)
+	filtered, err := service.CompareBoardDocs(local, clone)
+	require.NoError(t, err)
+	assert.Empty(t, filtered)
+	svc, recorded := enrolOverHub(fakeDial(hub))
+	_, err = svc.EnrolWorktree(ctx, enrolRequest(root))
+	require.NoError(t, err)
+	assert.True(t, *recorded)
 }
 
 // TestEnrolWorktree_RealPath_NotReplicatedWork_RefusesNamesItAndAcceptHubGoes:
@@ -207,8 +256,10 @@ func assertNothingChangedExceptReport(t *testing.T, root string, storeBefore map
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
-// preReplicatedFieldsEvents models the wire shape before MTIX-112.17.16.15.
-// Copy events so the original journal fixtures retain their current payloads.
+// preReplicatedFieldsEvents removes snapshots absent from old comment creation
+// and workflow events, preserving the other payload fields (including to).
+// A caller modelling an old resolve must also supply its bulk-placeholder body
+// and empty author_id. Copies preserve the original journal fixtures.
 func preReplicatedFieldsEvents(t *testing.T, events []*model.SyncEvent) []*model.SyncEvent {
 	t.Helper()
 	out := make([]*model.SyncEvent, 0, len(events))

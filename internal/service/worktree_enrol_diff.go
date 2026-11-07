@@ -19,7 +19,9 @@ import (
 // reproduce, including when replaying events from older clients, and so is left
 // out of the enrolment's comparison (MTIX-112.17.16.6). Path is dotted from the export's top level; a segment that
 // holds a list applies to every element. A path is added only with a test that
-// shows a fully pushed board differing on it (TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference);
+// shows a fully pushed board differing on it (for example,
+// TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference and
+// TestEnrolWorktree_RealPath_LegacyBackfilledAddressee_NeedsExclusion);
 // a field nobody listed here is always compared.
 type BoardExclusion struct {
 	Path   string
@@ -49,8 +51,8 @@ func BoardExclusions() []BoardExclusion {
 		{"nodes.updated_at", "apply stamps the clone's own clock when it changes a node"},
 		{"dependencies.created_at", "apply stamps the clone's own clock on an edge it creates; the edge itself (from, to, type) still compares; it differs only when the two clocks read different seconds"},
 		{"nodes.annotations.id", "for events from before MTIX-112.17.16.15, a locally written comment keeps its local id while a clone uses the event id; comments still compare by author, text and order"},
-		{"nodes.annotations.created_at", "for events from before MTIX-112.17.16.15, a clone stamps its own clock on a comment it applies; the comment's author, text and place in the order still compare"},
-		{"nodes.annotations.addressee", "applying a comment event from before MTIX-112.17.16.15 does not carry the addressee onto the clone's row; the author, text and order still compare, a resolved flag stays a difference"},
+		{"nodes.annotations.created_at", "for events from before MTIX-112.17.16.15, a clone takes the event time rather than the annotation's stored creation time, with its own clock as fallback if the event time is out of range; author, text and order still compare"},
+		{"nodes.annotations.addressee", "old backfilled and bulk comment events omit the addressee; ordinary old addressed events carry it; author, text, resolved flag and order still compare"},
 		{"agents", "host-local agent registrations, not board content; the aside store keeps them"},
 		{"sessions", "host-local session registrations, not board content; the aside store keeps them"},
 	}

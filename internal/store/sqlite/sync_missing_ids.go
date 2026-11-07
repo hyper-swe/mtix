@@ -32,16 +32,7 @@ func (s *Store) MissingLocalEventIDs(ctx context.Context, ids []string) ([]strin
 	if err != nil {
 		return nil, fmt.Errorf("encode hub id page: %w", err)
 	}
-	query, err := restoredInboxQuery(ctx, s.readDB, missingLocalEventIDsSQL, `
-	SELECT h.id FROM (SELECT key, CAST(unhex(value) AS TEXT) AS id FROM json_each(?)) AS h
-	WHERE NOT EXISTS (SELECT 1 FROM sync_events s WHERE s.event_id = h.id AND NOT EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=s.event_id))
-	  AND NOT EXISTS (SELECT 1 FROM applied_events a WHERE a.event_id = h.id)
-	  AND NOT EXISTS (SELECT 1 FROM sync_quarantine q WHERE q.event_id = h.id)
-	ORDER BY h.key`)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := s.Query(ctx, query, page)
+	rows, err := s.Query(ctx, missingLocalEventIDsSQL, page)
 	if err != nil {
 		return nil, fmt.Errorf("diff hub ids against local events: %w", err)
 	}

@@ -44,7 +44,7 @@ MIL-STD-498 §5.14 requires configuration status accounting. mtix provides:
 | Unique identification | Dot-notation IDs |
 | Current status | `mtix_show`, `mtix_stats` |
 | Change history | State machine transitions, activity log |
-| Baseline snapshots | `mtix export --board-only > <file>` with checksums |
+| Baseline snapshots | `mtix export > <file>` with checksums |
 | Integrity verification | `mtix verify` (SHA-256 content hashes) |
 
 ## Test Readiness Review

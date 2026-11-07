@@ -85,7 +85,7 @@ func TestRecover_HealthyDB_FullSalvage(t *testing.T) {
 	s, dbPath := seedRecoverFixture(t)
 	require.NoError(t, s.Close())
 
-	res, err := Recover(context.Background(), dbPath, "", "test-version", RecoverOptions{Logger: slog.Default()})
+	res, err := Recover(context.Background(), dbPath, "", "test-version", slog.Default())
 	require.NoError(t, err)
 
 	assert.Len(t, res.RecoveredIDs, 3)
@@ -136,7 +136,7 @@ func TestRecover_CorruptPage_PartitionsEveryID(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, f.Close())
 
-	res, err := Recover(context.Background(), dbPath, "", "test-version", RecoverOptions{Logger: slog.Default()})
+	res, err := Recover(context.Background(), dbPath, "", "test-version", slog.Default())
 	require.NoError(t, err, "recover must not fail outright on partial damage")
 
 	total := len(res.RecoveredIDs) + len(res.LostIDs)
@@ -172,7 +172,7 @@ func TestRecover_MirrorFillsLostNodes(t *testing.T) {
 	}))
 	require.NoError(t, s.Close())
 
-	res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
+	res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", slog.Default())
 	require.NoError(t, err)
 
 	assert.Contains(t, res.FromMirror, "TEST-2")
@@ -202,7 +202,8 @@ func TestRecover_SynthesizesPlaceholderParents(t *testing.T) {
 	mirrorPath := writeMirror(t, dir, mirror)
 
 	// No database at all — mirror-only recovery.
-	res, err := Recover(context.Background(), filepath.Join(dir, "absent.db"), mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
+	res, err := Recover(context.Background(),
+		filepath.Join(dir, "absent.db"), mirrorPath, "test-version", slog.Default())
 	require.NoError(t, err)
 
 	assert.Contains(t, res.Placeholders, "TEST-7")
@@ -219,7 +220,9 @@ func TestRecover_SynthesizesPlaceholderParents(t *testing.T) {
 // mirror, recover reports failure instead of fabricating an empty export.
 func TestRecover_NoSourcesAtAll(t *testing.T) {
 	dir := t.TempDir()
-	_, err := Recover(context.Background(), filepath.Join(dir, "absent.db"), filepath.Join(dir, "absent.json"), "test-version", RecoverOptions{Logger: slog.Default()})
+	_, err := Recover(context.Background(),
+		filepath.Join(dir, "absent.db"), filepath.Join(dir, "absent.json"),
+		"test-version", slog.Default())
 	require.Error(t, err)
 }
 
@@ -240,7 +243,7 @@ func TestRecover_SecondaryTablesGone_NodesStillSalvaged(t *testing.T) {
 	}
 	require.NoError(t, s.Close())
 
-	res, err := Recover(context.Background(), dbPath, "", "test-version", RecoverOptions{Logger: slog.Default()})
+	res, err := Recover(context.Background(), dbPath, "", "test-version", slog.Default())
 	require.NoError(t, err)
 	assert.Len(t, res.RecoveredIDs, 3)
 	assert.Empty(t, res.Export.Dependencies)

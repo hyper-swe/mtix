@@ -190,7 +190,7 @@ func claimProjectOnHub(ctx context.Context, stdout, stderr io.Writer, pool *tran
 		return wrapSyncErr(stderr, "hub first_event_hash", err)
 	}
 	if err := sqlite.DetectDivergentHistory(prefix, hash, hubPrefix, hubHash); err != nil {
-		return wrapSyncErr(stderr, "divergence", withRestoredInboxGuidance(ctx, app.store, err))
+		return wrapSyncErr(stderr, "divergence", err)
 	}
 
 	// Register this CLI's build version for the version-negotiation gate

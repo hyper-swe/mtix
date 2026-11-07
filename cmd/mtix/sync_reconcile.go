@@ -55,10 +55,6 @@ unattended and automation fails closed. A verified snapshot of the
 database is written to .mtix/data/backups/pre-discard-local-<time>.db
 before anything is deleted (MTIX-90).
 
-Stores holding restored mail refuse --discard-local, including dry runs.
-Keep the original store; in a new empty directory run 'mtix init PREFIX',
-configure the same hub credentials via MTIX_SYNC_DSN, then 'mtix sync clone'.
-
 See 'mtix sync init' for divergent-history detection.`,
 		Args: syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {

@@ -178,7 +178,7 @@ func TestAlertState_MissingLock_RefusesWithoutCreatingFile(t *testing.T) {
 }
 
 func TestAlertClasses_Registry_RejectsSupersededHold(t *testing.T) {
-	classes := []string{AlertClassWakeHopDepth, AlertClassWakeBackoff, "wake.binary", "wake.contract-probe", "wake.probe-no-cold", "wake.cold-exit", "wake.nothing-acked", "wake.budget", "hooks.exec-untrusted", "hooks.webhook-untrusted", "wake.takeover", "wake.counter-rewind", "hooks.pin-placement", "wake.unconfirmed", "wake.version-skew"}
+	classes := []string{AlertClassAttachEnrolBlocked, AlertClassWakeHopDepth, AlertClassWakeBackoff, "wake.binary", "wake.contract-probe", "wake.probe-no-cold", "wake.cold-exit", "wake.nothing-acked", "wake.budget", "hooks.exec-untrusted", "hooks.webhook-untrusted", "wake.takeover", "wake.counter-rewind", "hooks.pin-placement", "wake.unconfirmed", "wake.version-skew"}
 	for _, class := range classes {
 		t.Run(class, func(t *testing.T) {
 			row := alertInput()

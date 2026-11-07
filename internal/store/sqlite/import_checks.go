@@ -163,9 +163,6 @@ func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode I
 		if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&before); err != nil {
 			return fmt.Errorf("count the import's changes: %w", err)
 		}
-		if err := checkInboxJournalCollisions(ctx, tx, dry.InboxJournal); err != nil {
-			return err
-		}
 		if err := applyLocalRenumbers(ctx, tx, moves); err != nil {
 			return err
 		}
@@ -178,9 +175,6 @@ func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode I
 		if applyErr != nil {
 			return applyErr
 		}
-		if err := importInboxJournal(ctx, tx, dry.InboxJournal); err != nil {
-			return err
-		}
 		// Rows changed by the import.
 		if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&after); err != nil {
 			return fmt.Errorf("count the import's changes: %w", err)
@@ -192,15 +186,4 @@ func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode I
 		return 0, "", err
 	}
 	return changes, checksum, nil
-}
-
-// Check the writer-locked state before renumbering can alter event evidence.
-func (s *Store) checkImportState(ctx context.Context, tx *sql.Tx, data *ExportData, cfg importConfig) error {
-	if err := s.verifyStoreUnchanged(ctx, tx, cfg); err != nil {
-		return err
-	}
-	if err := refuseInvalidImportIDs(ctx, tx, data); err != nil {
-		return err
-	}
-	return checkInboxJournalCollisions(ctx, tx, data.InboxJournal)
 }

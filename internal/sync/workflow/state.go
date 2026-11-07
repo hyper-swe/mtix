@@ -20,8 +20,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // State enumerates the 5 sync states per FR-18 / SYNC-DESIGN.
@@ -120,8 +118,7 @@ func DetectState(ctx context.Context, db stateReader, mtixDir string) (Report, e
 	if err != nil {
 		return Report{}, fmt.Errorf("read consecutive_errors: %w", err)
 	}
-	// Restored inbox mail is not sync activity or evidence against backfill (MTIX-112.2.1).
-	localEventCount, err := sqlite.CountReplicationEvents(ctx, db, "")
+	localEventCount, err := scanCount(ctx, db, `SELECT COUNT(*) FROM sync_events`)
 	if err != nil {
 		return Report{}, fmt.Errorf("count sync_events: %w", err)
 	}

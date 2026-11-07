@@ -33,7 +33,7 @@ func TestRecover_HistoryMirror_LabelsFormat210AndKeepsOrphans(t *testing.T) {
 	// An entry only the database holds.
 	insertHistory(t, f.db, "01H0000000000000000000R003", goldenRootUID(t, raw), "priority")
 
-	res, err := sqlite.Recover(context.Background(), f.path, mirrorPath, "rv", sqlite.RecoverOptions{Logger: slog.Default()})
+	res, err := sqlite.Recover(context.Background(), f.path, mirrorPath, "rv", slog.Default())
 	require.NoError(t, err)
 	require.Equal(t, sqlite.SchemaVersionHistory, res.Export.SchemaVersion)
 	require.Len(t, res.Export.History, 1, "the orphan list is kept")
@@ -54,7 +54,7 @@ func TestRecover_PlainMirror_StaysFormat200(t *testing.T) {
 	insertHistory(t, f.db, "01H0000000000000000000R004", goldenRootUID(t, raw), "status")
 	mirrorPath := filepath.Join(t.TempDir(), "tasks.json")
 	require.NoError(t, os.WriteFile(mirrorPath, raw, 0o600))
-	res, err := sqlite.Recover(context.Background(), f.path, mirrorPath, "rv", sqlite.RecoverOptions{Logger: slog.Default()})
+	res, err := sqlite.Recover(context.Background(), f.path, mirrorPath, "rv", slog.Default())
 	require.NoError(t, err)
 	require.Equal(t, sqlite.SchemaVersionV1, res.Export.SchemaVersion)
 	require.Empty(t, res.Export.History)
@@ -84,7 +84,7 @@ func TestRecover_MalformedHistoryEntries_DroppedWithNotesFileStillImports(t *tes
 		VALUES ('01H0000000000000000000S004', ?, '2026-03-14 12:00:00', 'tester', 'local', 'change', 'status')`, uid)
 	require.NoError(t, err)
 
-	res, err := sqlite.Recover(context.Background(), f.path, mirrorPath, "rv", sqlite.RecoverOptions{Logger: slog.Default()})
+	res, err := sqlite.Recover(context.Background(), f.path, mirrorPath, "rv", slog.Default())
 	require.NoError(t, err)
 	notes := strings.Join(res.Notes, "\n")
 	require.Contains(t, notes, "2 task history entries were dropped")
@@ -126,7 +126,7 @@ func TestRecover_MalformedDatabaseCopy_FallsBackToTheMirrorsValidCopy(t *testing
 	_, err := f.db.Exec(`UPDATE task_history SET ts = '2026-03-14 12:00:00' WHERE entry_id = '01H0000000000000000000T001'`)
 	require.NoError(t, err)
 
-	res, err := sqlite.Recover(context.Background(), f.path, mirrorPath, "rv", sqlite.RecoverOptions{Logger: slog.Default()})
+	res, err := sqlite.Recover(context.Background(), f.path, mirrorPath, "rv", slog.Default())
 	require.NoError(t, err)
 	got := 0
 	for _, n := range res.Export.Nodes {
@@ -156,7 +156,7 @@ func TestRecover_OrphanOnAPlaceholderParentsID_MovesOntoThePlaceholder(t *testin
 	require.NoError(t, sqlite.RecomputeExportChecksum(&mirror))
 	require.NoError(t, os.WriteFile(mirrorPath, marshalExport(t, &mirror), 0o600))
 
-	res, err := sqlite.Recover(context.Background(), filepath.Join(t.TempDir(), "absent.db"), mirrorPath, "rv", sqlite.RecoverOptions{Logger: slog.Default()})
+	res, err := sqlite.Recover(context.Background(), filepath.Join(t.TempDir(), "absent.db"), mirrorPath, "rv", slog.Default())
 	require.NoError(t, err)
 	require.Contains(t, res.Placeholders, "PROJ-1")
 	require.Empty(t, res.Export.History, "no orphan names a task the file holds")
@@ -179,7 +179,7 @@ func TestRecover_UnreadableHistoryTable_IsReportedInTheNotes(t *testing.T) {
 	mirrorPath := mirrorWithHistory(t, f, goldenRootUID(t, raw), "01H0000000000000000000V001")
 	_, err := f.db.Exec(`DROP TABLE task_history`)
 	require.NoError(t, err)
-	res, err := sqlite.Recover(context.Background(), f.path, mirrorPath, "rv", sqlite.RecoverOptions{Logger: slog.Default()})
+	res, err := sqlite.Recover(context.Background(), f.path, mirrorPath, "rv", slog.Default())
 	require.NoError(t, err)
 	require.Contains(t, strings.Join(res.Notes, "\n"), "task history unreadable")
 	require.Equal(t, sqlite.SchemaVersionHistory, res.Export.SchemaVersion, "the mirror's entries are still carried")

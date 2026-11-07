@@ -56,7 +56,13 @@ var ErrBackfillNodesInvariant = errors.New("nodes table invariant violation")
 // CountSyncEvents returns the number of rows in sync_events. Used by
 // the backfill CLI's refusal check.
 func (s *Store) CountSyncEvents(ctx context.Context) (int, error) {
-	return CountReplicationEvents(ctx, s.readDB, "")
+	var n int
+	if err := s.readDB.QueryRowContext(ctx,
+		`SELECT count(*) FROM sync_events`,
+	).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count sync_events: %w", err)
+	}
+	return n, nil
 }
 
 // BackfillDryRun walks the canonical tables and returns the counts

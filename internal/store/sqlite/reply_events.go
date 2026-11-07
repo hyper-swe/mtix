@@ -36,9 +36,8 @@ func (s *Store) ReplyByEvents(ctx context.Context, afterSeq int64, limit int) ([
 	}
 	// Addressed comments with a reply deadline, in arrival order (rowid).
 	// json_valid guards a hand-damaged payload; the index-free scan is bounded by limit.
-	query, predicateErr := restoredInboxQuery(ctx, s.readDB, `
-		SELECT e.rowid, e.event_id, e.author_id, e.payload,
-          CASE WHEN (0) THEN 'restored' ELSE e.sync_status END
+	rows, err := s.readDB.QueryContext(ctx, `
+		SELECT e.rowid, e.event_id, e.author_id, e.payload, e.sync_status
 		  FROM sync_events e
 		 WHERE e.op_type = 'comment'
 		   AND e.rowid > ?
@@ -46,21 +45,7 @@ func (s *Store) ReplyByEvents(ctx context.Context, afterSeq int64, limit int) ([
 		   AND json_extract(e.payload, '$.reply_by') IS NOT NULL
 		   AND COALESCE(json_extract(e.payload, '$.to'), '') <> ''
 		 ORDER BY e.rowid ASC
-		 LIMIT ?`, `
-		SELECT e.rowid, e.event_id, e.author_id, e.payload,
-          CASE WHEN (EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=e.event_id)) THEN 'restored' ELSE e.sync_status END
-		  FROM sync_events e
-		 WHERE e.op_type = 'comment'
-		   AND e.rowid > ?
-		   AND json_valid(e.payload)
-		   AND json_extract(e.payload, '$.reply_by') IS NOT NULL
-		   AND COALESCE(json_extract(e.payload, '$.to'), '') <> ''
-		 ORDER BY e.rowid ASC
-		 LIMIT ?`)
-	if predicateErr != nil {
-		return nil, predicateErr
-	}
-	rows, err := s.readDB.QueryContext(ctx, query, afterSeq, limit)
+		 LIMIT ?`, afterSeq, limit)
 	if err != nil {
 		return nil, fmt.Errorf("reply events after %d: %w", afterSeq, err)
 	}

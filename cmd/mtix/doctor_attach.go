@@ -175,7 +175,7 @@ func attachFailureAlerts(ctx context.Context, deps attachDoctorDeps) []oplocal.A
 	}
 	var out []oplocal.Alert
 	for _, row := range rows {
-		if row.Class == attachAlertProtocolSkew || row.Class == attachAlertVerbFailure {
+		if row.Class == attachAlertProtocolSkew || row.Class == attachAlertVerbFailure || row.Class == attachAlertEnrolBlocked {
 			out = append(out, row)
 		}
 	}

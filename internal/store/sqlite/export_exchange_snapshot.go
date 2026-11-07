@@ -94,16 +94,6 @@ func readExchangeBoundary(ctx context.Context, tx *sql.Tx) (ExchangeBoundary, er
 }
 
 func countUnresolvedExchange(ctx context.Context, tx *sql.Tx, ids []string) (int64, error) {
-	query, err := restoredInboxQuery(ctx, tx, `SELECT COUNT(*) FROM (SELECT CAST(unhex(value) AS TEXT) AS value FROM json_each(?)) AS j
-   WHERE EXISTS (SELECT 1 FROM sync_quarantine q WHERE q.event_id=j.value)
-    OR (NOT EXISTS (SELECT 1 FROM applied_events a WHERE a.event_id=j.value)
-     AND NOT EXISTS (SELECT 1 FROM sync_events s WHERE s.event_id=j.value))`, `SELECT COUNT(*) FROM (SELECT CAST(unhex(value) AS TEXT) AS value FROM json_each(?)) AS j
-   WHERE EXISTS (SELECT 1 FROM sync_quarantine q WHERE q.event_id=j.value)
-    OR (NOT EXISTS (SELECT 1 FROM applied_events a WHERE a.event_id=j.value)
-     AND NOT EXISTS (SELECT 1 FROM sync_events s WHERE s.event_id=j.value AND NOT EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=s.event_id)))`)
-	if err != nil {
-		return 0, err
-	}
 	var total int64
 	for start := 0; start < len(ids); start += 500 {
 		raw, err := hexIDList(ids[start:min(start+500, len(ids))])
@@ -111,7 +101,10 @@ func countUnresolvedExchange(ctx context.Context, tx *sql.Tx, ids []string) (int
 			return 0, err
 		}
 		var count int64
-		err = tx.QueryRowContext(ctx, query, raw).Scan(&count)
+		err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM (SELECT CAST(unhex(value) AS TEXT) AS value FROM json_each(?)) AS j
+   WHERE EXISTS (SELECT 1 FROM sync_quarantine q WHERE q.event_id=j.value)
+    OR (NOT EXISTS (SELECT 1 FROM applied_events a WHERE a.event_id=j.value)
+     AND NOT EXISTS (SELECT 1 FROM sync_events s WHERE s.event_id=j.value))`, raw).Scan(&count)
 		if err != nil {
 			return 0, err
 		}

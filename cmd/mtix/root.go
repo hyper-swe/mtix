@@ -190,9 +190,13 @@ func autoImportForCommand(cmd *cobra.Command) {
 	}
 }
 
-// skipsStoreInit names commands that never open a store. Attach verbs run in
-// any directory a harness opens; they never open or create a store, and they
-// always exit 0 (ADR-007 §6.5, A5).
+// skipsStoreInit bypasses ordinary application store startup. Version, help and
+// permission recovery open no board store; top-level recover reads the damaged
+// store for salvage. The attach predicate reads identity; session-start drains
+// and pi wait use guarded existing-store opens, as does each dispatcher board
+// pass. Attach always exits 0. These enrolment checks do not hold the lock
+// across in-flight operations
+// (ADR-007 §6.5, A5, MTIX-112.17.16.21).
 func skipsStoreInit(cmd *cobra.Command) bool {
 	switch cmd.Name() {
 	case "version", "help", "recover":

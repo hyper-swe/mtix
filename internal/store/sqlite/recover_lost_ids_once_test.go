@@ -33,7 +33,7 @@ func TestRecover_TwoMisreadEntriesForOneLostID_ListsItOnceAndSalvageFileImports(
 	}
 	dbPath, mirrorPath := damagedIndexFixture(t, tc)
 
-	res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
+	res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", slog.Default())
 	require.NoError(t, err)
 	assert.Equal(t, []string{"RC-2"}, res.LostIDs, "RC-2 is listed as lost once")
 

@@ -323,7 +323,7 @@ func TestRecover_DuplicateRowsChooseMirror(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			f := makeDuplicateMirrorChoiceFixture(t, tc)
-			res, err := Recover(context.Background(), f.dbPath, f.mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
+			res, err := Recover(context.Background(), f.dbPath, f.mirrorPath, "test-version", slog.Default())
 			require.NoError(t, err)
 			want := f.rows[tc.winner-1].node
 			got := recoveredNode(t, res, "RC-2")
@@ -568,7 +568,7 @@ func TestRecover_DuplicateOwnEntryReportsFinalWinner(t *testing.T) {
 	})
 	renameTableRows(t, path, map[string]string{"RC-3": "RC-2"})
 	rows := readDuplicateChoiceRows(t, path, 2)
-	res, err := Recover(context.Background(), path, mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
+	res, err := Recover(context.Background(), path, mirrorPath, "test-version", slog.Default())
 	require.NoError(t, err)
 	require.Equal(t, rows[0].node.UID, recoveredNode(t, res, "RC-2").UID)
 	assertDuplicateMirrorChoiceNotes(t, tc, rows, res)
@@ -600,7 +600,7 @@ func TestRecover_DuplicateWinningOwnEntryRepeatedOnce(t *testing.T) {
 	})
 	renameTableRows(t, path, map[string]string{"RC-3": "RC-2"})
 	rows := readDuplicateChoiceRows(t, path, 2)
-	res, err := Recover(context.Background(), path, mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
+	res, err := Recover(context.Background(), path, mirrorPath, "test-version", slog.Default())
 	require.NoError(t, err)
 	require.Equal(t, rows[0].node.UID, recoveredNode(t, res, "RC-2").UID)
 	assertDuplicateMirrorChoiceNotes(t, tc, rows, res)
@@ -626,7 +626,7 @@ func TestRecover_DuplicateMisreadsReachKeptRow(t *testing.T) {
 		"RC-4": {pointAt: "RC-2"},
 	})
 	rows := readDuplicateChoiceRows(t, path, 1)
-	res, err := Recover(context.Background(), path, mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
+	res, err := Recover(context.Background(), path, mirrorPath, "test-version", slog.Default())
 	require.NoError(t, err)
 	require.Equal(t, rows[0].node.UID, recoveredNode(t, res, "RC-2").UID)
 	assertWinnerNeverDiscarded(t, res, rows[0].key.rowid)
@@ -646,7 +646,7 @@ func TestRecover_DuplicateOwnLoserIndexNotes(t *testing.T) {
 		t.Run(fmt.Sprintf("winner_%d", winner), func(t *testing.T) {
 			tc := duplicateMirrorChoiceCase{mirrorUID: winner, mirrorHash: 3 - winner, winner: winner, reason: "uid-match"}
 			f := makeDuplicateOwnLoserFixture(t, tc)
-			res, err := Recover(context.Background(), f.dbPath, f.mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
+			res, err := Recover(context.Background(), f.dbPath, f.mirrorPath, "test-version", slog.Default())
 			require.NoError(t, err)
 			require.Equal(t, f.rows[winner-1].node.UID, recoveredNode(t, res, "RC-2").UID)
 			assertDuplicateMirrorChoiceNotes(t, tc, f.rows, res)
@@ -897,7 +897,7 @@ func TestRecover_IndexEntryPointsAtAnotherRow_ExportHoldsEachIDOnceAndImports(t 
 		t.Run(tc.name, func(t *testing.T) {
 			dbPath, mirrorPath := damagedIndexFixture(t, tc)
 
-			res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
+			res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", slog.Default())
 			require.NoError(t, err)
 
 			assertDamagedIndexSalvage(t, tc, res)
@@ -967,7 +967,7 @@ func TestRecover_TableDuplicateRowWithTornColumn_NoteNamesTheColumn(t *testing.T
 	}
 	dbPath, mirrorPath := damagedIndexFixture(t, tc)
 
-	res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
+	res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", slog.Default())
 	require.NoError(t, err)
 
 	dup := notesContaining(res.Notes, "the table holds two rows with id RC-2")
@@ -997,7 +997,7 @@ func TestRecover_TableDuplicateRows_ReportPreservesContent(t *testing.T) {
 			require.NoError(t, db.Close())
 			requireDuplicateReportContent(t, second.node)
 
-			res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", RecoverOptions{Logger: slog.Default()})
+			res, err := Recover(context.Background(), dbPath, mirrorPath, "test-version", slog.Default())
 			require.NoError(t, err)
 			notes := notesContaining(res.Notes, "the row at rowid 3 is not salvaged; its content is ")
 			require.Len(t, notes, 1)

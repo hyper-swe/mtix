@@ -58,12 +58,3 @@ func (svc *AdminService) Close() error {
 	}
 	return nil
 }
-
-// Export returns an explicit private export, or a journal-free mirror (FR-7.8,
-// FR-19.1). The caller identifies the tracked mirror destination.
-func (svc *AdminService) Export(ctx context.Context, includeInbox bool) (*sqlite.ExportData, error) {
-	if includeInbox {
-		return svc.backend.ExportWithInbox(ctx, "", "")
-	}
-	return svc.backend.Export(ctx, "", "")
-}

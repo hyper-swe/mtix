@@ -236,26 +236,16 @@ func (s *Store) computeAndCacheFirstEventHash(ctx context.Context) (string, stri
 // when the table is empty. Sort ties broken by event_id so two CLIs
 // with simultaneous lowest-lamport emits agree on which is "first".
 func (s *Store) scanFirstEvent(ctx context.Context) (*model.SyncEvent, error) {
-	query, err := restoredInboxQuery(ctx, s.readDB, `
+	row := s.readDB.QueryRowContext(ctx, `
 		SELECT event_id, project_prefix, node_id, op_type, payload,
 		       wall_clock_ts, lamport_clock, vector_clock,
 		       author_id, author_machine_hash
-		FROM sync_events WHERE NOT (0)
-		ORDER BY lamport_clock ASC, event_id ASC
-		LIMIT 1`, `
-		SELECT event_id, project_prefix, node_id, op_type, payload,
-		       wall_clock_ts, lamport_clock, vector_clock,
-		       author_id, author_machine_hash
-		FROM sync_events WHERE NOT (EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=sync_events.event_id))
+		FROM sync_events
 		ORDER BY lamport_clock ASC, event_id ASC
 		LIMIT 1`)
-	if err != nil {
-		return nil, err
-	}
-	row := s.readDB.QueryRowContext(ctx, query)
 	var e model.SyncEvent
 	var opType, payload, vc string
-	err = row.Scan(
+	err := row.Scan(
 		&e.EventID, &e.ProjectPrefix, &e.NodeID, &opType, &payload,
 		&e.WallClockTS, &e.LamportClock, &vc,
 		&e.AuthorID, &e.AuthorMachineHash,

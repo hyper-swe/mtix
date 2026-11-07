@@ -113,7 +113,7 @@ func TestEnrolWorktree_RealPath_FullyPushedBoard_Enrols(t *testing.T) {
 // TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference: a pushed board
 // with pre-.15 creation/workflow events differs on activity, creation stamps,
 // annotations and agent registrations before the exclusions hide those fields.
-// The legacy-backfill test separately proves the addressee exclusion.
+// Legacy backfill without an addressee now refuses separately.
 func TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference(t *testing.T) {
 	ctx := context.Background()
 	root, writer, hubEvents := worktreeWith(t, func(ctx context.Context, st *sqlite.Store) { pushedWork(ctx, t, st) })
@@ -148,11 +148,8 @@ func TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference(t *testing.T) 
 	assert.Empty(t, filtered)
 }
 
-// TestEnrolWorktree_RealPath_LegacyBackfilledAddressee_NeedsExclusion: old
-// backfill sent the annotation's text and the node creator, but omitted to.
-// A bounded clone of that pushed board differs when only the addressee
-// exclusion is removed; the complete exclusion set lets it enrol.
-func TestEnrolWorktree_RealPath_LegacyBackfilledAddressee_NeedsExclusion(t *testing.T) {
+// Old backfill omitted the addressee; the strict comparison must report it.
+func TestEnrolWorktree_RealPath_LegacyBackfilledAddressee_Refuses(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 	root, writer, hubEvents := worktreeWith(t, func(ctx context.Context, st *sqlite.Store) {
@@ -179,22 +176,15 @@ func TestEnrolWorktree_RealPath_LegacyBackfilledAddressee_NeedsExclusion(t *test
 			return e
 		})
 	}))
-	var withoutAddressee []service.BoardExclusion
-	for _, exclusion := range service.BoardExclusions() {
-		if exclusion.Path != "nodes.annotations.addressee" {
-			withoutAddressee = append(withoutAddressee, exclusion)
-		}
-	}
-	diff, err := service.CompareBoardDocsWith(local, clone, withoutAddressee)
+	diff, err := service.CompareBoardDocs(local, clone)
 	require.NoError(t, err)
 	assert.Equal(t, service.BoardDiff{"TEST-2": {"annotations"}}, diff)
-	filtered, err := service.CompareBoardDocs(local, clone)
-	require.NoError(t, err)
-	assert.Empty(t, filtered)
 	svc, recorded := enrolOverHub(fakeDial(hub))
 	_, err = svc.EnrolWorktree(ctx, enrolRequest(root))
-	require.NoError(t, err)
-	assert.True(t, *recorded)
+	var refusal *service.WorktreeBoardError
+	require.ErrorAs(t, err, &refusal)
+	assert.Equal(t, diff, refusal.Diff)
+	assert.False(t, *recorded)
 }
 
 // TestEnrolWorktree_RealPath_NotReplicatedWork_RefusesNamesItAndAcceptHubGoes:

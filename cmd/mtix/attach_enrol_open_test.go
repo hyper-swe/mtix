@@ -139,11 +139,12 @@ func TestEnrolGuard_SkippedStorePaths_RefuseWithoutDataChanges(t *testing.T) {
 				before := enrolDataSnapshot(t, root)
 				err := invokeSkippedStorePath(t, st, root, path)
 				require.Error(t, err)
-				if mode == "running" {
+				switch mode {
+				case "running":
 					assert.ErrorIs(t, err, service.ErrEnrolInProgress)
-				} else if mode == "interrupted" {
+				case "interrupted":
 					assert.ErrorIs(t, err, service.ErrEnrolInterrupted)
-				} else {
+				default:
 					assert.Contains(t, err.Error(), "enrolment", "the guard error must survive")
 				}
 				assert.Equal(t, before, enrolDataSnapshot(t, root), "no side files, bytes or directory times may change")

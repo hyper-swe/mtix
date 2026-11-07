@@ -50,7 +50,7 @@ func productionAttachAdapters() map[string]attach.Adapter {
 
 // openPiWaitBoard guards the store the glue predicate resolved and judged. Its
 // pi capabilities recheck before each poll read and write, without holding the
-// enrol lock. It never searches for another board: an unresolved root fails.
+// enrollment lock. It never searches for another board: an unresolved root fails.
 func openPiWaitBoard(ctx context.Context) (service.PiWaitStore, func() error, error) {
 	root, ok := attach.StoreRootFrom(ctx)
 	if !ok {

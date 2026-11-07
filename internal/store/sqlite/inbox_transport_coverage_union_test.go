@@ -15,8 +15,8 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
-// FR-19.1 / MTIX-112.2.1: duplicate rows retain coverage from the later row.
-func TestRecover_DuplicateWithLaterAck_UnionsCoverage(t *testing.T) {
+// FR-19.1: duplicate identity makes every recovered acknowledgment untrusted.
+func TestRecover_DuplicateWithLaterAck_DiscardsAllCoverage(t *testing.T) {
 	source, raw := retentionStore(t)
 	addressThree(t, source, "recipient")
 	for _, statement := range []string{
@@ -36,14 +36,14 @@ func TestRecover_DuplicateWithLaterAck_UnionsCoverage(t *testing.T) {
 	require.NoError(t, sqlite.ValidateExport(result.Export))
 	require.Len(t, result.Export.InboxJournal.Events, 3)
 	first := result.Export.InboxJournal.Events[0]
-	require.True(t, first.Acked)
-	require.Equal(t, "2026-11-05T01:02:03Z", first.AckedAt)
+	require.False(t, first.Acked)
+	require.Empty(t, first.AckedAt)
 	dest := newTestStore(t)
 	_, err = dest.Import(t.Context(), result.Export, sqlite.ImportModeMerge, false)
 	require.NoError(t, err)
 	got, err := dest.InboxList(t.Context(), "recipient")
 	require.NoError(t, err)
-	require.Len(t, got, 2)
+	require.Len(t, got, 3)
 }
 
 func TestRecover_InvalidAckTimestamp_KeepsMailUnacknowledged(t *testing.T) {

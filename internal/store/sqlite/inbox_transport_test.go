@@ -153,7 +153,7 @@ func TestExportWithInbox_Released054Reader_ImportsNonemptyJournal(t *testing.T) 
 	attachReaderCommand(t, reader, project, "", "show", "PROJ-1", "--json")
 }
 
-func TestRecover_ExplicitExport_PreservesMailAndCoverage(t *testing.T) {
+func TestRecover_ExplicitExport_UnverifiedDatabase_RedeliversReadMail(t *testing.T) {
 	source := newTestStore(t)
 	first, _, _ := addressThree(t, source, "recipient")
 	require.NoError(t, source.InboxAckThrough(t.Context(), "recipient", first))
@@ -170,7 +170,8 @@ func TestRecover_ExplicitExport_PreservesMailAndCoverage(t *testing.T) {
 	require.NoError(t, err)
 	got, err := dest.InboxList(t.Context(), "recipient")
 	require.NoError(t, err)
-	require.Len(t, got, 2)
+	require.Len(t, got, 3)
+	require.True(t, result.InboxIncomplete)
 }
 
 func TestRecover_UnreadableAcks_KeepsReadableMail(t *testing.T) {

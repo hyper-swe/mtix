@@ -22,6 +22,9 @@ type salvageMail struct {
 func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (*InboxJournal, error) {
 	journal := &InboxJournal{Version: 1, Events: []inboxJournalEvent{}}
 	rows, readErr := collectSalvageInboxRows(ctx, db)
+	if readErr != nil {
+		res.InboxIncomplete = true
+	}
 	var records []salvageMail
 	loss := inboxLoss{}
 	for _, row := range rows {
@@ -38,13 +41,16 @@ func salvageInboxRows(ctx context.Context, db *sql.DB, res *RecoverResult) (*Inb
 	return journal, readErr
 }
 
-// restoreSalvageCoverage combines duplicate identities by recipient coverage (FR-19.1, MTIX-112.2.1).
+// restoreSalvageCoverage keeps one readable copy per identity (FR-19.1, MTIX-112.2.1).
 func restoreSalvageCoverage(ctx context.Context, db *sql.DB, records []salvageMail, j *InboxJournal, res *RecoverResult) {
 	unreadable := 0
 	positions := map[string]int{}
 	for _, r := range records {
-		if err := salvageInboxAck(ctx, db, &r.e, r.seq); err != nil {
-			unreadable++
+		if !res.InboxIncomplete {
+			if err := salvageInboxAck(ctx, db, &r.e, r.seq); err != nil {
+				unreadable++
+				res.InboxIncomplete = true
+			}
 		}
 		if i, exists := positions[r.e.EventID]; exists {
 			res.InboxIncomplete = true
@@ -52,10 +58,7 @@ func restoreSalvageCoverage(ctx context.Context, db *sql.DB, records []salvageMa
 				res.Notes = append(res.Notes, "conflicting duplicate inbox identity omitted; first readable database copy retained")
 				continue
 			}
-			res.Notes = append(res.Notes, "duplicate inbox identity combined; acknowledgment coverage retained; journal incomplete, lost record count unknown")
-			if !j.Events[i].Acked && r.e.Acked {
-				j.Events[i].Acked, j.Events[i].AckedAt = true, r.e.AckedAt
-			}
+			res.Notes = append(res.Notes, "duplicate inbox identity combined; journal incomplete, lost record count unknown")
 			continue
 		}
 		positions[r.e.EventID] = len(j.Events)
@@ -63,33 +66,21 @@ func restoreSalvageCoverage(ctx context.Context, db *sql.DB, records []salvageMa
 	}
 	if unreadable > 0 {
 		res.InboxIncomplete = true
-		res.Notes = append(res.Notes, fmt.Sprintf("acknowledgment coverage unreadable for %d addressed inbox event(s); delivered as unacknowledged unless supplied export restores coverage", unreadable))
+		res.Notes = append(res.Notes, fmt.Sprintf("acknowledgment coverage unreadable for %d addressed inbox event(s); all recovered acknowledgment coverage will be discarded", unreadable))
 	}
 }
 
-// salvageInboxAck binds recipient coverage to the full source row (FR-19.1).
+// salvageInboxAck reads coverage only while salvage remains proven clean (FR-19.1).
 func salvageInboxAck(ctx context.Context, db *sql.DB, event *inboxJournalEvent, seq int64) error {
-	var point inboxJournalEvent
-	var pointSeq int64
-	var op string
-	var acked bool
-	var ackedAt string
-	// Read identity and coverage together; damaged rowid routing must never let
-	// one event borrow another event's selective acknowledgment or cursor coverage.
+	// The completed integrity check authenticates table/index structure. Any
+	// later read or merge uncertainty discards coverage for the entire journal.
 	err := db.QueryRowContext(ctx, `SELECT
- e.event_id,e.project_prefix,e.node_id,COALESCE(e.uid,''),e.author_id,e.payload,e.created_at,e.rowid,e.op_type,
  (k.event_seq IS NOT NULL OR e.rowid<=COALESCE(c.cursor,0)),COALESCE(k.acked_at,'')
  FROM sync_events e NOT INDEXED LEFT JOIN agent_inbox_ack k ON k.event_seq=e.rowid
  AND k.agent_id=json_extract(e.payload,'$.to')
  LEFT JOIN agent_inbox_cursor c ON c.agent_id=json_extract(e.payload,'$.to')
- WHERE e.rowid=?`, seq).Scan(&point.EventID, &point.Project, &point.NodeID, &point.UID, &point.Author, &point.Payload, &point.CreatedAt, &pointSeq, &op, &acked, &ackedAt)
-	expected := *event
-	expected.Acked, expected.AckedAt = false, ""
-	if err == nil && (point != expected || pointSeq != seq || op != "comment") {
-		err = fmt.Errorf("journal coverage row does not match recovered event identity")
-	}
+ WHERE e.rowid=?`, seq).Scan(&event.Acked, &event.AckedAt)
 	if err == nil {
-		event.Acked, event.AckedAt = acked, ackedAt
 		err = validateInboxEvent(*event)
 	}
 	if err != nil {

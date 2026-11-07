@@ -16,12 +16,14 @@ func TestCollectSalvageInboxRows_DuplicateUnaddressedIdentity_IsIncomplete(t *te
 		`DROP TABLE sync_events`,
 		`ALTER TABLE copied_events RENAME TO sync_events`,
 		`UPDATE sync_events SET event_id='duplicate',payload='{"body":"unaddressed"}'`,
+		`INSERT INTO sync_events SELECT * FROM sync_events WHERE rowid=1`,
+		`UPDATE sync_events SET event_id='unique-after-duplicates' WHERE rowid=3`,
 	} {
 		_, err := db.Exec(query)
 		require.NoError(t, err)
 	}
 	rows, err := collectSalvageInboxRows(t.Context(), db)
-	require.Len(t, rows, 2, "retain readable rows while reporting the damage signal")
+	require.Len(t, rows, 3, "retain readable rows while reporting the damage signal")
 	require.ErrorContains(t, err, "duplicate journal identity")
 	require.ErrorContains(t, err, "lost record count unknown")
 }

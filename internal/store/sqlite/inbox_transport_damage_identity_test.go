@@ -106,7 +106,7 @@ func TestRecover_FlippedRowid_CannotBorrowAcknowledgment(t *testing.T) {
 			}
 			require.Contains(t, ids, "damage-172", "unverified coverage must fail toward unread mail")
 			require.True(t, result.InboxIncomplete)
-			require.Contains(t, strings.Join(result.Notes, " "), "acknowledgment coverage unreadable")
+			require.Contains(t, strings.Join(result.Notes, " "), "acknowledgment coverage discarded")
 		})
 	}
 }

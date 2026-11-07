@@ -93,39 +93,3 @@ func TestCheckInboxIntegrity_UnknownOrDamaged_IsNotClean(t *testing.T) {
 		})
 	}
 }
-
-func TestSalvageInboxAck_FullIdentityMismatch_LeavesUnread(t *testing.T) {
-	for _, field := range []string{"event", "project", "node", "uid", "author", "payload", "created", "op"} {
-		t.Run(field, func(t *testing.T) {
-			db := routeSeekDB(t, true)
-			// Obtain the real row before changing the claimed identity; the coverage is genuine.
-			walk := inboxRowidWalk{next: 1}
-			row, _, ok := walk.read(t.Context(), db)
-			require.True(t, ok)
-			_, err := db.Exec(`INSERT INTO agent_inbox_cursor(agent_id,cursor) VALUES('worker',100)`)
-			require.NoError(t, err)
-			switch field {
-			case "event":
-				row.e.EventID = "other"
-			case "project":
-				row.e.Project = "OTHER"
-			case "node":
-				row.e.NodeID = "TEST-2"
-			case "uid":
-				row.e.UID = "other"
-			case "author":
-				row.e.Author = "other"
-			case "payload":
-				row.e.Payload = `{"to":"worker","body":"other"}`
-			case "created":
-				row.e.CreatedAt = "2026-11-06T00:00:00Z"
-			case "op":
-				_, err = db.Exec(`UPDATE sync_events SET op_type='update_field' WHERE rowid=?`, row.seq)
-				require.NoError(t, err)
-			}
-			require.ErrorContains(t, salvageInboxAck(t.Context(), db, &row.e, row.seq), "identity")
-			require.False(t, row.e.Acked)
-			require.Empty(t, row.e.AckedAt)
-		})
-	}
-}

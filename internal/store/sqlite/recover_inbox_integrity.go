@@ -1,5 +1,6 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
+
 package sqlite
 
 import (
@@ -22,6 +23,9 @@ func checkInboxIntegrity(ctx context.Context, db *sql.DB) (err error) {
 	// Limit diagnostic rows as well as elapsed time; neither limit implies success.
 	rows, err := db.QueryContext(ctx, `PRAGMA integrity_check(20)`)
 	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("journal integrity_check did not finish (5 second limit): %w", err)
+		}
 		return fmt.Errorf("journal integrity_check unavailable: %w", err)
 	}
 	defer func() {
@@ -43,7 +47,7 @@ func checkInboxIntegrity(ctx context.Context, db *sql.DB) (err error) {
 		}
 	}
 	if readErr := rows.Err(); readErr != nil {
-		return fmt.Errorf("finish journal integrity_check (5 second limit): %w", readErr)
+		return fmt.Errorf("journal integrity_check did not finish (5 second limit): %w", readErr)
 	}
 	if len(problems) > 0 {
 		return fmt.Errorf("journal integrity_check detected damage; lost record count unknown: %s", strings.Join(problems, "; "))

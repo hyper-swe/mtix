@@ -39,6 +39,13 @@ func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData,
 		res.Notes = append(res.Notes, "inbox journal unavailable from both database and supplied export; lost event count unknown; ordinary tasks.json carries no journal")
 		return nil
 	}
+	// Any uncertainty applies to the whole journal, including supplied exports.
+	// A damaged row or index cannot authenticate its own acknowledgment coverage.
+	if res.InboxIncomplete {
+		for i := range journal.Events {
+			journal.Events[i].Acked, journal.Events[i].AckedAt = false, ""
+		}
+	}
 	sum, err := inboxJournalChecksum(journal)
 	if err != nil {
 		res.InboxIncomplete = true
@@ -46,7 +53,11 @@ func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData,
 		return nil
 	}
 	journal.Checksum = sum
-	res.Notes = append(res.Notes, fmt.Sprintf("recovered %d addressed inbox events; acknowledgment coverage retained where readable", len(journal.Events)))
+	if res.InboxIncomplete {
+		res.Notes = append(res.Notes, fmt.Sprintf("recovered %d addressed inbox events; acknowledgment coverage discarded because recovery is incomplete; all %d will be delivered as unread in a fresh store; already-read mail may cause repeated wakes", len(journal.Events), len(journal.Events)))
+	} else {
+		res.Notes = append(res.Notes, fmt.Sprintf("recovered %d addressed inbox events; acknowledgment coverage retained after a completed integrity check and complete salvage", len(journal.Events)))
+	}
 	return journal
 }
 
@@ -64,6 +75,9 @@ func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult) (
 		}
 	}()
 	integrityErr := checkInboxIntegrity(ctx, db)
+	if integrityErr != nil {
+		res.InboxIncomplete = true
+	}
 	journal, err = salvageInboxRows(ctx, db, res)
 	return journal, errors.Join(err, integrityErr)
 }

@@ -21,6 +21,7 @@ import (
 const (
 	attachAlertProtocolSkew = "attach.protocol-skew"
 	attachAlertVerbFailure  = "attach.verb-failure"
+	attachAlertEnrolBlocked = oplocal.AlertClassAttachEnrolBlocked
 	// attachAlertAgent names alerts for a harness the verb could not identify.
 	attachAlertAgent = "attach"
 )
@@ -109,9 +110,10 @@ func drainAttachQueue(ctx context.Context, deps attachDeps, req attach.VerbReque
 		return
 	}
 	if err := deps.drain(ctx, decision); err != nil {
-		attachFailure(ctx, deps, req.Stderr, req.Harness, attachAlertVerbFailure,
+		class, fix := attachErrorRemedy(err, operatorStateFix)
+		attachFailure(ctx, deps, req.Stderr, req.Harness, class,
 			fmt.Sprintf("mtix attach %s: could not drain the attach queue: %v; messages stay in the inbox (mtix inbox)", req.Verb, err),
-			operatorStateFix)
+			fix)
 	}
 }
 
@@ -252,9 +254,10 @@ func runAttachAdapter(ctx context.Context, deps attachDeps, req attach.VerbReque
 		return
 	}
 	if err := adapter.Run(ctx, req); err != nil {
-		attachFailure(ctx, deps, req.Stderr, req.Harness, attachAlertVerbFailure, fmt.Sprintf(
+		class, fix := attachErrorRemedy(err, attachFixAdapterRun)
+		attachFailure(ctx, deps, req.Stderr, req.Harness, class, fmt.Sprintf(
 			"mtix attach %s: %s adapter failed: %v; messages stay in the inbox (mtix inbox)", req.Verb, req.Harness, err),
-			attachFixAdapterRun)
+			fix)
 	}
 }
 

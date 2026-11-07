@@ -3,7 +3,7 @@
 # MTIX-112.17.27: the same guard for the remote bar's package sets, and a
 # test-level hash shard mode for the slow packages (sqlite, service).
 #
-#   bash scripts/ci-go-shards.sh check | list {sqlite|cli|other}             ci.yml shards
+#   bash scripts/ci-go-shards.sh check | list {sqlite|cli|service|other}             ci.yml shards
 #   bash scripts/ci-go-shards.sh bar-check | bar-list {serial|parallel|sharded}
 #       remote bar package sets (scripts/remote-bar-packages/*.txt); cmd/mtix
 #       has its own shards (scripts/cmd-mtix-shards.sh) and is not listed
@@ -21,7 +21,7 @@ die() {
 
 usage() {
 	cat >&2 <<'USAGE'
-usage: bash scripts/ci-go-shards.sh check | list {sqlite|cli|other}
+usage: bash scripts/ci-go-shards.sh check | list {sqlite|cli|service|other}
        bash scripts/ci-go-shards.sh bar-check | bar-list {serial|parallel|sharded}
        bash scripts/ci-go-shards.sh test-check <dir> <N> | test-pattern <dir> <N> <k>
 USAGE
@@ -36,7 +36,7 @@ case "$mode" in
 check | bar-check) [ "$#" -eq 1 ] || usage ;;
 list)
 	[ "$#" -eq 2 ] || usage
-	case "$shard" in sqlite | cli | other) ;; *) usage ;; esac
+	case "$shard" in sqlite | cli | service | other) ;; *) usage ;; esac
 	;;
 bar-list)
 	[ "$#" -eq 2 ] || usage
@@ -164,7 +164,7 @@ case "$mode" in
 check | list)
 	EXCLUDE='^$'
 	: >"$scratch/all"
-	check_packages scripts/ci-go-shards sqlite cli other
+	check_packages scripts/ci-go-shards sqlite cli service other
 	[ "$mode" != list ] || cat "scripts/ci-go-shards/$shard.txt"
 	;;
 bar-check | bar-list)

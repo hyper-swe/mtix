@@ -31,7 +31,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go mod verify
-      # MTIX-112.17.29: SQLite runs in three test shards below.
+      # MTIX-112.17.29/MTIX-112.51: SQLite and service run in test shards below.
       # MTIX-112.17.22.1: cmd/mtix runs in test-go-cmd below. This job keeps
       # the remaining packages' explicit list. Every
       # OS validates the complete package partition before selection.
@@ -77,6 +77,35 @@ jobs:
           pattern=$(bash scripts/ci-go-shards.sh test-pattern internal/store/sqlite 3 "$SHARD")
           go test ./internal/store/sqlite/ -race -count=1 -timeout 20m -run "$pattern"
 
+  test-go-service:
+    # MTIX-112.51: cumulative service race work approached the 20m budget.
+    # Reuse the remote bar's two exact test-name shards on each OS.
+    name: test-go-service (${{ matrix.os }}, shard ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-latest]
+        shard: ["1", "2"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go mod verify
+      - name: Verify exact package coverage
+        run: bash scripts/ci-go-shards.sh check
+      - name: Verify exact service test coverage
+        run: bash scripts/ci-go-shards.sh test-check internal/service 2
+      - name: Run service shard race tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          pattern=$(bash scripts/ci-go-shards.sh test-pattern internal/service 2 "$SHARD")
+          go test ./internal/service/ -race -count=1 -timeout 20m -run "$pattern"
+
   test-go-cmd:
     # MTIX-112.17.22.1: the whole-package cmd/mtix race run took 19-21 minutes
     # of the 20m go test timeout on one job (PRs failed at ~20m51s). Its tests
@@ -115,7 +144,7 @@ jobs:
 
   test-go:
     name: test-go
-    needs: [test-go-shards, test-go-sqlite, test-go-cmd]
+    needs: [test-go-shards, test-go-sqlite, test-go-cmd, test-go-service]
     if: ${{ always() }}
     runs-on: ubuntu-22.04
     steps:
@@ -124,9 +153,10 @@ jobs:
           SHARD_RESULT: ${{ needs.test-go-shards.result }}
           SQLITE_RESULT: ${{ needs.test-go-sqlite.result }}
           CMD_RESULT: ${{ needs.test-go-cmd.result }}
+          SERVICE_RESULT: ${{ needs.test-go-service.result }}
         run: |
-          if [ "$SHARD_RESULT" != success ] || [ "$SQLITE_RESULT" != success ] || [ "$CMD_RESULT" != success ]; then
-            echo "Go race shards did not all succeed: packages=$SHARD_RESULT sqlite=$SQLITE_RESULT cmd=$CMD_RESULT" >&2
+          if [ "$SHARD_RESULT" != success ] || [ "$SQLITE_RESULT" != success ] || [ "$CMD_RESULT" != success ] || [ "$SERVICE_RESULT" != success ]; then
+            echo "Go race shards did not all succeed: packages=$SHARD_RESULT sqlite=$SQLITE_RESULT cmd=$CMD_RESULT service=$SERVICE_RESULT" >&2
             exit 1
           fi
 

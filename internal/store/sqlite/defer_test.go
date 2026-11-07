@@ -106,7 +106,7 @@ func TestDeferNode_FromOpen_StoresWakeTimeWithTransition(t *testing.T) {
 			var p model.TransitionStatusPayload
 			require.NoError(t, json.Unmarshal([]byte(payload), &p))
 			assert.Equal(t, model.TransitionStatusPayload{
-				From: model.StatusOpen, To: model.StatusDeferred, Reason: "waiting on review",
+				From: model.StatusOpen, To: model.StatusDeferred, Reason: "waiting on review", ClosedAt: json.RawMessage(`null`),
 			}, p)
 			assert.Equal(t, "agent-7", author)
 		})

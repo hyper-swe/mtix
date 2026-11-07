@@ -24,9 +24,6 @@ func retryCloneQuarantinedEvents(ctx context.Context, st *sqlite.Store, limit in
 // durable cursor. A crash cannot leave a completed clone granting more seeds.
 func finishClonePullCursor(ctx context.Context, st *sqlite.Store, cursor transport.PullCursor) error {
 	return st.WithTx(ctx, func(tx *sql.Tx) error {
-		if err := writePullCursor(ctx, tx, cursor); err != nil {
-			return err
-		}
-		return sqlite.CompleteCloneWakeBootstrap(ctx, tx)
+		return writePullCursor(ctx, tx, cursor)
 	})
 }

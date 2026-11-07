@@ -36,7 +36,7 @@ func TestBoardFinding_Digest_SeveralRowsUnderOneKey_IsStableAndTracksEachRow(t *
 	hub := `{"nodes":[{"id":"TEST-1"}]}`
 	first := ""
 	for i := 0; i < 200; i++ {
-		f, err := service.BoardHubFinding([]byte(deps("blocks", "related", "blocks")), []byte(hub))
+		f, err := service.BoardHubFinding([]byte(deps("blocks", "related", "blocks")), []byte(hub), nil)
 		require.NoError(t, err)
 		if first == "" {
 			first = f.Digest()
@@ -44,7 +44,7 @@ func TestBoardFinding_Digest_SeveralRowsUnderOneKey_IsStableAndTracksEachRow(t *
 		require.Equal(t, first, f.Digest(), "run %d", i)
 	}
 	for i, changed := range [][]string{{"related", "related", "blocks"}, {"blocks", "blocks", "blocks"}, {"blocks", "related", "related"}} {
-		f, err := service.BoardHubFinding([]byte(deps(changed...)), []byte(hub))
+		f, err := service.BoardHubFinding([]byte(deps(changed...)), []byte(hub), nil)
 		require.NoError(t, err)
 		assert.NotEqual(t, first, f.Digest(), "changing row %d changes the digest", i)
 	}
@@ -54,12 +54,12 @@ func TestBoardFinding_Digest_SeveralRowsUnderOneKey_IsStableAndTracksEachRow(t *
 // same digest.
 func TestBoardFinding_Digest_SameRowsAgain_IsTheSame(t *testing.T) {
 	hub := `{"nodes":[{"id":"TEST-1"}]}`
-	a, err := service.BoardHubFinding([]byte(deps("blocks", "related")), []byte(hub))
+	a, err := service.BoardHubFinding([]byte(deps("blocks", "related")), []byte(hub), nil)
 	require.NoError(t, err)
-	b, err := service.BoardHubFinding([]byte(deps("related", "blocks")), []byte(hub))
+	b, err := service.BoardHubFinding([]byte(deps("related", "blocks")), []byte(hub), nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, a.Digest(), b.Digest(), "rows keyed by their target differ as rows")
-	again, err := service.BoardHubFinding([]byte(deps("blocks", "related")), []byte(hub))
+	again, err := service.BoardHubFinding([]byte(deps("blocks", "related")), []byte(hub), nil)
 	require.NoError(t, err)
 	assert.Equal(t, a.Digest(), again.Digest())
 }
@@ -86,7 +86,7 @@ func TestWorktreeBoardError_PrintedBackup_HostilePaths_AreOneLiteralWord(t *test
 		t.Run(name, func(t *testing.T) {
 			report := filepath.Join(dirs, name, ".mtix", "enroll-diff-20261106T010203Z.json")
 			l, c := titled("branch", "hub")
-			f, err := service.BoardHubFinding([]byte(l), []byte(c))
+			f, err := service.BoardHubFinding([]byte(l), []byte(c), nil)
 			require.NoError(t, err)
 			msg := (&service.WorktreeBoardError{BoardFinding: *f, Report: report}).Error()
 			cmd := printedLine(t, msg, "(1) keep a copy: ")
@@ -108,7 +108,7 @@ func TestWorktreeBoardError_PrintedBackup_HostilePaths_AreOneLiteralWord(t *test
 // existing file, so a second refusal must name a new path.
 func TestWorktreeBoardError_CopyPath_IsStampedPerRefusal(t *testing.T) {
 	l, c := titled("branch", "hub")
-	f, err := service.BoardHubFinding([]byte(l), []byte(c))
+	f, err := service.BoardHubFinding([]byte(l), []byte(c), nil)
 	require.NoError(t, err)
 	a := (&service.WorktreeBoardError{BoardFinding: *f, Report: "/w/.mtix/enroll-diff-20261106T010203Z.json"}).Error()
 	b := (&service.WorktreeBoardError{BoardFinding: *f, Report: "/w/.mtix/enroll-diff-20261106T010204Z.json"}).Error()
@@ -151,7 +151,7 @@ func TestWorktreeBoardError_ChangedFieldOnly_DoesNotMentionRows(t *testing.T) {
 // auto-import store has no journal, so re-entering cannot make a write win.
 func TestWorktreeBoardError_SnapshotStore_PrintsAcceptWithTheCopyFirst(t *testing.T) {
 	l, c := titled("branch", "hub")
-	f, err := service.BoardSnapshotHubFinding([]byte(l), []byte(c))
+	f, err := service.BoardSnapshotHubFinding([]byte(l), []byte(c), nil)
 	require.NoError(t, err)
 	msg := (&service.WorktreeBoardError{BoardFinding: *f, Report: "/w/.mtix/enroll-diff-x.json"}).Error()
 	assert.NotContains(t, msg, "re-enter")
@@ -210,19 +210,19 @@ func TestFindLostLocal(t *testing.T) {
 	clone := `{"nodes":[{"id":"TEST-1","title":"teammate 3","description":"d2"},{"id":"TEST-2","title":"two"},{"id":"TEST-3","title":"moved on"}]}`
 	own := []string{"TEST-1", "TEST-2"}
 
-	got, err := service.FindLostLocal([]byte(aside), []byte(clone), own)
+	got, err := service.FindLostLocal([]byte(aside), []byte(clone), own, nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, service.BoardDiff{"TEST-1": {"description", "title"}}, got.Diff, "TEST-2 matches; TEST-3 was touched by no own event")
 
-	none, err := service.FindLostLocal([]byte(aside), []byte(aside), own)
+	none, err := service.FindLostLocal([]byte(aside), []byte(aside), own, nil)
 	require.NoError(t, err)
 	assert.Nil(t, none)
-	noOwn, err := service.FindLostLocal([]byte(aside), []byte(clone), nil)
+	noOwn, err := service.FindLostLocal([]byte(aside), []byte(clone), nil, nil)
 	require.NoError(t, err)
 	assert.Nil(t, noOwn, "no own event: nothing this store wrote")
-	_, err = service.FindLostLocal([]byte("{bad"), []byte(clone), own)
+	_, err = service.FindLostLocal([]byte("{bad"), []byte(clone), own, nil)
 	require.Error(t, err)
 }
 
@@ -232,7 +232,7 @@ func TestFindLostLocal_Rows(t *testing.T) {
 	aside := `{"nodes":[{"id":"TEST-1","deleted_at":""},{"id":"TEST-2"}],"dependencies":[{"from_id":"TEST-1","to_id":"TEST-2","dep_type":"blocks"}]}`
 	clone := `{"nodes":[{"id":"TEST-1","deleted_at":"2026-06-01T00:00:00Z"}],"dependencies":[]}`
 
-	got, err := service.FindLostLocal([]byte(aside), []byte(clone), []string{"TEST-1", "TEST-2"})
+	got, err := service.FindLostLocal([]byte(aside), []byte(clone), []string{"TEST-1", "TEST-2"}, nil)
 
 	require.NoError(t, err)
 	require.NotNil(t, got)
@@ -245,7 +245,7 @@ func TestFindLostLocal_ExcludedFieldsAreNotLoss(t *testing.T) {
 	aside := `{"nodes":[{"id":"TEST-1","title":"a","updated_at":"2026-06-01T00:00:00Z"}]}`
 	clone := `{"nodes":[{"id":"TEST-1","title":"a","updated_at":"2026-06-09T00:00:00Z"}]}`
 
-	got, err := service.FindLostLocal([]byte(aside), []byte(clone), []string{"TEST-1"})
+	got, err := service.FindLostLocal([]byte(aside), []byte(clone), []string{"TEST-1"}, nil)
 
 	require.NoError(t, err)
 	assert.Nil(t, got, "the exclusions of the board comparison apply")
@@ -261,17 +261,17 @@ func TestFindLostLocal_ListTheCloneOnlyAddsTo_IsNotLoss(t *testing.T) {
 	}
 	own := []string{"TEST-1"}
 
-	both, err := service.FindLostLocal([]byte(doc(note("mine"))), []byte(doc(note("mine"), note("theirs"))), own)
+	both, err := service.FindLostLocal([]byte(doc(note("mine"))), []byte(doc(note("mine"), note("theirs"))), own, nil)
 	require.NoError(t, err)
 	assert.Nil(t, both, "the clone holds mine and theirs")
-	none, err := service.FindLostLocal([]byte(doc()), []byte(doc(note("theirs"))), own)
+	none, err := service.FindLostLocal([]byte(doc()), []byte(doc(note("theirs"))), own, nil)
 	require.NoError(t, err)
 	assert.Nil(t, none, "an empty side is contained")
-	missing, err := service.FindLostLocal([]byte(doc(note("mine"))), []byte(doc(note("theirs"))), own)
+	missing, err := service.FindLostLocal([]byte(doc(note("mine"))), []byte(doc(note("theirs"))), own, nil)
 	require.NoError(t, err)
 	require.NotNil(t, missing, "my comment is not on the clone")
 	assert.Equal(t, service.BoardDiff{"TEST-1": {"annotations"}}, missing.Diff)
-	twice, err := service.FindLostLocal([]byte(doc(note("mine"), note("mine"))), []byte(doc(note("mine"))), own)
+	twice, err := service.FindLostLocal([]byte(doc(note("mine"), note("mine"))), []byte(doc(note("mine"))), own, nil)
 	require.NoError(t, err)
 	assert.NotNil(t, twice, "two of mine, one on the clone: one is missing")
 }

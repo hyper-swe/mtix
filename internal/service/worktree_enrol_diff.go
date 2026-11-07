@@ -111,6 +111,8 @@ type boardCmp struct {
 	// replicas, so labels spacing alone is not a difference. The board file
 	// and its store are one replica, and a raw comparison compares nothing away.
 	replicas bool
+	// evidence is what is known of how the clone got its values; nil when none.
+	evidence *CloneEvidence
 	diff     BoardDiff
 	kinds    map[string]diffKind
 	vals     map[string][]string
@@ -219,7 +221,7 @@ func (c *boardCmp) signature() string {
 // is not a difference; a repeated identity is one. It reports ids and field
 // names only, never content (MTIX-112.17.16.6).
 func CompareBoardDocs(a, b []byte) (BoardDiff, error) {
-	c, err := compareReplicas(a, b)
+	c, err := compareReplicas(a, b, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -238,17 +240,17 @@ func CompareBoardDocsWith(a, b []byte, exclusions []BoardExclusion) (BoardDiff, 
 
 // compareReplicas compares a store with a clone of the hub: the documented
 // exclusions apply, and so do the two replication rules of sameNodeField.
-func compareReplicas(a, b []byte) (*boardCmp, error) {
-	return compareBoardsAs(a, b, BoardExclusions(), true)
+func compareReplicas(a, b []byte, ev *CloneEvidence) (*boardCmp, error) {
+	return compareBoardsAs(a, b, BoardExclusions(), true, ev)
 }
 
 // compareBoards compares two exports of one replica (or, with no exclusions, the
 // raw documents): the replication rules of sameNodeField do not apply.
 func compareBoards(a, b []byte, exclusions []BoardExclusion) (*boardCmp, error) {
-	return compareBoardsAs(a, b, exclusions, false)
+	return compareBoardsAs(a, b, exclusions, false, nil)
 }
 
-func compareBoardsAs(a, b []byte, exclusions []BoardExclusion, replicas bool) (*boardCmp, error) {
+func compareBoardsAs(a, b []byte, exclusions []BoardExclusion, replicas bool, ev *CloneEvidence) (*boardCmp, error) {
 	da, err := decodeBoardDoc(a)
 	if err != nil {
 		return nil, fmt.Errorf("read the first board: %w", err)
@@ -271,6 +273,7 @@ func compareBoardsAs(a, b []byte, exclusions []BoardExclusion, replicas bool) (*
 	}
 	c := newBoardCmp()
 	c.replicas = replicas
+	c.evidence = ev
 	keys := map[string]bool{}
 	for k := range da {
 		keys[k] = true
@@ -439,7 +442,7 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 		keys[k] = true
 	}
 	for k := range keys {
-		if sameJSON(ma[k], mb[k]) || (c.replicas && section == "nodes" && sameNodeField(k, ma, mb)) {
+		if sameJSON(ma[k], mb[k]) || (c.replicas && section == "nodes" && c.sameNodeField(k, shown, ma, mb)) {
 			continue
 		}
 		name := section + "." + k
@@ -453,8 +456,16 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 	}
 }
 
-// sameNodeField reports labels that differ in spacing only between replicas.
-// The board file and its store, and raw comparisons, compare the exact value.
-func sameNodeField(k string, a, b map[string]any) bool {
-	return k == "labels" && sameLabels(a[k], b[k])
+// sameNodeField reports a node field that differs in form only between replicas:
+// labels in spacing, and closed_at by the one-second skew of a plain old
+// terminal event (skewedLegacyClosedAt). The board file and its store, and raw
+// comparisons, compare the exact value.
+func (c *boardCmp) sameNodeField(k, id string, a, b map[string]any) bool {
+	switch k {
+	case "labels":
+		return sameLabels(a[k], b[k])
+	case "closed_at":
+		return c.skewedLegacyClosedAt(id, a, b)
+	}
+	return false
 }

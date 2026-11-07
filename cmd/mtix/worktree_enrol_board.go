@@ -154,28 +154,48 @@ func (h boundedHub) PullEvents(ctx context.Context, after transport.PullCursor, 
 // boundedCloneExport exports a fresh scratch clone built from only the hub
 // events local has applied (appliedBound).
 func boundedCloneExport(ctx context.Context, logger *slog.Logger, root, scratch string, local *sqlite.Store, hub cursorPuller) ([]byte, error) {
+	body, _, err := boundedCloneExportWithEvidence(ctx, logger, root, scratch, local, hub)
+	return body, err
+}
+
+// boundedCloneExportWithEvidence is boundedCloneExport with the evidence the
+// comparison of the two replicas may use (MTIX-112.17.16.19.1).
+func boundedCloneExportWithEvidence(ctx context.Context, logger *slog.Logger, root, scratch string, local *sqlite.Store, hub cursorPuller) ([]byte, *service.CloneEvidence, error) {
 	bound, err := readAppliedBound(ctx, local)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return cloneExportWithin(ctx, logger, root, scratch, bound, hub)
 }
 
+// cloneEvidence reads, from the clone store, which nodes it stamped closed_at
+// from a plain old terminal event (MTIX-112.17.16.19.1).
+func cloneEvidence(ctx context.Context, clone *sqlite.Store) (*service.CloneEvidence, error) {
+	stamps, err := clone.LegacyClosedStamps(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("read how the clone stamped completion times: %w", err)
+	}
+	return &service.CloneEvidence{LegacyClosedAt: stamps}, nil
+}
+
 // cloneExportWithin is boundedCloneExport over a bound already read.
-func cloneExportWithin(ctx context.Context, logger *slog.Logger, root, scratch string, bound appliedBound, hub cursorPuller) (body []byte, err error) {
+func cloneExportWithin(ctx context.Context, logger *slog.Logger, root, scratch string, bound appliedBound, hub cursorPuller) (body []byte, ev *service.CloneEvidence, err error) {
 	dir := filepath.Join(scratch, "clone")
 	if err = os.MkdirAll(dir, 0o700); err != nil {
-		return nil, fmt.Errorf("create the scratch clone directory: %w", err)
+		return nil, nil, fmt.Errorf("create the scratch clone directory: %w", err)
 	}
 	err = withBoardStore(logger, root, dir, func(clone *sqlite.Store) error {
 		if e := seedFreshStore(ctx, clone, io.Discard, boundedHub{cursorPuller: hub, bound: bound}); e != nil {
 			return fmt.Errorf("copy the applied hub events into the scratch clone: %w", e)
 		}
 		var e error
-		body, e = exportBytes(ctx, clone)
+		if body, e = exportBytes(ctx, clone); e != nil {
+			return e
+		}
+		ev, e = cloneEvidence(ctx, clone)
 		return e
 	})
-	return body, err
+	return body, ev, err
 }
 
 // boardHubFinding is the second rule: the local store's export equals a clone
@@ -193,14 +213,14 @@ func boardHubFinding(ctx context.Context, logger *slog.Logger, root, scratch str
 	if err != nil {
 		return nil, err
 	}
-	cloneBody, err := cloneExportWithin(ctx, logger, root, scratch, bound, hub)
+	cloneBody, ev, err := cloneExportWithin(ctx, logger, root, scratch, bound, hub)
 	if err != nil {
 		return nil, err
 	}
 	if bound.snapshot {
-		return service.BoardSnapshotHubFinding(localBody, cloneBody)
+		return service.BoardSnapshotHubFinding(localBody, cloneBody, ev)
 	}
-	finding, err := service.BoardHubFinding(localBody, cloneBody)
+	finding, err := service.BoardHubFinding(localBody, cloneBody, ev)
 	if err != nil || finding == nil || len(finding.StoreOnlyRows()) == 0 {
 		return finding, err
 	}
@@ -208,11 +228,11 @@ func boardHubFinding(ctx context.Context, logger *slog.Logger, root, scratch str
 	// them too is only known from a clone of the hub at its head; the refusal
 	// words its row advice from that (ruling r2 point 2). The bounded comparison
 	// above is unchanged.
-	full, err := cloneExportWithin(ctx, logger, root, filepath.Join(scratch, "full"), appliedBound{snapshot: true}, hub)
+	full, fullEv, err := cloneExportWithin(ctx, logger, root, filepath.Join(scratch, "full"), appliedBound{snapshot: true}, hub)
 	if err != nil {
 		return nil, fmt.Errorf("read the hub at its head to word the row advice: %w", err)
 	}
-	if err := finding.ConfirmAgainstHub(localBody, full); err != nil {
+	if err := finding.ConfirmAgainstHub(localBody, full, fullEv); err != nil {
 		return nil, err
 	}
 	return finding, nil
@@ -264,15 +284,19 @@ func lostLocalValues(ctx context.Context, logger *slog.Logger, root, asideDir st
 		return nil, err
 	}
 	var cloneBody []byte
+	var ev *service.CloneEvidence
 	err = withBoardStore(logger, root, worktreeDataDir(root), func(clone *sqlite.Store) error {
 		var e error
-		cloneBody, e = exportBytes(ctx, clone)
+		if cloneBody, e = exportBytes(ctx, clone); e != nil {
+			return e
+		}
+		ev, e = cloneEvidence(ctx, clone)
 		return e
 	})
 	if err != nil {
 		return nil, err
 	}
-	return service.FindLostLocal(asideBody, cloneBody, own)
+	return service.FindLostLocal(asideBody, cloneBody, own, ev)
 }
 
 // preflightBoard proves the local board is all derivable from the hub before the

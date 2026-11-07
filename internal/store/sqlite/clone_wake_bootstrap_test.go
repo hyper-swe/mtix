@@ -107,9 +107,13 @@ func TestCloneWakeBootstrap_InterruptedStream_InvalidationPersists(t *testing.T)
 			case "outside-write":
 				require.NoError(t, applyOnce(t, s, cloneBootstrapEvent(t, "TEST-2", 2)))
 			case "tail-identity-fault":
-				other := cloneBootstrapEvent(t, "TEST-2", 2)
-				_, err := raw.Exec(`UPDATE sync_events SET event_id=? WHERE rowid=?`, other.EventID, 1)
+				require.NoError(t, applyCloneBootstrapEvent(t, s, cloneBootstrapEvent(t, "TEST-2", 2)))
+				other := cloneBootstrapEvent(t, "TEST-3", 3)
+				_, err := raw.Exec(`UPDATE sync_events SET event_id=? WHERE rowid=?`, other.EventID, 2)
 				require.NoError(t, err)
+				var firstID string
+				require.NoError(t, raw.QueryRow(`SELECT event_id FROM sync_events WHERE rowid=1`).Scan(&firstID))
+				require.Equal(t, first.EventID, firstID, "only the tail identity changed")
 			case "tail-sequence-fault":
 				_, err := raw.Exec(`UPDATE sync_events SET rowid=? WHERE event_id=?`, 3, first.EventID)
 				require.NoError(t, err)

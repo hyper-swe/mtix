@@ -276,6 +276,11 @@ func pullLoop(ctx context.Context, in pullIngest,
 			break
 		}
 	}
+	// A drained pass also retires a stale witness when there was no batch to
+	// write a cursor (for example, a store completed by an older pull).
+	if err := store.WithTx(ctx, func(tx *sql.Tx) error { return sqlite.CompleteCloneWakeBootstrap(ctx, tx) }); err != nil {
+		return applied, batches, fmt.Errorf("complete pull: %w", err)
+	}
 	return applied, batches, nil
 }
 
@@ -422,11 +427,15 @@ func readLastPulledClock(ctx context.Context, store *sqlite.Store) (transport.Pu
 
 // writePullCursor saves cursor as the pull cursor, both halves, in tx
 // (MTIX-95.4). Each key is upserted, so a store that lacks the event-id key
-// gains it.
+// gains it. Any durable pull cursor revokes unfinished first-clone authority
+// in that same transaction, including ordinary pull recovery.
 func writePullCursor(ctx context.Context, tx *sql.Tx, cursor transport.PullCursor) error {
-	return upsertMeta(ctx, tx,
+	if err := upsertMeta(ctx, tx,
 		[2]string{"meta.sync.last_pulled_clock", strconv.FormatInt(cursor.Lamport, 10)},
-		[2]string{"meta.sync.last_pulled_event_id", cursor.EventID})
+		[2]string{"meta.sync.last_pulled_event_id", cursor.EventID}); err != nil {
+		return err
+	}
+	return sqlite.CompleteCloneWakeBootstrap(ctx, tx)
 }
 
 // upsertMeta sets each {key, value} pair in meta, in tx and in order, adding

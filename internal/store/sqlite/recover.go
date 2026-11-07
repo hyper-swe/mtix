@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
@@ -102,7 +103,7 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, option
 	if len(nodes) == 0 {
 		return nil, fmt.Errorf(
 			"nothing to salvage: database (%s) and mirror (%s) both unusable: %w",
-			dbPath, mirrorPath, model.ErrNotFound)
+			dbPath, mirrorPath, errors.Join(model.ErrNotFound, dbErr))
 	}
 
 	res.Placeholders = synthesizePlaceholderParents(nodes)
@@ -200,8 +201,8 @@ type dbSalvage struct {
 // read is salvaged without it, and the column is listed in the result's
 // unreadable.
 func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult, mirror *mirrorSource) (*dbSalvage, error) {
-	if _, err := os.Stat(dbPath); err != nil {
-		return nil, fmt.Errorf("stat database: %w", err)
+	if err := checkRecoverDatabase(dbPath); err != nil {
+		return nil, err
 	}
 
 	db, err := openSQLite(dbPath, "mode=ro")

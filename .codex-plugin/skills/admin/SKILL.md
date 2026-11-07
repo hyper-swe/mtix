@@ -311,6 +311,13 @@ Doctor shows these rows only when they apply:
   counted as rejected in the row's detail, no command is built from it, and the
   row prints the generic command with placeholders. The glue path never imports
   `tasks.json` and never triggers hooks, whatever `sync.auto_sync` says.
+  While worktree enrollment is running or its interrupted-enrollment marker
+  remains, this session-start drain leaves the queue untouched and does not
+  open or write the board store. It prints the enrollment reason on stderr
+  and records an `attach.verb-failure` alert while the hook still exits 0.
+  Let the next session-start retry after enrollment finishes; if enrollment
+  was interrupted, run `mtix doctor` and follow its recovery guidance first.
+  Never remove enrollment locks, markers or store data to force a drain.
 - `attach.failures`: recent `attach.protocol-skew` and `attach.verb-failure`
   operator alerts from the hidden attach verbs, with counts. These verbs are
   entry points for harness glue, not for agents. They always exit 0, even on

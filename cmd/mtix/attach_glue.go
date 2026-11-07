@@ -47,8 +47,12 @@ func productionPredicateDeps() attach.PredicateDeps {
 // runs (service.DrainAttachPending, MTIX-112.17.13) over the matched root's own store: a
 // listed linked worktree drains its own queue, not the main checkout's; there is no second
 // implementation. Rows with a foreign board key or path are dropped with an
-// attach.pending-rejected alert. It runs no import and no hook.
+// attach.pending-rejected alert. Before opening the store, it honors the
+// enrolment guard (FR-20.4, MTIX-112.17.16.21). It runs no import and no hook.
 func productionGlueDrain(ctx context.Context, d attach.GlueDecision) (retErr error) {
+	if err := service.CheckEnrolGuard(filepath.Join(d.BoardRoot, ".mtix"), false); err != nil {
+		return fmt.Errorf("drain attach queue: %w", err)
+	}
 	st, err := operatorState()
 	if err != nil {
 		return fmt.Errorf("drain attach queue: %w", err)

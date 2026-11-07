@@ -16,6 +16,13 @@ import (
 
 const preserveDatabaseSidecars = "keep the database and its -wal and -shm together: the WAL may hold the only copy of committed records, and SQLite treats such a file as empty and deletes its WAL when it opens it. To restore into this project, move all three files together out of the project (or the entire data/ directory); a copy leaves the refused files in place, so restoring here stays refused, and a copy is enough only for restoring into a fresh project. Do not move only the database"
 
+// storeRefusalAdvice closes a refusal of the live store.
+const storeRefusalAdvice = "run 'mtix recover'; " + preserveDatabaseSidecars
+
+// backupRefusalAdvice closes a refusal of a backup destination: the live
+// store is healthy, so recover does not apply.
+const backupRefusalAdvice = "the destination has a stale WAL beside an empty, one-byte or missing file, and the live store is healthy, so do not run recover: choose another destination, or move that file and its -wal and -shm together out of the way (never only the file)"
+
 // maxLinkHops bounds the walk along database and directory links. SQLite
 // itself follows up to 200; a walk that runs past this cap fails closed.
 const maxLinkHops = 255
@@ -34,13 +41,18 @@ func splitPathParts(path string) (string, []string) {
 }
 
 // resolveDatabasePath returns the file SQLite will really open for path,
-// walking it the way the kernel does (NFR-2.8): component by component, with
-// ".." applied to the directory a link led to, never to the text before it.
-// A dangling final link is followed to the path it would create. Where a
-// component does not exist (or is not a directory) the rest is taken as written, since nothing can
-// link below a missing directory. It returns an error when it cannot finish
-// (a link loop, a chain past maxLinkHops, an unreadable component), and the
-// caller must then refuse rather than guess.
+// walking it the way SQLite does, which mirrors sqlite3 unixFullPathname
+// (appendOnePathElement in modernc 3.46) rather than the kernel (NFR-2.8):
+// component by component, ".." applied to the directory a link led to, never
+// to the text before it, and a link followed wherever it appears, including
+// after a name that does not exist. A component that does not exist (ENOENT)
+// is not an error to SQLite: the walk goes on, so "missing/../hop" reaches
+// hop, and a link there is followed. A dangling final link is followed to the
+// path it would create. Any other lstat failure (a file used as a directory,
+// a permission error) makes SQLite itself fail to open the path, so no open
+// follows it. The walk returns an error when it cannot finish (a link loop, a
+// chain past maxLinkHops, an unreadable component), and the caller must then
+// refuse rather than guess.
 func resolveDatabasePath(path string) (string, error) {
 	if !filepath.IsAbs(path) {
 		wd, err := os.Getwd()
@@ -61,7 +73,14 @@ func resolveDatabasePath(path string) (string, error) {
 		}
 		next := filepath.Join(resolved, part)
 		info, err := os.Lstat(next)
-		if os.IsNotExist(err) || errors.Is(err, syscall.ENOTDIR) {
+		if os.IsNotExist(err) {
+			// SQLite treats a missing name as an ordinary directory entry
+			// and keeps walking: ".." pops it and a later link is followed.
+			resolved = next
+			continue
+		}
+		if errors.Is(err, syscall.ENOTDIR) {
+			// SQLite fails to open a path below a file, so no open follows.
 			return filepath.Join(append([]string{next}, queue...)...), nil
 		}
 		if err != nil {
@@ -95,12 +114,26 @@ func resolveDatabasePath(path string) (string, error) {
 // the path cannot be walked to its end the guard refuses: it never answers
 // "no WAL here" from a path it worked out differently from the kernel.
 func guardEmptyDatabaseWAL(path string) error {
+	return guardWALWithAdvice(path, storeRefusalAdvice)
+}
+
+// guardBackupDestinationWAL is the guard for a backup destination. The live
+// store is healthy there; the refusal is about the destination file, so its
+// advice is to choose another destination or move that file and its WAL aside
+// together, never to run recover (NFR-2.8).
+func guardBackupDestinationWAL(path string) error {
+	return guardWALWithAdvice(path, backupRefusalAdvice)
+}
+
+// guardWALWithAdvice is the shared guard; advice is the closing guidance of
+// the refusal, which differs between the live store and a backup destination.
+func guardWALWithAdvice(path, advice string) error {
 	resolved, err := resolveDatabasePath(path)
 	if err != nil {
-		return fmt.Errorf("refusing to open %s: cannot tell which file SQLite would open: %w: %w; run 'mtix recover'; %s", path, model.ErrCorrupted, err, preserveDatabaseSidecars)
+		return fmt.Errorf("refusing to open %s: cannot tell which file SQLite would open: %w: %w; %s", path, model.ErrCorrupted, err, advice)
 	}
 	for _, candidate := range []string{resolved, path} {
-		if err := guardWALBeside(candidate, resolved); err != nil {
+		if err := guardWALBeside(candidate, resolved, advice); err != nil {
 			return err
 		}
 	}
@@ -109,7 +142,7 @@ func guardEmptyDatabaseWAL(path string) error {
 
 // guardWALBeside refuses when a nonempty WAL sits beside candidate while the
 // database SQLite will open (resolved) is empty, one byte or missing.
-func guardWALBeside(candidate, resolved string) error {
+func guardWALBeside(candidate, resolved, advice string) error {
 	walPath := candidate + "-wal"
 	wal, err := os.Stat(walPath)
 	if os.IsNotExist(err) {
@@ -130,5 +163,5 @@ func guardWALBeside(candidate, resolved string) error {
 	if info != nil && info.Size() > 1 {
 		return nil
 	}
-	return fmt.Errorf("refusing to open empty, one-byte or missing database %s beside nonempty WAL %s: %w; run 'mtix recover'; %s", resolved, walPath, model.ErrCorrupted, preserveDatabaseSidecars)
+	return fmt.Errorf("refusing to open empty, one-byte or missing database %s beside nonempty WAL %s: %w; %s", resolved, walPath, model.ErrCorrupted, advice)
 }

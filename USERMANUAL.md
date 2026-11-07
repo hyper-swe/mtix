@@ -2012,6 +2012,8 @@ mtix backup /path/to/backup.db
 
 The backup uses SQLite's `VACUUM INTO` for atomicity and runs `PRAGMA quick_check` to verify the result.
 
+Give `mtix backup` a plain path. A destination that starts with `file:` is refused, because SQLite would read it as a URI and may write to another file; to name a local file that begins with `file:`, write `./file:name`. If a backup is refused because the destination already holds an empty or one-byte file with a `-wal` file beside it, the live store is healthy and `mtix recover` does not apply: choose another destination, or move that destination file and its `-wal` and `-shm` files out of the way together (never only the file).
+
 ### Export
 
 Export all project data to JSON:

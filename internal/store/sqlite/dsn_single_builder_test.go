@@ -117,7 +117,7 @@ func fileViolations(path, text string) (int, []string) {
 		if strings.Contains(strings.ToLower(text), "sqlite") {
 			out = append(out, path+": listed as a non-SQLite opener but names sqlite")
 		}
-		return 0, out
+		return 0, append(out, driverReaches(path, text)...)
 	}
 	src := dropCommentLines(text)
 	isHelper := filepath.Base(path) == "dsn.go" && strings.Contains(filepath.ToSlash(path), "internal/store/sqlite/")
@@ -136,7 +136,7 @@ func fileViolations(path, text string) (int, []string) {
 	if vacuumLiteralR.MatchString(src) {
 		out = append(out, path+": VACUUM INTO target is not a bound parameter")
 	}
-	return n, out
+	return n, append(out, driverReaches(path, text)...)
 }
 
 // dropCommentLines removes whole-line // comments so prose that names the
@@ -226,6 +226,18 @@ func TestDSNViolations_PlantedBreaches_AreCaught(t *testing.T) {
 		{"driver type used directly", "x/dt.go", plantedSource(std, `var drv sqlite.Driver`), "driver reached without the helper"},
 		{"backtick sprintf query string", "x/bq.go", plantedSource(std, "d := fmt.Sprintf(`%s?mode=ro`, p)"), "built with Sprintf"},
 		{"backtick sprintf file scheme", "x/bf.go", plantedSource(std, "d := fmt.Sprintf(`file:%s`, p)"), "built with Sprintf"},
+		{"driver reached by a Driver call", "x/dcall.go", plantedSource(std, `c, err := s.Driver().Open(d)`), "driver reached without the helper"},
+		{"sqlite driver type under an alias", "x/adrv.go", "package x\n\nimport d \"modernc.org/sqlite\"\n\nfunc f() {\n\tvar drv d.Driver\n\t_ = drv\n}\n", "driver reached without the helper"},
+		{"sqlite driver Open under an alias", "x/aopen.go", "package x\n\nimport zz \"modernc.org/sqlite\"\n\nfunc f() {\n\tzz.Open(\"x\")\n}\n", "driver reached without the helper"},
+		{"database/sql/driver Open under an alias", "x/drv.go", "package x\n\nimport dr \"database/sql/driver\"\n\nfunc f() {\n\tdr.Open(\"x\")\n}\n", "driver reached without the helper"},
+		{"dot import of the sqlite driver", "x/ddot.go", "package x\n\nimport . \"modernc.org/sqlite\"\n\nfunc f() {}\n", "dot import"},
+		{"attach database", "x/att.go", plantedSource(std, `db.Exec("ATTACH DATABASE ? AS other", p)`), "ATTACH in SQL text"},
+		{"attach as, lower case", "x/att2.go", plantedSource(std, `db.Exec("attach ? as other", p)`), "ATTACH in SQL text"},
+		{"attach in a raw string", "x/att3.go", plantedSource(std, "db.Exec(`ATTACH '/x/y.db' AS other`)"), "ATTACH in SQL text"},
+		{"second vacuum into in another function of backup.go", "internal/store/sqlite/backup.go", "package sqlite\n\nfunc (s *Store) Other() {\n\ts.db.Exec(\"VACUUM INTO ?\", p)\n}\n", "VACUUM INTO outside"},
+		{"vacuum into in a Backup method of another file", "internal/store/sqlite/other.go", "package sqlite\n\nfunc (s *Store) Backup() {\n\ts.db.Exec(\"VACUUM INTO ?\", p)\n}\n", "VACUUM INTO outside"},
+		{"bound vacuum into in a plain function", "x/v2.go", plantedSource(std, `db.Exec("vacuum into ?", p)`), "VACUUM INTO outside"},
+		{"same basename as the allowlisted tool in another directory", "other/tools/cleanup-test-schemas.go", "package main\n\nimport \"database/sql\"\n\nvar connectFn = sql.Open\n", "outside dsn.go"},
 		{"vacuum literal", "x/v.go", plantedSource(std, `"VACUUM INTO '" + p + "'"`), "not a bound parameter"},
 		{"vacuum sprintf", "x/s.go", plantedSource(std, `fmt.Sprintf("VACUUM INTO '%s'", p)`), "not a bound parameter"},
 	}
@@ -246,6 +258,26 @@ func TestDSNViolations_PlantedBreaches_AreCaught(t *testing.T) {
 	}
 	t.Run("another package named sql is not database/sql", func(t *testing.T) {
 		files := map[string]string{"x/other.go": plantedSource(`sql "example.com/other"`, `sql.Open("x")`)}
+		for k, v := range clean {
+			files[k] = v
+		}
+		got, err := dsnViolations(files, 2)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+	t.Run("prose and error values are not driver reaches", func(t *testing.T) {
+		src := "package x\n\nimport (\n\t\"database/sql/driver\"\n\t\"fmt\"\n)\n\nfunc f(err error) error {\n\t_ = driver.ErrBadConn\n\treturn fmt.Errorf(\"drain attach queue: %w\", err)\n}\n"
+		files := map[string]string{"x/prose.go": src}
+		for k, v := range clean {
+			files[k] = v
+		}
+		got, err := dsnViolations(files, 2)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+	t.Run("the one VACUUM INTO in Store.Backup is allowed", func(t *testing.T) {
+		src := "package sqlite\n\nfunc (s *Store) Backup() {\n\ts.db.Exec(\"VACUUM INTO ?\", p)\n}\n"
+		files := map[string]string{"internal/store/sqlite/backup.go": src}
 		for k, v := range clean {
 			files[k] = v
 		}

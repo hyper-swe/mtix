@@ -7,6 +7,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // BackupResult holds information about a completed backup per FR-6.3a.
@@ -25,9 +28,17 @@ func (s *Store) Backup(ctx context.Context, destPath string) (*BackupResult, err
 		return nil, fmt.Errorf("destination path is required")
 	}
 
+	// The connection is opened with SQLITE_OPEN_URI, so SQLite would read a
+	// destination that starts with file: as a URI (percent decoding, a query,
+	// file:/// forms) and reach a file the guard below never examined
+	// (NFR-2.8). Refuse it outright: a local file of that name is ./file:x.
+	if strings.HasPrefix(destPath, "file:") {
+		return nil, fmt.Errorf("backup destination %q starts with file:, which SQLite would read as a URI and may resolve to another file; give a plain path (to name a local file that begins with file:, write ./%s): %w", destPath, destPath, model.ErrInvalidInput)
+	}
+
 	// VACUUM INTO opens destPath as SQLite, which resets an empty or one-byte
 	// file and deletes the WAL beside it (NFR-2.8): refuse before any open.
-	if err := guardEmptyDatabaseWAL(destPath); err != nil {
+	if err := guardBackupDestinationWAL(destPath); err != nil {
 		return nil, fmt.Errorf("backup destination %s: %w", destPath, err)
 	}
 

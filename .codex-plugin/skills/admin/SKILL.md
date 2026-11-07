@@ -367,6 +367,8 @@ mtix manages task hierarchies that may track safety-critical work (aviation main
 
 Backup creates a timestamped copy of the SQLite database. Store backups in a safe location outside the project directory.
 
+Give `mtix backup` a plain path. A destination that starts with `file:` is refused (SQLite would read it as a URI and may write to another file); to name a local file that begins with `file:`, write `./file:name`. If the backup is refused because the destination already holds an empty or one-byte file with a `-wal` file beside it, the live store is healthy: do not run `mtix recover`. Choose another destination, or move that destination file and its `-wal` and `-shm` files out of the way together, never only the file.
+
 ## Export
 
 Run `mtix export > <private-file>` to save board data, addressed mail and recipient acknowledgment coverage. Stderr reports carried mail, unreadable records and uncarried unacknowledged deliveries. Never commit this default export; hook-created deliveries and host state are not transported.

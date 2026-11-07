@@ -65,6 +65,8 @@ func linkedBoard(t *testing.T, shape string, healthy bool) (string, string) {
 			link(filepath.Join("..", "real.db"), filepath.Join(farData, "mid.db"))
 		}
 		return root, realDB
+	case "missing-dotdot-hop", "missing-deep-dotdot-hop", "missing-dotdot-linkdir-dotdot":
+		return missingDotDotBoard(t, shape, root, db, move, link)
 	case "chain":
 		realDB := filepath.Join(data, "real.db")
 		move(realDB)
@@ -95,7 +97,7 @@ func TestCLI_DanglingLinkShapes_RefuseAndPreserveSidecars(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinks require Windows privileges")
 	}
-	for _, shape := range []string{"relative", "absolute", "dir-link-dotdot", "dir-link-two-hop", "chain", "cycle"} {
+	for _, shape := range []string{"relative", "absolute", "dir-link-dotdot", "dir-link-two-hop", "chain", "cycle", "missing-dotdot-hop", "missing-deep-dotdot-hop", "missing-dotdot-linkdir-dotdot"} {
 		for _, skip := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/skip-integrity=%t", shape, skip), func(t *testing.T) {
 				if skip {
@@ -122,7 +124,7 @@ func TestCLI_HealthyStoreThroughLinks_IsNotRefused(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinks require Windows privileges")
 	}
-	for _, shape := range []string{"relative", "absolute", "dir-link-dotdot", "dir-link-two-hop"} {
+	for _, shape := range []string{"relative", "absolute", "dir-link-dotdot", "dir-link-two-hop", "missing-dotdot-hop", "missing-deep-dotdot-hop", "missing-dotdot-linkdir-dotdot"} {
 		t.Run(shape, func(t *testing.T) {
 			root, _ := linkedBoard(t, shape, true)
 			for _, command := range []string{"list", "ready"} {
@@ -168,5 +170,70 @@ func TestCLI_BackupShortDestinationBesideWAL_RefusesAndPreservesSidecars(t *test
 			_, statErr := os.Stat(filepath.Join(dir, "real.db"))
 			require.True(t, os.IsNotExist(statErr), "must not create the link target")
 		})
+	}
+}
+
+// missingDotDotBoard lays out the three shapes from the round 4 review, where
+// the database link goes through a name that does not exist and "..", a walk
+// SQLite follows (a missing name is not an error there) though the kernel
+// would not. The database link, its hops and the real target are all placed
+// so the link walk ends at a real.db beside which the WAL waits.
+func missingDotDotBoard(t *testing.T, shape, root, db string, move func(string), link func(string, string)) (string, string) {
+	t.Helper()
+	data := filepath.Dir(db)
+	far := filepath.Join(t.TempDir(), "far")
+	require.NoError(t, os.MkdirAll(filepath.Join(far, "sub"), 0o700))
+	realDB := filepath.Join(far, "real.db")
+	move(realDB)
+	switch shape {
+	case "missing-dotdot-hop":
+		link(realDB, filepath.Join(data, "hop"))
+		link("missing/../hop", db) // not filepath.Join: it would clean the ".." away
+	case "missing-deep-dotdot-hop":
+		link("hop2", filepath.Join(data, "hop"))
+		link(realDB, filepath.Join(data, "hop2"))
+		link("m1/m2/../../hop", db)
+	default: // missing-dotdot-linkdir-dotdot
+		link(filepath.Join(far, "sub"), filepath.Join(data, "ld"))
+		link("real.db", filepath.Join(far, "hop"))
+		link("missing/../ld/../hop", db)
+	}
+	return root, realDB
+}
+
+// NFR-2.8: the backup destination is opened with SQLITE_OPEN_URI, so a name
+// that starts with file: would be read as a URI. mtix backup refuses all five
+// forms, and the file the URI names, its WAL and shm stay untouched.
+func TestCLI_BackupFileURIDestination_IsRefusedAndSidecarsKept(t *testing.T) {
+	forms := map[string]func(dir string) string{
+		"relative":        func(string) string { return "file:e.db" },
+		"absolute":        func(dir string) string { return "file:" + dir + "/e.db" },
+		"triple-slash":    func(dir string) string { return "file://" + dir + "/e.db" },
+		"percent-encoded": func(string) string { return "file:%65.db" },
+		"query":           func(string) string { return "file:e.db?cache=private" },
+	}
+	for name, form := range forms {
+		for _, size := range []int{0, 1} {
+			t.Run(fmt.Sprintf("%s/size=%d", name, size), func(t *testing.T) {
+				root, db := walOnlyBoard(t, 0)
+				original, err := os.ReadFile(filepath.Join(app.mtixDir, "data", "mtix.db"))
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(db, original, 0o600))
+				// The command runs with the project root as its working
+				// directory, so relative forms name a file there.
+				dir := root
+				target := filepath.Join(dir, "e.db")
+				require.NoError(t, os.WriteFile(target, make([]byte, size), 0o600))
+				wal, err := os.ReadFile(db + "-wal")
+				require.NoError(t, err)
+				require.NoError(t, os.WriteFile(target+"-wal", wal, 0o600))
+				require.NoError(t, os.WriteFile(target+"-shm", []byte("shm"), 0o600))
+				before := hashFiles(t, target, target+"-wal", target+"-shm")
+				out := doctorCLIExecute(t, root, "", "backup", form(dir))
+				require.NotEqual(t, 0, out.exit, "stdout: %s stderr: %s", out.stdout, out.stderr)
+				require.Contains(t, out.stderr, "file:")
+				require.Equal(t, before, hashFiles(t, target, target+"-wal", target+"-shm"))
+			})
+		}
 	}
 }

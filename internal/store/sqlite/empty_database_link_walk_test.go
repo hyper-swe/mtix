@@ -97,6 +97,28 @@ func linkShapes() []linkShape {
 			t.Chdir(dir)
 			return filepath.Join("sub", "link.db"), dir
 		}},
+		// Named regressions from the round 4 review: a link reached through a
+		// name that does not exist and "..", where SQLite keeps walking.
+		{"missing-dotdot-hop", func(t *testing.T) (string, string) {
+			root, far := t.TempDir(), filepath.Join(t.TempDir(), "far")
+			mustMkdir(t, far)
+			mustLink(t, filepath.Join(far, "real.db"), filepath.Join(root, "hop"))
+			return root + "/missing/../hop", far // not filepath.Join: it cleans ".." away
+		}},
+		{"missing-deep-dotdot-second-hop", func(t *testing.T) (string, string) {
+			root, far := t.TempDir(), filepath.Join(t.TempDir(), "far")
+			mustMkdir(t, far)
+			mustLink(t, "hop2", filepath.Join(root, "hop"))
+			mustLink(t, filepath.Join(far, "real.db"), filepath.Join(root, "hop2"))
+			return root + "/m1/m2/../../hop", far
+		}},
+		{"missing-dotdot-linked-directory-dotdot", func(t *testing.T) (string, string) {
+			root, far := t.TempDir(), filepath.Join(t.TempDir(), "far")
+			mustMkdir(t, filepath.Join(far, "sub"))
+			mustLink(t, filepath.Join(far, "sub"), filepath.Join(root, "ld"))
+			mustLink(t, "real.db", filepath.Join(far, "hop"))
+			return root + "/missing/../ld/../hop", far
+		}},
 		{"chain-of-4", func(t *testing.T) (string, string) { return chainShape(t, 4) }},
 		{"chain-of-45", func(t *testing.T) (string, string) { return chainShape(t, 45) }},
 	}

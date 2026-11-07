@@ -71,6 +71,8 @@ const (
 type pullIngest struct {
 	// cloneBootstrap keeps clone-origin retry batches inside the first-fill stream.
 	cloneBootstrap bool
+	// moreCursorPages records hasMore for this cursor-pass page only.
+	moreCursorPages bool
 	// onConnect observes an existing transport attempt, adding no contact (MTIX-112.20.7).
 	onConnect  func(context.Context)
 	receipt    *pullExchangeTracker

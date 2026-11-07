@@ -92,8 +92,9 @@ func continueCloneWakeBootstrapTx(ctx context.Context, tx *sql.Tx, before cloneW
 	return false, nil
 }
 
-// CompleteCloneWakeBootstrap clears clone intent in the successful final
-// pull-cursor transaction, so repeat resumes preserve later live mail (FR-20).
+// CompleteCloneWakeBootstrap retires clone intent with a completed clone's
+// cursor or an ordinary pull's final page. A drain without an accepted cursor
+// retires it on exhaustion; failed and intermediate pages retain it (FR-20).
 func CompleteCloneWakeBootstrap(ctx context.Context, tx *sql.Tx) error {
 	// Completion and invalidation both retire the same local-only witness.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM meta WHERE key=?`, cloneWakeBootstrapKey); err != nil {

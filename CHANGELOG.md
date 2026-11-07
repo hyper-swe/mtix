@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **CI: isolate service race tests in two exact hash shards per OS (MTIX-112.51).** All tests retain race detection, count 1 and the 20-minute limit; package and compiled-test ownership guards prevent omissions or duplicates, and `test-go` requires every shard. Native export child failures now include bounded retained stdout, stderr and joined process status so the next failure can name its cause. Ordinary CI has 33 checks.
+
 - Worktree enrollment compares annotation addressees and exact completion times, including missing values. Current pushed comments and reruns enrol; old backfill or workflow differences refuse with the existing printed backup and explicit accept-hub recovery, retaining the original store and reporting lost fields (MTIX-112.17.16.19). Annotation identity and creation-time exclusions remain for old events.
 
 - Preserve annotation identity, addressee and resolution plus rerun completion timestamps through later claims, unclaims and automatic unblocks across sync and fresh clones; current-client backfill carries the available source fields (MTIX-112.17.16.15). Older comment identity remains a documented residual (MTIX-112.17.16.20).

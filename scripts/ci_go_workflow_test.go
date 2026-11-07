@@ -92,36 +92,34 @@ func TestGoWorkflow_Shards_CoverBothOSesWithoutOptionalCases(t *testing.T) {
 func TestGoWorkflow_Aggregate_RejectsEveryNonSuccessResult(t *testing.T) {
 	job := readCIJobs(t)["test-go"]
 	require.Equal(t, "test-go", job.Name)
-	require.Equal(t, []string{"test-go-shards", "test-go-sqlite", "test-go-cmd"}, job.Needs)
+	require.Equal(t, []string{"test-go-shards", "test-go-sqlite", "test-go-cmd", "test-go-service"}, job.Needs)
 	require.Equal(t, "${{ always() }}", job.If)
 	require.Nil(t, job.ContinueOnError)
 	require.Len(t, job.Steps, 1)
 	step := job.Steps[0]
-	require.Equal(t, "${{ needs.test-go-cmd.result }}", step.Env["CMD_RESULT"])
 	require.Empty(t, step.If)
 	require.Nil(t, step.ContinueOnError)
-	require.Equal(t, "${{ needs.test-go-shards.result }}", step.Env["SHARD_RESULT"])
-	require.Equal(t, "${{ needs.test-go-sqlite.result }}", step.Env["SQLITE_RESULT"])
+	for env, need := range map[string]string{"SHARD_RESULT": "test-go-shards", "SQLITE_RESULT": "test-go-sqlite", "CMD_RESULT": "test-go-cmd", "SERVICE_RESULT": "test-go-service"} {
+		require.Equal(t, "${{ needs."+need+".result }}", step.Env[env])
+	}
 	results := []string{"success", "failure", "cancelled", "skipped", "", "unknown"}
-	for _, shard := range results {
-		for _, sqlite := range results {
-			for _, cmdResult := range results {
-				t.Run("shards="+shard+"/sqlite="+sqlite+"/cmd="+cmdResult, func(t *testing.T) {
-					cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", step.Run)
-					cmd.Env = append(os.Environ(), "SHARD_RESULT="+shard, "SQLITE_RESULT="+sqlite, "CMD_RESULT="+cmdResult)
-					out, err := cmd.CombinedOutput()
-					if shard == "success" && sqlite == "success" && cmdResult == "success" {
-						require.NoError(t, err, string(out))
-					} else {
-						require.Error(t, err, string(out))
-					}
-				})
-			}
+	for _, changed := range []string{"SHARD_RESULT", "SQLITE_RESULT", "CMD_RESULT", "SERVICE_RESULT"} {
+		for _, result := range results {
+			t.Run(changed+"="+result, func(t *testing.T) {
+				cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", step.Run)
+				cmd.Env = append(os.Environ(), "SHARD_RESULT=success", "SQLITE_RESULT=success", "CMD_RESULT=success", "SERVICE_RESULT=success", changed+"="+result)
+				out, err := cmd.CombinedOutput()
+				if result == "success" {
+					require.NoError(t, err, string(out))
+				} else {
+					require.Error(t, err, string(out))
+				}
+			})
 		}
 	}
 }
 
-func TestGoWorkflow_CheckCount_MatchesTwentyNineChecks(t *testing.T) {
+func TestGoWorkflow_CheckCount_MatchesThirtyThreeChecks(t *testing.T) {
 	count := 0
 	for _, job := range readCIJobs(t) {
 		combinations := 1
@@ -133,8 +131,8 @@ func TestGoWorkflow_CheckCount_MatchesTwentyNineChecks(t *testing.T) {
 		}
 		count += combinations
 	}
-	// MTIX-112.17.22.1: 25 - 2 (cli shard) + 6 (test-go-cmd) = 29.
-	require.Equal(t, 29, count)
+	// MTIX-112.51: 29 existing checks plus two service shards on each OS.
+	require.Equal(t, 33, count)
 }
 
 // MTIX-112.17.24: cmd/mtix runs as three shards per PostgreSQL version.

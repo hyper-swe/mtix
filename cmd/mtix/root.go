@@ -190,9 +190,10 @@ func autoImportForCommand(cmd *cobra.Command) {
 	}
 }
 
-// skipsStoreInit names commands that never open a store. Attach verbs run in
-// any directory a harness opens; they never open or create a store, and they
-// always exit 0 (ADR-007 §6.5, A5).
+// skipsStoreInit names commands that bypass ordinary application store startup.
+// Attach verbs run in any directory a harness opens and always exit 0. Their
+// predicate reads the matched store identity; a session-start drain opens only
+// that matched board after checking the enrolment guard (ADR-007 §6.5, A5).
 func skipsStoreInit(cmd *cobra.Command) bool {
 	switch cmd.Name() {
 	case "version", "help", "recover":

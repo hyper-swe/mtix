@@ -8,6 +8,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -18,26 +19,46 @@ import (
 )
 
 func TestPendingExports_ChildFailure_ReportsBothStreamsAndExit(t *testing.T) {
-	for _, mode := range []string{"failure", "large-failure", "exit"} {
-		t.Run(mode, func(t *testing.T) {
-			cmd := diagnosticProbe(t, "report-"+mode)
-			out, err := cmd.CombinedOutput()
+	for _, tc := range []struct {
+		mode                              string
+		stdoutTail, stderrTail, truncated bool
+		maxBytes                          int
+	}{
+		{"failure", false, false, false, 40 * 1024},
+		{"large-failure", true, false, true, 40 * 1024},
+		{"exit", false, false, false, 40 * 1024},
+		{"long-stdout", true, false, true, 40 * 1024},
+		{"long-stderr", false, true, true, 40 * 1024},
+		{"both-long", true, true, true, 80 * 1024},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			out, err := diagnosticProbe(t, "report-"+tc.mode).CombinedOutput()
 			require.Error(t, err, "the probe parent must fail on its child exit")
 			text := string(out)
 			require.Contains(t, text, "child stdout sentinel")
 			require.Contains(t, text, "child stderr sentinel")
 			require.Contains(t, text, "exit status 23")
-			if mode == "large-failure" {
-				require.Less(t, len(out), 40*1024, "retained output must be bounded")
-				require.NotContains(t, text, "beyond retained limit")
+			require.Less(t, len(out), tc.maxBytes, "both retained streams must stay bounded")
+			if tc.truncated {
+				require.Contains(t, text, "[truncated ")
+			}
+			if tc.stdoutTail {
+				require.Contains(t, text, "child stdout tail sentinel")
+			}
+			if tc.stderrTail {
+				require.Contains(t, text, "child stderr tail sentinel")
 			}
 		})
 	}
 }
 
 func TestPendingExports_ChildNoise_DrainsAndPreservesAllSignals(t *testing.T) {
-	out, err := diagnosticProbe(t, "report-protocol").CombinedOutput()
-	require.NoError(t, err, string(out))
+	for _, mode := range []string{"protocol", "protocol-no-newline", "protocol-long-noise"} {
+		t.Run(mode, func(t *testing.T) {
+			out, err := diagnosticProbe(t, "report-"+mode).CombinedOutput()
+			require.NoError(t, err, string(out))
+		})
+	}
 }
 
 func diagnosticProbe(t *testing.T, mode string) *exec.Cmd {
@@ -73,46 +94,85 @@ func TestPendingExports_ChildDiagnosticProbe(t *testing.T) {
 	}
 	mode := os.Args[len(os.Args)-1]
 	if strings.HasPrefix(mode, "report-") {
-		child := diagnosticChild(t, strings.TrimPrefix(mode, "report-"))
-		if mode == "report-protocol" {
-			for _, signal := range diagnosticSignals() {
-				child.awaitSignal(t, signal)
-			}
-			child.awaitExit(t)
-			return
-		}
-		if mode == "report-exit" {
-			child.awaitSignal(t, "ready")
-			child.awaitExit(t)
-			return
-		}
-		child.awaitSignal(t, "marked 32")
+		runDiagnosticParent(t, strings.TrimPrefix(mode, "report-"))
 		return
 	}
-	_, err := fmt.Fprintln(os.Stdout, "child stdout sentinel")
-	require.NoError(t, err)
-	_, err = fmt.Fprintln(os.Stderr, "child stderr sentinel")
-	require.NoError(t, err)
-	if mode == "large-failure" || mode == "protocol" {
-		for range 600 {
-			_, err = fmt.Fprintln(os.Stdout, strings.Repeat("diagnostic", 10))
-			require.NoError(t, err)
+	emitDiagnosticChild(t, mode)
+}
+
+func runDiagnosticParent(t *testing.T, mode string) {
+	t.Helper()
+	child := diagnosticChild(t, mode)
+	if strings.HasPrefix(mode, "protocol") {
+		var got []string
+		for signal := range child.lines {
+			got = append(got, signal)
 		}
-		_, err = fmt.Fprintln(os.Stdout, "beyond retained limit")
-		require.NoError(t, err)
-	}
-	if mode == "protocol" {
-		for _, signal := range diagnosticSignals() {
-			_, err = fmt.Fprintln(os.Stdout, signal)
-			require.NoError(t, err)
-		}
+		child.awaitExit(t)
+		require.Equal(t, diagnosticSignals(), got, "only whole protocol lines may queue")
 		return
 	}
 	if mode == "exit" {
-		_, err = fmt.Fprintln(os.Stdout, "ready")
-		require.NoError(t, err)
+		child.awaitSignal(t, "ready")
+		child.awaitExit(t)
+		return
 	}
-	os.Exit(23) // Only this owned re-exec probe exits, with no store or resource open.
+	child.awaitSignal(t, "marked 32")
+}
+
+func diagnosticLine(t *testing.T, w io.Writer, text string) {
+	t.Helper()
+	_, err := fmt.Fprintln(w, text)
+	require.NoError(t, err)
+}
+
+func emitDiagnosticChild(t *testing.T, mode string) {
+	t.Helper()
+	diagnosticLine(t, os.Stdout, "child stdout sentinel")
+	diagnosticLine(t, os.Stderr, "child stderr sentinel")
+	if mode == "large-failure" || strings.HasPrefix(mode, "protocol") {
+		for range 600 {
+			diagnosticLine(t, os.Stdout, strings.Repeat("diagnostic", 10))
+		}
+	}
+	if mode == "long-stdout" || mode == "both-long" || mode == "protocol-long-noise" {
+		diagnosticLine(t, os.Stdout, "force-result "+strings.Repeat("x", 300*1024))
+	}
+	if mode == "large-failure" || mode == "long-stdout" || mode == "both-long" {
+		diagnosticLine(t, os.Stdout, "child stdout tail sentinel")
+	}
+	if mode == "long-stderr" || mode == "both-long" {
+		diagnosticLine(t, os.Stderr, strings.Repeat("x", 300*1024))
+		diagnosticLine(t, os.Stderr, "child stderr tail sentinel")
+	}
+	if strings.HasPrefix(mode, "protocol") {
+		emitDiagnosticSignals(t, mode)
+		return
+	}
+	if mode == "exit" {
+		diagnosticLine(t, os.Stdout, "ready")
+	}
+	os.Exit(23) // Only this owned re-exec probe exits, with no store open.
+}
+
+func emitDiagnosticSignals(t *testing.T, mode string) {
+	t.Helper()
+	signals := diagnosticSignals()
+	for i, signal := range signals {
+		if mode == "protocol-no-newline" {
+			ending := "\r\n"
+			if i == len(signals)-1 {
+				ending = ""
+			}
+			_, err := fmt.Fprint(os.Stdout, signal+ending)
+			require.NoError(t, err)
+		} else {
+			diagnosticLine(t, os.Stdout, signal)
+		}
+	}
+	if mode == "protocol-no-newline" {
+		os.Exit(0) // Suppress testing's PASS line so the final signal really ends at EOF.
+	}
 }
 
 func diagnosticSignals() []string {

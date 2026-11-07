@@ -416,7 +416,7 @@ func testShardFixture(t *testing.T, listing string, exit string) string {
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "scripts", "ci-go-shards.sh"), source, 0o600))
 	require.NoError(t, os.Mkdir(filepath.Join(root, "bin"), 0o750))
-	shim := "#!/usr/bin/env bash\n[ \"$1 $2 $3\" = 'test -list .*' ] || exit 99\n[ \"$4\" = ./internal/slow/ ] || exit 98\ncat \"$SHARD_TEST_LIST\"\nexit \"${SHARD_TEST_EXIT:-0}\"\n"
+	shim := "#!/usr/bin/env bash\n[ \"$1 $2 $3 $4\" = 'test -race -list .*' ] || exit 99\n[ \"$5\" = ./internal/slow/ ] || exit 98\ncat \"$SHARD_TEST_LIST\"\nexit \"${SHARD_TEST_EXIT:-0}\"\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "bin", "go"), []byte(shim), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "listing.txt"), []byte(listing), 0o600))
 	t.Setenv("SHARD_TEST_EXIT", exit)

@@ -7,7 +7,6 @@ package service
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -108,8 +107,8 @@ type coalescingWriter struct {
 	lines       chan string
 	done        chan struct{}
 	err         error
-	stderr      bytes.Buffer
-	diagnostics bytes.Buffer
+	stderr      childDiagnosticOutput
+	diagnostics childDiagnosticOutput
 }
 
 func startCoalescingWriter(t *testing.T, dir string) *coalescingWriter {
@@ -149,23 +148,9 @@ func coalescingWriterEnv() []string {
 }
 
 func (c *coalescingWriter) readAndWait(stdout io.ReadCloser) {
-	scanner := bufio.NewScanner(stdout)
-	for scanner.Scan() {
-		line := scanner.Text()
-		// Assertion diagnostics can exceed the protocol buffer on early parent
-		// failure. Keep draining them; only fixed handshake lines queue.
-		if line == "ready" || line == "marked 32" || line == "snapshot-held" || line == "committed 2" || line == "writer-held" || strings.HasPrefix(line, "force-result ") {
-			c.lines <- line
-		} else if remaining := 32*1024 - c.diagnostics.Len(); remaining > 0 {
-			diagnostic := line + "\n"
-			if len(diagnostic) > remaining {
-				diagnostic = diagnostic[:remaining]
-			}
-			_, _ = c.diagnostics.WriteString(diagnostic)
-		}
-	}
+	readErr := c.readOutput(stdout)
 	close(c.lines)
-	c.err = errors.Join(scanner.Err(), c.cmd.Wait())
+	c.err = errors.Join(readErr, c.cmd.Wait())
 	close(c.done)
 }
 

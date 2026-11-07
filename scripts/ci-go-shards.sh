@@ -127,7 +127,7 @@ check_pg_consumers() {
 # hashed set shows up as a test selected by no shard.
 test_names() {
 	# The list is read from a file so that a failed go test is not hidden by a pipe.
-	go test -list '.*' "./$1/" >"$scratch/listing" || die "cannot list the $1 tests"
+	go test -race -list '.*' "./$1/" >"$scratch/listing" || die "cannot list the $1 tests"
 	grep -E '^(Test|Example|Fuzz)' "$scratch/listing" | grep -vE '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' >"$scratch/odd" || true
 	if [ -s "$scratch/odd" ]; then
 		printf 'go-shards: unsupported test name (cannot be selected by an exact -run pattern):\n' >&2

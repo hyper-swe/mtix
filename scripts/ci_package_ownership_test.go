@@ -56,7 +56,7 @@ case "$1" in
 list) [ "$*" = 'list ./...' ] || exit 99; cat "$SHARD_TEST_LIST" ;;
 test)
   shift
-  if [ "$1" = -list ]; then
+  if [ "$1" = -race ] && [ "$2" = -list ]; then
     printf 'TestCoverage1\nTestCoverage2\nTestCoverage3\nTestCoverage4\nTestCoverage5\nTestCoverage6\n'
     exit 0
   fi

@@ -16,6 +16,7 @@ import (
 )
 
 type ciGoStep struct {
+	Shell           string
 	Run             string
 	Uses            string
 	If              string
@@ -25,6 +26,8 @@ type ciGoStep struct {
 }
 
 type ciGoJob struct {
+	Env             map[string]string
+	Defaults        map[string]any
 	Name            string
 	Needs           []string
 	If              string
@@ -48,15 +51,36 @@ func readCIJobs(t *testing.T) map[string]ciGoJob {
 	t.Helper()
 	source, err := os.ReadFile("../.github/workflows/ci.yml")
 	require.NoError(t, err)
-	var workflow struct{ Jobs map[string]ciGoJob }
+	var workflow struct {
+		Jobs     map[string]ciGoJob
+		Env      map[string]string
+		Defaults map[string]any
+	}
 	require.NoError(t, yaml.Unmarshal(source, &workflow))
+	require.Empty(t, workflow.Env, "workflow env may alter race test selection")
+	require.Empty(t, workflow.Defaults, "workflow defaults may override fail-fast shells")
 	return workflow.Jobs
+}
+
+func requireRaceShardEnvironment(t *testing.T, job ciGoJob) {
+	t.Helper()
+	require.Empty(t, job.Env, "job env may alter test selection")
+	require.Empty(t, job.Defaults, "job defaults may override fail-fast shells")
+	for _, step := range job.Steps {
+		require.Empty(t, step.Shell, "retain the runner fail-fast shell")
+		if strings.Contains(step.Run, "go test") {
+			require.Equal(t, map[string]string{"SHARD": "${{ matrix.shard }}"}, step.Env)
+		} else {
+			require.Empty(t, step.Env)
+		}
+	}
 }
 
 func TestGoWorkflow_Shards_CoverBothOSesWithoutOptionalCases(t *testing.T) {
 	jobs := readCIJobs(t)
 	require.Contains(t, jobs, "test-go-shards")
 	job := jobs["test-go-shards"]
+	requireRaceShardEnvironment(t, job)
 	require.Equal(t, "test-go-shard (${{ matrix.os }}, ${{ matrix.shard }})", job.Name)
 	require.Equal(t, "${{ matrix.os }}", job.RunsOn)
 	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, job.Strategy.Matrix.OS)
@@ -103,18 +127,24 @@ func TestGoWorkflow_Aggregate_RejectsEveryNonSuccessResult(t *testing.T) {
 		require.Equal(t, "${{ needs."+need+".result }}", step.Env[env])
 	}
 	results := []string{"success", "failure", "cancelled", "skipped", "", "unknown"}
-	for _, changed := range []string{"SHARD_RESULT", "SQLITE_RESULT", "CMD_RESULT", "SERVICE_RESULT"} {
-		for _, result := range results {
-			t.Run(changed+"="+result, func(t *testing.T) {
-				cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", step.Run)
-				cmd.Env = append(os.Environ(), "SHARD_RESULT=success", "SQLITE_RESULT=success", "CMD_RESULT=success", "SERVICE_RESULT=success", changed+"="+result)
-				out, err := cmd.CombinedOutput()
-				if result == "success" {
-					require.NoError(t, err, string(out))
-				} else {
-					require.Error(t, err, string(out))
-				}
-			})
+	keys := []string{"SHARD_RESULT", "SQLITE_RESULT", "CMD_RESULT", "SERVICE_RESULT"}
+	// Every Cartesian combination is checked; no subtests add overhead to 1296 shells.
+	for combination := range 1296 {
+		encoded := combination
+		env := os.Environ()
+		values := make([]string, len(keys))
+		for i, key := range keys {
+			values[i] = results[encoded%len(results)]
+			encoded /= len(results)
+			env = append(env, key+"="+values[i])
+		}
+		cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", step.Run)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if combination == 0 {
+			require.NoError(t, err, "results=%v output=%s", values, out)
+		} else {
+			require.Error(t, err, "results=%v output=%s", values, out)
 		}
 	}
 }
@@ -174,6 +204,7 @@ func TestGoWorkflow_CmdShards_RunThreeHashShardsOnBothOSesWithUnchangedFlags(t *
 	jobs := readCIJobs(t)
 	job, ok := jobs["test-go-cmd"]
 	require.True(t, ok)
+	requireRaceShardEnvironment(t, job)
 	require.Equal(t, "test-go-cmd (${{ matrix.os }}, shard ${{ matrix.shard }})", job.Name)
 	require.Equal(t, "${{ matrix.os }}", job.RunsOn)
 	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, job.Strategy.Matrix.OS)

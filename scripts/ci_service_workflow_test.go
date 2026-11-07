@@ -20,6 +20,7 @@ func TestGoWorkflow_ServiceShards_CoverBothOSesWithUnchangedFlags(t *testing.T) 
 	jobs := readCIJobs(t)
 	job, ok := jobs["test-go-service"]
 	require.True(t, ok, "Service needs its own test-shard matrix")
+	requireRaceShardEnvironment(t, job)
 	require.Equal(t, "test-go-service (${{ matrix.os }}, shard ${{ matrix.shard }})", job.Name)
 	require.Equal(t, "${{ matrix.os }}", job.RunsOn)
 	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, job.Strategy.Matrix.OS)
@@ -111,7 +112,7 @@ esac
 }
 
 func TestServiceShards_CompiledInventory_EachNameSelectedExactlyOnce(t *testing.T) {
-	cmd := exec.Command("go", "test", "-list", ".*", "./internal/service/")
+	cmd := exec.Command("go", "test", "-race", "-list", ".*", "./internal/service/")
 	cmd.Dir = ".."
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(out))

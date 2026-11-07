@@ -72,7 +72,7 @@ bash scripts/ci-go-shards.sh test-check internal/service 2
 bash scripts/ci-go-shards.sh test-pattern internal/service 2 1
 ```
 
-Every compiled test, example and fuzz seed matches exactly one shard pattern;
+The inventory is listed with `go test -race -list`, using the same race build as the job. Every compiled test, example and fuzz seed matches exactly one shard pattern;
 subtests follow their parent. Each job checks package and test ownership before
 running `go test ./internal/service/ -race -count=1 -timeout 20m -run "$pattern"`.
 No test is skipped and no deadline is raised. `scripts/ci_service_workflow_test.go`
@@ -84,8 +84,9 @@ CI to 33 checks. Record actual per-shard hosted durations in the PR evidence;
 the full remote bar runs the code and guards, but does not execute changed
 `ci.yml` jobs.
 
-The native export child helper also retains up to 32 KiB of non-protocol stdout
-while continuing to drain output. On an early exit or unsuccessful joined exit,
+The native export child helper drains stdout in bounded chunks even when a line
+exceeds 64 KiB. It retains a head and tail totaling up to 32 KiB per stream,
+both stdout and stderr, and marks omitted bytes so a late failure stays visible. On an early exit or unsuccessful joined exit,
 it reports retained stdout, stderr and process status after joining the reader
 and process. Existing handshakes and 60-second guards are unchanged. This makes
 the next child failure diagnosable; it does not establish or fix the historical
@@ -116,7 +117,7 @@ or timeout is weakened, and no skip flag is added.
 
 The two old SQLite job names are replaced by six `test-go-sqlite` checks.
 Together with the four CLI/other jobs, the aggregate and the remaining checks,
-this changes the merge requirement from 21 successful checks to **25 of 25**; the `cmd/mtix` split below makes it **29 of 29**.
+this changes the merge requirement from 21 successful checks to **25 of 25**; the `cmd/mtix` split below makes it **29 of 29**, and the service split above makes the current requirement **33 of 33**.
 
 Before the split, the last five completed main CI runs measured these SQLite
 package times (seconds from the original Go output; setup is excluded):
@@ -350,7 +351,7 @@ that a changed remote-bar workflow ran.
 ## Release gates
 
 Run [the release checklist](RELEASE-CHECKLIST.md) on the exact CI-green commit
-before tagging. All 29 ordinary CI checks, including the fourteen race shards and
+before tagging. All 33 ordinary CI checks, including the eighteen race shards and
 `test-go` aggregate, must pass alongside independent review and the other
 documented quality gates.
 

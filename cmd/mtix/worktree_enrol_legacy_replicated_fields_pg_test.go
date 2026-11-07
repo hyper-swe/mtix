@@ -66,7 +66,7 @@ func TestEnrolWorktree_RealHub_LegacyReplicatedFields_WorkingRecovery_PG(t *test
 			assert.Empty(t, f.enrolled)
 			assert.Contains(t, refusal.Error(), "a value the store already holds cannot be re-entered")
 			assert.Contains(t, refusal.Error(), "accept-hub "+refusal.Digest())
-			copyPath := runPrintedBackup(t, f, refusal.Error())
+			copyPath := runReplicatedEnrolBackup(t, f, binary, history, refusal.Error())
 			assertLegacyEnrolCopy(t, copyPath, before)
 
 			result, err := f.service().EnrolWorktree(t.Context(), service.EnrollmentRequest{
@@ -127,6 +127,18 @@ func enrolRerunChild(t *testing.T, f *enrolPGFixture) *model.Node {
 	require.NoError(t, err)
 	require.NoError(t, st.Close())
 	return node
+}
+
+// Preserve history.export while executing the refusal's exact shell command.
+func runReplicatedEnrolBackup(t *testing.T, f *enrolPGFixture, binary, history, message string) string {
+	t.Helper()
+	m := printedBackup.FindStringSubmatch(message)
+	require.Len(t, m, 2, "the refusal prints a named backup: %s", message)
+	f.binaryLine(t, binary, history, m[1])
+	copies, err := filepath.Glob(filepath.Join(f.root, ".mtix", "enrol-copy-*.db"))
+	require.NoError(t, err)
+	require.Len(t, copies, 1)
+	return copies[0]
 }
 
 func assertLegacyEnrolCopy(t *testing.T, path string, before *model.Node) {

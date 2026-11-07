@@ -125,3 +125,47 @@ func TestImportMerge_StoreWithTasksAndNoJournal_RealBinary_BackfillStillReachesA
 	out = fresh.run(t, "list")
 	require.Contains(t, out.stdout, "Retitled by the merge", "the fresh clone holds the task")
 }
+
+// TestImportMerge_PullOfACreateOnAMergedTasksNumber_RealBinary_MovesTheMergedTaskAndKeepsBoth
+// (round 6 ruling 2, the pull side): a merged task sits unsent on TEST-2, the
+// hub's TEST-2 arrives on a real pull, and the pull neither fails nor drops
+// anything. The hub's task takes the number; the merged task keeps its title
+// on another number.
+func TestImportMerge_PullOfACreateOnAMergedTasksNumber_RealBinary_MovesTheMergedTaskAndKeepsBoth(t *testing.T) {
+	_ = requireCmdPG(t)
+	f := newQuarantineRecoveryCLI(t, buildQuarantineRecoveryCLI(t))
+	require.Zero(t, f.run(t, "create", "Seed").exitCode)
+	out := f.run(t, "sync", "push", "--insecure-tls")
+	require.Zero(t, out.exitCode, "%s%s", out.stdout, out.stderr)
+	out = f.run(t, "export")
+	require.Zero(t, out.exitCode, "%s", out.stderr)
+	var data sqlite.ExportData
+	require.NoError(t, json.Unmarshal([]byte(out.stdout), &data))
+	extra := data.Nodes[0]
+	extra.ID, extra.Seq, extra.UID, extra.Title = "TEST-2", 2, clock.MustNewEventID(), "Merged task"
+	extra.ContentHash = model.ComputeContentHash("Merged task", "", "", "", nil)
+	data.Nodes = append(data.Nodes, extra)
+	data.NodeCount = len(data.Nodes)
+	require.NoError(t, sqlite.RecomputeExportChecksum(&data))
+	raw, err := json.Marshal(&data)
+	require.NoError(t, err)
+	path := filepath.Join(t.TempDir(), "board.json")
+	require.NoError(t, os.WriteFile(path, raw, 0o600))
+	require.Zero(t, f.run(t, "import", path, "--mode", "merge", "--force").exitCode)
+	theirs := clock.MustNewEventID()
+	payload, err := model.EncodePayload(&model.CreateNodePayload{Title: "Teammate task", NodeType: model.NodeTypeForDepth(0)})
+	require.NoError(t, err)
+	pushToHub(t, f.hub, &model.SyncEvent{EventID: theirs, UID: theirs, ProjectPrefix: "TEST", NodeID: "TEST-2",
+		OpType: model.OpCreateNode, Payload: payload, WallClockTS: 1000, LamportClock: 5,
+		VectorClock: model.VectorClock{"remote-author": 5}, AuthorID: "remote-author", AuthorMachineHash: "ffffffffffffffff"})
+
+	out = f.run(t, "sync", "pull", "--insecure-tls")
+
+	require.Zero(t, out.exitCode, "the pull does not fail: %s%s", out.stdout, out.stderr)
+	var hubTask struct{ Title string }
+	require.NoError(t, json.Unmarshal([]byte(mustRun(t, f, "show", "TEST-2", "--json")), &hubTask))
+	require.Equal(t, "Teammate task", hubTask.Title, "the hub's task takes the number")
+	list := mustRun(t, f, "list")
+	require.Contains(t, list, "Merged task", "the merged task is not lost")
+	require.Contains(t, list, "Seed")
+}

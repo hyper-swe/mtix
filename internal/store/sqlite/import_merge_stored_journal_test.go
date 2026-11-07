@@ -10,7 +10,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -72,30 +71,24 @@ func TestImportMerge_CreatedTaskWithUID_KeepsItsUIDSoTheAuthorsCreateMatchesIt(t
 	require.Zero(t, countJournal(t, s, `sync_status = 'pending'`), "the author's create applies over the merged row and holds nothing")
 }
 
-// TestImportMerge_BlocksDependency_BlocksLocallyAndJournalsTheLinkOnly: a
-// blocks dependency the merge inserts blocks its dependent here, as the
-// link_dep event does on a peer, so the replicas agree on the status.
-func TestImportMerge_BlocksDependency_BlocksLocallyAndJournalsTheLinkOnly(t *testing.T) {
+// TestImportMerge_BlocksDependencyOnHeldTasks_BlocksNothingAndJournalsNothing: a
+// blocks dependency in the file between held tasks is not applied (round 6,
+// principle H), so the dependent is not blocked and no link_dep or transition
+// is journaled; the result names the command that adds it.
+func TestImportMerge_BlocksDependencyOnHeldTasks_BlocksNothingAndJournalsNothing(t *testing.T) {
 	s := syncedStoreWithTask(t)
 	createPlainTask(t, s, "REC-2", 2, "", sameIDTime)
 	markJournalPushed(t, s)
 	data := exportOf(t, s)
-	data.Dependencies = append(data.Dependencies, struct {
-		FromID    string `json:"from_id"`
-		ToID      string `json:"to_id"`
-		DepType   string `json:"dep_type"`
-		CreatedAt string `json:"created_at"`
-	}{"REC-2", "REC-1", "blocks", sameIDTime.Format(time.RFC3339)})
-	require.NoError(t, sqlite.RecomputeExportChecksum(data))
+	addFileDep(t, data, "REC-2", "REC-1", "blocks")
 
-	mergeFile(t, s, data)
+	res := mergeTheirs(t, s, data)
 
 	var status string
 	require.NoError(t, s.WriteDB().QueryRow(`SELECT status FROM nodes WHERE id = 'REC-1'`).Scan(&status))
-	require.Equal(t, "blocked", status, "the merge auto-blocks the dependent")
-	require.Equal(t, 1, countJournal(t, s, `op_type = 'link_dep' AND sync_status = 'pending'`))
-	require.Zero(t, countJournal(t, s, `op_type = 'transition_status' AND sync_status = 'pending'`),
-		"peers derive the block from the link, so no transition is journaled")
+	require.Equal(t, "open", status, "the merge blocks nothing")
+	require.Zero(t, countJournal(t, s, `sync_status = 'pending'`))
+	require.Equal(t, []string{"mtix dep add REC-2 REC-1 --type blocks"}, res.SkippedDeps)
 }
 
 func retitledFile(t *testing.T, s *sqlite.Store, title string) *sqlite.ExportData {

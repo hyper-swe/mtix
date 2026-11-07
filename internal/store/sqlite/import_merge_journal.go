@@ -41,13 +41,12 @@ type mergeJournal struct {
 	created []string
 	changed []string
 	before  map[string]exportNode
-	deps    []exportDep
-	// blocked maps a task the merge auto-blocked to its status before the
-	// block: a peer derives the block from the link_dep event, so no
-	// transition is journaled for it. unblocked holds the tasks the merge
-	// released because a blocker it resolved: a peer derives that too.
-	blocked   map[string]string
+	// unblocked holds the tasks the merge released because a blocker it
+	// resolved: a peer derives that from the blocker's transition.
 	unblocked map[string]bool
+	// skippedDeps names, as the mtix dep add command, each file dependency
+	// not applied because an end is a task the sync log holds.
+	skippedDeps []string
 	// localOnly names, per task, the columns the merge changed that no sync
 	// event carries, so the import reports them (principle B).
 	localOnly map[string][]string
@@ -130,36 +129,16 @@ func (j *mergeJournal) noteChanged(before *exportNode) {
 	}
 }
 
-// noteDep records a dependency the merge inserted, when the store did not
-// hold it already.
-func (j *mergeJournal) noteDep(ctx context.Context, tx *sql.Tx, d *exportDep) error {
-	if j == nil {
-		return nil
-	}
-	var held int
-	// The merge inserts a dependency with INSERT OR IGNORE: only one the
-	// store lacks is a change to journal.
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM dependencies WHERE from_id = ? AND to_id = ? AND dep_type = ?`,
-		d.FromID, d.ToID, d.DepType).Scan(&held); err != nil {
-		return fmt.Errorf("check dependency %s->%s: %w", d.FromID, d.ToID, err)
-	}
-	if held == 0 {
-		j.deps = append(j.deps, *d)
-	}
-	return nil
-}
-
 // journalMerge writes the journal rows for what the merge stored, when the
-// store syncs (syncedWithHub). It blocks the dependents of the inserted
-// blocks links, re-reads every created or changed task from the store, plans
+// store syncs (syncedWithHub). It releases the dependents of the blockers the
+// merge resolved, re-reads every created or changed task from the store, plans
 // the events from the stored rows, checks the queue cap once for all of
 // them, and writes nothing when the cap would be exceeded: the import's
 // transaction rolls back (FR-18, ErrSyncQueueFull). It returns the number of
 // events written.
 func (s *Store) journalMerge(ctx context.Context, tx *sql.Tx, j *mergeJournal, wallTS int64) (int, error) {
 	p := s.newMergePlanner(ctx, tx, j, wallTS)
-	if err := p.settleBlocks(); err != nil {
+	if err := p.unblockResolved(); err != nil {
 		return 0, err
 	}
 	planned, err := p.planMergeEvents()
@@ -200,6 +179,7 @@ func (s *Store) mergeAndJournal(ctx context.Context, tx *sql.Tx, data *ExportDat
 	n, err := s.journalMerge(ctx, tx, policy.journal, policy.now.UnixMilli())
 	result.Journaled, result.JournalLocalOnly = n, policy.journal.localOnlyList()
 	result.UnsentTasks = policy.journal.unsentList()
+	result.SkippedDeps = append([]string(nil), policy.journal.skippedDeps...)
 	result.NeedsBackfill = len(result.UnsentTasks) > 0
 	result.SkippedDeleted = append([]string(nil), policy.journal.skippedDeleted...)
 	result.keptUID = policy.journal.keptUID

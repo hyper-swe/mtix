@@ -17,9 +17,10 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
-// TestImportMerge_LinkWithOneUnsentEnd_IsNotJournaledWhichever End: both
-// ends must be carried (E7).
-func TestImportMerge_LinkWithOneUnsentEnd_IsNotJournaledWhicheverEnd(t *testing.T) {
+// TestImportMerge_LinkWithOneHeldEnd_IsNotAppliedWhicheverEnd (E7): a link
+// with an end the log holds is named, not applied or journaled, whichever
+// end is the held one.
+func TestImportMerge_LinkWithOneHeldEnd_IsNotAppliedWhicheverEnd(t *testing.T) {
 	for _, tc := range []struct{ name, from, to string }{{"unsent from", "REC-2", "REC-1"}, {"unsent to", "REC-1", "REC-2"}} {
 		t.Run(tc.name, func(t *testing.T) {
 			importer, _ := halfFilledPair(t)
@@ -29,21 +30,24 @@ func TestImportMerge_LinkWithOneUnsentEnd_IsNotJournaledWhicheverEnd(t *testing.
 			res := mergeTheirs(t, importer, data)
 
 			require.Zero(t, countJournal(t, importer, `op_type = 'link_dep' AND sync_status = 'pending'`))
-			require.Equal(t, []string{"REC-2"}, res.UnsentTasks)
+			require.Equal(t, []string{"mtix dep add " + tc.from + " " + tc.to + " --type related"}, res.SkippedDeps)
+			require.Zero(t, res.DepsImported)
 		})
 	}
 }
 
-// TestImportMerge_LinkBetweenTwoHeldTasks_IsJournaled: the counterpart of the
-// test above, so the rule is not "never".
-func TestImportMerge_LinkBetweenTwoHeldTasks_IsJournaled(t *testing.T) {
+// TestImportMerge_LinkBetweenTwoHeldTasks_IsNamedNotJournaledOrApplied: the
+// counterpart of the test above for two held ends (round 6: no merge changes a
+// dependency on a task the log holds).
+func TestImportMerge_LinkBetweenTwoHeldTasks_IsNamedNotJournaledOrApplied(t *testing.T) {
 	importer, peer := peerPair(t, 2)
 	data := exportOf(t, importer)
 	addFileDep(t, data, "REC-2", "REC-1", "related")
 
 	res := mergeTheirs(t, importer, data)
 
-	require.Equal(t, 1, countJournal(t, importer, `op_type = 'link_dep' AND sync_status = 'pending'`))
+	require.Zero(t, countJournal(t, importer, `op_type = 'link_dep' AND sync_status = 'pending'`))
+	require.Equal(t, []string{"mtix dep add REC-2 REC-1 --type related"}, res.SkippedDeps)
 	require.Empty(t, res.UnsentTasks)
 	replicate(t, importer, peer)
 }
@@ -175,27 +179,6 @@ func TestBackfill_Partial_ChildOfADeletedParentWithNoCreate_IsNamedNotSent(t *te
 	require.NoError(t, err)
 	require.Equal(t, []string{"REC-3.1"}, res.NotSent)
 	require.Equal(t, 1, res.CreateEvents, "REC-2 only")
-}
-
-// TestImportMerge_RelatedLinkDoesNotReblock (J1): only a blocks link keeps a
-// task blocked.
-func TestImportMerge_RelatedLinkDoesNotReblock(t *testing.T) {
-	importer, peer := peerPair(t, 2)
-	require.NoError(t, importer.AddDependency(context.Background(), &model.Dependency{FromID: "REC-2", ToID: "REC-1", DepType: model.DepTypeRelated}))
-	replicate(t, importer, peer)
-	for _, s := range []*sqlite.Store{importer, peer} {
-		_, err := s.WriteDB().Exec(`UPDATE nodes SET status = 'blocked', previous_status = 'open' WHERE id = 'REC-1'`)
-		require.NoError(t, err)
-	}
-	data := exportOf(t, importer)
-	data.Nodes[fileIdx(t, data, "REC-1")].Status = string(model.StatusOpen)
-	require.NoError(t, sqlite.RecomputeExportChecksum(data))
-
-	mergeTheirs(t, importer, data)
-	replicate(t, importer, peer)
-
-	require.Equal(t, "open", viewOf(t, importer, "REC-1").Status)
-	require.Equal(t, "open", viewOf(t, peer, "REC-1").Status)
 }
 
 // TestImportMerge_NoOpMergeOverTheCap_IsNotRefusedWhenPendingEventsPassTheCap

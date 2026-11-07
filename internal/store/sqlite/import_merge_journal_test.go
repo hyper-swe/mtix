@@ -136,10 +136,11 @@ func TestImportMerge_UnsyncedStore_WritesNoJournal(t *testing.T) {
 	require.Equal(t, "Imported title", titleOf(t, s, "REC-1"))
 }
 
-// TestImportMerge_HeldTaskStatusDependencyAndComment_AreJournaled: a task the
-// sync log already holds reaches the journal with its non-default status, its
-// dependency and its annotation, and the merge adds no create (ruling 1).
-func TestImportMerge_HeldTaskStatusDependencyAndComment_AreJournaled(t *testing.T) {
+// TestImportMerge_HeldTaskStatusAndComment_AreJournaledAndItsDependencyIsNamed: a
+// task the sync log already holds reaches the journal with its non-default
+// status and its annotation; the file's dependency on it is named, not applied
+// or journaled (round 6); the merge adds no create (ruling 1).
+func TestImportMerge_HeldTaskStatusAndComment_AreJournaledAndItsDependencyIsNamed(t *testing.T) {
 	s := syncedStoreWithTask(t)
 	createPlainTask(t, s, "REC-2", 2, "", sameIDTime)
 	markJournalPushed(t, s)
@@ -162,11 +163,13 @@ func TestImportMerge_HeldTaskStatusDependencyAndComment_AreJournaled(t *testing.
 	}{"REC-2", "REC-1", "related", sameIDTime.Format(time.RFC3339)})
 	require.NoError(t, sqlite.RecomputeExportChecksum(data))
 
-	mergeTheirs(t, s, data)
+	res := mergeTheirs(t, s, data)
 
-	for _, op := range []string{"transition_status", "link_dep", "comment"} {
+	for _, op := range []string{"transition_status", "comment"} {
 		require.Equal(t, 1, countJournal(t, s, `op_type = ? AND node_id = 'REC-2' AND sync_status = 'pending'`, op), op)
 	}
+	require.Zero(t, countJournal(t, s, `op_type = 'link_dep'`))
+	require.Equal(t, []string{"mtix dep add REC-2 REC-1 --type related"}, res.SkippedDeps)
 	require.Equal(t, createsBefore, countJournal(t, s, `op_type = 'create_node'`), "the merge journals no create")
 }
 

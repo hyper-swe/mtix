@@ -12,7 +12,6 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -135,27 +134,21 @@ func inProgressPair(t *testing.T) (importer, peer *sqlite.Store) {
 	return importer, peer
 }
 
-// TestImportMerge_BlocksDependencyRepeatedWithTheirs_EmitsNothingAndStaysBlocked:
-// the repeat finds the dependency held; the file's status must not unblock
-// the task, and nothing is journaled, so every replica agrees.
-func TestImportMerge_BlocksDependencyRepeatedWithTheirs_EmitsNothingAndStaysBlocked(t *testing.T) {
+// TestImportMerge_BlocksDependencyOnHeldTasksRepeated_EmitsNothingAndBlocksNothing:
+// the file's link on held tasks is not applied, however often it is merged:
+// nothing is journaled, the task stays as it was, and every replica agrees.
+func TestImportMerge_BlocksDependencyOnHeldTasksRepeated_EmitsNothingAndBlocksNothing(t *testing.T) {
 	importer, peer := inProgressPair(t)
 	markJournalPushed(t, importer)
 	data := exportOf(t, importer)
-	data.Dependencies = append(data.Dependencies, struct {
-		FromID    string `json:"from_id"`
-		ToID      string `json:"to_id"`
-		DepType   string `json:"dep_type"`
-		CreatedAt string `json:"created_at"`
-	}{"REC-2", "REC-1", "blocks", sameIDTime.Format(time.RFC3339)})
-	require.NoError(t, sqlite.RecomputeExportChecksum(data))
+	addFileDep(t, data, "REC-2", "REC-1", "blocks")
 
 	mergeTheirs(t, importer, data)
 	replicate(t, importer, peer)
 	mergeTheirs(t, importer, data)
 
 	require.Zero(t, countJournal(t, importer, `sync_status = 'pending'`), "the repeat emits nothing")
-	require.Equal(t, "blocked", viewOf(t, importer, "REC-1").Status)
+	require.Equal(t, "in_progress", viewOf(t, importer, "REC-1").Status)
 	require.Equal(t, viewOf(t, importer, "REC-1"), viewOf(t, peer, "REC-1"))
 }
 

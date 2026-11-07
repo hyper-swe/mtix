@@ -44,8 +44,12 @@ func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 	}
 
 	for _, d := range data.Dependencies {
-		if err := policy.journal.noteDep(ctx, tx, &d); err != nil {
-			return result, err
+		apply, depErr := policy.journal.settleDep(ctx, tx, &d)
+		if depErr != nil {
+			return result, depErr
+		}
+		if !apply {
+			continue
 		}
 		if err := insertExportDep(ctx, tx, &d); err != nil {
 			return result, fmt.Errorf("insert dep %s->%s: %w", d.FromID, d.ToID, err)

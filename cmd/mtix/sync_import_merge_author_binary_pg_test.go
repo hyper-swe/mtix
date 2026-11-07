@@ -135,3 +135,54 @@ func TestImportMerge_BlockerResolvedByTheFile_RealBinary_EveryReplicaReleasesThe
 	}
 	alice.doctor(t, 0)
 }
+
+// TestImportMerge_LinkAndResolvedBlockerInOneFile_RealBinary_BothPushOrdersAgree
+// is the round 6 ruling 1 run: Bob links a blocker to the dependent and
+// resolves the blocker, so his board shows the dependent open; Alice merges
+// his export with --prefer theirs. Alice names the link and applies none; in
+// either push order Alice, Bob and a fresh clone agree on the dependent and
+// doctor is clean.
+func TestImportMerge_LinkAndResolvedBlockerInOneFile_RealBinary_BothPushOrdersAgree(t *testing.T) {
+	for _, alicePushesFirst := range []bool{true, false} {
+		name := "bob pushes first"
+		if alicePushesFirst {
+			name = "alice pushes first"
+		}
+		t.Run(name, func(t *testing.T) {
+			_ = requireCmdPG(t)
+			alice := newQuarantineRecoveryCLI(t, buildQuarantineRecoveryCLI(t))
+			mustRun(t, alice, "create", "Seed")
+			mustRun(t, alice, "create", "Blocker")
+			mustRun(t, alice, "create", "Dependent")
+			mustRun(t, alice, "sync", "push", "--insecure-tls")
+			bob := cloneOf(t, alice, "bob")
+			mustRun(t, bob, "dep", "add", "TEST-2", "TEST-3")
+			mustRun(t, bob, "claim", "TEST-2", "--agent", "bob")
+			mustRun(t, bob, "done", "TEST-2")
+			path := filepath.Join(t.TempDir(), "bob.json")
+			require.NoError(t, os.WriteFile(path, []byte(mustRun(t, bob, "export")), 0o600))
+
+			merged := mustRun(t, alice, "import", path, "--mode", "merge", "--prefer", "theirs", "--force")
+			require.Contains(t, merged, "mtix dep add TEST-2 TEST-3 --type blocks", "the link is named, not applied")
+			require.Equal(t, "open", statusOfTask(t, alice, "TEST-3"), "the merge blocked nothing")
+			if alicePushesFirst {
+				mustRun(t, alice, "sync", "push", "--insecure-tls")
+				mustRun(t, bob, "sync", "push", "--insecure-tls")
+			} else {
+				mustRun(t, bob, "sync", "push", "--insecure-tls")
+				mustRun(t, alice, "sync", "push", "--insecure-tls")
+			}
+			mustRun(t, alice, "sync", "pull", "--insecure-tls")
+			mustRun(t, bob, "sync", "pull", "--insecure-tls")
+
+			fresh := cloneOf(t, alice, "carol")
+			want := statusOfTask(t, bob, "TEST-3")
+			for who, c := range map[string]quarantineRecoveryCLI{"alice": alice, "bob": bob, "fresh clone": fresh} {
+				require.Equal(t, want, statusOfTask(t, c, "TEST-3"), who)
+				require.Equal(t, "done", statusOfTask(t, c, "TEST-2"), who)
+			}
+			alice.doctor(t, 0)
+			bob.doctor(t, 0)
+		})
+	}
+}

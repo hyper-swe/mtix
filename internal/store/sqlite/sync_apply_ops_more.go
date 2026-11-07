@@ -218,6 +218,7 @@ func mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, event *model.SyncEvent
 type appliedCreateRow struct {
 	payload         model.CreateNodePayload
 	uid, labels, at string
+	store           *Store // moves a local task off the number; nil outside a Store
 }
 
 // insertAppliedCreate preserves the existing number-conflict and UID checks.
@@ -258,6 +259,11 @@ func insertAppliedCreate(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, ro
 	if inserted, rowsErr := res.RowsAffected(); rowsErr != nil {
 		return fmt.Errorf("apply create_node %s: rows affected: %w", format.EventID(e.EventID), rowsErr)
 	} else if inserted == 0 {
+		if moved, err := moveUnsentHolder(ctx, tx, row.store, e, uid); err != nil {
+			return err
+		} else if moved {
+			return insertAppliedCreate(ctx, tx, e, row) // the number is free now
+		}
 		if err := refuseHeldNumber(ctx, tx, e, uid); err != nil {
 			return err
 		}

@@ -115,9 +115,7 @@ func mergeColumnTable() []mergeColumn {
 			return b.InvalidationReason != a.InvalidationReason
 		}),
 		local("previous_status", func(p *mergePlanner, b, a *exportNode) bool {
-			_, derived := p.j.blocked[a.ID] // a peer sets it when the link_dep blocks the task
-			derived = derived || p.j.unblocked[a.ID]
-			return !derived && b.PreviousStatus != a.PreviousStatus
+			return !p.j.unblocked[a.ID] && b.PreviousStatus != a.PreviousStatus // a peer clears it on a release
 		}),
 		local("deleted_by", func(_ *mergePlanner, b, a *exportNode) bool { return b.DeletedBy != a.DeletedBy }),
 		local("activity", func(_ *mergePlanner, b, a *exportNode) bool { return activityDiffers(b, a) }),

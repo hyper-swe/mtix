@@ -64,9 +64,10 @@ func TestImportMerge_NewTask_IsWrittenNamedUnsentAndNeverJournaled(t *testing.T)
 	require.Zero(t, countJournal(t, importer, `sync_status = 'pending'`), "no event for a new task, its child or its link")
 	require.ElementsMatch(t, []string{"REC-2", "REC-2.1"}, res.UnsentTasks)
 	require.NotEmpty(t, titleOf(t, importer, "REC-2"), "the task is written here")
-	require.Contains(t, fieldsNamed(res, "REC-1"), "status (blocked by a link that stays local)")
+	require.Equal(t, []string{"mtix dep add REC-2 REC-1 --type blocks"}, res.SkippedDeps, "the link to a held task is named, not applied")
+	require.Equal(t, "open", viewOf(t, importer, "REC-1").Status, "nothing blocked the held task")
 	replicate(t, importer, peer)
-	require.Equal(t, "open", viewOf(t, peer, "REC-1").Status, "the peer never saw the unsent link")
+	require.Equal(t, "open", viewOf(t, peer, "REC-1").Status)
 }
 
 // TestImportMerge_AuthorPushesLater_CreateAppliesOverTheMergedRowAndEveryReplicaAgrees:
@@ -128,10 +129,10 @@ func TestImportMerge_EditToAnUnsentTask_IsNotJournaled(t *testing.T) {
 	require.Equal(t, title, titleOf(t, importer, "REC-2"))
 }
 
-// TestImportMerge_LinkToADeletedTaskWithNoCreate_IsNamedAndItsBlockIsLocalOnly:
-// a link whose end is deleted and was never created in the log is not sent;
-// the block it causes on a live task is named.
-func TestImportMerge_LinkToADeletedTaskWithNoCreate_IsNamedAndItsBlockIsLocalOnly(t *testing.T) {
+// TestImportMerge_LinkFromADeletedTaskWithNoCreate_ToAHeldTask_IsNamedNotApplied:
+// a link whose end is deleted and was never created in the log, to a task the
+// log holds, is not applied: the held end decides, and nothing is blocked.
+func TestImportMerge_LinkFromADeletedTaskWithNoCreate_ToAHeldTask_IsNamedNotApplied(t *testing.T) {
 	importer, peer := halfFilledPair(t)
 	require.NoError(t, importer.DeleteNode(context.Background(), "REC-2", false, "alice"))
 	_, err := importer.WriteDB().Exec(`DELETE FROM sync_events WHERE node_id = 'REC-2'`)
@@ -141,28 +142,32 @@ func TestImportMerge_LinkToADeletedTaskWithNoCreate_IsNamedAndItsBlockIsLocalOnl
 
 	res := mergeTheirs(t, importer, data)
 
-	require.Contains(t, res.UnsentTasks, "REC-2")
-	require.Contains(t, fieldsNamed(res, "REC-1"), "status (blocked by a link that stays local)")
+	require.Equal(t, []string{"mtix dep add REC-2 REC-1 --type blocks"}, res.SkippedDeps)
+	require.Equal(t, "open", viewOf(t, importer, "REC-1").Status)
 	replicate(t, importer, peer)
 	require.Equal(t, "open", viewOf(t, peer, "REC-1").Status)
 }
 
 // TestImportMerge_BlockerResolvedByTheFile_DependentAgreesWithAPeer: the
 // importer's status for a dependent after a merge is what a peer computes
-// applying the journaled transition, for every state the file gives the
-// blocker, and a repeat emits nothing.
+// applying the journaled transitions, for every state the file gives the
+// blocker and whether the file leaves the dependent blocked or gives it a
+// status (round 6: the merge never re-blocks against the file), and a repeat
+// emits nothing.
 func TestImportMerge_BlockerResolvedByTheFile_DependentAgreesWithAPeer(t *testing.T) {
 	for _, tc := range []struct {
-		name, before, fileStatus string
-		fileDeleted              bool
-		want                     string
+		name, before, fileStatus, fileDependent string
+		fileDeleted                             bool
+		want                                    string
 	}{
-		{"file resolves the blocker", "open", "done", false, "in_progress"},
-		{"file cancels the blocker", "open", "cancelled", false, "in_progress"},
-		{"file invalidates the blocker", "open", "invalidated", false, "in_progress"},
-		{"file reopens a done blocker", "done", "open", false, "blocked"},
-		{"file deletes the blocker", "open", "open", true, "blocked"},
-		{"file leaves the blocker open", "open", "open", false, "blocked"},
+		{"file resolves the blocker, dependent left blocked", "open", "done", "", false, "in_progress"},
+		{"file cancels the blocker, dependent left blocked", "open", "cancelled", "", false, "in_progress"},
+		{"file invalidates the blocker, dependent left blocked", "open", "invalidated", "", false, "in_progress"},
+		{"file reopens a done blocker, dependent left blocked", "done", "open", "", false, "blocked"},
+		{"file deletes the blocker, dependent left blocked", "open", "open", "", true, "blocked"},
+		{"file leaves the blocker open, dependent left blocked", "open", "open", "", false, "blocked"},
+		{"file resolves the blocker, dependent given a status", "open", "done", "open", false, "open"},
+		{"file leaves the blocker open, dependent given a status", "open", "open", "in_progress", false, "in_progress"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			importer, peer := inProgressPair(t)
@@ -170,13 +175,15 @@ func TestImportMerge_BlockerResolvedByTheFile_DependentAgreesWithAPeer(t *testin
 			require.NoError(t, err)
 			_, err = peer.WriteDB().Exec(`UPDATE nodes SET status = ? WHERE id = 'REC-2'`, tc.before)
 			require.NoError(t, err)
-			setup := exportOf(t, importer)
-			addFileDep(t, setup, "REC-2", "REC-1", "blocks")
-			mergeTheirs(t, importer, setup) // REC-1 is blocked here and on the peer
-			replicate(t, importer, peer)
+			require.NoError(t, importer.AddDependency(context.Background(),
+				&model.Dependency{FromID: "REC-2", ToID: "REC-1", DepType: model.DepTypeBlocks}))
+			replicate(t, importer, peer) // REC-1 is blocked here and on the peer
 			require.Equal(t, "blocked", viewOf(t, importer, "REC-1").Status)
+			require.Equal(t, "blocked", viewOf(t, peer, "REC-1").Status)
 			file := exportOf(t, importer)
-			file.Nodes[fileIdx(t, file, "REC-1")].Status = string(model.StatusInProgress)
+			if tc.fileDependent != "" {
+				file.Nodes[fileIdx(t, file, "REC-1")].Status = tc.fileDependent
+			}
 			blocker := &file.Nodes[fileIdx(t, file, "REC-2")]
 			blocker.Status = tc.fileStatus
 			if tc.fileDeleted {
@@ -187,7 +194,14 @@ func TestImportMerge_BlockerResolvedByTheFile_DependentAgreesWithAPeer(t *testin
 			mergeTheirs(t, importer, file)
 			replicate(t, importer, peer)
 			first := countJournal(t, importer, `1 = 1`)
-			mergeTheirs(t, importer, file)
+			fileDependent := "blocked"
+			if tc.fileDependent != "" {
+				fileDependent = tc.fileDependent
+			}
+			repeats := tc.want == fileDependent // a file the merge released from is stale: its repeat is the file's word again
+			if repeats {
+				mergeTheirs(t, importer, file)
+			}
 
 			require.Equal(t, tc.want, viewOf(t, importer, "REC-1").Status, "importer")
 			require.Equal(t, viewOf(t, peer, "REC-1"), viewOf(t, importer, "REC-1"), "peer")

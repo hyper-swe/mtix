@@ -77,3 +77,21 @@ func TestImportMerge_RelaySnapshotClone_RealBinary_KeepsUIDNamesWhatStaysAndPrin
 	require.Contains(t, mustRun(t, pub, "list"), "Seed", "the publisher still holds its own title: the value stayed local")
 	require.NotContains(t, mustRun(t, pub, "list"), "Retitled on the clone")
 }
+
+// TestSyncBackfill_RelayBoard_RealBinary_RefusesWithTheRelayTextAndDryRunStillReads
+// (round 6 ruling 5): the backfill refusal and the import line share one
+// predicate, so on a relay board the real command refuses and says why, and
+// --dry-run, which writes nothing, is not refused.
+func TestSyncBackfill_RelayBoard_RealBinary_RefusesWithTheRelayTextAndDryRunStillReads(t *testing.T) {
+	binary := buildQuarantineRecoveryCLI(t)
+	pub := relayPeerCLI(t, binary, t.TempDir(), "peer-a")
+	mustRun(t, pub, "create", "Seed")
+
+	out := pub.run(t, "sync", "backfill")
+
+	require.NotZero(t, out.exitCode, "%s%s", out.stdout, out.stderr)
+	require.Contains(t, out.stdout+out.stderr, "exchanges events through a relay")
+	require.Contains(t, out.stdout+out.stderr, "there is no backfill route on a relay board")
+	dry := pub.run(t, "sync", "backfill", "--dry-run")
+	require.NotContains(t, dry.stdout+dry.stderr, "exchanges events through a relay")
+}

@@ -83,6 +83,11 @@ func runSyncBackfill(ctx context.Context, stdout, stderr io.Writer, dryRun, forc
 		return fmt.Errorf("mtix sync backfill: local store not initialized")
 	}
 
+	if !dryRun && storeIngestsRelay() { // the same condition as the import line that prints no backfill route
+		return errors.New("mtix sync backfill: this board exchanges events through a relay, so a backfill would " +
+			"duplicate what the relay carries; there is no backfill route on a relay board")
+	}
+
 	// Acquire the pushlock to prevent concurrent push from racing the
 	// emit walk. Skipped when --dry-run since dry-run is read-only.
 	if !dryRun {

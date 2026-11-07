@@ -96,7 +96,7 @@ func (a syncApplier) applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.S
 	// the pull quarantines it, visibly, instead of dropping it. It must NOT hard-error
 	// (that would wedge the apply pipeline for the whole batch); the
 	// surfacing/renumber is layered on top by 30.7.
-	row := appliedCreateRow{payload: p, uid: uid, labels: labelsJSON, at: now}
+	row := appliedCreateRow{payload: p, uid: uid, labels: labelsJSON, at: now, store: a.store}
 	if err := insertAppliedCreate(ctx, tx, e, row); err != nil {
 		return err
 	}

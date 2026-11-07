@@ -102,11 +102,11 @@ func TestCloudPath_ImportMerge_EqualHash_NothingReachesHubAndPeerAgrees(t *testi
 	require.Equal(t, importer, peerView(t, "TEST-1"))
 }
 
-// TestCloudPath_ImportMerge_ChangesDeferAndBlock_PeerAgreesOnEveryField: a
-// merge that retitles, reprioritises and defers a task with a wake time,
-// adds a task and a blocks dependency, leaves a fresh peer with the
-// importer's values.
-func TestCloudPath_ImportMerge_ChangesDeferAndBlock_PeerAgreesOnEveryField(t *testing.T) {
+// TestCloudPath_ImportMerge_ChangesDeferAndDependency_PeerAgreesOnEveryField: a
+// merge that retitles, reprioritises and defers a task with a wake time, and
+// whose file links two held tasks, leaves a fresh peer with the importer's
+// values; the link is named with its command, not applied (round 6).
+func TestCloudPath_ImportMerge_ChangesDeferAndDependency_PeerAgreesOnEveryField(t *testing.T) {
 	pool := openCmdHub(t)
 	t.Setenv(sqlite.AuthorIDEnv, "agent-importer")
 	initTestApp(t)
@@ -127,15 +127,16 @@ func TestCloudPath_ImportMerge_ChangesDeferAndBlock_PeerAgreesOnEveryField(t *te
 	}{"TEST-2", "TEST-1", "blocks", wake})
 	path := writeBoard(t, data)
 
-	_ = captureStdout(t, func() {
+	out := captureStdout(t, func() {
 		require.NoError(t, runImport(path, importFlags{mode: "merge", force: true, prefer: "theirs"}))
 	})
+	require.Contains(t, out, "mtix dep add TEST-2 TEST-1 --type blocks", "the link on held tasks is named, not applied")
 	var stderr bytes.Buffer
 	_, err = pushLoop(context.Background(), &stderr, pool, app.store)
 	require.NoError(t, err, stderr.String())
 
 	first, second := peerView(t, "TEST-1"), peerView(t, "TEST-2")
-	require.Equal(t, "blocked", first.Status, "the importer blocks the dependent as the peer will")
+	require.Equal(t, "open", first.Status, "nothing blocked the held task")
 	require.Equal(t, wake, second.DeferUntil)
 	pullAsFreshPeer(t, pool)
 	require.Equal(t, first, peerView(t, "TEST-1"))

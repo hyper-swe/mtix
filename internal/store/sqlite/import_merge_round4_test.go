@@ -12,7 +12,6 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -147,14 +146,18 @@ func TestImportMerge_DeletedTask_StaysDeletedAndTheFileChangesAreNotApplied(t *t
 	require.NotEmpty(t, viewOf(t, importer, "REC-1").DeletedAt, "still deleted")
 	require.NotEqual(t, "Back again", viewOf(t, importer, "REC-1").Title)
 	require.Zero(t, countJournal(t, importer, `sync_status = 'pending'`))
-	require.Equal(t, viewOf(t, importer, "REC-1"), viewOf(t, peer, "REC-1"))
+	// The peer stamps deleted_at with its own apply clock, so the two may differ by a second; both must be set.
+	mine, theirs := viewOf(t, importer, "REC-1"), viewOf(t, peer, "REC-1")
+	require.NotEmpty(t, theirs.DeletedAt)
+	mine.DeletedAt, theirs.DeletedAt = "", ""
+	require.Equal(t, mine, theirs)
 }
 
-// TestImportMerge_RepeatWithADeadBlocker_EmitsNothingAndStaysBlocked: block and
-// reblock are one rule, the one a peer uses (any blocks dependency blocks an
-// open or in-progress task, whatever state the blocker is in), so a repeat
-// with a done, deleted or invalidated blocker emits nothing.
-func TestImportMerge_RepeatWithADeadBlocker_EmitsNothingAndStaysBlocked(t *testing.T) {
+// TestImportMerge_LinkToADeadBlocker_IsNotAppliedWhateverStateTheBlockerIsIn:
+// the file's link from a done, deleted, invalidated or cancelled task to a
+// held one is not applied either, so a repeat emits nothing and the dependent
+// is as it was on every replica.
+func TestImportMerge_LinkToADeadBlocker_IsNotAppliedWhateverStateTheBlockerIsIn(t *testing.T) {
 	for _, tc := range []struct{ name, sql string }{
 		{"done", `UPDATE nodes SET status = 'done' WHERE id = 'REC-2'`},
 		{"deleted", `UPDATE nodes SET deleted_at = '2026-01-01T00:00:00Z' WHERE id = 'REC-2'`},
@@ -169,20 +172,15 @@ func TestImportMerge_RepeatWithADeadBlocker_EmitsNothingAndStaysBlocked(t *testi
 			_, err = peer.WriteDB().Exec(tc.sql)
 			require.NoError(t, err)
 			data := exportOf(t, importer)
-			data.Dependencies = append(data.Dependencies, struct {
-				FromID    string `json:"from_id"`
-				ToID      string `json:"to_id"`
-				DepType   string `json:"dep_type"`
-				CreatedAt string `json:"created_at"`
-			}{"REC-2", "REC-1", "blocks", sameIDTime.Format(time.RFC3339)})
-			require.NoError(t, sqlite.RecomputeExportChecksum(data))
+			addFileDep(t, data, "REC-2", "REC-1", "blocks")
 
-			mergeTheirs(t, importer, data)
+			res := mergeTheirs(t, importer, data)
 			replicate(t, importer, peer)
 			mergeTheirs(t, importer, data)
 
+			require.Equal(t, []string{"mtix dep add REC-2 REC-1 --type blocks"}, res.SkippedDeps)
 			require.Zero(t, countJournal(t, importer, `sync_status = 'pending'`), "the repeat emits nothing")
-			require.Equal(t, "blocked", viewOf(t, importer, "REC-1").Status)
+			require.Equal(t, "in_progress", viewOf(t, importer, "REC-1").Status)
 			require.Equal(t, viewOf(t, importer, "REC-1"), viewOf(t, peer, "REC-1"))
 		})
 	}

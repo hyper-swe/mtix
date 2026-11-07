@@ -103,6 +103,11 @@ type ImportResult struct {
 	// on a store that syncs they stay deleted and the file's changes to them
 	// are not applied, because no op restores a deleted task.
 	SkippedDeleted []string `json:"skipped_deleted,omitempty"`
+	// SkippedDeps names, as the mtix dep add command that makes it, each
+	// dependency of the file that a merge on a store that syncs did not apply
+	// because one of its ends is a task the sync log holds (principle H,
+	// round 6).
+	SkippedDeps []string `json:"skipped_deps,omitempty"`
 	// keptUID lists the tasks whose uid the merge did not adopt although the
 	// plan listed an adoption: the hub knows them by the local uid.
 	keptUID []string

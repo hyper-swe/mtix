@@ -298,20 +298,31 @@ func reportImportResult(result *sqlite.ImportResult, writerVersion string) {
 	if result.Journaled > 0 { // MTIX-112.17.16.16: the changes wait in the sync journal
 		fmt.Printf("Journaled %d sync events for the changes; %s\n", result.Journaled, journaledSendWords())
 	}
+	printMergeNotices(result)
+	if n := result.HistoryAdded + result.HistorySkipped + result.HistoryConflicts + result.HistorySkippedLegacyKey; n > 0 {
+		fmt.Printf("History: %d added, %d already present, %d conflicts, %d skipped (legacy key)\n",
+			result.HistoryAdded, result.HistorySkipped, result.HistoryConflicts, result.HistorySkippedLegacyKey)
+	}
+}
+
+// printMergeNotices prints what a merge into a project that syncs did not send
+// or apply: the unsent tasks, the tasks that stay deleted, the dependencies it
+// left to mtix dep add (MTIX-112.17.16.16), and the columns that stay local.
+func printMergeNotices(result *sqlite.ImportResult) {
 	if len(result.UnsentTasks) > 0 {
-		fmt.Println(unsentLine(result.UnsentTasks, relayConfigured()))
+		fmt.Println(unsentLine(result.UnsentTasks, storeIngestsRelay()))
 	}
 	if len(result.SkippedDeleted) > 0 {
 		fmt.Printf("%d task(s) (%s) deleted here stay deleted: the file's changes were not applied. "+
 			"No op restores a deleted task; to bring one back, create a new task with mtix create.\n",
 			len(result.SkippedDeleted), strings.Join(result.SkippedDeleted, ", "))
 	}
+	if len(result.SkippedDeps) > 0 { // principle H: a link on a task the hub holds is the person's to add
+		fmt.Printf("%d dependency(ies) on tasks the sync log holds were not applied; run each to add it: %s\n",
+			len(result.SkippedDeps), strings.Join(result.SkippedDeps, "; "))
+	}
 	if len(result.JournalLocalOnly) > 0 {
 		fmt.Println(localOnlyLine(result.JournalLocalOnly))
-	}
-	if n := result.HistoryAdded + result.HistorySkipped + result.HistoryConflicts + result.HistorySkippedLegacyKey; n > 0 {
-		fmt.Printf("History: %d added, %d already present, %d conflicts, %d skipped (legacy key)\n",
-			result.HistoryAdded, result.HistorySkipped, result.HistoryConflicts, result.HistorySkippedLegacyKey)
 	}
 }
 
@@ -468,11 +479,16 @@ func journaledSendWords() string {
 	}
 }
 
-// relayConfigured reports whether this board exchanges events through a file
-// relay (sync.relay.dir is set).
-func relayConfigured() bool {
-	dir, err := app.configSvc.Get("sync.relay.dir")
-	return err == nil && dir != ""
+// storeIngestsRelay reports whether this board exchanges events through a
+// relay: a relay directory is configured, or the store already ingested a
+// segment. It is the one condition under which mtix sync backfill refuses and
+// the import prints no backfill route (MTIX-112.17.16.16, round 6).
+func storeIngestsRelay() bool {
+	if dir, err := app.configSvc.Get("sync.relay.dir"); err == nil && dir != "" {
+		return true
+	}
+	relay, err := app.store.IngestsRelay(context.Background())
+	return err == nil && relay
 }
 
 // unsentLine says what the merge did with tasks the sync log cannot carry

@@ -16,7 +16,7 @@ import (
 // holds the creation of (round 5, rule G). A task the merge created is never
 // eligible: it is written here and named unsent (ImportResult.UnsentTasks),
 // and it reaches the hub when its author pushes it. A held task whose
-// creation the log lacks gets no event either, nor does a link to it.
+// creation the log lacks gets no event either.
 
 // eligible reports whether the sync log can carry events for task id.
 func (p *mergePlanner) eligible(id string) (bool, error) {
@@ -70,46 +70,6 @@ func (p *mergePlanner) createInLog(id, uid string) (bool, error) {
 		return false, fmt.Errorf("check the sync log for %s: %w", format.EventID(id), err)
 	}
 	return held, nil
-}
-
-// eligibleOrNote is eligible, naming the task as unsent when it is not.
-func (p *mergePlanner) eligibleOrNote(id string) (bool, error) {
-	ok, err := p.eligible(id)
-	if err == nil && !ok {
-		p.j.noteUnsent(id)
-	}
-	return ok, err
-}
-
-// depEligible reports whether both ends of a dependency can be carried; a live
-// end that cannot is named as unsent. A deleted end that the log created still
-// carries the link, as a peer applies it to a deleted task (it blocks).
-func (p *mergePlanner) depEligible(d *exportDep) (bool, error) {
-	from, err := p.depEndEligible(d.FromID)
-	if err != nil {
-		return false, err
-	}
-	to, err := p.depEndEligible(d.ToID)
-	return from && to, err
-}
-
-func (p *mergePlanner) depEndEligible(id string) (bool, error) {
-	var uid string
-	var deleted bool
-	// The end's uid and whether it is deleted: a deleted end is checked against the log alone.
-	err := p.tx.QueryRowContext(p.ctx, `SELECT COALESCE(uid, ''), deleted_at IS NOT NULL FROM nodes WHERE id = ?`,
-		id).Scan(&uid, &deleted)
-	if err == nil && deleted && !p.newTasks[id] {
-		ok, logErr := p.createInLog(id, uid)
-		if logErr == nil && !ok {
-			p.j.noteUnsent(id)
-		}
-		return ok, logErr
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return false, fmt.Errorf("read task %s: %w", id, err)
-	}
-	return p.eligibleOrNote(id)
 }
 
 // planChangedTasks plans every changed task the log can carry; one it cannot

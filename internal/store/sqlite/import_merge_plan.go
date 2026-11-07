@@ -27,7 +27,7 @@ type mergePlanner struct {
 	// taken holds the event ids this merge planned already: a second event
 	// under the same id would fail the import, so it takes a fresh id.
 	taken map[string]bool
-	// newTasks holds the tasks the merge created; eligible memoizes eligibleOrNote.
+	// newTasks holds the tasks the merge created; elig memoizes eligible.
 	newTasks map[string]bool
 	elig     map[string]bool
 }
@@ -62,13 +62,6 @@ func (p *mergePlanner) storedNode(id string) (exportNode, error) {
 	n, err := scanExportNode(p.tx.QueryRowContext(p.ctx, exportNodeSelectSQL+" WHERE id = ?", id))
 	if err != nil {
 		return n, fmt.Errorf("read stored node %s: %w", id, err)
-	}
-	if was, blocked := p.j.blocked[id]; blocked {
-		// The peer derives the block from the link_dep event, unless the task
-		// was blocked already: then the stored status is the held one.
-		if held, ok := p.j.before[id]; !ok || held.Status != string(model.StatusBlocked) {
-			n.Status = was
-		}
 	}
 	if p.j.unblocked[id] {
 		// Released by a blocker the merge resolved: a peer derives the release
@@ -112,7 +105,15 @@ func keepHubKnownUID(merged, local *exportNode, ctl mergeControl) {
 
 // newMergePlanner makes the planner for a merge's journal.
 func (s *Store) newMergePlanner(ctx context.Context, tx *sql.Tx, j *mergeJournal, wallTS int64) *mergePlanner {
-	p := &mergePlanner{s: s, ctx: ctx, tx: tx, wallTS: wallTS, j: j}
+	p := j.planner(ctx, tx)
+	p.s, p.wallTS = s, wallTS
+	return p
+}
+
+// planner makes the planner for a journal's merge, to ask what the sync log
+// holds; it has no store or clock, so it plans no event.
+func (j *mergeJournal) planner(ctx context.Context, tx *sql.Tx) *mergePlanner {
+	p := &mergePlanner{ctx: ctx, tx: tx, j: j}
 	p.newTasks = make(map[string]bool, len(j.created))
 	for _, id := range j.created {
 		p.newTasks[id] = true
@@ -122,8 +123,8 @@ func (s *Store) newMergePlanner(ctx context.Context, tx *sql.Tx, j *mergeJournal
 
 // planMergeEvents turns the merge's changes into events (rule G, round 5): a
 // merge journals only field edits and transitions on a task the sync log
-// holds, and the links between such tasks. A task the merge created is
-// written here and named unsent, with everything under it and every link to
+// holds; it applies and journals no link on such a task (principle H). A task
+// the merge created is written here and named unsent, with everything under
 // it: it reaches the hub when its author pushes it.
 func (p *mergePlanner) planMergeEvents() ([]emitParams, error) {
 	for _, id := range p.j.created {
@@ -131,16 +132,6 @@ func (p *mergePlanner) planMergeEvents() ([]emitParams, error) {
 	}
 	if err := p.planChangedTasks(); err != nil {
 		return nil, err
-	}
-	for _, d := range p.j.deps {
-		if ok, err := p.depEligible(&d); err != nil {
-			return nil, err
-		} else if !ok {
-			continue
-		}
-		if err := p.add(d.FromID, model.OpLinkDep, &model.LinkDepPayload{DependsOnNodeID: d.ToID, DepType: d.DepType}); err != nil {
-			return nil, err
-		}
 	}
 	return p.planned, nil
 }

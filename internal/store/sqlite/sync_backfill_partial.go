@@ -9,6 +9,18 @@ import (
 	"sort"
 )
 
+// IngestsRelay reports whether this store ingests a relay: one predicate for the
+// backfill refusal and for the import line that says there is no backfill route
+// (MTIX-112.17.16.16, round 6).
+func (s *Store) IngestsRelay(ctx context.Context) (bool, error) {
+	var relay bool
+	// A relay ingest cursor row means the log holds peers' relay segments.
+	if err := s.readDB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM relay_ingest_cursor)`).Scan(&relay); err != nil {
+		return false, fmt.Errorf("check relay cursor: %w", err)
+	}
+	return relay, nil
+}
+
 // partialBackfillSet returns the live tasks whose creation the sync log lacks,
 // when a backfill may send just those on a log that holds other events (round
 // 4, ruling 2: an import merge into a store with tasks from before any sync
@@ -16,14 +28,12 @@ import (
 // creation or when the store ingests a relay (its log is not this store's to
 // complete).
 func (s *Store) partialBackfillSet(ctx context.Context) (set map[string]bool, notSent []string, err error) {
-	var relay bool
-	// A relay ingest cursor row: the log mixes peers' segments, so refuse.
-	err = s.readDB.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM relay_ingest_cursor)`).Scan(&relay)
+	relay, err := s.IngestsRelay(ctx)
 	if err != nil {
-		return nil, nil, fmt.Errorf("check relay cursor: %w", err)
+		return nil, nil, err
 	}
 	if relay {
-		return nil, nil, nil
+		return nil, nil, nil // the log mixes peers' segments: refuse
 	}
 	parents, err := s.tasksWithoutCreation(ctx)
 	if err != nil {

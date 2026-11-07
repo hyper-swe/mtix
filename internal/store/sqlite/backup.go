@@ -25,6 +25,12 @@ func (s *Store) Backup(ctx context.Context, destPath string) (*BackupResult, err
 		return nil, fmt.Errorf("destination path is required")
 	}
 
+	// VACUUM INTO opens destPath as SQLite, which resets an empty or one-byte
+	// file and deletes the WAL beside it (NFR-2.8): refuse before any open.
+	if err := guardEmptyDatabaseWAL(destPath); err != nil {
+		return nil, fmt.Errorf("backup destination %s: %w", destPath, err)
+	}
+
 	// Pre-flight per NFR-2.8: VACUUM INTO writes a full copy of the
 	// database, so the destination volume must hold the current DB plus
 	// WAL plus the configured floor. Refusing up front beats failing

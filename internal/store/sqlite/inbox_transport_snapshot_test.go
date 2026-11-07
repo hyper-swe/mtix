@@ -8,8 +8,9 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 func TestExportWithInbox_ConcurrentWrite_SharesBoardSnapshot(t *testing.T) {
@@ -69,4 +70,5 @@ func TestMergeRecoveredInbox_ConflictsAndStaleCoverage_KeepsDatabaseContentAndAc
 	mergeRecoveredInbox(dst, &InboxJournal{Events: []inboxJournalEvent{e}}, res)
 	require.Equal(t, acked, dst.Events[0])
 	require.Contains(t, res.Notes[0], "conflicting")
+	require.True(t, res.InboxIncomplete, "omitting conflicting content is known loss")
 }

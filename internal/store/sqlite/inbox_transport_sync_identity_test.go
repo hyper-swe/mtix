@@ -7,9 +7,10 @@ import (
 	"database/sql"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 )
 
 // FR-19.1: restored mail cannot establish project identity, even before a real event.

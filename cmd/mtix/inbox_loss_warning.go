@@ -47,18 +47,18 @@ func exportInboxNoteTo(ctx context.Context, w io.Writer) error {
 	return nil
 }
 
-// writeRecoverInboxNote reports the unread mail in the damaged database
+// writeRecoverInboxNote reports the unread mail in the source database
 // (opened read-only). The salvage report identifies what was recoverable.
 func writeRecoverInboxNote(ctx context.Context, w io.Writer, dbPath string) {
 	n, err := sqlite.CountUnackedInboxFile(ctx, dbPath)
 	if err != nil {
-		fmt.Fprintln(w, "note: unacknowledged inbox events in the damaged database could not be counted; "+
-			"read the salvage report for retained and unavailable mail. Keep the damaged database file if recovery is incomplete.")
+		fmt.Fprintln(w, "note: unacknowledged inbox events in the source database could not be counted; "+
+			"read the salvage report for retained and unavailable mail. Keep the source database file if recovery is incomplete.")
 		return
 	}
 	if n == 0 {
 		return
 	}
-	fmt.Fprintf(w, "note: the damaged database holds %d unacknowledged inbox event(s); read the salvage report for retained and unavailable mail. "+
-		"Ordinary tasks.json does not carry the journal; keep the damaged database if recovery is incomplete.\n", n)
+	fmt.Fprintf(w, "note: the source database holds %d unacknowledged inbox event(s); read the salvage report for retained and unavailable mail. "+
+		"Ordinary tasks.json does not carry the journal; keep the source database if recovery is incomplete.\n", n)
 }

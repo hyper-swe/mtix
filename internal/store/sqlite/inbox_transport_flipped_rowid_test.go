@@ -176,3 +176,32 @@ func TestRecover_BackwardRowid_TerminatesAndKeepsReadableScan(t *testing.T) {
 	require.Greater(t, len(expected), 160)
 	recoverFlippedMail(t, path, expected)
 }
+
+// A damaged separator can hide readable cells without making either seek fail.
+func TestRecover_LoweredRowidSeparator_UnionsReadableScan(t *testing.T) {
+	path, root, size := rowFlipFixture(t)
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	header := (root - 1) * size
+	require.Equal(t, byte(5), data[header])
+	count := int(binary.BigEndian.Uint16(data[header+3:]))
+	patched := false
+	for i := range count {
+		at := header + int(binary.BigEndian.Uint16(data[header+12+2*i:])) + 4
+		seq, n := rowVarint(data[at:])
+		if seq < 132 || seq > 300 {
+			continue
+		}
+		require.Equal(t, 2, n)
+		lower := seq - 4
+		data[at] = 0x80 | byte(lower>>7)
+		data[at+1] = byte(lower & 0x7f)
+		patched = true
+		break
+	}
+	require.True(t, patched)
+	require.NoError(t, os.WriteFile(path, data, 0600))
+	expected := scannedMailIDs(t, path)
+	require.Len(t, expected, 170)
+	recoverFlippedMail(t, path, expected)
+}

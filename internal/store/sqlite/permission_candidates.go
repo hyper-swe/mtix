@@ -7,8 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/hyper-swe/mtix/internal/model"
 	"sort"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // PermissionAddressedAgents reports actual foreign-applied addressed comments,

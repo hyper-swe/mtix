@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"maps"
 	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -65,8 +66,18 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, option
 	if logger == nil {
 		logger = slog.Default()
 	}
+	// SQLite follows database symlinks when locating the adjacent WAL. Use the
+	// same resolved path for verification and every salvage read (FR-19.1).
+	if resolved, err := filepath.EvalSymlinks(dbPath); err == nil {
+		dbPath = resolved
+	}
 	inboxSources := options.InboxSources
 	res := &RecoverResult{}
+	// Verify WAL bytes before any SQLite read can ignore an invalid suffix.
+	if walErr := checkRecoverWAL(ctx, dbPath); walErr != nil {
+		res.InboxIncomplete = true
+		res.Notes = append(res.Notes, fmt.Sprintf("WAL tail could not be proven: %v; committed records (including tickets and mail) in ignored WAL frames are possibly missing; lost record count unknown. Even a stale tail makes recovery partial and may redeliver already-read mail; keep the database and WAL together.", walErr))
+	}
 	mirrorNotes := &RecoverResult{}
 	mirror := readMirrorSource(mirrorPath, mirrorNotes)
 	db, dbErr := salvageFromDB(ctx, dbPath, res, mirror)
@@ -102,7 +113,7 @@ func Recover(ctx context.Context, dbPath, mirrorPath, mtixVersion string, option
 	if err != nil {
 		return nil, err
 	}
-	result.Export.InboxJournal = recoverInboxJournal(ctx, dbPath, mirror.data, res, inboxSources...)
+	result.Export.InboxJournal = recoverInboxJournal(ctx, dbPath, mirror.data, res, inboxIntegrityTimeout, inboxSources...)
 	return result, nil
 }
 

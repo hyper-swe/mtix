@@ -1,5 +1,6 @@
 // Copyright 2025-2026 HyperSWE
 // SPDX-License-Identifier: Apache-2.0
+
 package sqlite
 
 import (
@@ -65,6 +66,7 @@ func (w *inboxRowidWalk) failedRead(ctx context.Context, db *sql.DB, readErr err
 		w.err = readErr
 	}
 	if w.failed == 1 {
+		// Bound probing using a table read without trusting secondary indexes.
 		boundErr := db.QueryRowContext(ctx, `SELECT COALESCE(MAX(rowid),0) FROM sync_events NOT INDEXED`).Scan(&w.tail)
 		w.bounded = boundErr == nil
 		if boundErr != nil {
@@ -90,7 +92,7 @@ func (w *inboxRowidWalk) resultError() error {
 }
 
 // A damaged btree may return a successful seek outside its requested range.
-// Only a matching point read authorizes skipping a healthy sparse gap.
+// Only a matching point read authorizes skipping a healthy sparse gap (FR-19.1).
 func (w *inboxRowidWalk) verifyRow(ctx context.Context, db *sql.DB, row salvageMail, op string) error {
 	if row.seq < w.next {
 		return fmt.Errorf("journal rowid moved backward from %d to %d; lost record count unknown", w.next, row.seq)
@@ -98,6 +100,7 @@ func (w *inboxRowidWalk) verifyRow(ctx context.Context, db *sql.DB, row salvageM
 	var point salvageMail
 	var pointOp string
 	e := &point.e
+	// Compare the entire point-read row before trusting the seek position.
 	err := db.QueryRowContext(ctx, `SELECT event_id,project_prefix,node_id,COALESCE(uid,''),
  author_id,payload,created_at,rowid,op_type FROM sync_events NOT INDEXED WHERE rowid=?`, row.seq).Scan(&e.EventID, &e.Project, &e.NodeID, &e.UID, &e.Author, &e.Payload, &e.CreatedAt, &point.seq, &pointOp)
 	if err != nil {

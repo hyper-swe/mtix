@@ -15,8 +15,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // FR-19.1: compare recovery with independent point reads beyond first/middle damage.

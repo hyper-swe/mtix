@@ -4,8 +4,9 @@
 package sqlite
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // FR-19.1 / MTIX-112.2.1: a correct checksum cannot opt into an unknown schema.

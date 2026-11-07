@@ -12,9 +12,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 )
 
 func TestExportWithInbox_MultipleRecipients_CoverageStaysWithRecipient(t *testing.T) {

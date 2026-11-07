@@ -12,8 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 func TestRecover_TamperedMirrorJournal_RejectsPrivateMail(t *testing.T) {
@@ -54,6 +55,7 @@ func TestRecover_ConflictingDuplicateInbox_DoesNotAdoptOtherAck(t *testing.T) {
 	require.False(t, result.Export.InboxJournal.Events[0].Acked)
 	require.NotContains(t, result.Export.InboxJournal.Events[0].Payload, "conflicting copy")
 	require.Contains(t, strings.Join(result.Notes, " "), "conflicting duplicate inbox identity omitted")
+	require.True(t, result.InboxIncomplete, "omitting conflicting content is known loss")
 }
 
 func TestExportWithInbox_OversizedSender_ReportsTransportBound(t *testing.T) {

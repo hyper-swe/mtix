@@ -12,8 +12,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // FR-19.1: one invalid cell pointer must not poison the rest of its page during salvage.

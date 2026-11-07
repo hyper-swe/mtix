@@ -5,16 +5,22 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"time"
 )
 
 // Recovery reads inbox state independently of damaged node indexes. The
 // supplied export can fill events absent from the readable database prefix.
-func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData, res *RecoverResult, inboxSources ...*ExportData) *InboxJournal {
-	journal, readErr := salvageInboxJournal(ctx, dbPath, res)
+func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData, res *RecoverResult, limit time.Duration, inboxSources ...*ExportData) *InboxJournal {
+	journal, readErr := salvageInboxJournal(ctx, dbPath, res, limit)
 	if readErr != nil {
 		res.InboxIncomplete = true
-		res.Notes = append(res.Notes, fmt.Sprintf("inbox journal partially unreadable or unavailable: %v", readErr))
+		if errors.Is(readErr, errInboxIntegrityUnfinished) {
+			res.Notes = append(res.Notes, fmt.Sprintf("inbox journal acknowledgment coverage could not be proven: %v; the time limit alone does not establish damage. If the store opens, use mtix export to preserve readable acknowledgment coverage.", readErr))
+		} else {
+			res.Notes = append(res.Notes, fmt.Sprintf("inbox journal partially unreadable or unavailable: %v", readErr))
+		}
 	}
 	if journal == nil {
 		journal = &InboxJournal{Version: 1, Events: []inboxJournalEvent{}}
@@ -38,6 +44,13 @@ func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData,
 		res.Notes = append(res.Notes, "inbox journal unavailable from both database and supplied export; lost event count unknown; ordinary tasks.json carries no journal")
 		return nil
 	}
+	// Any uncertainty applies to the whole journal, including supplied exports.
+	// A damaged row or index cannot authenticate its own acknowledgment coverage.
+	if res.InboxIncomplete {
+		for i := range journal.Events {
+			journal.Events[i].Acked, journal.Events[i].AckedAt = false, ""
+		}
+	}
 	sum, err := inboxJournalChecksum(journal)
 	if err != nil {
 		res.InboxIncomplete = true
@@ -45,12 +58,16 @@ func recoverInboxJournal(ctx context.Context, dbPath string, mirror *ExportData,
 		return nil
 	}
 	journal.Checksum = sum
-	res.Notes = append(res.Notes, fmt.Sprintf("recovered %d addressed inbox events; acknowledgment coverage retained where readable", len(journal.Events)))
+	if res.InboxIncomplete {
+		res.Notes = append(res.Notes, fmt.Sprintf("recovered %d addressed inbox events; acknowledgment coverage discarded because recovery is incomplete; all %d will be delivered as unread in a fresh store; already-read mail may cause repeated wakes", len(journal.Events), len(journal.Events)))
+	} else {
+		res.Notes = append(res.Notes, fmt.Sprintf("recovered %d addressed inbox events; acknowledgment coverage retained after a completed integrity check and complete salvage", len(journal.Events)))
+	}
 	return journal
 }
 
 // salvageInboxJournal reads damaged files without writes or index dependence (FR-19.1, MTIX-112.2.1).
-func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult) (journal *InboxJournal, err error) {
+func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult, limit time.Duration) (journal *InboxJournal, err error) {
 	// Apply salvage pragmas on every connection through the shared DSN builder.
 	params := append(readOnlyDSNParams(), "_pragma=cell_size_check(0)")
 	db, err := openSQLite(path, params...)
@@ -62,8 +79,12 @@ func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult) (
 			err = fmt.Errorf("close salvage journal: %w", closeErr)
 		}
 	}()
+	integrityErr := checkInboxIntegrity(ctx, db, limit)
+	if integrityErr != nil {
+		res.InboxIncomplete = true
+	}
 	journal, err = salvageInboxRows(ctx, db, res)
-	return journal, err
+	return journal, errors.Join(err, integrityErr)
 }
 
 // mergeRecoveredInbox unions compatible identities and ack coverage (FR-19.1, MTIX-112.2.1).
@@ -80,6 +101,7 @@ func mergeRecoveredInbox(dst, src *InboxJournal, res *RecoverResult) {
 			continue
 		}
 		if !sameInboxContent(dst.Events[i], event) {
+			res.InboxIncomplete = true
 			res.Notes = append(res.Notes, "conflicting inbox event in supplied export skipped; database copy retained")
 			continue
 		}

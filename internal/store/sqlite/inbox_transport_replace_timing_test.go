@@ -3,9 +3,11 @@
 package sqlite_test
 
 import (
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 func TestImport_InteriorEventRetained_PreservesDestinationAck(t *testing.T) {

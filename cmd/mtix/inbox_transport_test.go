@@ -10,8 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // Explicit exports are private; automatic or redirected tracked mirrors are not.

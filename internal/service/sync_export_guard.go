@@ -9,10 +9,11 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // The kinds of AutoImportRefusal (MTIX-95.31.2).

@@ -73,7 +73,12 @@ func TestRecover_DamagedCommentIndex_KeepsReadableMail(t *testing.T) {
 	require.NoError(t, err)
 	got, err := dest.InboxList(t.Context(), "recipient")
 	require.NoError(t, err)
-	require.Len(t, got, 2)
+	require.Len(t, got, 3)
+	require.True(t, result.InboxIncomplete)
+	for _, event := range result.Export.InboxJournal.Events {
+		require.False(t, event.Acked)
+		require.Empty(t, event.AckedAt)
+	}
 }
 
 func TestImport_DroppedTaskRetainedMail_LeavesOutboundQueue(t *testing.T) {

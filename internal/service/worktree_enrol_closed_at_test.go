@@ -12,11 +12,8 @@ import (
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
-// Events from before MTIX-112.17.16.15 omit closed_at: a fully pushed rerun
-// can leave closed_at set on the store row while the clone has none. It is
-// normalized only when the status matches on both sides (MTIX-112.17.16.18,
-// ruling r3 point 1); a status difference keeps it a difference.
-func TestCompareBoardDocs_ClosedAt_SameStatus_IsNoDifference(t *testing.T) {
+// Completion stamps are replicated content even when both statuses match.
+func TestCompareBoardDocs_ClosedAt_SameStatus_StaysADifference(t *testing.T) {
 	node := func(status, closed string) string {
 		c := ""
 		if closed != "" {
@@ -32,10 +29,11 @@ func TestCompareBoardDocs_ClosedAt_SameStatus_IsNoDifference(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			d, err := service.CompareBoardDocs([]byte(tc.a), []byte(tc.b))
 			require.NoError(t, err)
-			assert.Empty(t, d)
+			assert.Equal(t, service.BoardDiff{"TEST-1": {"closed_at"}}, d)
 			f, err := service.BoardHubFinding([]byte(tc.a), []byte(tc.b))
 			require.NoError(t, err)
-			assert.Nil(t, f, "a pushed rerun must not be refused on closed_at alone")
+			require.NotNil(t, f)
+			assert.Equal(t, d, f.Diff)
 		})
 	}
 }

@@ -9,12 +9,10 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/attach"
 	"github.com/hyper-swe/mtix/internal/service"
-	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // piWaitPoll is how often a wait child re-reads its local board. It touches only the
@@ -50,24 +48,19 @@ func productionAttachAdapters() map[string]attach.Adapter {
 	return adapters
 }
 
-// openPiWaitBoard opens the store the glue predicate resolved and judged, without creating
-// anything. It never looks for a board of its own: a context without a resolved store
-// root fails with one line.
+// openPiWaitBoard guards the store the glue predicate resolved and judged. Its
+// pi capabilities recheck before each poll read and write, without holding the
+// enrol lock. It never searches for another board: an unresolved root fails.
 func openPiWaitBoard(ctx context.Context) (service.PiWaitStore, func() error, error) {
 	root, ok := attach.StoreRootFrom(ctx)
 	if !ok {
 		return nil, nil, fmt.Errorf("no resolved mtix board for this wait")
 	}
-	mtixDir := filepath.Join(root, ".mtix")
-	dbDir := filepath.Join(mtixDir, "data")
-	if info, statErr := os.Stat(dbDir); statErr != nil || !info.IsDir() {
-		return nil, nil, fmt.Errorf("the board at %s has no data directory", mtixDir)
-	}
-	st, err := sqlite.New(dbDir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	st, err := openEnrolGuardedStore(root, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		return nil, nil, fmt.Errorf("open board: %w", err)
 	}
-	return st, st.Close, nil
+	return &piEnrolStore{Store: st, root: root}, st.Close, nil
 }
 
 // piParentWatch returns the wait between polls. It ends the wait with an error as soon as

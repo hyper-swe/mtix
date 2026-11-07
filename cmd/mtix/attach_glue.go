@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/attach"
@@ -50,14 +49,11 @@ func productionPredicateDeps() attach.PredicateDeps {
 // attach.pending-rejected alert. Before opening the store, it honors the
 // enrolment guard (FR-20.4, MTIX-112.17.16.21). It runs no import and no hook.
 func productionGlueDrain(ctx context.Context, d attach.GlueDecision) (retErr error) {
-	if err := service.CheckEnrolGuard(filepath.Join(d.BoardRoot, ".mtix"), false); err != nil {
-		return fmt.Errorf("drain attach queue: %w", err)
-	}
 	st, err := operatorState()
 	if err != nil {
 		return fmt.Errorf("drain attach queue: %w", err)
 	}
-	store, err := sqlite.New(filepath.Join(d.BoardRoot, ".mtix", "data"), slog.Default())
+	store, err := openEnrolGuardedStore(d.BoardRoot, slog.Default())
 	if err != nil {
 		return fmt.Errorf("open attached board store: %w", err)
 	}

@@ -91,13 +91,13 @@ type ImportResult struct {
 	// carries, so they stay local (MTIX-112.17.16.16).
 	Journaled        int               `json:"journaled,omitempty"`
 	JournalLocalOnly []LocalOnlyChange `json:"journal_local_only,omitempty"`
-	// NeedsBackfill is set when the store syncs but its journal is empty
-	// while it holds tasks: the merge journaled nothing, as before, and
-	// mtix sync backfill sends the tasks (MTIX-112.17.16.16).
+	// NeedsBackfill is set when UnsentTasks is not empty: the author's push,
+	// or mtix sync backfill on a hub board, sends them.
 	NeedsBackfill bool `json:"needs_backfill,omitempty"`
-	// UnsentTasks names the tasks whose creation the sync log does not hold,
-	// and the new tasks under them: the merge journals no event for any of
-	// them, and mtix sync backfill sends them (MTIX-112.17.16.16 round 4).
+	// UnsentTasks names the tasks the merge wrote that the sync log cannot
+	// carry: every new task, a held task whose creation the log lacks, and
+	// the tasks at the end of a link it cannot send. The merge journals no
+	// event for any of them (MTIX-112.17.16.16, rule G).
 	UnsentTasks []string `json:"unsent_tasks,omitempty"`
 	// SkippedDeleted names the tasks deleted here that the file holds live:
 	// on a store that syncs they stay deleted and the file's changes to them

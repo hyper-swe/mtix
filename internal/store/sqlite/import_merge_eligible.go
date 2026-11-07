@@ -13,11 +13,10 @@ import (
 
 // A peer can apply an event only to a task whose creation it holds, so a
 // merge on a store that syncs journals events only for a task the sync log
-// can carry (round 4, ruling 2). A task is eligible when its create is in the
-// log (a local create_node row, or a create applied from the hub), or when the
-// merge created it under an eligible parent or at the top. A task whose
-// creation the log lacks gets no event, nor does anything under it: it is
-// named (ImportResult.UnsentTasks) and mtix sync backfill sends it.
+// holds the creation of (round 5, rule G). A task the merge created is never
+// eligible: it is written here and named unsent (ImportResult.UnsentTasks),
+// and it reaches the hub when its author pushes it. A held task whose
+// creation the log lacks gets no event either, nor does a link to it.
 
 // eligible reports whether the sync log can carry events for task id.
 func (p *mergePlanner) eligible(id string) (bool, error) {
@@ -36,11 +35,14 @@ func (p *mergePlanner) eligible(id string) (bool, error) {
 }
 
 func (p *mergePlanner) computeEligible(id string) (bool, error) {
-	var parent, uid string
+	if p.newTasks[id] {
+		return false, nil // the author's push sends a task the merge created
+	}
+	var uid string
 	var deleted bool
-	// The task's parent, uid and whether it is deleted: a deleted task takes no event.
-	err := p.tx.QueryRowContext(p.ctx, `SELECT COALESCE(parent_id, ''), COALESCE(uid, ''), deleted_at IS NOT NULL
-		FROM nodes WHERE id = ?`, id).Scan(&parent, &uid, &deleted)
+	// The task's uid and whether it is deleted: a deleted task takes no event.
+	err := p.tx.QueryRowContext(p.ctx, `SELECT COALESCE(uid, ''), deleted_at IS NOT NULL
+		FROM nodes WHERE id = ?`, id).Scan(&uid, &deleted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -50,17 +52,8 @@ func (p *mergePlanner) computeEligible(id string) (bool, error) {
 	if before, held := p.j.before[id]; held {
 		deleted = before.DeletedAt != "" // deleted by this merge: its delete event is still journaled
 	}
-	if p.newTasks[id] {
-		deleted = false // created already deleted: create, then delete
-	}
 	if deleted {
 		return false, nil
-	}
-	if p.newTasks[id] {
-		if parent == "" {
-			return true, nil
-		}
-		return p.eligible(parent)
 	}
 	return p.createInLog(id, uid)
 }
@@ -107,7 +100,11 @@ func (p *mergePlanner) depEndEligible(id string) (bool, error) {
 	err := p.tx.QueryRowContext(p.ctx, `SELECT COALESCE(uid, ''), deleted_at IS NOT NULL FROM nodes WHERE id = ?`,
 		id).Scan(&uid, &deleted)
 	if err == nil && deleted && !p.newTasks[id] {
-		return p.createInLog(id, uid)
+		ok, logErr := p.createInLog(id, uid)
+		if logErr == nil && !ok {
+			p.j.noteUnsent(id)
+		}
+		return ok, logErr
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return false, fmt.Errorf("read task %s: %w", id, err)

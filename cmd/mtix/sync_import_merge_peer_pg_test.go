@@ -142,11 +142,11 @@ func TestCloudPath_ImportMerge_ChangesDeferAndBlock_PeerAgreesOnEveryField(t *te
 	require.Equal(t, second, peerView(t, "TEST-2"))
 }
 
-// TestCloudPath_ImportMerge_CreateWhoseNumberTheHubHolds_IsRenumberedNotWedged:
+// TestCloudPath_ImportMerge_TaskOnANumberTheHubHolds_IsNamedUnsentAndNeverWedgesThePush:
 // the hub holds TEST-2 under another task; a merge brings a different TEST-2.
-// The push renumbers the merged task and delivers it, instead of failing on
-// every run.
-func TestCloudPath_ImportMerge_CreateWhoseNumberTheHubHolds_IsRenumberedNotWedged(t *testing.T) {
+// The merge journals no create (ruling 1), so the push neither fails nor
+// delivers it: the merged task stays on this machine until its author pushes it.
+func TestCloudPath_ImportMerge_TaskOnANumberTheHubHolds_IsNamedUnsentAndNeverWedgesThePush(t *testing.T) {
 	pool := openCmdHub(t)
 	t.Setenv(sqlite.AuthorIDEnv, "agent-importer")
 	initTestApp(t)
@@ -166,20 +166,18 @@ func TestCloudPath_ImportMerge_CreateWhoseNumberTheHubHolds_IsRenumberedNotWedge
 	data.Nodes = append(data.Nodes, extra)
 	data.NodeCount = len(data.Nodes)
 	path := writeBoard(t, data)
-	_ = captureStdout(t, func() { require.NoError(t, runImport(path, importFlags{mode: "merge", force: true})) })
+	out := captureStdout(t, func() { require.NoError(t, runImport(path, importFlags{mode: "merge", force: true})) })
+	require.Contains(t, out, "TEST-2", "the merged task is named unsent")
 
 	var stderr bytes.Buffer
 	_, err = pushLoop(context.Background(), &stderr, pool, app.store)
 
 	require.NoError(t, err, stderr.String())
-	display, err := app.store.ResolveDisplayPathByUID(context.Background(), mine)
-	require.NoError(t, err)
-	require.NotEqual(t, "TEST-2", display, "the merged task moved off the number the hub holds")
+	require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM sync_events WHERE op_type = 'create_node' AND node_id = 'TEST-2'`),
+		"the merge journaled no create, so nothing is held or pushed")
 	events, _, err := pool.PullEvents(context.Background(), transport.PullCursor{}, 1000)
 	require.NoError(t, err)
-	reached := false
 	for _, e := range events {
-		reached = reached || (e.OpType == model.OpCreateNode && e.UID == mine)
+		require.False(t, e.OpType == model.OpCreateNode && e.UID == mine, "the merged task never reached the hub")
 	}
-	require.True(t, reached, "the merged task reached the hub")
 }

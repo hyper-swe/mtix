@@ -159,7 +159,7 @@ func planWorkflow(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 	carries := carriesNodeColumns(data.SchemaVersion)
 	var all []WorkflowConflict
 	for i := range data.Nodes {
-		c, err := workflowConflictOf(ctx, tx, &data.Nodes[i], carries)
+		c, err := workflowConflictOf(ctx, tx, &data.Nodes[i], carries, policy.journal != nil)
 		if err != nil {
 			return nil, err
 		}
@@ -172,8 +172,9 @@ func planWorkflow(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 
 // workflowConflictOf returns the conflict of one file node against the
 // store's node under its id, or nil when there is none: the node is new, is
-// a different task (mergeImportNode refuses that), or the values agree.
-func workflowConflictOf(ctx context.Context, tx *sql.Tx, n *exportNode, carries bool) (*WorkflowConflict, error) {
+// a different task (mergeImportNode refuses that), or the values agree. A
+// deleted task on a store that syncs has no conflict: it takes nothing from the file.
+func workflowConflictOf(ctx context.Context, tx *sql.Tx, n *exportNode, carries, keepDeleted bool) (*WorkflowConflict, error) {
 	local, err := scanExportNode(tx.QueryRowContext(ctx, exportNodeSelectSQL+" WHERE id = ?", n.ID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -183,6 +184,9 @@ func workflowConflictOf(ctx context.Context, tx *sql.Tx, n *exportNode, carries 
 	}
 	if refuseDifferentTask(&local, n) != nil {
 		return nil, nil
+	}
+	if keepDeleted && local.DeletedAt != "" {
+		return nil, nil // a task that stays deleted takes none of the file's changes: no choice to make
 	}
 	diffs := workflowDiffs(&local, n)
 	if len(diffs) == 0 {

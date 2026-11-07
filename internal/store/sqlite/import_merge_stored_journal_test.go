@@ -49,23 +49,27 @@ func TestImportMerge_EqualHash_PriorityAndIssueTypeDiffer_JournalsNothing(t *tes
 		"a value the merge did not write is not journaled, and a repeat emits nothing")
 }
 
-// TestImportMerge_CreatedTaskWithUID_CreateEventIDIsTheUID: a created task's
-// create event carries the task's uid as its event id, the way every create
-// path does, so a hub number collision renumbers it instead of wedging push.
-func TestImportMerge_CreatedTaskWithUID_CreateEventIDIsTheUID(t *testing.T) {
+// TestImportMerge_CreatedTaskWithUID_KeepsItsUIDSoTheAuthorsCreateMatchesIt: a
+// merge journals no create (ruling 1), so the unsent task must keep the uid
+// the file gave it: the author's later create, whose event id is that uid,
+// then finds the row by uid and applies cleanly with nothing held.
+func TestImportMerge_CreatedTaskWithUID_KeepsItsUIDSoTheAuthorsCreateMatchesIt(t *testing.T) {
 	s := syncedStoreWithTask(t)
-	other := newTestStore(t)
+	author := newTestStore(t)
 	uid := clock.MustNewEventID()
-	createPlainTask(t, other, "REC-1", 1, "", sameIDTime)
-	createPlainTask(t, other, "REC-2", 2, uid, sameIDTime)
-	data := exportOf(t, other)
+	createPlainTask(t, author, "REC-1", 1, "", sameIDTime)
+	createPlainTask(t, author, "REC-2", 2, uid, sameIDTime)
+	data := exportOf(t, author)
 
 	mergeFile(t, s, data)
 
-	require.Equal(t, 1, countJournal(t, s, `op_type = 'create_node' AND node_id = 'REC-2' AND event_id = ? AND uid = ?`, uid, uid),
-		"the create event id is the node uid")
-	_, err := s.RenumberForHubRejection(context.Background(), uid)
-	require.NoError(t, err, "the hub's renumber outcome finds the merged task by its uid")
+	require.Zero(t, countJournal(t, s, `op_type = 'create_node' AND node_id = 'REC-2'`), "no create is journaled")
+	var stored string
+	require.NoError(t, s.WriteDB().QueryRow(`SELECT uid FROM nodes WHERE id = 'REC-2'`).Scan(&stored))
+	require.Equal(t, uid, stored, "the unsent task keeps the file's uid")
+	replicate(t, author, s)
+	require.Equal(t, "Shared task", titleOf(t, s, "REC-2"))
+	require.Zero(t, countJournal(t, s, `sync_status = 'pending'`), "the author's create applies over the merged row and holds nothing")
 }
 
 // TestImportMerge_BlocksDependency_BlocksLocallyAndJournalsTheLinkOnly: a

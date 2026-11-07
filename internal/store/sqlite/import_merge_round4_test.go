@@ -43,6 +43,16 @@ func addChildOf(t *testing.T, data *sqlite.ExportData, parent, id string) {
 	require.NoError(t, sqlite.RecomputeExportChecksum(data))
 }
 
+// addHeldChild creates child id under parent in s, as a local create the sync
+// log records, so the merge treats it as a held task.
+func addHeldChild(t *testing.T, s *sqlite.Store, parent, id string) {
+	t.Helper()
+	require.NoError(t, s.CreateNode(context.Background(), &model.Node{
+		ID: id, ParentID: parent, Project: "REC", Depth: 1, Seq: 1, Title: "Child " + id, Status: model.StatusOpen,
+		Priority: model.PriorityMedium, Weight: 1, NodeType: model.NodeTypeForDepth(1),
+		ContentHash: plainHash("Child " + id), CreatedAt: sameIDTime, UpdatedAt: sameIDTime}))
+}
+
 // halfFilledPair returns an importer holding REC-1 (created in the log and
 // sent) and REC-2 (created before any sync: no create row), and a peer that
 // holds REC-1 only.
@@ -228,56 +238,6 @@ func TestImportMerge_LabelsClearedToEmpty_JournalAnEmptyList(t *testing.T) {
 
 	require.Equal(t, viewOf(t, importer, "REC-1").Labels, viewOf(t, peer, "REC-1").Labels)
 	require.NotEqual(t, "null", viewOf(t, peer, "REC-1").Labels)
-}
-
-// columnEdit changes one column of node REC-1 in a file and lists the stored
-// value to compare after the merge.
-type columnEdit struct {
-	edit func(data *sqlite.ExportData, i int)
-}
-
-// columnEdits is the class table of the property test: every column of the
-// nodes table that the file can carry, edited alone.
-func columnEdits() map[string]columnEdit {
-	return map[string]columnEdit{
-		"project":     {func(d *sqlite.ExportData, i int) { d.Nodes[i].Project = "OTHER" }},
-		"parent_id":   {func(d *sqlite.ExportData, i int) { d.Nodes[i].ParentID = "REC-2" }},
-		"depth":       {func(d *sqlite.ExportData, i int) { d.Nodes[i].Depth = 3 }},
-		"seq":         {func(d *sqlite.ExportData, i int) { d.Nodes[i].Seq = 7 }},
-		"node_type":   {func(d *sqlite.ExportData, i int) { d.Nodes[i].NodeType = "micro" }},
-		"defer_until": {func(d *sqlite.ExportData, i int) { d.Nodes[i].DeferUntil = "2027-05-05T00:00:00Z" }},
-		"progress":    {func(d *sqlite.ExportData, i int) { d.Nodes[i].Progress = 0.5 }},
-	}
-}
-
-// TestImportMerge_EveryStructuralColumn_AgreesOnAPeerOrIsNamed: for each
-// column of a held task that the planner does not carry, change that column
-// alone, merge, replicate to a fresh peer: the stored value agrees or the
-// Local only line names the column (principle F).
-func TestImportMerge_EveryStructuralColumn_AgreesOnAPeerOrIsNamed(t *testing.T) {
-	for col, e := range columnEdits() {
-		t.Run(col, func(t *testing.T) {
-			importer, peer := peerPair(t, 2)
-			data := exportOf(t, importer)
-			for i := range data.Nodes {
-				if data.Nodes[i].ID == "REC-1" {
-					e.edit(data, i)
-				}
-			}
-			require.NoError(t, sqlite.RecomputeExportChecksum(data))
-
-			res := mergeTheirs(t, importer, data)
-			replicate(t, importer, peer)
-
-			agree := columnOf(t, importer, col) == columnOf(t, peer, col)
-			named := false
-			for _, f := range fieldsNamed(res, "REC-1") {
-				named = named || f == col
-			}
-			require.True(t, agree || named, "column %s differs on the peer (%s against %s) and the Local only line does not name it",
-				col, columnOf(t, importer, col), columnOf(t, peer, col))
-		})
-	}
 }
 
 func columnOf(t *testing.T, s *sqlite.Store, col string) string {

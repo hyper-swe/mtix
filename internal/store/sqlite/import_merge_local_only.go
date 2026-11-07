@@ -45,29 +45,26 @@ func sameRefs(a, b []model.CodeRef) bool {
 
 // mergeColumn is one column of the nodes table, or one field of an annotation
 // (named annotations.<field>), with the op that carries its value to a peer.
-// A column with no op is local only: differs says when the merge changed it,
-// for a changed task (b is the held copy) or a new one (created: b is the
-// empty task a create event produces).
+// A column with no op is local only: differs says when the merge changed it
+// on a held task (b is the held copy). A task the merge created is never
+// journaled, so it has no column to name: the task itself is named unsent.
 type mergeColumn struct {
 	name        string
 	journaledBy string // "" for a local-only column
-	differs     func(p *mergePlanner, b, a *exportNode, created bool) bool
+	differs     func(p *mergePlanner, b, a *exportNode) bool
 }
 
-// heldChanged marks a column local only when a held task's value changed: a
-// new task's value rides on its create event.
-func heldChanged(get func(*exportNode) any) func(*mergePlanner, *exportNode, *exportNode, bool) bool {
-	return func(_ *mergePlanner, b, a *exportNode, created bool) bool { return !created && get(b) != get(a) }
+// changedCol marks a column local only when a held task's value changed: no op
+// moves it once the create set it.
+func changedCol(get func(*exportNode) any) func(*mergePlanner, *exportNode, *exportNode) bool {
+	return func(_ *mergePlanner, b, a *exportNode) bool { return get(b) != get(a) }
 }
 
 // derivedProgress is the progress a peer holds for a task after the events
-// the merge journals: 1.0 for a done task, else what it held (0 for a new one).
-func derivedProgress(b, a *exportNode, created bool) float64 {
-	switch {
-	case a.Status == string(model.StatusDone):
+// the merge journals: 1.0 for a done task, else what it held.
+func derivedProgress(b, a *exportNode) float64 {
+	if a.Status == string(model.StatusDone) {
 		return 1.0
-	case created:
-		return 0
 	}
 	return b.Progress
 }
@@ -78,60 +75,59 @@ func timeDiffers(b, a string) bool { return a != "" && a != b }
 // between replicas by design (a peer stamps its own event time) and are named.
 func mergeColumnTable() []mergeColumn {
 	op := func(name, by string) mergeColumn { return mergeColumn{name: name, journaledBy: by} }
-	local := func(name string, f func(p *mergePlanner, b, a *exportNode, created bool) bool) mergeColumn {
+	local := func(name string, f func(p *mergePlanner, b, a *exportNode) bool) mergeColumn {
 		return mergeColumn{name: name, differs: f}
 	}
 	return []mergeColumn{
 		op("id", "create_node"),
 		// Structural columns: the create op sets them once; no op changes them
 		// afterwards, so a change to a held task stays local (principle F).
-		local("parent_id", heldChanged(func(n *exportNode) any { return n.ParentID })),
-		local("depth", heldChanged(func(n *exportNode) any { return n.Depth })),
-		local("seq", heldChanged(func(n *exportNode) any { return n.Seq })),
-		local("project", heldChanged(func(n *exportNode) any { return n.Project })),
-		local("node_type", heldChanged(func(n *exportNode) any { return n.NodeType })),
-		local("uid", heldChanged(func(n *exportNode) any { return n.UID })),
+		local("parent_id", changedCol(func(n *exportNode) any { return n.ParentID })),
+		local("depth", changedCol(func(n *exportNode) any { return n.Depth })),
+		local("seq", changedCol(func(n *exportNode) any { return n.Seq })),
+		local("project", changedCol(func(n *exportNode) any { return n.Project })),
+		local("node_type", changedCol(func(n *exportNode) any { return n.NodeType })),
+		local("uid", changedCol(func(n *exportNode) any { return n.UID })),
 		op("title", "update_field"), op("description", "update_field"), op("prompt", "set_prompt"),
 		op("acceptance", "set_acceptance"), op("issue_type", "update_field"), op("priority", "update_field"),
 		op("labels", "update_field"), op("assignee", "update_field"), op("status", "transition_status"),
 		// The defer op carries a wake time only for a task that ends deferred.
-		local("defer_until", func(_ *mergePlanner, b, a *exportNode, _ bool) bool {
+		local("defer_until", func(_ *mergePlanner, b, a *exportNode) bool {
 			return a.Status != string(model.StatusDeferred) && b.DeferUntil != a.DeferUntil
 		}),
 		// The delete op carries no time: a peer stamps its own.
-		local("deleted_at", func(_ *mergePlanner, b, a *exportNode, _ bool) bool {
+		local("deleted_at", func(_ *mergePlanner, b, a *exportNode) bool {
 			return a.DeletedAt != "" && a.DeletedAt != b.DeletedAt
 		}),
 		op("content_hash", "derived from the content fields"),
-		local("agent_state", func(_ *mergePlanner, b, a *exportNode, created bool) bool {
-			return created && b.AgentState != a.AgentState
-		}),
-		local("creator", func(_ *mergePlanner, b, a *exportNode, created bool) bool { return !created && b.Creator != a.Creator }),
-		local("weight", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return b.Weight != a.Weight }),
-		local("estimate_min", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return !sameInt(b.EstimateMin, a.EstimateMin) }),
-		local("actual_min", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return !sameInt(b.ActualMin, a.ActualMin) }),
-		local("code_refs", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return !sameRefs(b.CodeRefs, a.CodeRefs) }),
-		local("commit_refs", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return !sameStrings(b.CommitRefs, a.CommitRefs) }),
-		local("metadata", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return b.Metadata != a.Metadata }),
-		local("session_id", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return b.SessionID != a.SessionID }),
-		local("invalidated_at", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return b.InvalidatedAt != a.InvalidatedAt }),
-		local("invalidated_by", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return b.InvalidatedBy != a.InvalidatedBy }),
-		local("invalidation_reason", func(_ *mergePlanner, b, a *exportNode, _ bool) bool {
+		op("agent_state", "update_field"),
+		local("creator", func(_ *mergePlanner, b, a *exportNode) bool { return b.Creator != a.Creator }),
+		local("weight", func(_ *mergePlanner, b, a *exportNode) bool { return b.Weight != a.Weight }),
+		local("estimate_min", func(_ *mergePlanner, b, a *exportNode) bool { return !sameInt(b.EstimateMin, a.EstimateMin) }),
+		local("actual_min", func(_ *mergePlanner, b, a *exportNode) bool { return !sameInt(b.ActualMin, a.ActualMin) }),
+		local("code_refs", func(_ *mergePlanner, b, a *exportNode) bool { return !sameRefs(b.CodeRefs, a.CodeRefs) }),
+		local("commit_refs", func(_ *mergePlanner, b, a *exportNode) bool { return !sameStrings(b.CommitRefs, a.CommitRefs) }),
+		local("metadata", func(_ *mergePlanner, b, a *exportNode) bool { return b.Metadata != a.Metadata }),
+		local("session_id", func(_ *mergePlanner, b, a *exportNode) bool { return b.SessionID != a.SessionID }),
+		local("invalidated_at", func(_ *mergePlanner, b, a *exportNode) bool { return b.InvalidatedAt != a.InvalidatedAt }),
+		local("invalidated_by", func(_ *mergePlanner, b, a *exportNode) bool { return b.InvalidatedBy != a.InvalidatedBy }),
+		local("invalidation_reason", func(_ *mergePlanner, b, a *exportNode) bool {
 			return b.InvalidationReason != a.InvalidationReason
 		}),
-		local("previous_status", func(p *mergePlanner, b, a *exportNode, _ bool) bool {
+		local("previous_status", func(p *mergePlanner, b, a *exportNode) bool {
 			_, derived := p.j.blocked[a.ID] // a peer sets it when the link_dep blocks the task
+			derived = derived || p.j.unblocked[a.ID]
 			return !derived && b.PreviousStatus != a.PreviousStatus
 		}),
-		local("deleted_by", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return b.DeletedBy != a.DeletedBy }),
-		local("activity", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return activityDiffers(b, a) }),
-		local("created_at", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return timeDiffers(b.CreatedAt, a.CreatedAt) }),
-		local("updated_at", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return timeDiffers(b.UpdatedAt, a.UpdatedAt) }),
-		local("closed_at", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return timeDiffers(b.ClosedAt, a.ClosedAt) }),
+		local("deleted_by", func(_ *mergePlanner, b, a *exportNode) bool { return b.DeletedBy != a.DeletedBy }),
+		local("activity", func(_ *mergePlanner, b, a *exportNode) bool { return activityDiffers(b, a) }),
+		local("created_at", func(_ *mergePlanner, b, a *exportNode) bool { return timeDiffers(b.CreatedAt, a.CreatedAt) }),
+		local("updated_at", func(_ *mergePlanner, b, a *exportNode) bool { return timeDiffers(b.UpdatedAt, a.UpdatedAt) }),
+		local("closed_at", func(_ *mergePlanner, b, a *exportNode) bool { return timeDiffers(b.ClosedAt, a.ClosedAt) }),
 		// A peer derives progress: 1.0 when a task is done, else the value it held
-		// (0 for a new leaf), and a parent's follows its children.
-		local("progress", func(p *mergePlanner, b, a *exportNode, created bool) bool {
-			return a.Progress != derivedProgress(b, a, created) && !p.hasLiveChildren(a.ID)
+		// and a parent's follows its children.
+		local("progress", func(p *mergePlanner, b, a *exportNode) bool {
+			return a.Progress != derivedProgress(b, a) && !p.hasLiveChildren(a.ID)
 		}),
 		op("annotations", "comment"),
 		op("annotations.id", "comment"), op("annotations.author", "comment"), op("annotations.text", "comment"),
@@ -192,12 +188,11 @@ func MergeColumnCoverage() map[string]string {
 }
 
 // localOnlyColumns lists the columns of a that differ from b and no sync op
-// carries, whether the task is new (b is the empty task a create produces) or
-// changed. It is computed from mergeColumnTable.
-func (p *mergePlanner) localOnlyColumns(b, a *exportNode, created bool) []string {
+// carries on a held task the merge changed. It is computed from mergeColumnTable.
+func (p *mergePlanner) localOnlyColumns(b, a *exportNode) []string {
 	var out []string
 	for _, c := range mergeColumnTable() {
-		if c.differs != nil && c.differs(p, b, a, created) {
+		if c.differs != nil && c.differs(p, b, a) {
 			out = append(out, c.name)
 		}
 	}

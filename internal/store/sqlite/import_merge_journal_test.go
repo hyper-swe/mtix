@@ -136,11 +136,14 @@ func TestImportMerge_UnsyncedStore_WritesNoJournal(t *testing.T) {
 	require.Equal(t, "Imported title", titleOf(t, s, "REC-1"))
 }
 
-// TestImportMerge_NewTaskStatusDependencyAndComment_AreJournaled: a task the
-// file adds reaches the journal with its create, its non-default status, its
-// dependency and its annotation.
-func TestImportMerge_NewTaskStatusDependencyAndComment_AreJournaled(t *testing.T) {
+// TestImportMerge_HeldTaskStatusDependencyAndComment_AreJournaled: a task the
+// sync log already holds reaches the journal with its non-default status, its
+// dependency and its annotation, and the merge adds no create (ruling 1).
+func TestImportMerge_HeldTaskStatusDependencyAndComment_AreJournaled(t *testing.T) {
 	s := syncedStoreWithTask(t)
+	createPlainTask(t, s, "REC-2", 2, "", sameIDTime)
+	markJournalPushed(t, s)
+	createsBefore := countJournal(t, s, `op_type = 'create_node'`)
 	other := newTestStore(t)
 	createPlainTask(t, other, "REC-1", 1, "", sameIDTime)
 	createPlainTask(t, other, "REC-2", 2, "", sameIDTime)
@@ -159,11 +162,12 @@ func TestImportMerge_NewTaskStatusDependencyAndComment_AreJournaled(t *testing.T
 	}{"REC-2", "REC-1", "related", sameIDTime.Format(time.RFC3339)})
 	require.NoError(t, sqlite.RecomputeExportChecksum(data))
 
-	mergeFile(t, s, data)
+	mergeTheirs(t, s, data)
 
-	for _, op := range []string{"create_node", "transition_status", "link_dep", "comment"} {
+	for _, op := range []string{"transition_status", "link_dep", "comment"} {
 		require.Equal(t, 1, countJournal(t, s, `op_type = ? AND node_id = 'REC-2' AND sync_status = 'pending'`, op), op)
 	}
+	require.Equal(t, createsBefore, countJournal(t, s, `op_type = 'create_node'`), "the merge journals no create")
 }
 
 // TestImportMerge_QueueCap_RefusesWholeImportAndNamesTheFix: with the cap too

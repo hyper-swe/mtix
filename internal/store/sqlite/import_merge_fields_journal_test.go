@@ -142,9 +142,11 @@ func TestImportMerge_RestoredTask_StaysDeletedAndIsNamed(t *testing.T) {
 	require.Zero(t, countJournal(t, importer, `sync_status = 'pending'`))
 }
 
-// TestImportMerge_NewParentAndChild_CreateEventsAreParentFirst: the file lists
-// the child before the parent; the journal creates the parent first.
-func TestImportMerge_NewParentAndChild_CreateEventsAreParentFirst(t *testing.T) {
+// TestImportMerge_NewParentAndChild_AreWrittenAndNamedUnsentWithNoCreate: the
+// file lists the child before the parent; both are written here, both are
+// named unsent, and the journal carries no create for either (ruling 1: a
+// merge journals only edits to tasks the sync log already holds).
+func TestImportMerge_NewParentAndChild_AreWrittenAndNamedUnsentWithNoCreate(t *testing.T) {
 	importer := syncedStoreWithTask(t)
 	other := newTestStore(t)
 	createPlainTask(t, other, "REC-1", 1, "", sameIDTime)
@@ -159,18 +161,11 @@ func TestImportMerge_NewParentAndChild_CreateEventsAreParentFirst(t *testing.T) 
 	}
 	require.NoError(t, sqlite.RecomputeExportChecksum(data))
 
-	mergeFile(t, importer, data)
+	res := mergeTheirs(t, importer, data)
 
-	var order []string
-	rows, err := importer.WriteDB().Query(`SELECT node_id FROM sync_events WHERE op_type = 'create_node' AND sync_status = 'pending' ORDER BY rowid`)
-	require.NoError(t, err)
-	defer func() { require.NoError(t, rows.Close()) }()
-	for rows.Next() {
-		var id string
-		require.NoError(t, rows.Scan(&id))
-		order = append(order, id)
-	}
-	require.Equal(t, []string{"REC-2", "REC-2.1"}, order)
+	require.Zero(t, countJournal(t, importer, `op_type = 'create_node' AND sync_status = 'pending'`))
+	require.ElementsMatch(t, []string{"REC-2", "REC-2.1"}, res.UnsentTasks)
+	require.Equal(t, "Child", titleOf(t, importer, "REC-2.1"), "the child is written here")
 }
 
 // TestImportMerge_QueueCapBoundary_OneEventUnderTheCapPasses: pending plus the

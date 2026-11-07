@@ -83,7 +83,7 @@ func TestImportMerge_PartialLog_RealBinary_PrintedBackfillReachesAFreshClone(t *
 
 	out = f.run(t, "import", path, "--mode", "merge", "--force")
 	require.Zero(t, out.exitCode, "%s%s", out.stdout, out.stderr)
-	require.Contains(t, out.stdout, "have no creation in this sync log")
+	require.Contains(t, out.stdout, "stay unsent")
 	require.Contains(t, out.stdout, "TEST-1")
 	require.Contains(t, out.stdout, "mtix sync backfill")
 	var unsent int

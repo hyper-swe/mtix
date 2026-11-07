@@ -6,7 +6,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -45,8 +44,10 @@ type mergeJournal struct {
 	deps    []exportDep
 	// blocked maps a task the merge auto-blocked to its status before the
 	// block: a peer derives the block from the link_dep event, so no
-	// transition is journaled for it.
-	blocked map[string]string
+	// transition is journaled for it. unblocked holds the tasks the merge
+	// released because a blocker it resolved: a peer derives that too.
+	blocked   map[string]string
+	unblocked map[string]bool
 	// localOnly names, per task, the columns the merge changed that no sync
 	// event carries, so the import reports them (principle B).
 	localOnly map[string][]string
@@ -149,77 +150,6 @@ func (j *mergeJournal) noteDep(ctx context.Context, tx *sql.Tx, d *exportDep) er
 	return nil
 }
 
-// autoBlockMerged blocks, as a peer does on the link_dep event, the
-// dependent of every blocks dependency the merge inserted (FR-3.8), and
-// records the status each had before so no transition is journaled for it.
-func (s *Store) autoBlockMerged(ctx context.Context, tx *sql.Tx, j *mergeJournal) error {
-	for _, d := range j.deps {
-		if d.DepType != string(model.DepTypeBlocks) {
-			continue
-		}
-		var was string
-		if err := tx.QueryRowContext(ctx, `SELECT status FROM nodes WHERE id = ? AND deleted_at IS NULL`, d.ToID).Scan(&was); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			return fmt.Errorf("read status of %s: %w", d.ToID, err)
-		}
-		if err := autoBlockNode(ctx, tx, s, d.ToID, s.clock); err != nil {
-			return fmt.Errorf("auto-block %s for the imported dependency: %w", d.ToID, err)
-		}
-		if was == string(model.StatusOpen) || was == string(model.StatusInProgress) {
-			if j.blocked == nil {
-				j.blocked = map[string]string{}
-			}
-			if _, held := j.blocked[d.ToID]; !held {
-				j.blocked[d.ToID] = was
-			}
-		}
-	}
-	return nil
-}
-
-// reblockMerged keeps blocked a task that was blocked before the merge and
-// still has a blocks dependency, when the merge wrote another status
-// over it (a file chosen with --prefer theirs). Without it the repeat of an
-// import that blocked the task would unblock it and journal the transition.
-// The task is blocked as before, so the stored result equals the held one and
-// nothing is journaled (principle A, round 3). One rule decides block and
-// reblock, the one a peer applies: a blocker that is done, cancelled,
-// invalidated or deleted still blocks the open or in-progress task.
-func (s *Store) reblockMerged(ctx context.Context, tx *sql.Tx, j *mergeJournal) error {
-	for _, id := range j.changed {
-		if j.before[id].Status != string(model.StatusBlocked) {
-			continue
-		}
-		var status string
-		// The merged task's status, for a live task only.
-		if err := tx.QueryRowContext(ctx, `SELECT status FROM nodes WHERE id = ? AND deleted_at IS NULL`, id).Scan(&status); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				continue
-			}
-			return fmt.Errorf("read status of %s: %w", id, err)
-		}
-		if status != string(model.StatusOpen) && status != string(model.StatusInProgress) {
-			continue
-		}
-		var blockers int
-		// The peer's rule (autoBlockNode on a link_dep event): any blocks
-		// dependency on the task blocks it, whatever state the blocker is in.
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM dependencies
-			WHERE to_id = ? AND dep_type = 'blocks')`, id).Scan(&blockers); err != nil {
-			return fmt.Errorf("check blockers of %s: %w", id, err)
-		}
-		if blockers == 0 {
-			continue
-		}
-		if err := autoBlockNode(ctx, tx, s, id, s.clock); err != nil {
-			return fmt.Errorf("keep %s blocked: %w", id, err)
-		}
-	}
-	return nil
-}
-
 // journalMerge writes the journal rows for what the merge stored, when the
 // store syncs (syncedWithHub). It blocks the dependents of the inserted
 // blocks links, re-reads every created or changed task from the store, plans
@@ -228,13 +158,11 @@ func (s *Store) reblockMerged(ctx context.Context, tx *sql.Tx, j *mergeJournal) 
 // transaction rolls back (FR-18, ErrSyncQueueFull). It returns the number of
 // events written.
 func (s *Store) journalMerge(ctx context.Context, tx *sql.Tx, j *mergeJournal, wallTS int64) (int, error) {
-	if err := s.autoBlockMerged(ctx, tx, j); err != nil {
+	p := s.newMergePlanner(ctx, tx, j, wallTS)
+	if err := p.settleBlocks(); err != nil {
 		return 0, err
 	}
-	if err := s.reblockMerged(ctx, tx, j); err != nil {
-		return 0, err
-	}
-	planned, err := s.planMergeEvents(ctx, tx, j, wallTS)
+	planned, err := p.planMergeEvents()
 	if err != nil {
 		return 0, err
 	}

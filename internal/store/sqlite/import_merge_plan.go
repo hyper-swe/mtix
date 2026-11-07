@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"sort"
 	"unicode/utf8"
 
 	"github.com/hyper-swe/mtix/internal/format"
@@ -71,23 +70,14 @@ func (p *mergePlanner) storedNode(id string) (exportNode, error) {
 			n.Status = was
 		}
 	}
+	if p.j.unblocked[id] {
+		// Released by a blocker the merge resolved: a peer derives the release
+		// from that transition, so the task keeps the status it held.
+		if held, ok := p.j.before[id]; ok {
+			n.Status = held.Status
+		}
+	}
 	return n, nil
-}
-
-// uidEventID returns the event id a created task's create event takes: its
-// uid, as every create path does, so the hub's renumber outcome, which names
-// the task by that id, finds it (ADR-003 section 2). It is "" (a fresh id)
-// when the task has no uid, the uid is not valid text, or an event with that
-// id exists already.
-func (p *mergePlanner) uidEventID(uid string) (string, error) {
-	if uid == "" || !utf8.ValidString(uid) {
-		return "", nil
-	}
-	used, err := p.eventIDUsed(uid)
-	if err != nil || used {
-		return "", err
-	}
-	return uid, nil
 }
 
 // eventIDUsed reports whether an event with this id is in the journal or was
@@ -120,37 +110,29 @@ func keepHubKnownUID(merged, local *exportNode, ctl mergeControl) {
 	}
 }
 
-// planMergeEvents turns the merge's changes into events: new tasks parents
-// first, then each changed task's values, then new dependencies.
-func (s *Store) planMergeEvents(ctx context.Context, tx *sql.Tx, j *mergeJournal, wallTS int64) ([]emitParams, error) {
+// newMergePlanner makes the planner for a merge's journal.
+func (s *Store) newMergePlanner(ctx context.Context, tx *sql.Tx, j *mergeJournal, wallTS int64) *mergePlanner {
 	p := &mergePlanner{s: s, ctx: ctx, tx: tx, wallTS: wallTS, j: j}
 	p.newTasks = make(map[string]bool, len(j.created))
 	for _, id := range j.created {
 		p.newTasks[id] = true
 	}
-	created := make([]exportNode, 0, len(j.created))
-	for _, id := range j.created {
-		n, err := p.storedNode(id)
-		if err != nil {
-			return nil, err
-		}
-		created = append(created, n)
-	}
-	sort.SliceStable(created, func(a, b int) bool { return created[a].Depth < created[b].Depth })
-	for i := range created {
-		if ok, err := p.eligibleOrNote(created[i].ID); err != nil {
-			return nil, err
-		} else if !ok {
-			continue
-		}
-		if err := p.planCreated(&created[i]); err != nil {
-			return nil, err
-		}
+	return p
+}
+
+// planMergeEvents turns the merge's changes into events (rule G, round 5): a
+// merge journals only field edits and transitions on a task the sync log
+// holds, and the links between such tasks. A task the merge created is
+// written here and named unsent, with everything under it and every link to
+// it: it reaches the hub when its author pushes it.
+func (p *mergePlanner) planMergeEvents() ([]emitParams, error) {
+	for _, id := range p.j.created {
+		p.j.noteUnsent(id)
 	}
 	if err := p.planChangedTasks(); err != nil {
 		return nil, err
 	}
-	for _, d := range j.deps {
+	for _, d := range p.j.deps {
 		if ok, err := p.depEligible(&d); err != nil {
 			return nil, err
 		} else if !ok {
@@ -163,30 +145,10 @@ func (s *Store) planMergeEvents(ctx context.Context, tx *sql.Tx, j *mergeJournal
 	return p.planned, nil
 }
 
-// planCreated plans a new task: its create, then the state the create
-// payload cannot carry (a status other than open, a deletion, annotations).
-func (p *mergePlanner) planCreated(n *exportNode) error {
-	eventID, err := p.uidEventID(n.UID)
-	if err != nil {
-		return err
-	}
-	if err := p.addWithID(n.ID, eventID, model.OpCreateNode, &model.CreateNodePayload{
-		Title: n.Title, ParentID: n.ParentID, NodeType: model.NodeType(n.NodeType),
-		IssueType: model.IssueType(n.IssueType), Description: n.Description, Prompt: n.Prompt,
-		Acceptance: n.Acceptance, Priority: model.Priority(n.Priority), Labels: labelsOf(n.Labels),
-		Assignee: n.Assignee, Creator: n.Creator,
-	}); err != nil {
-		return err
-	}
-	zero := exportNode{Status: string(model.StatusOpen), Weight: 1}
-	p.j.noteLocalOnly(n.ID, p.localOnlyColumns(&zero, n, true)...)
-	return p.planStateChange(&zero, n)
-}
-
 // planChanged plans the values of a changed task that differ: one event per
 // field, a transition for a status change, a delete, and new annotations.
 func (p *mergePlanner) planChanged(b, a *exportNode) error {
-	p.j.noteLocalOnly(a.ID, p.localOnlyColumns(b, a, false)...)
+	p.j.noteLocalOnly(a.ID, p.localOnlyColumns(b, a)...)
 	if err := p.planAcceptancePrompt(b, a); err != nil {
 		return err
 	}

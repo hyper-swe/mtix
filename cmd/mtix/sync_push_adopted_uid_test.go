@@ -126,7 +126,7 @@ func TestPushLoop_HeldCreationUIDKeptThenRenumbered_LaterChangeStillHeld(t *test
 
 	kept := mergeFileUIDKept(t, "TEST-1")
 	root := eventIDFor(t, "TEST-1", model.OpCreateNode)
-	require.NotEmpty(t, kept)
+	require.Equal(t, kept, root, "the held creation is the event under the kept uid")
 	require.NoError(t, app.store.RenumberSubtree(context.Background(), "TEST-1", 5))
 	require.NoError(t, runUpdate("TEST-5", "edit under the new number", "", "", "", 0, "", ""))
 	require.NoError(t, runUpdate("TEST-2", "unrelated edit", "", "", "", 0, "", ""))

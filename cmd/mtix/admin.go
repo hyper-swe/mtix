@@ -299,9 +299,7 @@ func reportImportResult(result *sqlite.ImportResult, writerVersion string) {
 		fmt.Printf("Journaled %d sync events for the changes; %s\n", result.Journaled, journaledSendWords())
 	}
 	if len(result.UnsentTasks) > 0 {
-		fmt.Printf("%d task(s) (%s) have no creation in this sync log; the merge sent nothing for them or anything under them. "+
-			"If they were never sent, mtix sync backfill sends them (a task a peer holds already, such as one from a relay snapshot clone, is sent again as the same task)\n",
-			len(result.UnsentTasks), strings.Join(result.UnsentTasks, ", "))
+		fmt.Println(unsentLine(result.UnsentTasks, relayConfigured()))
 	}
 	if len(result.SkippedDeleted) > 0 {
 		fmt.Printf("%d task(s) (%s) deleted here stay deleted: the file's changes were not applied. "+
@@ -468,4 +466,28 @@ func journaledSendWords() string {
 	default:
 		return "mtix sync push sends them to the hub"
 	}
+}
+
+// relayConfigured reports whether this board exchanges events through a file
+// relay (sync.relay.dir is set).
+func relayConfigured() bool {
+	dir, err := app.configSvc.Get("sync.relay.dir")
+	return err == nil && dir != ""
+}
+
+// unsentLine says what the merge did with tasks the sync log cannot carry
+// (MTIX-112.17.16.16, rule G): they are written here and sent nothing, and a
+// task someone else created arrives when its author pushes it. mtix sync
+// backfill is the author's route on a hub board; a relay board has none, so
+// none is printed there.
+func unsentLine(ids []string, relay bool) string {
+	head := fmt.Sprintf("%d task(s) (%s) are written here and stay unsent: the merge journals no new task, "+
+		"no edit to one and no link to one. ", len(ids), strings.Join(ids, ", "))
+	if relay {
+		return head + "A task someone else created reaches the other peers when its author publishes it. " +
+			"This board syncs through a relay, so there is no backfill route here: a task created on this machine " +
+			"before the relay stays on this machine."
+	}
+	return head + "A task someone else created arrives when its author pushes it. If you are the author " +
+		"and never pushed it, mtix sync backfill sends it."
 }

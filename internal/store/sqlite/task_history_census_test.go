@@ -47,6 +47,7 @@ var historyCensus = map[string]struct {
 	"dependency.go:autoBlockNode":                           {1, censusWired},
 	"dependency.go:restoreUnblockedNode":                    {1, censusWired},
 	"import_merge_keep.go:mergeUnchangedContent":            {1, censusWired},
+	"import_merge_block.go:mergePlanner.releaseDependents":  {1, censusWired},
 	"import_merge_streams.go:writeNodeStreams":              {1, censusWired},
 	"import_title_identity.go:stampNewUIDs":                 {1, censusWired},
 	"import_workflow_conflict.go:writeWorkflowGroup":        {1, censusWired},

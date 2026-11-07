@@ -25,7 +25,7 @@ import (
 // a real hub. Every round-2 finding escaped tests that called the command
 // functions in process.
 
-func TestImportMerge_HubNumberCollision_RealBinary_PushRenumbersAndDelivers(t *testing.T) {
+func TestImportMerge_HubNumberCollision_RealBinary_PushIsNotWedgedAndTheMergedTaskStaysUnsent(t *testing.T) {
 	_ = requireCmdPG(t)
 	f := newQuarantineRecoveryCLI(t, buildQuarantineRecoveryCLI(t))
 	out := f.run(t, "create", "Seed")
@@ -57,16 +57,15 @@ func TestImportMerge_HubNumberCollision_RealBinary_PushRenumbersAndDelivers(t *t
 
 	out = f.run(t, "import", path, "--mode", "merge", "--force")
 	require.Zero(t, out.exitCode, "%s%s", out.stdout, out.stderr)
+	require.Contains(t, out.stdout, "TEST-2", "the new task is named unsent")
 	out = f.run(t, "sync", "push", "--insecure-tls")
 
 	require.Zero(t, out.exitCode, "the push is not wedged by the number: %s%s", out.stdout, out.stderr)
 	events, _, err := f.hub.PullEvents(t.Context(), transport.PullCursor{}, 1000)
 	require.NoError(t, err)
-	reached := false
 	for _, e := range events {
-		reached = reached || (e.OpType == model.OpCreateNode && e.UID == mine)
+		require.False(t, e.OpType == model.OpCreateNode && e.UID == mine, "a merged task is never journaled, so it never reaches the hub from the merge")
 	}
-	require.True(t, reached, "the merged task reached the hub")
 }
 
 // TestImportMerge_StoreWithTasksAndNoJournal_RealBinary_BackfillStillReachesAFreshClone:
@@ -108,6 +107,7 @@ func TestImportMerge_StoreWithTasksAndNoJournal_RealBinary_BackfillStillReachesA
 	out = f.run(t, "import", path, "--mode", "merge", "--force")
 	require.Zero(t, out.exitCode, "%s%s", out.stdout, out.stderr)
 	require.Contains(t, out.stdout, "mtix sync backfill")
+	require.Contains(t, out.stdout, "stay unsent")
 	var journal int
 	require.NoError(t, app.store.WriteDB().QueryRow(`SELECT COUNT(*) FROM sync_events`).Scan(&journal))
 	require.Zero(t, journal, "the merge journaled nothing")

@@ -75,19 +75,22 @@ func TestImportMerge_HeldAnnotationResolved_IsNamedAndJournalsNothing(t *testing
 	require.Zero(t, countJournal(t, s, `op_type = 'comment' AND sync_status = 'pending'`))
 }
 
-// A created task whose uid is already an event id in the log gets a fresh
-// create event id instead of colliding with it.
-func TestImportMerge_CreatedTaskWhoseUIDIsAnEventID_GetsAFreshCreateEventID(t *testing.T) {
+// A created task whose uid is already an event id in the log is written and
+// named unsent with no create journaled, so nothing collides with that event.
+func TestImportMerge_CreatedTaskWhoseUIDIsAnEventID_JournalsNoCreateAndKeepsTheLog(t *testing.T) {
 	s := syncedStoreWithTask(t)
 	other := newTestStore(t)
 	uid := clock.MustNewEventID()
 	createPlainTask(t, other, "REC-1", 1, "", sameIDTime)
 	createPlainTask(t, other, "REC-2", 2, uid, sameIDTime)
 	queueEvent(t, s, uid, "REC-1", "", model.OpComment, "pushed")
+	events := countJournal(t, s, `1 = 1`)
 
 	mergeFile(t, s, exportOf(t, other))
 
-	require.Equal(t, 1, countJournal(t, s, `op_type = 'create_node' AND node_id = 'REC-2' AND event_id <> ?`, uid))
+	require.Zero(t, countJournal(t, s, `op_type = 'create_node' AND node_id = 'REC-2'`))
+	require.Equal(t, events, countJournal(t, s, `1 = 1`), "the log is untouched")
+	require.Equal(t, "Shared task", titleOf(t, s, "REC-2"))
 }
 
 // A pushed create matched by event id alone (no uid column) makes the hub

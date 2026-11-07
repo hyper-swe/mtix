@@ -68,9 +68,10 @@ func TestImportMerge_DoneTaskWithFullProgress_ProgressIsDerivedNotNamed(t *testi
 	require.NotContains(t, fieldsNamed(res, "REC-1"), "progress")
 }
 
-// TestImportMerge_NewLeafProgress_NamedOnlyWhenItIsNotZero: a peer starts a new
-// leaf at 0, so a file's other value is named and 0 is not (M17).
-func TestImportMerge_NewLeafProgress_NamedOnlyWhenItIsNotZero(t *testing.T) {
+// TestImportMerge_HeldLeafProgress_NamedOnlyWhenItDiffers: a held leaf starts
+// at 0 and no op carries progress, so a file's other value is named and 0 is
+// not (M17; the leaf is held because a merge no longer journals creates).
+func TestImportMerge_HeldLeafProgress_NamedOnlyWhenItDiffers(t *testing.T) {
 	for _, tt := range []struct {
 		name     string
 		progress float64
@@ -78,12 +79,14 @@ func TestImportMerge_NewLeafProgress_NamedOnlyWhenItIsNotZero(t *testing.T) {
 	}{{"zero", 0, false}, {"half", 0.5, true}} {
 		t.Run(tt.name, func(t *testing.T) {
 			importer, _ := peerPair(t, 1)
+			addHeldChild(t, importer, "REC-1", "REC-1.1") // held: the sync log has its create
 			markJournalPushed(t, importer)
 			data := exportOf(t, importer)
-			addChildOf(t, data, "REC-1", "REC-1.1")
 			for i := range data.Nodes {
 				if data.Nodes[i].ID == "REC-1.1" {
 					data.Nodes[i].Progress = tt.progress
+					data.Nodes[i].Title = "Retitled so the row is written"
+					data.Nodes[i].ContentHash = plainHash(data.Nodes[i].Title)
 				}
 			}
 			require.NoError(t, sqlite.RecomputeExportChecksum(data))

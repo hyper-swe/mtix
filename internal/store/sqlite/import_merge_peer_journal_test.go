@@ -23,11 +23,20 @@ import (
 // marks them pushed in from, as a push and a pull would.
 func replicate(t *testing.T, from, to *sqlite.Store) int {
 	t.Helper()
+	return replicateToAll(t, from, to)
+}
+
+// replicateToAll applies every pending event of from to each store in tos
+// before marking them pushed, as one push followed by several pulls would.
+func replicateToAll(t *testing.T, from *sqlite.Store, tos ...*sqlite.Store) int {
+	t.Helper()
 	ctx := context.Background()
 	events, err := from.ReadPendingEvents(ctx, 100000)
 	require.NoError(t, err)
-	for _, e := range events {
-		require.NoError(t, to.WithTx(ctx, func(tx *sql.Tx) error { return sqlite.IdempotentApply(ctx, tx, e) }), e.OpType)
+	for _, to := range tos {
+		for _, e := range events {
+			require.NoError(t, to.WithTx(ctx, func(tx *sql.Tx) error { return sqlite.IdempotentApply(ctx, tx, e) }), e.OpType)
+		}
 	}
 	_, err = from.WriteDB().Exec(`UPDATE sync_events SET sync_status = 'pushed'`)
 	require.NoError(t, err)
@@ -117,10 +126,11 @@ func TestImportMerge_SecondPeer_ConvergesOnEveryJournaledField(t *testing.T) {
 // the merge writes that no event carries is named, per task, in the result.
 func TestImportMerge_ColumnsNoOpCarries_AreNamedLocalOnlyByField(t *testing.T) {
 	importer, _ := peerPair(t, 1)
+	createPlainTask(t, importer, "REC-2", 2, "", sameIDTime) // held: the sync log has its create
 	markJournalPushed(t, importer)
 	data := exportOf(t, importer)
 	est, act := 30, 40
-	n := &data.Nodes[0]
+	n := &data.Nodes[fileIdx(t, data, "REC-1")]
 	n.Title, n.Weight, n.EstimateMin, n.ActualMin = "T1", 2.5, &est, &act
 	n.Metadata, n.SessionID = `{"k":1}`, "sess-1"
 	n.CodeRefs = []model.CodeRef{{File: "a.go"}}
@@ -128,14 +138,9 @@ func TestImportMerge_ColumnsNoOpCarries_AreNamedLocalOnlyByField(t *testing.T) {
 	n.InvalidatedAt, n.InvalidatedBy, n.InvalidationReason = "2026-01-01T00:00:00Z", "bob", "stale"
 	n.Annotations = []model.Annotation{{ID: "01ARZ3NDEKTSV4RRFFQ69G5FAV", Author: "bob", Text: "", CreatedAt: sameIDTime}}
 	n.ContentHash = plainHash(n.Title)
-	n2 := *n
-	n2.ID, n2.Seq, n2.UID, n2.Title = "REC-2", 2, "", "T2"
-	n2.AgentState, n2.Weight, n2.Annotations = "thinking", 3, nil
-	n2.EstimateMin, n2.ActualMin, n2.Metadata, n2.SessionID, n2.CodeRefs, n2.CommitRefs = nil, nil, "", "", nil, nil
-	n2.InvalidatedAt, n2.InvalidatedBy, n2.InvalidationReason = "", "", ""
+	n2 := &data.Nodes[fileIdx(t, data, "REC-2")]
+	n2.Title, n2.AgentState, n2.Weight = "T2", "thinking", 3
 	n2.ContentHash = plainHash(n2.Title)
-	data.Nodes = append(data.Nodes, n2)
-	data.NodeCount = len(data.Nodes)
 	require.NoError(t, sqlite.RecomputeExportChecksum(data))
 
 	res := mergeTheirs(t, importer, data)
@@ -144,7 +149,6 @@ func TestImportMerge_ColumnsNoOpCarries_AreNamedLocalOnlyByField(t *testing.T) {
 		"invalidated_at", "invalidated_by", "invalidation_reason", "metadata", "session_id", "weight"} {
 		require.Contains(t, fieldsNamed(res, "REC-1"), f)
 	}
-	for _, f := range []string{"agent_state", "weight"} {
-		require.Contains(t, fieldsNamed(res, "REC-2"), f)
-	}
+	require.Contains(t, fieldsNamed(res, "REC-2"), "weight")
+	require.NotContains(t, fieldsNamed(res, "REC-2"), "agent_state", "agent_state has an op now, so it is journaled and not named")
 }

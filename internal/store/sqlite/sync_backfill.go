@@ -25,6 +25,10 @@ type BackfillResult struct {
 	AnnotateEvents    int `json:"annotate_events"`
 	LinkDepEvents     int `json:"link_dep_events"`
 	TotalEvents       int `json:"total_events"`
+	// NotSent names the live tasks a partial backfill cannot send: they sit
+	// under a deleted parent whose creation the log lacks, so a peer has no
+	// parent to attach them to.
+	NotSent []string `json:"not_sent,omitempty"`
 }
 
 // ErrBackfillSyncEventsNonEmpty is returned by Backfill when sync_events
@@ -73,17 +77,20 @@ func (s *Store) BackfillDryRun(ctx context.Context) (BackfillResult, error) {
 		return BackfillResult{}, err
 	}
 	var only map[string]bool // nil: every task
+	var notSent []string
 	if count, err := s.CountSyncEvents(ctx); err != nil {
 		return BackfillResult{}, err
 	} else if count > 0 {
 		// A log that holds other events: count what a real backfill sends,
 		// only the tasks the log lacks (round 4); nil means it would refuse,
 		// and the dry run counts the whole board as before.
-		if only, err = s.partialBackfillSet(ctx); err != nil {
+		if only, notSent, err = s.partialBackfillSet(ctx); err != nil {
 			return BackfillResult{}, err
 		}
 	}
-	return s.countBackfillWork(ctx, s.readDB, only)
+	res, err := s.countBackfillWork(ctx, s.readDB, only)
+	res.NotSent = notSent
+	return res, err
 }
 
 // Backfill synthesizes sync_events rows for every existing node,
@@ -116,9 +123,10 @@ func (s *Store) Backfill(ctx context.Context, force bool) (BackfillResult, error
 		return BackfillResult{}, countErr
 	}
 	var only map[string]bool // nil: every task (an empty journal, or force)
+	var notSent []string
 	if count > 0 && !force {
 		var missErr error
-		if only, missErr = s.partialBackfillSet(ctx); missErr != nil {
+		if only, notSent, missErr = s.partialBackfillSet(ctx); missErr != nil {
 			return BackfillResult{}, missErr
 		}
 		if only == nil {
@@ -140,6 +148,7 @@ func (s *Store) Backfill(ctx context.Context, force bool) (BackfillResult, error
 	if txErr != nil {
 		return BackfillResult{}, txErr
 	}
+	result.NotSent = notSent
 	return result, nil
 }
 

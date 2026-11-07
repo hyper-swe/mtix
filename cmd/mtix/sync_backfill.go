@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -175,5 +176,9 @@ func printBackfillResult(stdout io.Writer, result sqlite.BackfillResult, dryRun 
 		result.AnnotateEvents,
 		result.LinkDepEvents,
 	)
+	if err == nil && len(result.NotSent) > 0 {
+		_, err = fmt.Fprintf(stdout, "not sent: %d task(s) (%s) sit under a deleted parent that was never created in this sync log; "+
+			"a peer has nothing to attach them to\n", len(result.NotSent), strings.Join(result.NotSent, ", "))
+	}
 	return err
 }

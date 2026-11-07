@@ -347,8 +347,9 @@ func sameTaskAtUpgrade(losses []sqlite.NodeLoss) []string {
 // a new task first.
 func sameTaskAtUpgradeNote(ids []string) string {
 	return "                                               a task treated as the same task (uid assigned at " +
-		"upgrade), here " + strings.Join(ids, ", ") + ", keeps its id and takes the file's uid, title and " +
-		"content, and the import lists each uid it adopts; if the two titles name different tasks (tasks " +
+		"upgrade), here " + strings.Join(ids, ", ") + ", keeps its id and takes the file's title and " +
+		"content; on a project that has not synced it also takes the file's uid and the import lists each uid it adopts, " +
+		"and on a project that syncs it keeps your uid and names it local only; if the two titles name different tasks (tasks " +
 		"created in the same second whose create event at least one clone's event log lacks, for example " +
 		"created before 0.2), yours would survive only in the backup the merge takes: copy it to a new task first (mtix " +
 		"show <id>, then mtix create with its title and description; writes stay local while this refusal is " +

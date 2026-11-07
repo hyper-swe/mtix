@@ -179,9 +179,10 @@ func TestImportMerge_EmptyJournalBesideTasks_HeldTaskGetsNoEventsAndSaysBackfill
 	require.Equal(t, "Imported", titleOf(t, s, "REC-1"))
 }
 
-// TestImportMerge_EmptyStoreEmptyJournal_StillJournals: a store with no task
-// has nothing a backfill would send, so the merge journals its creates.
-func TestImportMerge_EmptyStoreEmptyJournal_StillJournals(t *testing.T) {
+// TestImportMerge_EmptyStoreEmptyJournal_NamesTheTaskUnsentAndJournalsNoCreate:
+// a store with no task has nothing a backfill would send; the merge still
+// journals no create (ruling 1), writes the task and names it unsent.
+func TestImportMerge_EmptyStoreEmptyJournal_NamesTheTaskUnsentAndJournalsNoCreate(t *testing.T) {
 	source, s := newTestStore(t), newTestStore(t)
 	createPlainTask(t, source, "REC-1", 1, "", sameIDTime)
 
@@ -189,8 +190,9 @@ func TestImportMerge_EmptyStoreEmptyJournal_StillJournals(t *testing.T) {
 		sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge, AssumeSynced: true})
 
 	require.NoError(t, err)
-	require.False(t, res.NeedsBackfill)
-	require.Positive(t, countJournal(t, s, `op_type = 'create_node'`))
+	require.Equal(t, []string{"REC-1"}, res.UnsentTasks)
+	require.Zero(t, countJournal(t, s, `op_type = 'create_node'`))
+	require.Equal(t, "Shared task", titleOf(t, s, "REC-1"))
 }
 
 // TestMergeColumnTable_CoversEveryColumnOfTheSchema: a column the schema

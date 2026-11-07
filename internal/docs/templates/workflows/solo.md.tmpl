@@ -43,7 +43,7 @@ machines is not a supported topology.
 | `.mtix/data/mtix.db` corrupted | Read/write fails with a clear error | Restore from `.mtix/tasks.json` via `mtix import`; commit a fresh snapshot |
 | Two agents on same machine race a write | SQLite WAL + busy_timeout serialize writes | No action; this is the supported concurrent topology for solo mode |
 | **Hub unreachable** | N/A — solo mode does not use a sync hub | Switch to small-team workflow before adding remote collaborators |
-| **Hook bypassed** (`git push --no-verify`) | tasks.json may lag the DB | Re-export with `mtix export` and commit |
+| **Hook bypassed** (`git push --no-verify`) | tasks.json may lag the DB | Re-export with `mtix export --board-only > .mtix/tasks.json` and commit that mirror; never commit a default private export |
 | **Schema mismatch** after upgrade | Startup migration runs automatically; failure aborts | `mtix verify`, then re-run; report a bug if migration loops |
 | **Queue full** | N/A — sync queue is empty in solo mode | Not applicable to solo mode |
 | **Lost laptop** | The git-tracked `.mtix/tasks.json` is your only off-machine copy | Restore from a fresh clone via `mtix import` — see "Disaster recovery" below |

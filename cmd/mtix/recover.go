@@ -45,6 +45,9 @@ Any unproven result discards all recovered coverage, including supplied-export
 coverage, and can deliver already-read mail again. A five-second check timeout
 does not prove damage: acknowledgement coverage could not be proven. If the
 store opens, use mtix export to preserve readable acknowledgement coverage.
+A zero-byte database is skipped before any SQLite open to preserve it and its
+adjacent WAL. Mirror and private-export fallback remains available, but recovery
+is incomplete; the WAL alone is not salvaged. Keep both source files together.
 WAL headers and frame checksums are checked before opening the store. An
 unverifiable tail, even a stale tail, makes recovery partial: committed records
 (including tickets and mail) may be missing and the lost count is unknown.

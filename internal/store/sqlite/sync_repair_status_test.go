@@ -271,12 +271,14 @@ func TestRepairNodeStatus_S7ReplayRevert_RestoresDoneAndClosedAt(t *testing.T) {
 	require.Equal(t, winner, repaired.WinnerEventID)
 	row := nodeRow(t, raw, "MTIX-1.1")
 	require.Equal(t, "done", row["status"])
-	require.Equal(t, wallClockClosedAt(t, raw, winner), row["closed_at"],
-		"closed_at is the winner's wall clock in whole seconds")
+	require.Equal(t, repairTime().UTC().Format(time.RFC3339), row["closed_at"],
+		"closed_at is the original completion time carried by the winner")
 	require.Equal(t, "agent-a", row["assignee"], "the done row does not write the assignee")
 	require.Equal(t, repairedAt.Format(time.RFC3339), row["updated_at"])
 
-	require.Equal(t, []model.TransitionStatusPayload{{From: model.StatusInProgress, To: model.StatusDone, Reason: "sync repair"}},
+	completionJSON, err := json.Marshal(repairTime().UTC().Format(time.RFC3339))
+	require.NoError(t, err)
+	require.Equal(t, []model.TransitionStatusPayload{{From: model.StatusInProgress, To: model.StatusDone, Reason: "sync repair", ClosedAt: json.RawMessage(completionJSON)}},
 		repairEvents(t, raw, "MTIX-1.1"), "one repair event, from the stored to the derived status")
 	repairEvent := eventIDOf(t, raw, "MTIX-1.1", model.OpTransitionStatus)
 	require.Equal(t, eventWallClock(t, raw, winner), eventWallClock(t, raw, repairEvent),

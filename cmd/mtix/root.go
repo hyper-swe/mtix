@@ -226,6 +226,12 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	// A running or interrupted worktree enrolment owns the board: refuse before
+	// anything creates a store in the data directory it moved (MTIX-112.17.16).
+	if guardErr := service.CheckEnrolGuard(mtixDir, isTopLevelDoctor(cmd)); guardErr != nil {
+		return guardErr
+	}
+
 	// Ensure data directory exists (FR-15.2a: fresh clone has no .mtix/data/).
 	dbDir := filepath.Join(mtixDir, "data")
 	if mkErr := os.MkdirAll(dbDir, 0755); mkErr != nil {

@@ -6,6 +6,42 @@ description: "Set up, use, verify and recover the MTIX sync hub, the shared Post
 
 The hub is a Postgres database that you and your teammates' agents push task changes to and pull each other's changes from. Each machine keeps its own local store; the hub carries the event log between them. This skill is the full runbook: requirements, setup from zero, daily use, verification, troubleshooting and recovery. The short routine is in the managed SYNC section of `CLAUDE.md` and `AGENTS.md`.
 
+## Replicated annotation and workflow data
+
+New comment events carry the annotation identity, creation time, addressee and
+resolved state. Push then pull (or clone a fresh checkout) preserves these fields;
+resolving or unresolving updates the original annotation and does not deliver a
+second addressed message. Concurrent snapshots of one annotation use the largest
+Lamport clock, then event ID, so late delivery cannot undo a newer resolution.
+Exports retain the addressee and resolved state as real annotation data.
+
+New status-transition, claim and unclaim events carry the stored `closed_at`,
+including an explicit null. Rerun invalidation and reset therefore retain the same completion time as
+the source checkout instead of deriving a different value from the rerun event.
+Events without this optional metadata still apply with their legacy behavior.
+Older events that never recorded resolution or original annotation identity
+cannot reconstruct those missing values. Upgrade participating clients before
+relying on the new metadata. Older readers ignore the metadata and show a
+resolution as an extra copy of the original comment. This change does not repair
+already-applied history or normalize away differences during verification.
+
+An addressed comment created before annotation metadata was carried has a
+different annotation ID on its source and clone. Resolving it with a newer
+client leaves one unresolved legacy row and one resolved source-ID row on the
+clone; both retain the text, author and addressee. In the reverse direction,
+resolving the legacy row on the clone leaves the source row unresolved and adds
+a resolved row with the legacy event ID on the source. Old events still apply, but
+this change does not provide pre-upgrade convergence. Legacy identity migration
+is tracked by MTIX-112.17.16.20. Do not guess which rows to merge from matching
+text or timestamps.
+
+Current-client backfill carries available annotation identity, author, creation
+time, addressee and resolution, plus the stored completion time even on an open
+rerun task. An original annotation `id` that is absent cannot be recovered;
+backfill allocates a fresh event identity. A missing or invalid `created_at` uses
+the node creation time, and a missing `author` remains empty. These limits do not
+change the separate old-journal identity residual in MTIX-112.17.16.20.
+
 ## CLI read freshness
 
 CLI board reads retry a busy local sync lock briefly, with a total wait budget of
@@ -119,6 +155,20 @@ no public enrollment command in this build. Listing, a board identity copied
 into a worktree, an agent confirmation and a manual pull never enroll a
 checkout. Existing per-project daemons and listeners retain their duty until
 explicit migration; do not remove them as part of trying the experiment.
+
+Worktree enrollment compares annotation addressees and exact completion times
+(`closed_at`), including a missing value. A fully pushed current-client addressed
+comment and rerun retain those values on the hub clone. Annotation IDs and
+creation times remain excluded because older events may use different ones.
+An old backfill without an addressee or an old workflow event without the
+completion time can therefore refuse, naming `annotations` or `closed_at` in
+the report. Keep the copy using the refusal's printed `mtix backup <path>`
+command. Re-entering a value the store already holds emits nothing; if you
+intend to drop that difference, retry the enrollment service with the printed
+`accept-hub` digest. It keeps the old store in an aside directory and a backup,
+enrolls the hub's values, and reports lost fields on nodes this store's own
+journal touched, with a doctor warning until its record is cleared. This is the
+existing service API; no public enrollment command ships in this build.
 
 Only enrolled checkouts contact the hub under `sync.hub_contact`: activity,
 interval or manual. Activity lets an idle scale-to-zero database sleep; interval
@@ -572,6 +622,19 @@ registry checks and hub registration get a fresh 30-second budget.
 Every `mtix sync init`, `push`, `pull`, `clone`, `doctor`, `backup`, `harden`, `migrate`, `mark-restored` and `collisions` command contacts the hub, even when nothing is pending. A database that scales to zero or suspends when idle therefore wakes on each of them (a push or pull at session start is one wake-up), and the first contact after idle waits for it to resume (mtix allows each hub connection 30 seconds). `mtix sync status`, `mtix sync quarantine list` and `mtix sync repair --status` read only the local store. Task commands such as `mtix create` and `mtix done` write locally and do not contact the hub.
 
 mtix does not poll the hub on a timer from the CLI. After activity, sync (session start and after changes), never in a loop. When `mtix daemon` contacts the hub is set by `sync.hub_contact` (read fresh every pass, so a change applies without a restart): `activity` (the default for new boards) contacts the hub every 5 seconds for 10 minutes after real activity, every 60 seconds until 30 minutes, then not at all, so a database that pauses when idle can pause; `interval:<duration>` (at least 1s) contacts it on that period all day and keeps such a database awake around the clock; `manual` never contacts it from the daemon. `mtix config get sync.hub_contact` shows the effective mode. Real activity is recorded operator-locally (outside the board, never synced) by: a local mutation command, an addressed `mtix comment --to`, a commit made through the MCP server, `mtix agent heartbeat` (run by a model turn or a person), the attach glue's session-start and prompt-submit. It is not recorded by reads, `mtix inbox`, any wait, or any waiter arming, re-arming or refreshing a lease (a second waiter process that re-arms after the first exits never moves the activity window or the clamp). The first message to a host that has been idle past the window waits for that host's next activity (or for the listen hold below). A board created before this key existed keeps contacting the hub at the daemon's own `--interval` until you set the key, and `mtix doctor` row `sync.hub-contact` says so and prints `mtix config set sync.hub_contact activity`. With `interval:<duration>` the daemon prints a one-time cost warning at start. Local work (pending-export recovery, relay, hook dispatch) runs on every pass and never depends on the hub.
+
+The `mtix doctor` row `sync.hub-contact` reports the last pull outcome in text and `--json`: `data.last_contact` contains `at`, `route` (`poll` for the daemon or `pull` for an explicit command), `ok`, and failure-only `error_class`. `mtix sync doctor --json` carries the same object as `last_contact`. This operator-local record never syncs and contains no DSN or raw error. Recording and reading it adds no hub connection or polling timer. A successful explicit `mtix sync pull` or scheduled daemon pull replaces the failure; a later failed contact replaces success. A blocked exchange lock, a skipped pass, or shutdown during a pull preserves the last real outcome. The success/failure wording names the last hub contact, not the current pull: local failures before transport starts (such as unreadable secrets or quarantine retry failures) appear only in the daemon log and preserve that historical record. Daemon scheduling keeps its existing cadence. The most recently completed pull wins, even when a daemon callback finishes after a newer manual recovery.
+
+| Last pull class | Recovery |
+| --- | --- |
+| `auth` | Repair the hub credential in `MTIX_SYNC_DSN`, `MTIX_SYNC_PASSWORD` or `.mtix/secrets`, then run `mtix sync pull`. |
+| `refused` | Ask the hub operator to restore pull permissions, then run `mtix sync pull`. |
+| `tls` | Set `sslmode=verify-full` in the configured DSN and supply `sslrootcert` for its trusted CA. If TLS settings already verify, check the DSN host against the certificate and ask the hub operator to renew the certificate or enable TLS, then run `mtix sync pull`. |
+| `unreachable` | Restore network reachability to the configured hub, then run `mtix sync pull`. |
+| `timeout` | Check hub availability and query load, then run `mtix sync pull`. |
+| `pull_failed` | Run `mtix sync pull`, then `mtix sync doctor` to diagnose the failure. |
+
+An unreadable contact record is an advisory in manual mode and a historical note without a hub; it fails the automatic-contact check when a hub is configured. On a hub board, the printed `mtix sync pull` fix replaces a malformed record after any operator-state directory problem is repaired. The row prints the corresponding exact fix. These explicit recovery commands can contact the hub. Hook-mode warnings remain failures and never run on to pull completion. In manual mode a historical failed pull is an advisory with the manual recovery; with no hub configured it is a historical note, not a permanent failing check or an instruction to pull from an absent hub. Old records remain readable, and an unknown failed class becomes `pull_failed`. Records from before this fix used `ok: true` for an attempt, so their apparent success is not verified until an explicit or scheduled pull refreshes it.
 
 Listen hold: `sync.listen` is `live` or `off` (shipped default: `live`). A waiter (`mtix inbox --wait --agent X`) on a board that syncs through a hub or relay arms a lease and, when no daemon runs for the board, starts one detached `mtix daemon --listen` for it (the same binary, no extra argument, nothing secret on its command line) and prints one line saying so; if it starts nothing it prints why, for example `sync.listen` off or `sync.hub_contact` manual. Two waiters share one listener. While the hold is armed (real activity within `sync.listen_max_idle`) and `sync.listen` is `live`, a live waiter lease on this host makes the listener contact the hub every `sync.listen_interval` (default `10s`) even after the activity window closed, so an idle session can be woken by a message from another machine; `off` is strict activity-only contact. There is exactly one clamp: the hold ends `sync.listen_max_idle` (default `8h`, at most `72h`) after the last real activity, or sooner when the last lease's process is gone or `sync.listen` is set to `off`; re-arming or refreshing a lease never extends it. A live listening session therefore keeps a scale-to-zero database awake, at about 360 contacts an hour per board at the default interval, until that clamp; if the user does not want that, run `mtix config set sync.listen off`. `manual` overrides the hold. The listener exits within one local pass (about 5 seconds) after the last waiter lease ends, a lease whose waiter stopped refreshing it expires after 15 minutes so a crashed session cannot keep the hub awake, and after it exits nothing contacts the hub. A relay board has no database to wake, so its listener ingests the relay folder while a waiter lives. A waiter restarts a listener that exited early, but not while the board is idle-clamped (no respawn, no restart line, a quiet park). A listener started past the clamp, or on a board with no recorded activity, makes no hub contact and exits at once: a waiter that re-parks every few minutes costs the hub nothing until real activity (an addressed message or a local write) re-arms the hold. `mtix doctor` row `wake.listener.no-hub-listener` fails when waiters are parked with no listener on an armed hold and prints the fix `mtix daemon --listen`; past the clamp it passes as idle-clamped; it reads local state only. Automatic push of an addressed send: `sync.push_on_addressed_send` (default `true`) makes `mtix comment --to <agent>` (and the MCP `mtix_annotate` with `to`) push the board's pending events to the hub right after the comment commits, so you never run `mtix sync push` by hand to deliver a message. It pushes the board's whole pending prefix in order, so a comment never reaches the hub before the creation of the task it is on. The command returns at once and never waits on the network: the CLI starts one detached `mtix sync push` child, and the MCP server and `mtix serve` (the comment route, with `to` or an @agent token) push inside their own process. At most one push runs per board: inside one process a burst of sends shares one push, and across CLI processes the push lock serialises the children. Each send contacts the hub at most once, which is activity anyway, so it adds no idle contact and keeps no timer. A child that finds the push lock held probes it again for about 20 seconds (a local check, no hub contact) and then pushes itself, so a message that lands after a running push's last pass is not left behind; if the lock is still held it records `push_held` and the message stays pending. A child that finds nothing pending (an earlier push already sent the message) makes no hub contact. A push that ran but did not drain the queue (conflicts, or events waiting on a held creation) is recorded as `push_incomplete` with the fix `mtix sync doctor`, and each addressed-send push (the detached CLI child, MCP, or `mtix serve`) that reaches its 5 minute limit is recorded as `timeout` and releases the push lock. The MCP server and `mtix serve` read `sync.hub_contact` and `sync.push_on_addressed_send` at each send, so a later `mtix config set` applies without restarting them. It applies only to a board whose checkout resolves its own hub (a DSN from the environment or the secrets file) or has a relay configured; it is off under `sync.hub_contact` `manual`, off when the key is `false`, and never runs for a board the host only lists without enrolling. `mtix comment --to` prints `push: queued for hub push`, `deferred` or `off` with the reason, and `--json` carries `push` with `state` and `reason`; `deferred` means this process could not start a background push (for example a sandbox), so the host dispatcher or your next `mtix sync push` sends it. A failed push never loses the message: it stays pending and goes with the next push. The gRPC package has no `mtix serve` listener, so it requests no push. A relay board publishes on every addressed send even when `sync.relay.poll_interval` is `0` (that setting only stops the daemon polling); a relay that cannot open or publish is recorded as a failed send with class `relay_failed`, and the fix it prints is `mtix doctor`. The failure is recorded operator-locally (an error class only, never connection text), the next mtix command prints one warning line, and `mtix doctor` row `sync.push-on-send` fails with the fix `mtix sync push` (run it to see the cause) until a push completes (a plain `mtix sync push` clears it; a `relay_failed` record clears at the next successful relay pass); `mtix doctor --json` carries the same row. Switch it off with `mtix config set sync.push_on_addressed_send false`. Verify with `mtix doctor`: row `sync.hub-contact` shows the mode, the last activity, the last contact and whether any contact will happen; row `sync.listen` shows whether the hold is on, its route (`poll`), the interval, the idle clamp and when the current hold ends; each failing row prints the exact `mtix config set` command. `mtix doctor` reads only local state and never contacts the hub for these rows. Never start `mtix daemon` or a cron job or a short-interval hook that pulls without telling the user what it costs. `mtix sync daemon` is the deprecated alias and keeps a fixed 5 second cadence.
 

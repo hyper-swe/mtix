@@ -106,6 +106,90 @@ Doctor shows these rows only when they apply:
   mtix upgrade (compare `mtix version`), and older glue this build cannot
   rewrite must be corrected or removed in the harness configuration. The
   attach verb's stderr line and alert name the same fix.
+- `glue.tracked-store`: the attach verbs (harness glue entry points) act only
+  on a board attached on this host. mtix resolves once: the nearest `.mtix` at
+  or above the physical working directory is the store the verb would open, and
+  that store, and only that store, is judged. Its project directory must be
+  listed or enrolled on this host with a store path and `store_instance_id`
+  matching the operator-local record (paths are compared as physical paths, so
+  a symlinked working directory works). A store nested under a listed checkout,
+  or committed on a worktree branch, is judged as itself, so it is declined
+  unless it is listed too; a board listed at a subdirectory of a git checkout
+  is attached because its own store is the one listed. Everything after that
+  decision (the queue drain, the activity record, the pi wait) uses the same
+  store and never searches for another. Anywhere else every verb, including an
+  unknown verb, an unparsable flag or a bad `-C` directory, prints the single
+  line `board not attached on this host` and writes nothing: no injection,
+  proposal, alert or operator-state file. That is normal, not a fault. A `.git`
+  file that points straight at a common directory, or a worktree admin
+  directory without its back-link or outside `<common>/worktrees`, is not a
+  worktree, so a forged one cannot stand in for a checkout; a relative
+  back-link written by `git worktree add --relative-paths` is accepted. The row
+  appears only for a board listed with no recorded instance id (a legacy
+  store), where mtix reads the index of the checkout that holds the store (it
+  never runs git) to make sure the store is not committed, and only when that
+  check declines. Each remedy names the checkout with `git -C`, so it works
+  from any directory and from a worktree. One remedy per cause. Store tracked:
+  `git -C <checkout> rm -r --cached --ignore-unmatch -- <store dir>/.mtix/data
+  && git -C <checkout> update-index --no-split-index && echo
+  <store dir>/.mtix/data/ >> <checkout>/.gitignore` (the split-index step
+  matters because a split index's shared base keeps listing the store). A
+  committed symlink or submodule at `.mtix` or `.mtix/data`: `git -C <checkout>
+  update-index --force-remove -- .mtix .mtix/data && git -C <checkout>
+  update-index --no-split-index`. Sparse index with a directory entry covering
+  `.mtix`: `git -C <checkout> sparse-checkout reapply --no-sparse-index`. Split
+  index whose base file is missing: `git -C <checkout> read-tree HEAD` (it
+  rebuilds the index from HEAD, so commit or stash staged changes first). An
+  index path longer than 4096 bytes: the row lists such paths
+  (`git -C <checkout> ls-files | awk 'length($0) > 4096'`); remove or rename
+  them. An unknown index version or extension, an oversize index or a SHA-256
+  repository cannot be read by this build: upgrade mtix.
+- `glue.store-identity`: the board you are in is listed on this host, but its
+  store does not match the listing, so glue stays off and every verb prints
+  the not-attached line. The row's detail says which case it is. (1) The
+  listing records no store identity for a store that has one: run `mtix agent
+  register <agent-id>` from a normal shell in the checkout; it records the
+  identity and glue acts. Restoring a store is not needed. (2) The store cannot
+  be read as a plain store (`.mtix` or `.mtix/data` is a symlink or missing, or
+  the store file could not be read): make both real directories that hold the
+  store file. A store that was just being opened or closed by another mtix
+  process clears on its own; a lone `mtix.db-wal` or `mtix.db-shm` file left
+  behind by a crash goes away after any normal mtix command (for example `mtix
+  doctor`), which replays it. (3) Both identities exist and differ (the store
+  was recreated or replaced, for example rebuilt from an export): no mtix
+  command re-lists a board under a new store identity, so put the original
+  store file (`.mtix/data/mtix.db`) back from a backup or from the previous
+  copy of the checkout. Reading the identity creates no file next to the store
+  (no WAL or shm); it tries up to three times, 15 ms apart, before it declines,
+  so a busy store is not declined by chance. Run `mtix doctor` again until the
+  row is gone.
+- `glue.checkout`: the board you are in is listed on this host, but the `.git`
+  entry above it is not a valid checkout (a linked worktree whose record was
+  pruned, a main checkout that moved, or a damaged `.git` file), so glue stays
+  off. The row names the `.git` entry and prints `git worktree repair <path>`;
+  run it from the main checkout (if the worktree record was pruned, re-create
+  the worktree with `git worktree add`), then run `mtix doctor` again. A
+  directory that is not listed gets no such row.
+- `glue.stranded-queue`: in an attached board, a `session-start` drains the
+  board's pending attach queue (rows queued by a registration inside a sandbox)
+  through the same validation the host dispatcher uses; a row naming another
+  board or path is dropped and raises an `attach.pending-rejected` alert, and a
+  listed linked worktree drains its own store's queue. An unlisted board's
+  queue is never read (a linked worktree with a store of its own is a board of
+  its own and needs its own listing), and glue never lists a board by itself,
+  because repository content must not activate a host. The row appears when
+  the board you are in is not listed but its store holds such rows; the fix is
+  printed from the queued rows, one command per registration: `cd <store root>
+  && mtix agent register <agent-id> --harness <harness>`, run from a normal
+  shell outside any sandbox. The lane a queued row names is never used, so a
+  symlink or a nested board cannot steer the command out of this store. It keeps each agent's harness; a bare `mtix agent
+  register <agent-id>` would record the harness as unknown. Add `--session
+  <handle>` if the session was registered with one. Queued rows
+  are untrusted: only a row that carries this store's own board key and path
+  and a plain agent id reaches the printed command; any other row is
+  counted as rejected in the row's detail, no command is built from it, and the
+  row prints the generic command with placeholders. The glue path never imports
+  `tasks.json` and never triggers hooks, whatever `sync.auto_sync` says.
 - `attach.failures`: recent `attach.protocol-skew` and `attach.verb-failure`
   operator alerts from the hidden attach verbs, with counts. These verbs are
   entry points for harness glue, not for agents. They always exit 0, even on
@@ -216,6 +300,11 @@ The guarantee covers the journal of one store (`.mtix/data/mtix.db`). Its exact 
 - **Per store.** The journal and the acknowledgements live in one store. An event reaches another checkout only through sync. Acknowledgements are not synced: a new checkout made with `mtix sync clone` lists every addressed event as unacknowledged, including events the first checkout already acknowledged. Delivery is at least once, so handle inbox work idempotently. Carrying acknowledgements to a new checkout is planned work (MTIX-112.17.16).
 - **Export, import and recover.** `mtix export > private-export.json` carries addressed comments and recipient acknowledgement coverage by default; stderr reports the event count. Treat this file as private and never commit it. Merge or replace import restores that mail by event identity (replace requires the typed ticket count at a terminal when the store holds tickets), without replaying hooks or queueing it for push; importing the same file twice adds no mail and never undoes local acknowledgements. Automatic `.mtix/tasks.json` stays journal-free, as does explicit export redirected to that path (including links to it). For a temporary file later moved to the mirror, or a pipe such as `tee`, explicitly use `--board-only`. A fresh store imported only from that mirror has no inbox journal. `mtix recover` salvages readable mail from the database; `mtix recover --from-export private-export.json` also fills journal gaps from an explicit export while retaining `.mtix/tasks.json` as the board source. Its report identifies detected missing or unreadable journal data and gives counts where known; keep the source database when recovery is incomplete. Inbox salvage checks each rowid seek against a full point read and combines it with readable sequential-scan rows, continuing after a bad column. Before opening the database, recovery verifies the WAL header, frame salts, frame boundaries and rolling checksums. An unverifiable WAL tail, even a stale tail left by normal reuse, makes recovery partial: committed records (including tickets and mail) may be missing, the lost count is unknown, and already-read mail may return unread. Keep the database and its `-wal` file together. It also runs a read-only `PRAGMA integrity_check`, limited to five seconds and 20 reported problems. Damage, duplicate identities, conflicting copies, disagreement between reads, or an unfinished check makes the report incomplete, with loss unknown where it cannot be counted. Acknowledgement coverage is retained only when the integrity check finishes successfully and no part of inbox recovery is incomplete. Any detected damage, unavailable or unfinished check, or other incomplete result discards all recovered acknowledgement coverage, including coverage supplied by a private export. Every recovered event is then exported as unread; the report gives that count. A damaged store, or a store too large or slow for the five-second check, can therefore deliver already-read mail again: repeated wakes are preferable to hidden unread mail. An unfinished five-second check does not prove the store is damaged: acknowledgement coverage could not be proven. If the store opens, use `mtix export` to preserve readable acknowledgement coverage instead of salvage. A complete report means these checks found no damage. A `-wal` file that is absent, emptied, or shortened exactly on a frame boundary (including a header-only log) cannot be distinguished from a shorter healthy log; committed records may be missing even under a complete report. A bit flip in body text inside `sync_events.payload` or a value in `agent_inbox_cursor.cursor` can still leave a structurally valid store and pass the check; without a checksum for those fields, recovery cannot detect the changed text or a raised cursor that hides unread mail. On stores last written by 0.5.4 or earlier that lack `idx_sync_events_comment_addressee`, a change to the recipient `$.to` in `sync_events.payload` can also pass the check, redirect mail or apply another recipient’s cursor; recovery opens read-only and does not add the missing index. Keep independent private exports. It probes past damaged ranges, with at most 10,000 failed rowid probes. An unreadable upper bound or an exhausted probe budget produces an explicitly incomplete report naming the limit and rowid reached; lost records are reported as unknown or an upper bound in positions, never as an exact record count. Keep the source database and any private export. Recovery adds `.mtix/recovered-*.json` to the existing project `.gitignore` before writing; if it cannot protect the file, it writes no recovered export. Hook-created deliveries, dispatch state and host identities are not transported. With `history.export` off, a 0.5.4 reader can import the board but ignores the journal and drops it on rewrite, so use this version to move or recover mail. Cumulative acknowledgements become per-event coverage without an invented acknowledgement time; no source watermark can hide unrelated destination mail.
 - **`mtix import --mode replace`.** On a store that never synced, a replace removes the events of every ticket the file lacks. It asks for the ticket count, typed at a terminal, and lists the number of unacknowledged inbox events first; that number is the most the replace can remove. A store that has synced refuses a replace that would drop a task its sync log holds; a replace that keeps every task proceeds and removes no event. When a replace does remove events, the acknowledgement and delivery rows for event numbers above the newest surviving event are removed in the same step, and any agent cursor above that event is lowered to it (cursors are lowered, not removed; an agent whose cursor is already at or below it keeps it), so mail addressed afterwards shows as unread. The same transaction removes hook dispatch ledger rows above the surviving journal tail and lowers a hook scan cursor above it (to zero for an empty journal); surviving hook dispatch state is retained. A hook pass already in progress checks event identity before claiming, recording inbox deliveries and finalizing. Before advancing its scan, it also checks whether replace lowered the cursor it read; a pass that missed reused events stops there, and otherwise advances only through events whose identities still match. Recovery of a missing event only removes an existing expired claim; it cannot recreate one at a reused number. Hook crash recovery remains at least once. A merge import never removes events.
+- **Wakes after replace.** Fresh addressed events at reused event numbers remain eligible for live wake. The same replace transaction removes wake claims above the surviving journal tail and lowers scan, registration and lease marks above it to that tail (zero for an empty journal). Lower marks and surviving claims stay unchanged, along with registration epochs, pending holds, ownership of a running lease and budget usage already recorded. A scan snapshot cannot claim a different event under a reused number or move a wake mark for an event removed by replace. A wake attempt claimed before replace may finish; wake crash retries remain at least once. Discarding local sync history performs the same wake reconciliation against the empty journal. Returned-mail budget accounting has a separate limitation: reused event numbers can still be treated as already returned (MTIX-112.2.2.1.1).
+
+- **Automatic wakes on a first fill.** A clean bootstrap is a pull, clone or first relay ingest that starts with an empty journal and completes its first fill and shared floor initialization. Existing automatic scanner and pi wake marks move to the populated journal tail alongside the hook-dispatch floor. **Every addressed event up to that tail is bootstrap history for automatic wakes, including mail no checkout has seen.** It remains unread in the inbox but gets no automatic wake; initializing the floors spends no wake budget. Addressed mail appended after the floor is set remains eligible for an automatic wake. A `mtix sync clone --resume` that starts with a non-empty journal moves only the hook-dispatch floor toward the journal tail, clamped below outstanding hook claims. Every event covered by that floor gets no hook delivery, including local mail written before the resume. The mail stays in the inbox: the floor does not acknowledge it. Existing automatic wake progress and unread-mail eligibility are preserved. The explicit session-hook waiter keeps its unread-backlog behavior and may wake on any unread mail, including this history.
+
+- **Discard recovery limits.** The automatic first-fill floor does not cover an interrupted fill, a journaled local write before the pull, a scan during a multi-batch fill, or a floor-initialization warning. History can then wake again and spend wake budget; unacknowledged-wake backoff can hold later mail. A pull or `mtix sync clone --resume` with an already non-empty journal does not rerun bootstrap floor initialization. These wake-floor limits do not drop inbox events: complete `mtix sync pull` to retrieve remaining hub mail, and use `mtix inbox --agent <id>` to read it. Handle and acknowledge inbox mail to clear unacknowledged-wake backoff. Discard/pull recovery is tracked in MTIX-112.2.2.1.2; automatic wakes from history after an interrupted first clone of a fresh store are tracked in MTIX-112.2.2.1.4.
 - **`mtix sync reconcile --discard-local`.** On a store holding restored mail, do not use `mtix sync reconcile --discard-local`: it is refused, including its dry run; typed confirmation cannot bypass this guard. Pending 0 does not mean that mail reached the hub. Keep the original store. To obtain the hub board, run `mtix init PREFIX` in a new empty directory, configure the same hub credentials via `MTIX_SYNC_DSN`, then run `mtix sync clone`. In an operator terminal, read the restored mail in the original store with `mtix inbox --include-held --agent AGENT`; hub contact can hold mail for an unregistered recipient. On stores without restored mail, it deletes the whole journal and the acknowledgements, with the local tasks and unpushed changes. Run `mtix sync push` first and check that `mtix sync status` shows pending 0. It asks for the ticket count, typed at a terminal, lists the unacknowledged inbox events first, and saves a snapshot of the database before the delete.
 - **Backups.** A backup copy of the database keeps the journal and the acknowledgements together, with the same event numbers. Restoring an older copy brings back its older state: events acknowledged after the copy was made are unacknowledged again, and events addressed after it are not in it.
 - **Deleting the database** (or the `.mtix` directory) deletes the inbox.

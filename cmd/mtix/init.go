@@ -73,6 +73,12 @@ func runInit(prefix string) error {
 		return fmt.Errorf("initialize exclusion: %w", ignoreErr)
 	}
 
+	// The store copy a refusal prints keeps the spelling of the aside directory.
+	for _, pattern := range []string{".mtix/enroll-diff-*.json", ".mtix/enroll-lost-local-*.json", ".mtix/enrol-copy-*.db"} { //nolint:misspell // as above
+		if ignoreErr := addToGitignore(cwd, pattern); ignoreErr != nil {
+			return fmt.Errorf("ignore the enrolment reports and copies: %w", ignoreErr)
+		}
+	}
 	if ignoreErr := addToGitignore(cwd, ".mtix/serve.json"); ignoreErr != nil {
 		return fmt.Errorf("initialize exclusion: %w", ignoreErr)
 	}

@@ -52,14 +52,14 @@ func (s *Store) executeCancelTx(ctx context.Context, tx *sql.Tx, req transitionR
 		return validErr
 	}
 
-	now := time.Now().UTC()
+	now := clockOrDefault(s.clock)().UTC()
 	nowStr := now.Format(time.RFC3339)
 
 	if err := applyCancelUpdate(ctx, tx, req, fromStatus, now); err != nil {
 		return err
 	}
 
-	if err := s.emitPayload(ctx, tx, emitParams{
+	if err := s.emitTransitionSnapshot(ctx, tx, emitParams{
 		NodeID:      id,
 		ProjectCode: projectPrefixFromNodeID(id),
 		OpType:      model.OpTransitionStatus,

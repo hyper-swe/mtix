@@ -885,8 +885,11 @@ not checked on a relay-only board. WARN and INFO are advisory: exit 0 when no
 check fails, or 2 when any check reports FAIL.
 
 --json emits an array with id, status, detail and fix for each check; a check may add
-a data object of machine-readable numbers (the history.size row does), and rows
+a data object of machine-readable details (the history.size row does), and rows
 without one have exactly the four fields.
+The sync.hub-contact row carries its last outcome under data.last_contact
+(at, route, ok and failure-only error_class); it reads operator-local state
+and adds no hub contact.
 --fix performs only explicitly registered non-grant repairs and rechecks them.
 Grant commands are printed for you to run yourself; they are never executed.
 Without --fix, operator-local files, including attach artifacts, stay unchanged.
@@ -2192,6 +2195,10 @@ Run health checks against the local store and the BYO Postgres hub:
                            grammar; names each task, its uid and the fix
   Unique node uids       - no two tasks share a uid; names each uid, its tasks
                            and the recovery (see 'mtix verify')
+  sync.hub-contact       - last pull outcome: success or safe failure
+                           class and exact fix; --json includes last_contact
+                           with at, route (poll or explicit pull), ok and failure-only error_class;
+                           this local outcome check contacts no hub
   sync.exchange-record   - local received provenance and recorded omission;
                            this check does not contact the hub
   Held push events       - push holds no event the hub would refuse (such as

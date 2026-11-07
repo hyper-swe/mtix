@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Recovery skips zero-byte databases before opening SQLite, preserving the database and adjacent WAL. Reports explain the skipped source, including when nothing can be salvaged; mirror and private-export fallback stays available as incomplete recovery. The WAL alone is not salvaged (MTIX-112.50).
+
 - Recovery checks WAL headers, frame boundaries, both salt and checksum words before opening the store, and refuses non-regular WAL paths without waiting on a pipe. Unverifiable tails report possibly missing records, including tickets and mail, and discard all recovered acknowledgments. Tests pin WAL replacement, size and time changes plus redelivery cost. Documentation names absent or frame-aligned shortened WALs as undetectable limits, alongside body text, cursor and older-store recipient changes. Unfinished integrity checks use neutral wording and ordinary export guidance (MTIX-112.48).
 - Explicit exports now preserve addressed inbox mail and acknowledgement coverage for import and recovery. Automatic tasks.json remains journal-free; private exports must not be committed. `--board-only` supports journal-free temporary files and pipes. Recovery accepts `--from-export` as a journal supplement to the current board mirror and reports unavailable or malformed mail. Restored mail stays local and visible on solo boards; existing destination acknowledgments and hook bookkeeping are retained. Restored mail is excluded from sweep-held evidence and blocks discard-local; recovery does not trust secondary indexes, labels exhausted probes as incomplete with unknown loss, and protects private files in existing projects (MTIX-112.2.1).
 

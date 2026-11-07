@@ -54,6 +54,24 @@ type mergeColumn struct {
 	differs     func(p *mergePlanner, b, a *exportNode, created bool) bool
 }
 
+// heldChanged marks a column local only when a held task's value changed: a
+// new task's value rides on its create event.
+func heldChanged(get func(*exportNode) any) func(*mergePlanner, *exportNode, *exportNode, bool) bool {
+	return func(_ *mergePlanner, b, a *exportNode, created bool) bool { return !created && get(b) != get(a) }
+}
+
+// derivedProgress is the progress a peer holds for a task after the events
+// the merge journals: 1.0 for a done task, else what it held (0 for a new one).
+func derivedProgress(b, a *exportNode, created bool) float64 {
+	switch {
+	case a.Status == string(model.StatusDone):
+		return 1.0
+	case created:
+		return 0
+	}
+	return b.Progress
+}
+
 func timeDiffers(b, a string) bool { return a != "" && a != b }
 
 // mergeColumnTable lists every column the merge can write. The times differ
@@ -64,12 +82,27 @@ func mergeColumnTable() []mergeColumn {
 		return mergeColumn{name: name, differs: f}
 	}
 	return []mergeColumn{
-		op("id", "create_node"), op("parent_id", "create_node"), op("depth", "create_node"), op("seq", "create_node"),
-		op("project", "create_node"), op("node_type", "create_node"), op("uid", "create_node"),
+		op("id", "create_node"),
+		// Structural columns: the create op sets them once; no op changes them
+		// afterwards, so a change to a held task stays local (principle F).
+		local("parent_id", heldChanged(func(n *exportNode) any { return n.ParentID })),
+		local("depth", heldChanged(func(n *exportNode) any { return n.Depth })),
+		local("seq", heldChanged(func(n *exportNode) any { return n.Seq })),
+		local("project", heldChanged(func(n *exportNode) any { return n.Project })),
+		local("node_type", heldChanged(func(n *exportNode) any { return n.NodeType })),
+		local("uid", heldChanged(func(n *exportNode) any { return n.UID })),
 		op("title", "update_field"), op("description", "update_field"), op("prompt", "set_prompt"),
 		op("acceptance", "set_acceptance"), op("issue_type", "update_field"), op("priority", "update_field"),
 		op("labels", "update_field"), op("assignee", "update_field"), op("status", "transition_status"),
-		op("defer_until", "defer"), op("deleted_at", "delete"), op("content_hash", "derived from the content fields"),
+		// The defer op carries a wake time only for a task that ends deferred.
+		local("defer_until", func(_ *mergePlanner, b, a *exportNode, _ bool) bool {
+			return a.Status != string(model.StatusDeferred) && b.DeferUntil != a.DeferUntil
+		}),
+		// The delete op carries no time: a peer stamps its own.
+		local("deleted_at", func(_ *mergePlanner, b, a *exportNode, _ bool) bool {
+			return a.DeletedAt != "" && a.DeletedAt != b.DeletedAt
+		}),
+		op("content_hash", "derived from the content fields"),
 		local("agent_state", func(_ *mergePlanner, b, a *exportNode, created bool) bool {
 			return created && b.AgentState != a.AgentState
 		}),
@@ -95,8 +128,10 @@ func mergeColumnTable() []mergeColumn {
 		local("created_at", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return timeDiffers(b.CreatedAt, a.CreatedAt) }),
 		local("updated_at", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return timeDiffers(b.UpdatedAt, a.UpdatedAt) }),
 		local("closed_at", func(_ *mergePlanner, b, a *exportNode, _ bool) bool { return timeDiffers(b.ClosedAt, a.ClosedAt) }),
+		// A peer derives progress: 1.0 when a task is done, else the value it held
+		// (0 for a new leaf), and a parent's follows its children.
 		local("progress", func(p *mergePlanner, b, a *exportNode, created bool) bool {
-			return !created && b.Status == a.Status && b.Progress != a.Progress && !p.hasLiveChildren(a.ID)
+			return a.Progress != derivedProgress(b, a, created) && !p.hasLiveChildren(a.ID)
 		}),
 		op("annotations", "comment"),
 		op("annotations.id", "comment"), op("annotations.author", "comment"), op("annotations.text", "comment"),

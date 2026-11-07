@@ -37,8 +37,14 @@ populated hub to replicate the history locally.
 Safety properties:
   * Single-tx atomicity: all events OR none. SQLite WAL rolls back
     on any failure mid-walk (including SIGKILL).
-  * Refusal-by-default if sync_events is non-empty. Note --force does
-    NOT regenerate: it appends a second history alongside the first.
+  * Partial backfill: when the log holds other events but some live
+    tasks have no create_node in it (for example an import merge into a
+    store whose tasks predate any sync), backfill sends just those
+    tasks and the links that touch them, and nothing the log holds
+    already. A store that ingests a relay is refused.
+  * Refusal-by-default if sync_events is non-empty.
+    Note --force does NOT regenerate: it appends a second history
+    alongside the first.
     There is no supported regenerate path yet (MTIX-89). Do NOT reach
     for 'mtix sync reconcile --discard-local' — that deletes every
     ticket in this store.

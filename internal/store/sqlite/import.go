@@ -95,6 +95,14 @@ type ImportResult struct {
 	// while it holds tasks: the merge journaled nothing, as before, and
 	// mtix sync backfill sends the tasks (MTIX-112.17.16.16).
 	NeedsBackfill bool `json:"needs_backfill,omitempty"`
+	// UnsentTasks names the tasks whose creation the sync log does not hold,
+	// and the new tasks under them: the merge journals no event for any of
+	// them, and mtix sync backfill sends them (MTIX-112.17.16.16 round 4).
+	UnsentTasks []string `json:"unsent_tasks,omitempty"`
+	// SkippedDeleted names the tasks deleted here that the file holds live:
+	// on a store that syncs they stay deleted and the file's changes to them
+	// are not applied, because no op restores a deleted task.
+	SkippedDeleted []string `json:"skipped_deleted,omitempty"`
 	// keptUID lists the tasks whose uid the merge did not adopt although the
 	// plan listed an adoption: the hub knows them by the local uid.
 	keptUID []string

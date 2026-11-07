@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -297,9 +298,15 @@ func reportImportResult(result *sqlite.ImportResult, writerVersion string) {
 	if result.Journaled > 0 { // MTIX-112.17.16.16: the changes wait in the sync journal
 		fmt.Printf("Journaled %d sync events for the changes; %s\n", result.Journaled, journaledSendWords())
 	}
-	if result.NeedsBackfill {
-		fmt.Println("The sync journal is empty beside the tasks this store holds, so the merge journaled nothing; " +
-			"mtix sync backfill sends the tasks to the hub or relay")
+	if len(result.UnsentTasks) > 0 {
+		fmt.Printf("%d task(s) (%s) have no creation in this sync log; the merge sent nothing for them or anything under them. "+
+			"If they were never sent, mtix sync backfill sends them (a task a peer holds already, such as one from a relay snapshot clone, is sent again as the same task)\n",
+			len(result.UnsentTasks), strings.Join(result.UnsentTasks, ", "))
+	}
+	if len(result.SkippedDeleted) > 0 {
+		fmt.Printf("%d task(s) (%s) deleted here stay deleted: the file's changes were not applied. "+
+			"No op restores a deleted task; to bring one back, create a new task with mtix create.\n",
+			len(result.SkippedDeleted), strings.Join(result.SkippedDeleted, ", "))
 	}
 	if len(result.JournalLocalOnly) > 0 {
 		fmt.Println(localOnlyLine(result.JournalLocalOnly))

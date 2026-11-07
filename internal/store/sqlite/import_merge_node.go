@@ -27,18 +27,11 @@ func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 	var touched []*exportNode // nodes the merge created or updated, rolled up once all are written (FR-5.7)
 	for i := range data.Nodes {
 		res := settled[data.Nodes[i].ID]
-		action, mergeErr := mergeImportNode(ctx, tx, &data.Nodes[i], fileCarriesAllColumns, mergeControl{res, policy.journal})
+		action, mergeErr := mergeImportNode(ctx, tx, &data.Nodes[i], fileCarriesAllColumns, mergeControl{res, policy.journal, policy.keepUIDs})
 		if mergeErr != nil {
 			return result, mergeErr
 		}
-		switch action {
-		case importActionCreated:
-			result.NodesCreated++
-		case importActionUpdated, importActionRolledUp:
-			result.NodesUpdated++
-		case importActionSkipped:
-			result.NodesSkipped++
-		}
+		result.countAction(action)
 		if action != importActionSkipped {
 			touched = append(touched, &data.Nodes[i])
 		}
@@ -64,6 +57,18 @@ func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 	}
 	// MTIX-95.31.19.9: task history unions by entry id, never dropping a local entry.
 	return withHistoryUnion(ctx, tx, data, result, policy.now)
+}
+
+// countAction adds one merged node to the created, updated or skipped count.
+func (r *ImportResult) countAction(action importAction) {
+	switch action {
+	case importActionCreated:
+		r.NodesCreated++
+	case importActionUpdated, importActionRolledUp:
+		r.NodesUpdated++
+	case importActionSkipped:
+		r.NodesSkipped++
+	}
 }
 
 // withHistoryUnion unions the file's task history into the store and returns
@@ -133,7 +138,14 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	if differentErr := refuseDifferentTask(&local, n); differentErr != nil {
 		return 0, differentErr
 	}
-	merged, prepErr := prepareMerged(ctx, tx, n, &local, fileCarriesAllColumns, ctl.journal)
+	if ctl.journal != nil && local.DeletedAt != "" {
+		// No op restores a deleted task: a restored row would split from every
+		// peer, so on a store that syncs it stays deleted and the file's
+		// changes to it are not applied (round 4).
+		ctl.journal.noteSkippedDeleted(n)
+		return importActionSkipped, nil
+	}
+	merged, prepErr := prepareMerged(n, &local, fileCarriesAllColumns, ctl)
 	if prepErr != nil {
 		return 0, prepErr
 	}
@@ -159,17 +171,14 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	return markRollUp(importActionUpdated, &local, &merged), nil
 }
 
-// prepareMerged returns the copy of the file's node the merge writes: the
-// hub-known uid is kept (MTIX-112.17.16.16), local columns an older file lacks
+// prepareMerged returns the copy of the file's node the merge writes: on a
+// store that syncs the held uid is kept (MTIX-112.17.16.16), local columns an older file lacks
 // stand (keepLocalNodeColumns), and a local value a stale copy leaves empty is
 // kept (keepLocalBlankedFields, MTIX-95.31.4). The caller's export is not
 // changed, because it must still verify.
-func prepareMerged(ctx context.Context, tx *sql.Tx, n, local *exportNode, fileCarriesAll bool,
-	j *mergeJournal) (exportNode, error) {
+func prepareMerged(n, local *exportNode, fileCarriesAll bool, ctl mergeControl) (exportNode, error) {
 	merged := *n
-	if err := keepHubKnownUID(ctx, tx, &merged, local, j); err != nil {
-		return merged, err
-	}
+	keepHubKnownUID(&merged, local, ctl)
 	if !fileCarriesAll {
 		keepLocalNodeColumns(&merged, local)
 	}

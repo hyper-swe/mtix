@@ -72,7 +72,18 @@ func (s *Store) BackfillDryRun(ctx context.Context) (BackfillResult, error) {
 	if err := s.verifyNodesInvariants(ctx, s.readDB); err != nil {
 		return BackfillResult{}, err
 	}
-	return s.countBackfillWork(ctx, s.readDB)
+	var only map[string]bool // nil: every task
+	if count, err := s.CountSyncEvents(ctx); err != nil {
+		return BackfillResult{}, err
+	} else if count > 0 {
+		// A log that holds other events: count what a real backfill sends,
+		// only the tasks the log lacks (round 4); nil means it would refuse,
+		// and the dry run counts the whole board as before.
+		if only, err = s.partialBackfillSet(ctx); err != nil {
+			return BackfillResult{}, err
+		}
+	}
+	return s.countBackfillWork(ctx, s.readDB, only)
 }
 
 // Backfill synthesizes sync_events rows for every existing node,
@@ -104,9 +115,16 @@ func (s *Store) Backfill(ctx context.Context, force bool) (BackfillResult, error
 	if countErr != nil {
 		return BackfillResult{}, countErr
 	}
+	var only map[string]bool // nil: every task (an empty journal, or force)
 	if count > 0 && !force {
-		return BackfillResult{}, fmt.Errorf("%w (%d events present)",
-			ErrBackfillSyncEventsNonEmpty, count)
+		var missErr error
+		if only, missErr = s.partialBackfillSet(ctx); missErr != nil {
+			return BackfillResult{}, missErr
+		}
+		if only == nil {
+			return BackfillResult{}, fmt.Errorf("%w (%d events present)",
+				ErrBackfillSyncEventsNonEmpty, count)
+		}
 	}
 
 	if verifyErr := s.verifyNodesInvariants(ctx, s.readDB); verifyErr != nil {
@@ -115,7 +133,7 @@ func (s *Store) Backfill(ctx context.Context, force bool) (BackfillResult, error
 
 	var result BackfillResult
 	txErr := s.WithTx(ctx, func(tx *sql.Tx) error {
-		r, runErr := s.runBackfillInTx(ctx, tx)
+		r, runErr := s.runBackfillInTx(ctx, tx, only)
 		result = r
 		return runErr
 	})
@@ -135,10 +153,10 @@ type backfillNodeRow struct {
 // runBackfillInTx is the single-tx body. Called by Backfill; extracted
 // so the chaos test can override and panic mid-walk. Split into three
 // helpers for cognitive-complexity hygiene.
-func (s *Store) runBackfillInTx(ctx context.Context, tx *sql.Tx) (BackfillResult, error) {
+func (s *Store) runBackfillInTx(ctx context.Context, tx *sql.Tx, only map[string]bool) (BackfillResult, error) {
 	var result BackfillResult
 
-	collected, err := collectBackfillNodes(ctx, tx)
+	collected, err := collectBackfillNodes(ctx, tx, only)
 	if err != nil {
 		return result, err
 	}
@@ -150,7 +168,7 @@ func (s *Store) runBackfillInTx(ctx context.Context, tx *sql.Tx) (BackfillResult
 		}
 	}
 
-	depCount, depErr := emitBackfillDependencies(ctx, tx)
+	depCount, depErr := emitBackfillDependencies(ctx, tx, only)
 	if depErr != nil {
 		return result, depErr
 	}
@@ -166,7 +184,7 @@ func (s *Store) runBackfillInTx(ctx context.Context, tx *sql.Tx) (BackfillResult
 // precedes its children (see topoOrderBackfillNodes). Pulled out for
 // cognitive-complexity hygiene; runBackfillInTx then iterates and
 // emits.
-func collectBackfillNodes(ctx context.Context, tx *sql.Tx) ([]backfillNodeRow, error) {
+func collectBackfillNodes(ctx context.Context, tx *sql.Tx, only map[string]bool) ([]backfillNodeRow, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT id, parent_id, depth, seq, project, title, description,
 		       prompt, acceptance, node_type, issue_type, priority,
@@ -185,6 +203,9 @@ func collectBackfillNodes(ctx context.Context, tx *sql.Tx) ([]backfillNodeRow, e
 		nr, scanErr := scanBackfillNode(rows)
 		if scanErr != nil {
 			return nil, scanErr
+		}
+		if only != nil && !only[nr.node.ID] {
+			continue // a partial backfill sends only the tasks the log lacks
 		}
 		collected = append(collected, nr)
 	}
@@ -457,7 +478,7 @@ func emitBackfillTransition(ctx context.Context, tx *sql.Tx, n *model.Node, upda
 
 // emitBackfillDependencies walks the dependencies table and emits one
 // link_dep event per row. Returns the emitted count.
-func emitBackfillDependencies(ctx context.Context, tx *sql.Tx) (int, error) {
+func emitBackfillDependencies(ctx context.Context, tx *sql.Tx, only map[string]bool) (int, error) {
 	rows, err := tx.QueryContext(ctx, `
 		SELECT from_id, to_id, dep_type, created_at, created_by
 		FROM dependencies
@@ -473,6 +494,9 @@ func emitBackfillDependencies(ctx context.Context, tx *sql.Tx) (int, error) {
 		var createdBy sql.NullString
 		if scanErr := rows.Scan(&fromID, &toID, &depType, &createdAt, &createdBy); scanErr != nil {
 			return count, fmt.Errorf("scan dep: %w", scanErr)
+		}
+		if only != nil && !only[fromID] && !only[toID] {
+			continue // a partial backfill sends only links with an end it sends
 		}
 		ts, _ := parseFlexibleTime(createdAt)
 		author := ""
@@ -585,7 +609,7 @@ func emitBackfillAnnotations(ctx context.Context, tx *sql.Tx, nodeID, project, c
 // counts what would be emitted. Used by BackfillDryRun. Per-row work
 // is delegated to accountBackfillNodeRow for cognitive-complexity
 // hygiene.
-func (s *Store) countBackfillWork(ctx context.Context, db queryable) (BackfillResult, error) {
+func (s *Store) countBackfillWork(ctx context.Context, db queryable, only map[string]bool) (BackfillResult, error) {
 	var result BackfillResult
 
 	rows, err := db.QueryContext(ctx, `
@@ -598,7 +622,7 @@ func (s *Store) countBackfillWork(ctx context.Context, db queryable) (BackfillRe
 	defer func() { _ = rows.Close() }()
 
 	for rows.Next() {
-		if scanErr := accountBackfillNodeRow(rows, &result); scanErr != nil {
+		if scanErr := accountBackfillNodeRow(rows, &result, only); scanErr != nil {
 			return result, scanErr
 		}
 	}
@@ -606,11 +630,9 @@ func (s *Store) countBackfillWork(ctx context.Context, db queryable) (BackfillRe
 		return result, fmt.Errorf("count walk: %w", iterErr)
 	}
 
-	var depCount int
-	if depErr := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM dependencies`,
-	).Scan(&depCount); depErr != nil {
-		return result, fmt.Errorf("count deps: %w", depErr)
+	depCount, depErr := countBackfillDependencies(ctx, db, only)
+	if depErr != nil {
+		return result, depErr
 	}
 	result.LinkDepEvents = depCount
 
@@ -621,7 +643,7 @@ func (s *Store) countBackfillWork(ctx context.Context, db queryable) (BackfillRe
 
 // accountBackfillNodeRow scans one nodes row in the dry-run shape and
 // tallies the events that would be emitted, without touching tx.
-func accountBackfillNodeRow(rows *sql.Rows, result *BackfillResult) error {
+func accountBackfillNodeRow(rows *sql.Rows, result *BackfillResult, only map[string]bool) error {
 	var id string
 	var description, prompt, acceptance, assignee sql.NullString
 	var status string
@@ -629,6 +651,9 @@ func accountBackfillNodeRow(rows *sql.Rows, result *BackfillResult) error {
 	if scanErr := rows.Scan(&id, &description, &prompt, &acceptance,
 		&assignee, &status, &annotations); scanErr != nil {
 		return fmt.Errorf("scan: %w", scanErr)
+	}
+	if only != nil && !only[id] {
+		return nil // a partial backfill sends only the tasks the log lacks
 	}
 	result.NodeCount++
 	result.CreateEvents++
@@ -640,18 +665,27 @@ func accountBackfillNodeRow(rows *sql.Rows, result *BackfillResult) error {
 	if status != "" && status != string(model.StatusOpen) {
 		result.TransitionEvents++
 	}
-	if annotations.Valid && annotations.String != "" &&
-		annotations.String != "[]" && annotations.String != "null" {
-		var entries []map[string]any
-		if err := json.Unmarshal([]byte(annotations.String), &entries); err == nil {
-			for _, e := range entries {
-				if text, ok := e["text"].(string); ok && text != "" {
-					result.AnnotateEvents++
-				}
-			}
+	result.AnnotateEvents += countAnnotationEntries(annotations)
+	return nil
+}
+
+// countAnnotationEntries counts the annotation entries with text, each of
+// which a backfill emits as a comment.
+func countAnnotationEntries(annotations sql.NullString) int {
+	if !annotations.Valid || annotations.String == "" || annotations.String == "[]" || annotations.String == "null" {
+		return 0
+	}
+	var entries []map[string]any
+	if err := json.Unmarshal([]byte(annotations.String), &entries); err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range entries {
+		if text, ok := e["text"].(string); ok && text != "" {
+			n++
 		}
 	}
-	return nil
+	return n
 }
 
 // verifyNodesInvariants checks that every non-null parent_id refers
@@ -682,4 +716,29 @@ func (s *Store) verifyNodesInvariants(ctx context.Context, db queryable) error {
 type queryable interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// countBackfillDependencies counts the links a backfill would emit: all of
+// them, or with a partial set only those with an end in it.
+func countBackfillDependencies(ctx context.Context, db queryable, only map[string]bool) (int, error) {
+	// Every dependency link, to count those a backfill would send.
+	rows, err := db.QueryContext(ctx, `SELECT from_id, to_id FROM dependencies`)
+	if err != nil {
+		return 0, fmt.Errorf("count deps: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	n := 0
+	for rows.Next() {
+		var from, to string
+		if err := rows.Scan(&from, &to); err != nil {
+			return 0, fmt.Errorf("scan dep: %w", err)
+		}
+		if only == nil || only[from] || only[to] {
+			n++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("count deps: %w", err)
+	}
+	return n, nil
 }

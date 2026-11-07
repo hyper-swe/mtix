@@ -108,6 +108,9 @@ type workflowPolicy struct {
 	// journal records what a merge changes for journaling; nil when the
 	// store does not sync (MTIX-112.17.16.16).
 	journal *mergeJournal
+	// keepUIDs is true for a store that syncs, whether or not the merge
+	// journals (a relay snapshot merge does not): it keeps every task's uid.
+	keepUIDs bool
 }
 
 // withWorkflowResolution makes the import settle workflow conflicts with r

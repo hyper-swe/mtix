@@ -87,8 +87,8 @@ func TestDoctor_LocalOnlyImports_FixSettlesOneFieldAtATime(t *testing.T) {
 		[]sqlite.LocalOnlyImport{{ID: "TEST-1", Fields: []string{"title", "priority"}}}))
 	check := localOnlyCheck(t)
 	require.Contains(t, check.Detail, "TEST-1 (priority, title)")
-	require.Contains(t, check.Fix, `title: mtix update <id> --title`)
-	require.Contains(t, check.Fix, `priority: mtix update <id> --priority`)
+	require.Contains(t, check.Fix, "title: `mtix update <id> --title")
+	require.Contains(t, check.Fix, "priority: `mtix update <id> --priority")
 
 	require.NoError(t, runUpdate("TEST-1", "Imported", "", "", "", 0, "", ""), "the title route")
 	check = localOnlyCheck(t)

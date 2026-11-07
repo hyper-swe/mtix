@@ -25,6 +25,12 @@ type mergePlanner struct {
 	wallTS  int64
 	planned []emitParams
 	j       *mergeJournal
+	// taken holds the event ids this merge planned already: a second event
+	// under the same id would fail the import, so it takes a fresh id.
+	taken map[string]bool
+	// newTasks holds the tasks the merge created; eligible memoizes eligibleOrNote.
+	newTasks map[string]bool
+	elig     map[string]bool
 }
 
 func (p *mergePlanner) add(id string, op model.OpType, payload any) error {
@@ -33,6 +39,16 @@ func (p *mergePlanner) add(id string, op model.OpType, payload any) error {
 
 // addWithID plans an event under a given event id ("" for a fresh one).
 func (p *mergePlanner) addWithID(id, eventID string, op model.OpType, payload any) error {
+	if eventID != "" {
+		if p.taken[eventID] {
+			eventID = "" // planned under this id already in this merge
+		} else {
+			if p.taken == nil {
+				p.taken = map[string]bool{}
+			}
+			p.taken[eventID] = true
+		}
+	}
 	raw, err := p.s.encodePayload(payload)
 	if err != nil {
 		return fmt.Errorf("encode %s payload for %s: %w", op, id, err)
@@ -86,37 +102,32 @@ func (p *mergePlanner) eventIDUsed(id string) (bool, error) {
 	return used, nil
 }
 
-// keepHubKnownUID keeps the uid of a task the hub holds (principle D, round
-// 3): nothing the merge does moves the identity of a task the hub knows, so
-// the file's other uid for it is ignored, not adopted. Peers name the task by
-// the uid it was created under, and an event under another uid would
-// quarantine on every one of them. A task the hub does not hold yet still
-// adopts the file's uid, and its pending events follow (carryAdoptedUID). It
-// asks only when the merge journals (a store that syncs), and names the
-// kept uid local only.
-func keepHubKnownUID(ctx context.Context, tx *sql.Tx, merged, local *exportNode, j *mergeJournal) error {
-	if j == nil || merged.UID == "" || local.UID == "" || merged.UID == local.UID {
-		return nil
+// keepHubKnownUID keeps the uid of a task held on a store that syncs (principle
+// D, rounds 3 and 4): nothing the merge does moves the identity of a task a
+// peer may know, so the file's other uid for it is ignored, not adopted, on
+// every transport. It is not derived from the journal: a relay snapshot clone
+// holds tasks with no create row, and peers name them by the uid they hold.
+// Adoption stays for a store that does not sync. It names the kept
+// uid local only.
+func keepHubKnownUID(merged, local *exportNode, ctl mergeControl) {
+	if !ctl.keepUIDs || merged.UID == "" || local.UID == "" || merged.UID == local.UID {
+		return
 	}
-	var known bool
-	// The local uid's creation was pushed or pulled: the hub knows the task by it.
-	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sync_events
-		WHERE op_type = 'create_node' AND ((uid = ? AND uid <> '') OR event_id = ?) AND sync_status <> 'pending')`,
-		local.UID, local.UID).Scan(&known); err != nil {
-		return fmt.Errorf("check whether the hub knows %s: %w", format.EventID(local.UID), err)
-	}
-	if known {
-		merged.UID = local.UID
+	merged.UID = local.UID
+	if j := ctl.journal; j != nil {
 		j.noteLocalOnly(merged.ID, "uid") // peers know the task by the old uid
 		j.keptUID = append(j.keptUID, merged.ID)
 	}
-	return nil
 }
 
 // planMergeEvents turns the merge's changes into events: new tasks parents
 // first, then each changed task's values, then new dependencies.
 func (s *Store) planMergeEvents(ctx context.Context, tx *sql.Tx, j *mergeJournal, wallTS int64) ([]emitParams, error) {
 	p := &mergePlanner{s: s, ctx: ctx, tx: tx, wallTS: wallTS, j: j}
+	p.newTasks = make(map[string]bool, len(j.created))
+	for _, id := range j.created {
+		p.newTasks[id] = true
+	}
 	created := make([]exportNode, 0, len(j.created))
 	for _, id := range j.created {
 		n, err := p.storedNode(id)
@@ -127,21 +138,24 @@ func (s *Store) planMergeEvents(ctx context.Context, tx *sql.Tx, j *mergeJournal
 	}
 	sort.SliceStable(created, func(a, b int) bool { return created[a].Depth < created[b].Depth })
 	for i := range created {
+		if ok, err := p.eligibleOrNote(created[i].ID); err != nil {
+			return nil, err
+		} else if !ok {
+			continue
+		}
 		if err := p.planCreated(&created[i]); err != nil {
 			return nil, err
 		}
 	}
-	for _, id := range j.changed {
-		after, err := p.storedNode(id)
-		if err != nil {
-			return nil, err
-		}
-		before := j.before[id]
-		if err := p.planChanged(&before, &after); err != nil {
-			return nil, err
-		}
+	if err := p.planChangedTasks(); err != nil {
+		return nil, err
 	}
 	for _, d := range j.deps {
+		if ok, err := p.depEligible(&d); err != nil {
+			return nil, err
+		} else if !ok {
+			continue
+		}
 		if err := p.add(d.FromID, model.OpLinkDep, &model.LinkDepPayload{DependsOnNodeID: d.ToID, DepType: d.DepType}); err != nil {
 			return nil, err
 		}
@@ -172,14 +186,6 @@ func (p *mergePlanner) planCreated(n *exportNode) error {
 // planChanged plans the values of a changed task that differ: one event per
 // field, a transition for a status change, a delete, and new annotations.
 func (p *mergePlanner) planChanged(b, a *exportNode) error {
-	if b.DeletedAt != "" {
-		// A peer applies an event only to a live task and no event restores a
-		// deleted one, so nothing is journaled for a task deleted before the
-		// merge: its changed values stay on this machine, named (principle E).
-		p.j.noteLocalOnly(a.ID, nodeFieldDiffs(b, a)...)
-		p.j.noteLocalOnly(a.ID, p.localOnlyColumns(b, a, false)...)
-		return nil
-	}
 	p.j.noteLocalOnly(a.ID, p.localOnlyColumns(b, a, false)...)
 	if err := p.planAcceptancePrompt(b, a); err != nil {
 		return err
@@ -273,9 +279,9 @@ func changedPlainFields(b, a *exportNode) []changedField {
 
 // labelsOf reads the stored labels text (a JSON array) as a list.
 func labelsOf(raw string) []string {
-	var out []string
-	if raw == "" || json.Unmarshal([]byte(raw), &out) != nil {
-		return nil
+	out := []string{} // an empty list, never nil: nil marshals as the text null
+	if raw == "" || json.Unmarshal([]byte(raw), &out) != nil || out == nil {
+		return []string{}
 	}
 	return out
 }

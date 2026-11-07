@@ -116,10 +116,10 @@ func TestImportMerge_DeletedTask_JournalsDeleteAndAPeerConverges(t *testing.T) {
 	require.NotEmpty(t, viewOf(t, peer, "REC-2").DeletedAt, "the peer deleted the task")
 }
 
-// TestImportMerge_RestoredTask_IsNamedLocalOnlyAndWritesNoEvent: a file that
-// restores a task deleted here writes it back, journals nothing for the
-// restore, and names the task local only by field.
-func TestImportMerge_RestoredTask_IsNamedLocalOnlyAndWritesNoEvent(t *testing.T) {
+// TestImportMerge_RestoredTask_StaysDeletedAndIsNamed: a file that restores a
+// task deleted here does not write it back (no op restores a task), journals
+// nothing, and names the task as one that stays deleted.
+func TestImportMerge_RestoredTask_StaysDeletedAndIsNamed(t *testing.T) {
 	importer, _ := peerPair(t, 2)
 	_, err := importer.WriteDB().Exec(`UPDATE nodes SET deleted_at = '2026-10-01T00:00:00Z' WHERE id = 'REC-2'`)
 	require.NoError(t, err)
@@ -136,9 +136,9 @@ func TestImportMerge_RestoredTask_IsNamedLocalOnlyAndWritesNoEvent(t *testing.T)
 
 	res := mergeTheirs(t, importer, data)
 
-	require.Empty(t, viewOf(t, importer, "REC-2").DeletedAt)
-	require.Contains(t, fieldsNamed(res, "REC-2"), "deleted_at")
-	require.Contains(t, fieldsNamed(res, "REC-2"), "title", "a peer applies events to a live task only: the change is named, not journaled")
+	require.NotEmpty(t, viewOf(t, importer, "REC-2").DeletedAt, "no op restores a deleted task")
+	require.Equal(t, []string{"REC-2"}, res.SkippedDeleted)
+	require.NotEqual(t, "Back", viewOf(t, importer, "REC-2").Title)
 	require.Zero(t, countJournal(t, importer, `sync_status = 'pending'`))
 }
 

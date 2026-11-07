@@ -37,6 +37,23 @@ func adoptFileUID(t *testing.T, nodeID string) string {
 	return uid
 }
 
+// mergeFileUIDKept runs the same merge import as adoptFileUID on a store
+// that already syncs (a push has run, so the hub knows the task by its uid)
+// and checks the round 4 rule (F23, Principle D): the task keeps its own uid
+// and the file's uid is not adopted. It returns the kept uid.
+func mergeFileUIDKept(t *testing.T, nodeID string) string {
+	t.Helper()
+	before, err := app.store.GetNode(context.Background(), nodeID)
+	require.NoError(t, err)
+	fileUID, err := tryAdoptFileUID(t, nodeID)
+	require.NoError(t, err)
+	require.NotEqual(t, fileUID, before.UID)
+	after, err := app.store.GetNode(context.Background(), nodeID)
+	require.NoError(t, err)
+	require.Equal(t, before.UID, after.UID, "a store that syncs keeps the task's uid; the file's is not adopted")
+	return after.UID
+}
+
 // tryAdoptFileUID is adoptFileUID without the checks on the outcome: it
 // returns the uid the file gives nodeID and the merge import's error.
 func tryAdoptFileUID(t *testing.T, nodeID string) (string, error) {
@@ -86,7 +103,13 @@ func queueWithoutUID(t *testing.T, nodeID string) string {
 // held too: a soft-deleted task still counts as the task found by the
 // number its creation names.
 func TestPushLoop_HeldCreationWhoseUIDNoNodeHas_TaskAndSubtreeHeld(t *testing.T) {
-	adopt := func(t *testing.T) { adoptFileUID(t, "TEST-1") }
+	// A merge before the first push adopts the file's uid (the store does not
+	// sync yet); one after it keeps the task's uid (round 4). Either way the
+	// task and its subtree stay held.
+	adopt := func(t *testing.T) {
+		_, err := tryAdoptFileUID(t, "TEST-1")
+		require.NoError(t, err)
+	}
 	queue := func(t *testing.T) { queueWithoutUID(t, "TEST-1") }
 	tests := []struct {
 		name       string
@@ -94,10 +117,10 @@ func TestPushLoop_HeldCreationWhoseUIDNoNodeHas_TaskAndSubtreeHeld(t *testing.T)
 		loseUID    func(t *testing.T)
 		deleteTask bool // mtix delete TEST-1 --cascade after the other changes
 	}{
-		{"uid adopted by a merge, creation held before", true, adopt, false},
-		{"uid adopted by a merge, creation held in the same push", false, adopt, false},
-		{"uid adopted by a merge, task deleted, creation held before", true, adopt, true},
-		{"uid adopted by a merge, task deleted, creation held in the same push", false, adopt, true},
+		{"uid merged, creation held before", true, adopt, false},
+		{"uid merged, creation held in the same push", false, adopt, false},
+		{"uid merged, task deleted, creation held before", true, adopt, true},
+		{"uid merged, task deleted, creation held in the same push", false, adopt, true},
 		{"creation queued without a uid, held before", true, queue, false},
 		{"creation queued without a uid, held in the same push", false, queue, false},
 	}

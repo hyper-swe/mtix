@@ -62,8 +62,10 @@ func TestImportMerge_HubKnownTask_KeepsItsUID_LaterEditsApplyBothWays(t *testing
 	require.Equal(t, "Peer edit", titleOf(t, importer, "REC-1"), "a peer edit applies on the importer")
 }
 
-// TestImportMerge_PendingTask_StillAdoptsTheFileUID: a task the hub does not
-// hold yet takes the file's uid, with its pending events.
+// TestImportMerge_PendingTask_StillAdoptsTheFileUID: on a store that does not
+// sync (its events are all pending, no hub evidence) the merge still adopts
+// the file's uid, with the task's pending events (round 4 keeps uids only on
+// a store that syncs: TestImportMerge_SyncedStoreTaskWithoutCreateRow_KeepsItsUID).
 func TestImportMerge_PendingTask_StillAdoptsTheFileUID(t *testing.T) {
 	importer, teammate := newTestStore(t), newTestStore(t)
 	createSameIDTask(t, importer, "REC-1", "", 1, backfilledUID(t), "Shared task")
@@ -106,10 +108,9 @@ func TestImportMerge_DeletedTaskWithComment_CommentComesBeforeTheDelete(t *testi
 	require.NotEmpty(t, viewOf(t, peer, "REC-1").DeletedAt)
 }
 
-// TestImportMerge_RestoredTask_JournalsNothingAndNamesTheValues: no op
-// restores a deleted task, so a peer could apply none of its field events;
-// the merge journals nothing for it and names what changed.
-func TestImportMerge_RestoredTask_JournalsNothingAndNamesTheValues(t *testing.T) {
+// TestImportMerge_RestoredTask_JournalsNothingAndStaysDeleted: no op restores
+// a deleted task, so the merge leaves it deleted and journals nothing.
+func TestImportMerge_RestoredTask_JournalsNothingAndStaysDeleted(t *testing.T) {
 	importer, _ := peerPair(t, 1)
 	require.NoError(t, importer.DeleteNode(context.Background(), "REC-1", false, "alice"))
 	markJournalPushed(t, importer)
@@ -120,9 +121,8 @@ func TestImportMerge_RestoredTask_JournalsNothingAndNamesTheValues(t *testing.T)
 	res := mergeTheirs(t, importer, data)
 
 	require.Zero(t, countJournal(t, importer, `sync_status = 'pending'`))
-	named := fieldsNamed(res, "REC-1")
-	require.Contains(t, named, "deleted_at")
-	require.Contains(t, named, "title")
+	require.Equal(t, []string{"REC-1"}, res.SkippedDeleted)
+	require.NotEmpty(t, viewOf(t, importer, "REC-1").DeletedAt)
 }
 
 func inProgressPair(t *testing.T) (importer, peer *sqlite.Store) {
@@ -159,11 +159,11 @@ func TestImportMerge_BlocksDependencyRepeatedWithTheirs_EmitsNothingAndStaysBloc
 	require.Equal(t, viewOf(t, importer, "REC-1"), viewOf(t, peer, "REC-1"))
 }
 
-// TestImportMerge_EmptyJournalBesideTasks_JournalsNothingAndSaysBackfill: a
-// store filled before any sync has no create events; journaling only its
-// changes would send orphans and make backfill refuse, so the merge leaves
-// the journal empty and says so.
-func TestImportMerge_EmptyJournalBesideTasks_JournalsNothingAndSaysBackfill(t *testing.T) {
+// TestImportMerge_EmptyJournalBesideTasks_HeldTaskGetsNoEventsAndSaysBackfill:
+// a store filled before any sync has no create events; a change to a held task
+// would reach the hub without its create, so the task gets none and is named
+// (round 4: a per-task rule replaced the empty-journal rule).
+func TestImportMerge_EmptyJournalBesideTasks_HeldTaskGetsNoEventsAndSaysBackfill(t *testing.T) {
 	s := newTestStore(t)
 	createPlainTask(t, s, "REC-1", 1, "", sameIDTime)
 	_, err := s.WriteDB().Exec(`DELETE FROM sync_events`)
@@ -174,6 +174,7 @@ func TestImportMerge_EmptyJournalBesideTasks_JournalsNothingAndSaysBackfill(t *t
 
 	require.NoError(t, err)
 	require.True(t, res.NeedsBackfill)
+	require.Equal(t, []string{"REC-1"}, res.UnsentTasks)
 	require.Zero(t, countJournal(t, s, `1 = 1`))
 	require.Equal(t, "Imported", titleOf(t, s, "REC-1"))
 }

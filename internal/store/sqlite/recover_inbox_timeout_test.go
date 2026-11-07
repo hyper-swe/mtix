@@ -14,6 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// warmupIntegrityTimeout bounds the warm-up integrity checks only. It is
+// deliberately far above the 5 second production limit so that a slow
+// -race host cannot fail the warm-up (MTIX-112.54); the measured limit
+// below is what exercises the real timeout path.
+const warmupIntegrityTimeout = time.Minute
+
 // FR-19.1: exercise the real check with an injected budget, not a host-speed threshold.
 func TestRecoverInboxJournal_RealIntegrityTimeout_ExplainsUnprovenCoverage(t *testing.T) {
 	s := exchangeSnapshotStore(t)
@@ -29,11 +35,11 @@ func TestRecoverInboxJournal_RealIntegrityTimeout_ExplainsUnprovenCoverage(t *te
 		require.NoError(t, err)
 	}
 	// Measure a warmed real check on this host, then give the same work at most
-	// one hundredth of its fastest measured duration. Production still uses 5s.
+	// one hundredth of its fastest measured duration. Production still uses 5s (inboxIntegrityTimeout).
 	fastest := time.Hour
 	for i := 0; i < 3; i++ {
 		start := time.Now()
-		require.NoError(t, checkInboxIntegrity(t.Context(), s.readDB, inboxIntegrityTimeout))
+		require.NoError(t, checkInboxIntegrity(t.Context(), s.readDB, warmupIntegrityTimeout))
 		fastest = min(fastest, time.Since(start))
 	}
 	limit := min(fastest/100, time.Millisecond)

@@ -43,13 +43,17 @@ func TestRunSyncClone_UnreadableJournal_RefusesBeforeHub(t *testing.T) {
 	}
 }
 
-func TestInitCloneHookFloor_WriterFailure_WarnsForBothFloors(t *testing.T) {
-	for _, bootstrap := range []bool{false, true} {
-		t.Run(map[bool]string{false: "nonempty", true: "empty"}[bootstrap], func(t *testing.T) {
+func TestInitCloneHookFloor_WriterFailure_WarnsForEmptyAndNonemptyJournals(t *testing.T) {
+	for _, empty := range []bool{false, true} {
+		t.Run(map[bool]string{false: "nonempty", true: "empty"}[empty], func(t *testing.T) {
 			initTestApp(t)
+			if !empty {
+				_, err := app.nodeSvc.CreateNode(t.Context(), &service.CreateNodeRequest{Project: "TEST", Title: "existing", Creator: "sender"})
+				require.NoError(t, err)
+			}
 			require.NoError(t, app.store.WriteDB().Close())
 			var stderr bytes.Buffer
-			initCloneHookFloor(t.Context(), &stderr, bootstrap)
+			initCloneHookFloor(t.Context(), &stderr)
 			assert.Contains(t, stderr.String(), "mtix sync clone: hook floor init")
 			assert.Contains(t, stderr.String(), "database is closed")
 		})
@@ -64,7 +68,7 @@ func TestInitCloneHookFloor_UnreadableTail_WarnsWithoutAdvancing(t *testing.T) {
 	_, err = app.store.WriteDB().ExecContext(t.Context(), `DROP TABLE sync_events`)
 	require.NoError(t, err)
 	var stderr bytes.Buffer
-	initCloneHookFloor(t.Context(), &stderr, false)
+	initCloneHookFloor(t.Context(), &stderr)
 	assert.Contains(t, stderr.String(), "mtix sync clone: hook floor init")
 	assert.Contains(t, stderr.String(), "no such table")
 	var floor int64
@@ -79,7 +83,7 @@ func TestInitCloneHookFloor_NonemptyUsesWriterSnapshot(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, app.store.ReadDB().Close())
 	var stderr bytes.Buffer
-	initCloneHookFloor(t.Context(), &stderr, false)
+	initCloneHookFloor(t.Context(), &stderr)
 	assert.Empty(t, stderr.String(), "hook floor initialization uses the writer snapshot even without a reader")
 	var floor int64
 	require.NoError(t, app.store.WriteDB().QueryRowContext(t.Context(),

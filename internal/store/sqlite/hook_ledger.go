@@ -152,19 +152,7 @@ func (s *Store) InitHookOnlyScanFloorAtTail(ctx context.Context) error {
 // writer transaction so discard cannot leave a stale floor above the journal.
 func (s *Store) initHookScanFloorAtTail(ctx context.Context, seedWakes bool) error {
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		var tail int64
-		// Read the tail under the same writer transaction as the floor write,
-		// so replace cannot rewind the journal between the two (FR-20 §8).
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(rowid),0) FROM sync_events`).Scan(&tail); err != nil {
-			return err
-		}
-		if err := advanceHookScanFloorTx(ctx, tx, tail); err != nil {
-			return err
-		}
-		if !seedWakes {
-			return nil
-		}
-		return seedWakeProgressAtTailTx(ctx, tx, tail)
+		return initHookScanFloorAtTailTx(ctx, tx, seedWakes)
 	})
 	if err != nil {
 		return fmt.Errorf("initialize hook scan floor: %w", err)

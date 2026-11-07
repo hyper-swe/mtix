@@ -69,6 +69,10 @@ const (
 // check and the quarantine's timestamps), the sync.max_lamport_jump bound
 // and the CLI version recorded with a quarantined event.
 type pullIngest struct {
+	// cloneBootstrap keeps clone-origin retry batches inside the first-fill stream.
+	cloneBootstrap bool
+	// moreCursorPages records hasMore for this cursor-pass page only.
+	moreCursorPages bool
 	// onConnect observes an existing transport attempt, adding no contact (MTIX-112.20.7).
 	onConnect  func(context.Context)
 	receipt    *pullExchangeTracker
@@ -336,7 +340,11 @@ func retryQuarantinePage(ctx context.Context, in pullIngest, st *sqlite.Store,
 	page []sqlite.QuarantinedEvent,
 ) (applied, dropped int, err error) {
 	in.apply = st.IdempotentApply
-	err = st.WithTx(ctx, func(tx *sql.Tx) error {
+	withTx := st.WithTx
+	if in.cloneBootstrap {
+		withTx = st.WithCloneWakeBootstrap
+	}
+	err = withTx(ctx, func(tx *sql.Tx) error {
 		applied, dropped = 0, 0
 		for _, q := range page {
 			if q.Source == sqlite.QuarantineSourcePush {

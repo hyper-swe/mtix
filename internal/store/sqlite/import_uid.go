@@ -328,7 +328,27 @@ func markApplied(report *ImportReconcileReport, result *ImportResult) {
 	report.WorkflowConflicts = result.WorkflowResolved
 	report.Idempotent -= countIdempotent(result.WorkflowResolved)
 	report.Applied = true
+	report.UIDAdoptions = withoutKeptUIDs(report.UIDAdoptions, result.keptUID)
 	result.UIDAdoptions = report.UIDAdoptions
+}
+
+// withoutKeptUIDs drops from the planned adoptions the tasks whose local uid
+// the merge kept: nothing was adopted for them (MTIX-112.17.16.16).
+func withoutKeptUIDs(planned []ImportUIDAdoption, kept []string) []ImportUIDAdoption {
+	if len(kept) == 0 {
+		return planned
+	}
+	skip := make(map[string]bool, len(kept))
+	for _, id := range kept {
+		skip[id] = true
+	}
+	var out []ImportUIDAdoption
+	for _, a := range planned {
+		if !skip[a.ID] {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // finishFailedImport returns what ImportReconcile returns when Import failed.

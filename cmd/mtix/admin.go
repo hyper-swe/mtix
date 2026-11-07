@@ -295,7 +295,11 @@ func reportImportResult(result *sqlite.ImportResult, writerVersion string) {
 		result.NodesCreated, result.NodesUpdated,
 		result.NodesSkipped, result.DepsImported)
 	if result.Journaled > 0 { // MTIX-112.17.16.16: the changes wait in the sync journal
-		fmt.Printf("Journaled %d sync events for the changes; mtix sync push sends them to the hub\n", result.Journaled)
+		fmt.Printf("Journaled %d sync events for the changes; %s\n", result.Journaled, journaledSendWords())
+	}
+	if result.NeedsBackfill {
+		fmt.Println("The sync journal is empty beside the tasks this store holds, so the merge journaled nothing; " +
+			"mtix sync backfill sends the tasks to the hub or relay")
 	}
 	if len(result.JournalLocalOnly) > 0 {
 		fmt.Println(localOnlyLine(result.JournalLocalOnly))
@@ -443,4 +447,18 @@ func guardImportReplace(ctx context.Context, exportData *sqlite.ExportData) erro
 	}
 	_, err = guardDestructive(ctx, os.Stderr, op)
 	return err
+}
+
+// journaledSendWords says how the journaled events leave this machine, by the
+// transport the board syncs through: a hub takes a push, a relay publishes.
+func journaledSendWords() string {
+	hub, relay := hubConfigured(app.mtixDir), relayDir() != ""
+	switch {
+	case hub && relay:
+		return "mtix sync push sends them to the hub, and the relay publishes them to its peers"
+	case relay:
+		return "this board syncs through a relay, so they stay pending until the relay publishes them to its peers (there is no hub to push to)"
+	default:
+		return "mtix sync push sends them to the hub"
+	}
 }

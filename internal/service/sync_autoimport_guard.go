@@ -504,6 +504,6 @@ func (s *SyncService) noticeLocalOnly(changes []sqlite.LocalOnlyImport) {
 		"and may be replaced on the next pull; run mtix doctor for the list\n",
 		plural(len(changes), "task", "tasks"), strings.Join(named, "; "), more)
 	if unsent {
-		fmt.Fprint(s.notices, "mtix: weight, estimates, references and metadata are carried by no sync event, so those values never reach the hub\n")
+		fmt.Fprint(s.notices, "mtix: weight, estimates, references, metadata, wake time and agent state have no command that sends them to the hub, so those values stay on this machine\n")
 	}
 }

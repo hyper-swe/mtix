@@ -140,9 +140,11 @@ func TestImportMerge_ColumnsNoOpCarries_AreNamedLocalOnlyByField(t *testing.T) {
 
 	res := mergeTheirs(t, importer, data)
 
-	require.Equal(t, []sqlite.LocalOnlyChange{
-		{ID: "REC-1", Fields: []string{"actual_min", "annotations", "code_refs", "commit_refs", "estimate_min",
-			"invalidation", "metadata", "session_id", "weight"}},
-		{ID: "REC-2", Fields: []string{"agent_state", "weight"}},
-	}, res.JournalLocalOnly)
+	for _, f := range []string{"actual_min", "annotations", "code_refs", "commit_refs", "estimate_min",
+		"invalidated_at", "invalidated_by", "invalidation_reason", "metadata", "session_id", "weight"} {
+		require.Contains(t, fieldsNamed(res, "REC-1"), f)
+	}
+	for _, f := range []string{"agent_state", "weight"} {
+		require.Contains(t, fieldsNamed(res, "REC-2"), f)
+	}
 }

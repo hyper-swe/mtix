@@ -13,9 +13,11 @@ import (
 
 // The fields of a task an automatic import can change, by the names the
 // local-only record and its notices use (MTIX-112.17.16.16). A field is
-// settleable when a sync event carries it: a later event then replaces the
-// imported value or sends the current one. Other columns (weight, estimates,
-// references, metadata) are named in the notice only: no event carries them.
+// settleable when a command here journals an event that carries it: a later
+// event then replaces the imported value or sends the current one. Other
+// columns (weight, estimates, references, metadata, and also the wake time
+// and the agent state, which no command here journals) are named in the
+// notice only: nothing sends them from this machine.
 
 // fieldsOfEvent names the record fields an event of the sync log touches.
 func fieldsOfEvent(op, payload string) []string {
@@ -30,7 +32,7 @@ func fieldsOfEvent(op, payload string) []string {
 	case model.OpSetAcceptance:
 		return []string{"acceptance"}
 	case model.OpTransitionStatus:
-		return []string{"status", "defer_until"}
+		return []string{"status"} // mtix defer journals a transition with no wake time
 	case model.OpDefer:
 		return []string{"status", "defer_until"}
 	case model.OpClaim, model.OpUnclaim:
@@ -45,11 +47,12 @@ func fieldsOfEvent(op, payload string) []string {
 	return nil
 }
 
-// settleableField reports whether a sync event can carry the field.
+// settleableField reports whether a command here can send the field in a
+// sync event (round 3: a route is claimed only where one was run).
 func settleableField(name string) bool {
 	switch name {
 	case "title", "description", "prompt", "acceptance", "labels", "priority", "issue_type", "assignee",
-		"agent_state", "status", "defer_until", "deleted_at", "annotations", "dependencies":
+		"status", "annotations", "dependencies":
 		return true
 	}
 	return false

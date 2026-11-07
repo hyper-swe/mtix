@@ -19,6 +19,11 @@ const queueCapCheckName = "sync queue cap"
 // exact fix, when the queue is at the cap, where the next write that journals
 // an event is refused. It reads the local store only.
 func appendQueueCapCheck(ctx context.Context, r DoctorReport, st *sqlite.Store) DoctorReport {
+	if _, invalid := configuredQueueCap(); invalid != nil {
+		return appendDoctorCheck(r, DoctorCheck{Name: queueCapCheckName, Pass: true, Warn: true,
+			Detail: "the configured cap is refused and the queue is unlimited: " + invalid.Error(),
+			Fix:    "mtix config set sync.max_queue_size <number> (0 is unlimited)"})
+	}
 	pending, limit, err := st.QueueDepth(ctx)
 	if err != nil {
 		return appendCheck(r, queueCapCheckName, false, "could not read the queue: "+err.Error())
@@ -34,4 +39,12 @@ func appendQueueCapCheck(ctx context.Context, r DoctorReport, st *sqlite.Store) 
 		"(on a relay-only board the events stay pending, so raise the cap)", pending*2)
 	return appendDoctorCheck(r, DoctorCheck{Name: queueCapCheckName, Pass: true, Warn: true,
 		Detail: detail + ": the next write that journals an event is refused", Fix: fix})
+}
+
+// configuredQueueCap reads the configured cap and the reason it was refused.
+func configuredQueueCap() (int64, error) {
+	if app.configSvc == nil {
+		return 0, nil
+	}
+	return app.configSvc.MaxQueueSizeChecked()
 }

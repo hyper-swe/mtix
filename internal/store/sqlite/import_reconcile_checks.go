@@ -68,7 +68,8 @@ func (s *Store) prepareWrite(ctx context.Context, data *ExportData, opts ImportR
 	if err := s.refuseEmptyImport(ctx, data, opts.Force); err != nil {
 		return nil, err
 	}
-	changes, checksum, err := s.countImportChanges(ctx, data, opts.Mode, moves, opts.Workflow)
+	changes, checksum, err := s.countImportChanges(ctx, data, opts.Mode, moves,
+		&importConfig{workflow: opts.Workflow, asSynced: opts.AssumeSynced, noJournal: opts.NoJournal})
 	if err != nil {
 		return nil, err
 	}

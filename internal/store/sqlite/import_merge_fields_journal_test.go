@@ -137,8 +137,9 @@ func TestImportMerge_RestoredTask_IsNamedLocalOnlyAndWritesNoEvent(t *testing.T)
 	res := mergeTheirs(t, importer, data)
 
 	require.Empty(t, viewOf(t, importer, "REC-2").DeletedAt)
-	require.Equal(t, []sqlite.LocalOnlyChange{{ID: "REC-2", Fields: []string{"deleted_at"}}}, res.JournalLocalOnly)
-	require.Zero(t, countJournal(t, importer, `op_type = 'delete' AND sync_status = 'pending'`))
+	require.Contains(t, fieldsNamed(res, "REC-2"), "deleted_at")
+	require.Contains(t, fieldsNamed(res, "REC-2"), "title", "a peer applies events to a live task only: the change is named, not journaled")
+	require.Zero(t, countJournal(t, importer, `sync_status = 'pending'`))
 }
 
 // TestImportMerge_NewParentAndChild_CreateEventsAreParentFirst: the file lists

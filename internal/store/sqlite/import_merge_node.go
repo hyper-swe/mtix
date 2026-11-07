@@ -133,14 +133,9 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	if differentErr := refuseDifferentTask(&local, n); differentErr != nil {
 		return 0, differentErr
 	}
-	merged := *n // merge into a copy: the caller's export must still verify
-	if !fileCarriesAllColumns {
-		keepLocalNodeColumns(&merged, &local)
-	}
-	if !copyIsCurrent(&local, n, fileCarriesAllColumns) { // MTIX-95.31.4
-		if keepErr := keepLocalBlankedFields(&merged, &local); keepErr != nil {
-			return 0, fmt.Errorf("merge node %s: %w", n.ID, keepErr)
-		}
+	merged, prepErr := prepareMerged(ctx, tx, n, &local, fileCarriesAllColumns, ctl.journal)
+	if prepErr != nil {
+		return 0, prepErr
 	}
 	streamsChanged, choiceErr := mergeChoiceAndStreams(&merged, &local, n, fileCarriesAllColumns, res)
 	if choiceErr != nil {
@@ -162,6 +157,28 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	}
 	ctl.journal.noteChanged(&local) // MTIX-112.17.16.16: the events come from the stored row
 	return markRollUp(importActionUpdated, &local, &merged), nil
+}
+
+// prepareMerged returns the copy of the file's node the merge writes: the
+// hub-known uid is kept (MTIX-112.17.16.16), local columns an older file lacks
+// stand (keepLocalNodeColumns), and a local value a stale copy leaves empty is
+// kept (keepLocalBlankedFields, MTIX-95.31.4). The caller's export is not
+// changed, because it must still verify.
+func prepareMerged(ctx context.Context, tx *sql.Tx, n, local *exportNode, fileCarriesAll bool,
+	j *mergeJournal) (exportNode, error) {
+	merged := *n
+	if err := keepHubKnownUID(ctx, tx, &merged, local, j); err != nil {
+		return merged, err
+	}
+	if !fileCarriesAll {
+		keepLocalNodeColumns(&merged, local)
+	}
+	if !copyIsCurrent(local, n, fileCarriesAll) { // MTIX-95.31.4
+		if err := keepLocalBlankedFields(&merged, local); err != nil {
+			return merged, fmt.Errorf("merge node %s: %w", n.ID, err)
+		}
+	}
+	return merged, nil
 }
 
 // mergeChoiceAndStreams applies the caller's choice for a node's differing

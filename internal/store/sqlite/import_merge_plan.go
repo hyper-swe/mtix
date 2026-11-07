@@ -25,9 +25,6 @@ type mergePlanner struct {
 	wallTS  int64
 	planned []emitParams
 	j       *mergeJournal
-	// uidFor maps a task whose uid the merge adopted to the uid the hub knows
-	// it by, which its events carry.
-	uidFor map[string]string
 }
 
 func (p *mergePlanner) add(id string, op model.OpType, payload any) error {
@@ -41,7 +38,7 @@ func (p *mergePlanner) addWithID(id, eventID string, op model.OpType, payload an
 		return fmt.Errorf("encode %s payload for %s: %w", op, id, err)
 	}
 	p.planned = append(p.planned, emitParams{NodeID: id, ProjectCode: projectPrefixFromNodeID(id),
-		OpType: op, Payload: raw, WallClockTS: p.wallTS, EventID: eventID, UID: p.uidFor[id]})
+		OpType: op, Payload: raw, WallClockTS: p.wallTS, EventID: eventID})
 	return nil
 }
 
@@ -52,7 +49,11 @@ func (p *mergePlanner) storedNode(id string) (exportNode, error) {
 		return n, fmt.Errorf("read stored node %s: %w", id, err)
 	}
 	if was, blocked := p.j.blocked[id]; blocked {
-		n.Status = was // the peer derives the block from the link_dep event
+		// The peer derives the block from the link_dep event, unless the task
+		// was blocked already: then the stored status is the held one.
+		if held, ok := p.j.before[id]; !ok || held.Status != string(model.StatusBlocked) {
+			n.Status = was
+		}
 	}
 	return n, nil
 }
@@ -85,30 +86,30 @@ func (p *mergePlanner) eventIDUsed(id string) (bool, error) {
 	return used, nil
 }
 
-// adoptedUIDKnown notes, for a task whose uid the merge replaced, the uid the
-// hub knows it by when its creation is past pending, so the task's events
-// carry that uid (a peer does not know the adopted one) and the adoption is
-// named local only. A task whose creation is still pending was carried to the
-// new uid with its events (carryAdoptedUID).
-func (p *mergePlanner) adoptedUIDKnown(b, a *exportNode) error {
-	if b.UID == "" || b.UID == a.UID {
+// keepHubKnownUID keeps the uid of a task the hub holds (principle D, round
+// 3): nothing the merge does moves the identity of a task the hub knows, so
+// the file's other uid for it is ignored, not adopted. Peers name the task by
+// the uid it was created under, and an event under another uid would
+// quarantine on every one of them. A task the hub does not hold yet still
+// adopts the file's uid, and its pending events follow (carryAdoptedUID). It
+// asks only when the merge journals (a store that syncs), and names the
+// kept uid local only.
+func keepHubKnownUID(ctx context.Context, tx *sql.Tx, merged, local *exportNode, j *mergeJournal) error {
+	if j == nil || merged.UID == "" || local.UID == "" || merged.UID == local.UID {
 		return nil
 	}
 	var known bool
-	// The old uid's creation was pushed or pulled: the hub knows the task by it.
-	if err := p.tx.QueryRowContext(p.ctx, `SELECT EXISTS (SELECT 1 FROM sync_events
+	// The local uid's creation was pushed or pulled: the hub knows the task by it.
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM sync_events
 		WHERE op_type = 'create_node' AND ((uid = ? AND uid <> '') OR event_id = ?) AND sync_status <> 'pending')`,
-		b.UID, b.UID).Scan(&known); err != nil {
-		return fmt.Errorf("check whether the hub knows %s: %w", format.EventID(b.UID), err)
+		local.UID, local.UID).Scan(&known); err != nil {
+		return fmt.Errorf("check whether the hub knows %s: %w", format.EventID(local.UID), err)
 	}
-	if !known {
-		return nil
+	if known {
+		merged.UID = local.UID
+		j.noteLocalOnly(merged.ID, "uid") // peers know the task by the old uid
+		j.keptUID = append(j.keptUID, merged.ID)
 	}
-	if p.uidFor == nil {
-		p.uidFor = map[string]string{}
-	}
-	p.uidFor[a.ID] = b.UID
-	p.j.noteLocalOnly(a.ID, "uid")
 	return nil
 }
 
@@ -171,13 +172,15 @@ func (p *mergePlanner) planCreated(n *exportNode) error {
 // planChanged plans the values of a changed task that differ: one event per
 // field, a transition for a status change, a delete, and new annotations.
 func (p *mergePlanner) planChanged(b, a *exportNode) error {
-	if b.DeletedAt != "" && a.DeletedAt == "" {
-		p.j.noteLocalOnly(a.ID, "deleted_at") // no event restores a deleted task
+	if b.DeletedAt != "" {
+		// A peer applies an event only to a live task and no event restores a
+		// deleted one, so nothing is journaled for a task deleted before the
+		// merge: its changed values stay on this machine, named (principle E).
+		p.j.noteLocalOnly(a.ID, nodeFieldDiffs(b, a)...)
+		p.j.noteLocalOnly(a.ID, p.localOnlyColumns(b, a, false)...)
+		return nil
 	}
 	p.j.noteLocalOnly(a.ID, p.localOnlyColumns(b, a, false)...)
-	if err := p.adoptedUIDKnown(b, a); err != nil {
-		return err
-	}
 	if err := p.planAcceptancePrompt(b, a); err != nil {
 		return err
 	}
@@ -205,8 +208,8 @@ func (p *mergePlanner) planAcceptancePrompt(b, a *exportNode) error {
 	return nil
 }
 
-// planStateChange plans a status transition, a deletion and the annotations
-// the before copy lacks.
+// planStateChange plans a status transition, the annotations the before copy
+// lacks and then a deletion, which comes after the comments.
 func (p *mergePlanner) planStateChange(b, a *exportNode) error {
 	if p.deferJournaled(b, a) { // the defer op carries the wake time a transition lacks
 		if err := p.add(a.ID, model.OpDefer, deferPayload(a)); err != nil {
@@ -215,11 +218,6 @@ func (p *mergePlanner) planStateChange(b, a *exportNode) error {
 	} else if a.Status != b.Status {
 		if err := p.add(a.ID, model.OpTransitionStatus, &model.TransitionStatusPayload{
 			From: model.Status(b.Status), To: model.Status(a.Status)}); err != nil {
-			return err
-		}
-	}
-	if b.DeletedAt == "" && a.DeletedAt != "" {
-		if err := p.add(a.ID, model.OpDelete, &model.DeletePayload{}); err != nil {
 			return err
 		}
 	}
@@ -234,6 +232,9 @@ func (p *mergePlanner) planStateChange(b, a *exportNode) error {
 		if err := p.planComment(a.ID, &x); err != nil {
 			return err
 		}
+	}
+	if b.DeletedAt == "" && a.DeletedAt != "" { // last: a peer applies a comment only to a live task
+		return p.add(a.ID, model.OpDelete, &model.DeletePayload{})
 	}
 	return nil
 }

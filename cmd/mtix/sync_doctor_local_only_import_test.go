@@ -47,7 +47,7 @@ func TestDoctor_LocalOnlyImports_WarnsWithBoundedJSONListAndFix(t *testing.T) {
 	require.True(t, check.Warn)
 	require.Contains(t, check.Detail, "12 task(s)")
 	require.Len(t, check.LocalOnly, sqlite.MaxNamedNodes)
-	require.Contains(t, check.Fix, "mtix update <id>")
+	require.Contains(t, check.Fix, "edit that field again")
 	require.NotContains(t, check.Fix, "run mtix sync pull", "a pull takes the hub value only when the hub holds a later edit")
 	require.Contains(t, check.Fix, "no command does it on demand")
 	raw, err := json.Marshal(check)

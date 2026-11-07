@@ -109,6 +109,12 @@ func TestImportReconcile_MergeAdoptingUID_CarriesUIDOntoUnpushedEvents(t *testin
 				holdEvent(t, local, "pending-1", mine)
 
 				report := mergeFile(t, local, exportOf(t, teammate))
+				if op == model.OpCreateNode {
+					// A pushed creation means the hub knows the task by its uid: the merge keeps it (round 3).
+					require.Empty(t, report.UIDAdoptions)
+					assert.Equal(t, mine, eventUID(t, local, "pending-1"), "the hub-known uid stands")
+					return
+				}
 				require.Len(t, report.UIDAdoptions, 1)
 
 				assert.Equal(t, theirs, eventUID(t, local, "pending-1"), "the pending event follows the task")

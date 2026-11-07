@@ -158,7 +158,7 @@ func (s *Store) refuseEmptyImport(ctx context.Context, data *ExportData, force b
 // writing a node normalizes its node_type, and the real import must still
 // verify the file's checksum.
 func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode ImportMode,
-	moves localWrites, workflow WorkflowResolution) (int64, string, error) {
+	moves localWrites, cfg *importConfig) (int64, string, error) {
 	dry := *data
 	dry.Nodes = append([]exportNode(nil), data.Nodes...)
 	var changes int64
@@ -180,7 +180,10 @@ func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode I
 		if mode == ImportModeReplace {
 			_, applyErr = replaceAllData(ctx, tx, &dry, false)
 		} else {
-			_, applyErr = mergeAllData(ctx, tx, &dry, workflowPolicy{resolution: workflow, now: s.clock()})
+			// The dry run journals as the write will, so a merge the queue cap
+			// would refuse is refused here, before the pre-import backup rotates
+			// the older recovery points (MTIX-112.17.16.16).
+			_, applyErr = s.mergeAndJournal(ctx, tx, &dry, cfg)
 		}
 		if applyErr != nil {
 			return applyErr

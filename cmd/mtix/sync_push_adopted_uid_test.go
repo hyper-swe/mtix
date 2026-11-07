@@ -101,11 +101,13 @@ func TestPushLoop_UIDAdoptedMidPush_ImportWaitsForThePush(t *testing.T) {
 	}
 	require.Equal(t, 1, sent, "the creation is sent once")
 
-	adopted, err := tryAdoptFileUID(t, "TEST-1")
+	held, err := app.store.GetNode(context.Background(), "TEST-1")
+	require.NoError(t, err)
+	_, err = tryAdoptFileUID(t, "TEST-1")
 	require.NoError(t, err, "the import goes through once the push has ended")
 	node, err := app.store.GetNode(context.Background(), "TEST-1")
 	require.NoError(t, err)
-	require.Equal(t, adopted, node.UID)
+	require.Equal(t, held.UID, node.UID, "the push made the hub know the task by its uid: the import keeps it (round 3)")
 }
 
 // TestPushLoop_HeldCreationAdoptedThenRenumbered_LaterChangeStillHeld is the

@@ -150,26 +150,6 @@ func TestImportMerge_Comment_CarriesTheAnnotationID(t *testing.T) {
 	require.Equal(t, 1, strings.Count(raw, annID), "the peer holds one copy of the comment")
 }
 
-// TestImportMerge_AdoptedUID_EventsCarryTheUIDThePeersKnow: after the merge
-// adopts the file's uid for a task the hub knows, its events carry the uid
-// the hub knows, so a peer applies them, and the adoption is named local only.
-func TestImportMerge_AdoptedUID_EventsCarryTheUIDThePeersKnow(t *testing.T) {
-	importer, peer, teammate := newTestStore(t), newTestStore(t), newTestStore(t)
-	known := createSameIDTask(t, importer, "REC-1", "", 1, backfilledUID(t), "Shared task")
-	replicate(t, importer, peer)
-	markJournalPushed(t, importer)
-	createSameIDTask(t, teammate, "REC-1", "", 1, backfilledUID(t), "Imported title")
-
-	res := mergeTheirs(t, importer, exportOf(t, teammate))
-	replicate(t, importer, peer)
-
-	require.Equal(t, "Imported title", titleOf(t, peer, "REC-1"), "the peer applies the title event")
-	require.Equal(t, countJournal(t, importer, `sync_status = 'pending'`),
-		countJournal(t, importer, `sync_status = 'pending' AND uid = ?`, known), "every journaled event carries the known uid")
-	require.Positive(t, countJournal(t, importer, `op_type = 'update_field' AND uid = ?`, known))
-	require.Equal(t, []sqlite.LocalOnlyChange{{ID: "REC-1", Fields: []string{"uid"}}}, res.JournalLocalOnly)
-}
-
 func recomputeChecksum(d *sqlite.ExportData) error { return sqlite.RecomputeExportChecksum(d) }
 
 func mergeErr(s *sqlite.Store, d *sqlite.ExportData) error {

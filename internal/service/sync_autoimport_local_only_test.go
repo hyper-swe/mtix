@@ -153,3 +153,29 @@ func TestAutoImport_PendingCreateOnASyncedStore_NamesTheTask(t *testing.T) {
 
 	assert.Contains(t, f.notices.String(), "(PROJ-2: title)")
 }
+
+// TestAutoImport_FieldsNoCommandSends_AreNamedInTheNoticeAndNotRecorded: a
+// changed weight or wake time has no command here that sends it, so the notice
+// says it stays on this machine and the doctor record leaves the task out; a
+// title change beside it is recorded alone.
+func TestAutoImport_FieldsNoCommandSends_AreNamedInTheNoticeAndNotRecorded(t *testing.T) {
+	ctx := context.Background()
+	f := newGuardFixture(t)
+	_, err := f.store.WriteDB().Exec(`UPDATE sync_events SET sync_status = 'pushed'`)
+	require.NoError(t, err)
+	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) {
+		i := nodeIndex(t, d, "PROJ-1")
+		d.Nodes[i].Weight = 9
+		j := nodeIndex(t, d, "PROJ-2")
+		d.Nodes[j].Title, d.Nodes[j].ContentHash = "Retitled upstream", "h-upstream"
+		d.Nodes[j].Weight = 7
+	}))
+
+	require.NoError(t, f.svc.AutoImport(ctx, f.mtixDir))
+
+	assert.Contains(t, f.notices.String(), "have no command that sends them to the hub, so those values stay on this machine")
+	live, _, err := f.store.LocalOnlyImports(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"PROJ-2"}, localOnlyIDs(live), "the weight-only task is not on the doctor list")
+	assert.Equal(t, []string{"title"}, live[0].Fields)
+}

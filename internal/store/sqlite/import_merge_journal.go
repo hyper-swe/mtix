@@ -49,6 +49,9 @@ type mergeJournal struct {
 	// localOnly names, per task, the columns the merge changed that no sync
 	// event carries, so the import reports them (principle B).
 	localOnly map[string][]string
+	// keptUID lists the tasks whose local uid the merge kept against the
+	// file's, because the hub knows them by it (keepHubKnownUID).
+	keptUID []string
 }
 
 // noteLocalOnly records columns of task id that stay local.
@@ -145,6 +148,46 @@ func (s *Store) autoBlockMerged(ctx context.Context, tx *sql.Tx, j *mergeJournal
 	return nil
 }
 
+// reblockMerged keeps blocked a task that was blocked before the merge and
+// still has a live blocks dependency, when the merge wrote another status
+// over it (a file chosen with --prefer theirs). Without it the repeat of an
+// import that blocked the task would unblock it and journal the transition.
+// The task is blocked as before, so the stored result equals the held one and
+// nothing is journaled (principle A, round 3). It reads the live blockers: a
+// blocker that is done, cancelled, invalidated or deleted no longer blocks.
+func (s *Store) reblockMerged(ctx context.Context, tx *sql.Tx, j *mergeJournal) error {
+	for _, id := range j.changed {
+		if j.before[id].Status != string(model.StatusBlocked) {
+			continue
+		}
+		var status string
+		// The merged task's status, for a live task only.
+		if err := tx.QueryRowContext(ctx, `SELECT status FROM nodes WHERE id = ? AND deleted_at IS NULL`, id).Scan(&status); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return fmt.Errorf("read status of %s: %w", id, err)
+		}
+		if status != string(model.StatusOpen) && status != string(model.StatusInProgress) {
+			continue
+		}
+		var live int
+		// Blocks dependencies of the task whose blocker is still live and unfinished.
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM dependencies d JOIN nodes f ON f.id = d.from_id
+			WHERE d.to_id = ? AND d.dep_type = 'blocks' AND f.deleted_at IS NULL
+			AND f.status NOT IN ('done', 'cancelled', 'invalidated')`, id).Scan(&live); err != nil {
+			return fmt.Errorf("count live blockers of %s: %w", id, err)
+		}
+		if live == 0 {
+			continue
+		}
+		if err := autoBlockNode(ctx, tx, s, id, s.clock); err != nil {
+			return fmt.Errorf("keep %s blocked: %w", id, err)
+		}
+	}
+	return nil
+}
+
 // journalMerge writes the journal rows for what the merge stored, when the
 // store syncs (syncedWithHub). It blocks the dependents of the inserted
 // blocks links, re-reads every created or changed task from the store, plans
@@ -154,6 +197,9 @@ func (s *Store) autoBlockMerged(ctx context.Context, tx *sql.Tx, j *mergeJournal
 // events written.
 func (s *Store) journalMerge(ctx context.Context, tx *sql.Tx, j *mergeJournal, wallTS int64) (int, error) {
 	if err := s.autoBlockMerged(ctx, tx, j); err != nil {
+		return 0, err
+	}
+	if err := s.reblockMerged(ctx, tx, j); err != nil {
 		return 0, err
 	}
 	planned, err := s.planMergeEvents(ctx, tx, j, wallTS)
@@ -182,15 +228,27 @@ func (s *Store) mergeAndJournal(ctx context.Context, tx *sql.Tx, data *ExportDat
 	if err != nil {
 		return ImportResult{}, err
 	}
+	unjournaled := false
 	if synced && !cfg.noJournal {
-		policy.journal = &mergeJournal{}
+		// A journal that is empty beside a store that holds tasks is one a
+		// backfill has not filled: events for the changed tasks alone would
+		// reach the hub without their creates, and backfill would refuse the
+		// store. Journal nothing, as before this change (principle E, round 3).
+		if unjournaled, err = journalEmptyBesideTasks(ctx, tx); err != nil {
+			return ImportResult{}, err
+		}
+		if !unjournaled {
+			policy.journal = &mergeJournal{}
+		}
 	}
 	result, err := mergeAllData(ctx, tx, data, policy)
+	result.NeedsBackfill = unjournaled
 	if err != nil || policy.journal == nil {
 		return result, err
 	}
 	n, err := s.journalMerge(ctx, tx, policy.journal, policy.now.UnixMilli())
 	result.Journaled, result.JournalLocalOnly = n, policy.journal.localOnlyList()
+	result.keptUID = policy.journal.keptUID
 	return result, err
 }
 
@@ -232,5 +290,39 @@ func checkQueueRoom(ctx context.Context, tx *sql.Tx, n int) error {
 			"events first (on a relay-only board they stay pending, so raise the cap instead)",
 			model.ErrSyncQueueFull, n, pending, limit, need)
 	}
+	return nil
+}
+
+// journalEmptyBesideTasks reports whether the sync journal holds no event
+// while the store holds a task.
+func journalEmptyBesideTasks(ctx context.Context, tx *sql.Tx) (bool, error) {
+	var empty bool
+	// No journal row, and at least one task: the store was filled before any sync.
+	if err := tx.QueryRowContext(ctx, `SELECT NOT EXISTS (SELECT 1 FROM sync_events)
+		AND EXISTS (SELECT 1 FROM nodes)`).Scan(&empty); err != nil {
+		return false, fmt.Errorf("check the sync journal: %w", err)
+	}
+	return empty, nil
+}
+
+// nameLocalRenumbers names, on a store that syncs, each local task the merge
+// moved to another number: no event carries a move, so the hub and the peers
+// keep the old number and edits still apply by uid (MTIX-112.17.16.16).
+func nameLocalRenumbers(ctx context.Context, tx *sql.Tx, cfg *importConfig, result *ImportResult) error {
+	if len(cfg.localMoves.moves) == 0 || cfg.noJournal {
+		return nil
+	}
+	synced, err := storeSyncs(ctx, tx, cfg.asSynced)
+	if err != nil || !synced {
+		return err
+	}
+	for _, m := range cfg.localMoves.moves {
+		id, idErr := idOfUID(ctx, tx, m.uid)
+		if idErr != nil {
+			return idErr
+		}
+		result.JournalLocalOnly = append(result.JournalLocalOnly, LocalOnlyChange{ID: id, Fields: []string{"id (was " + m.oldID + ")"}})
+	}
+	sort.Slice(result.JournalLocalOnly, func(a, b int) bool { return result.JournalLocalOnly[a].ID < result.JournalLocalOnly[b].ID })
 	return nil
 }

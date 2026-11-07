@@ -999,8 +999,9 @@ registry checks and hub registration get a fresh 30-second budget.
 
 ## Queue management
 
-- `sync.max_queue_size` in `meta` caps the pending queue per CLI.
-  Default `0` (unlimited). On overflow, `enforceQueueLimit` returns
+- `sync.max_queue_size` caps the pending queue per CLI; set it with
+  `mtix config set sync.max_queue_size <number>` (the command copies it into
+  `meta`, and a hand edit of the meta key is overwritten). Default `0` (unlimited). On overflow, `enforceQueueLimit` returns
   `model.ErrSyncQueueFull` from the emit path; the new event is
   rejected, NOT silently dropped.
 - `pushBatchSize` defaults to 100 events per batch in

@@ -244,7 +244,11 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 	app.store.SetHistoryLimitSource(app.configSvc.HistoryMaxEntries) // MTIX-95.31.19.4: unset by default
 	app.store.SetWriterVersion(version)
 	// MTIX-112.17.16.16: the store enforces sync.max_queue_size from its own meta; copy the config value in.
-	if capErr := app.store.SetMaxQueueSize(context.Background(), app.configSvc.MaxQueueSize()); capErr != nil {
+	capValue, capInvalid := app.configSvc.MaxQueueSizeChecked()
+	if capInvalid != nil { // a hand-edited bad value turns the cap off: say so (round 3)
+		fmt.Fprintf(os.Stderr, "warning: %v; the queue cap is off until it is fixed (mtix config set sync.max_queue_size <number>)\n", capInvalid)
+	}
+	if capErr := app.store.SetMaxQueueSize(context.Background(), capValue); capErr != nil {
 		app.logger.Warn("could not store sync.max_queue_size; the cap applies as last stored", "error", capErr)
 	}
 	// MTIX-95.31.19.6: turning history.export on is refused while an older mtix is detected.

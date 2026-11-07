@@ -91,6 +91,13 @@ type ImportResult struct {
 	// carries, so they stay local (MTIX-112.17.16.16).
 	Journaled        int               `json:"journaled,omitempty"`
 	JournalLocalOnly []LocalOnlyChange `json:"journal_local_only,omitempty"`
+	// NeedsBackfill is set when the store syncs but its journal is empty
+	// while it holds tasks: the merge journaled nothing, as before, and
+	// mtix sync backfill sends the tasks (MTIX-112.17.16.16).
+	NeedsBackfill bool `json:"needs_backfill,omitempty"`
+	// keptUID lists the tasks whose uid the merge did not adopt although the
+	// plan listed an adoption: the hub knows them by the local uid.
+	keptUID []string
 }
 
 // LocalOnlyChange is a task an import changed in columns no sync event
@@ -184,6 +191,9 @@ func (s *Store) Import(
 			}
 		} else {
 			result, applyErr = s.mergeAndJournal(ctx, tx, data, &cfg)
+			if applyErr == nil {
+				applyErr = nameLocalRenumbers(ctx, tx, &cfg, &result)
+			}
 		}
 		if applyErr != nil {
 			return applyErr

@@ -64,8 +64,8 @@ type BoardFinding struct {
 // bounded clone lacks may still be on the hub, above the store's pull cursor;
 // only a row the full clone also lacks is one the hub lacks. The bounded
 // comparison itself is unchanged (MTIX-112.17.16.18, ruling r2 point 2).
-func (f *BoardFinding) ConfirmAgainstHub(localExport, fullCloneExport []byte) error {
-	c, err := compareReplicas(localExport, fullCloneExport)
+func (f *BoardFinding) ConfirmAgainstHub(localExport, fullCloneExport []byte, ev *CloneEvidence) error {
+	c, err := compareReplicas(localExport, fullCloneExport, ev)
 	if err != nil {
 		return err
 	}
@@ -324,8 +324,8 @@ func BoardFileFinding(file, localExport []byte) (*BoardFinding, error) {
 // built from the hub events this store has applied (events at or below its pull
 // cursor and events it originated); nil when they hold the same thing. Equal
 // means every local state is derivable from hub events.
-func BoardHubFinding(localExport, boundedCloneExport []byte) (*BoardFinding, error) {
-	return boardHubFinding(localExport, boundedCloneExport, false)
+func BoardHubFinding(localExport, boundedCloneExport []byte, ev *CloneEvidence) (*BoardFinding, error) {
+	return boardHubFinding(localExport, boundedCloneExport, false, ev)
 }
 
 // BoardSnapshotHubFinding is the hub rule for a store that came from a
@@ -334,16 +334,16 @@ func BoardHubFinding(localExport, boundedCloneExport []byte) (*BoardFinding, err
 // holds are not a difference here, because the enrolment replaces the store with
 // that clone and loses nothing by it; anything the store holds that the clone
 // lacks or holds differently is (ruling r5 point 8).
-func BoardSnapshotHubFinding(localExport, fullCloneExport []byte) (*BoardFinding, error) {
-	f, err := boardHubFinding(localExport, fullCloneExport, true)
+func BoardSnapshotHubFinding(localExport, fullCloneExport []byte, ev *CloneEvidence) (*BoardFinding, error) {
+	f, err := boardHubFinding(localExport, fullCloneExport, true, ev)
 	if f != nil {
 		f.Snapshot = true
 	}
 	return f, err
 }
 
-func boardHubFinding(localExport, cloneExport []byte, ignoreHubOnly bool) (*BoardFinding, error) {
-	c, err := compareReplicas(localExport, cloneExport)
+func boardHubFinding(localExport, cloneExport []byte, ignoreHubOnly bool, ev *CloneEvidence) (*BoardFinding, error) {
+	c, err := compareReplicas(localExport, cloneExport, ev)
 	if err != nil {
 		return nil, err
 	}

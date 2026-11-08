@@ -70,16 +70,16 @@ func TestWorktreeBoardError_RowAdvice_DependencyRowsAreWordedApart(t *testing.T)
 func TestWorktreeBoardError_RowAdvice_NodeAndDependencyKeepSeparateKinds(t *testing.T) {
 	local := `{"nodes":[{"id":"TEST-1"}],"dependencies":[{"from_id":"TEST-1","to_id":"TEST-2","dep_type":"blocks"}]}`
 	hub := `{"nodes":[{"id":"TEST-1"}],"dependencies":[{"from_id":"TEST-1","to_id":"TEST-3","dep_type":"blocks"}]}`
-	f, err := service.BoardHubFinding([]byte(local), []byte(hub))
+	f, err := service.BoardHubFinding([]byte(local), []byte(hub), nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"TEST-1"}, f.StoreOnlyRows(), "the store-only row survives a hub-only row under the same key")
 	assert.False(t, f.HubRowsOnly())
 	l, c := titled("a", "b")
-	changed, err := service.BoardHubFinding([]byte(l), []byte(c))
+	changed, err := service.BoardHubFinding([]byte(l), []byte(c), nil)
 	require.NoError(t, err)
 	assert.Empty(t, changed.StoreOnlyRows(), "a changed field is not a row")
-	hubOnly, err := service.BoardHubFinding([]byte(nodesDoc("TEST-1")), []byte(nodesDoc("TEST-1", "TEST-2")))
+	hubOnly, err := service.BoardHubFinding([]byte(nodesDoc("TEST-1")), []byte(nodesDoc("TEST-1", "TEST-2")), nil)
 	require.NoError(t, err)
 	assert.Empty(t, hubOnly.StoreOnlyRows(), "a hub-only row is not a store-only row")
 }
@@ -114,7 +114,7 @@ func TestWorktreeBoardError_ReEnterStep_SaysAHeldValueCannotBeReEntered(t *testi
 // TestWorktreeBoardError_ReportPath_ControlCharactersAreNotPrinted (review F12).
 func TestWorktreeBoardError_ReportPath_ControlCharactersAreNotPrinted(t *testing.T) {
 	l, c := titled("branch", "hub")
-	f, err := service.BoardHubFinding([]byte(l), []byte(c))
+	f, err := service.BoardHubFinding([]byte(l), []byte(c), nil)
 	require.NoError(t, err)
 	msg := (&service.WorktreeBoardError{BoardFinding: *f, Report: "/w\x1b[31m/.mtix/enroll-diff-x.json"}).Error()
 

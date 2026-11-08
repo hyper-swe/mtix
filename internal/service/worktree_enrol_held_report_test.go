@@ -20,10 +20,10 @@ import (
 // heldFinding confirms a finding whose rows the hub already holds.
 func heldFinding(t *testing.T, local, bounded, full string) *service.BoardFinding {
 	t.Helper()
-	f, err := service.BoardHubFinding([]byte(local), []byte(bounded))
+	f, err := service.BoardHubFinding([]byte(local), []byte(bounded), nil)
 	require.NoError(t, err)
 	require.NotNil(t, f)
-	require.NoError(t, f.ConfirmAgainstHub([]byte(local), []byte(full)))
+	require.NoError(t, f.ConfirmAgainstHub([]byte(local), []byte(full), nil))
 	return f
 }
 

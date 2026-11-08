@@ -171,6 +171,21 @@ enrolls the hub's values, and reports lost fields on nodes this store's own
 journal touched, with a doctor warning until its record is cleared. This is the
 existing service API; no public enrollment command ships in this build.
 
+A terminal transition (done, cancel or invalidate) whose event carries no
+`closed_at` (from a build that did not yet carry the completion time in its
+event, or a plain terminal transition that backfill or status repair of a
+legacy winner emits) stamps `closed_at` in the store from one clock
+read and in the event from a second. When the two reads fall either side of a
+second, the hub clone's `closed_at` differs from the store's by one second, and
+enrollment accepts that one case. It does so only when the clone took its
+completion time from such an event that carries no `closed_at`, both sides hold
+the same terminal status, and the two times are at most one second apart. It
+cannot tell this skew from a real change of one second or less to the same
+completion time on that node, so it accepts that as well; the node's status and
+every other field still compare exactly. A longer gap, an event that carries its
+own `closed_at`, another status or a missing value still refuses and names
+`closed_at`.
+
 Only enrolled checkouts contact the hub under `sync.hub_contact`: activity,
 interval or manual. Activity lets an idle scale-to-zero database sleep; interval
 keeps it awake, and manual makes no automatic hub contact. Contact costs apply

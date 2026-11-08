@@ -30,7 +30,7 @@ func TestCompareBoardDocs_ClosedAt_SameStatus_StaysADifference(t *testing.T) {
 			d, err := service.CompareBoardDocs([]byte(tc.a), []byte(tc.b))
 			require.NoError(t, err)
 			assert.Equal(t, service.BoardDiff{"TEST-1": {"closed_at"}}, d)
-			f, err := service.BoardHubFinding([]byte(tc.a), []byte(tc.b))
+			f, err := service.BoardHubFinding([]byte(tc.a), []byte(tc.b), nil)
 			require.NoError(t, err)
 			require.NotNil(t, f)
 			assert.Equal(t, d, f.Diff)
@@ -68,7 +68,7 @@ func TestCompareBoardDocs_Labels_ShorterSideIsADifference(t *testing.T) {
 func TestFindLostLocal_AnnotationsAbsentOnTheOldStore_IsNotLoss(t *testing.T) {
 	aside := `{"nodes":[{"id":"TEST-1"}]}`
 	clone := `{"nodes":[{"id":"TEST-1","annotations":[{"author":"a","text":"theirs"}]}]}`
-	got, err := service.FindLostLocal([]byte(aside), []byte(clone), []string{"TEST-1"})
+	got, err := service.FindLostLocal([]byte(aside), []byte(clone), []string{"TEST-1"}, nil)
 	require.NoError(t, err)
 	assert.Nil(t, got, "a real export omits the field when a node has none")
 }

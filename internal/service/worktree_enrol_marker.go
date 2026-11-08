@@ -217,14 +217,9 @@ func MoveAsideUnprobeableEnrolLock(mtixDir string) error {
 		}
 		return fmt.Errorf("refusing to move %s: no proof that no process holds it; the project maintainer must stop the holder or restore its owner and mode: %w", lock, probeErr)
 	}
-	aside := lock + ".unprobeable"
-	if _, statErr := os.Lstat(aside); statErr == nil {
-		return fmt.Errorf("refusing to move %s: %s already exists: %w", lock, aside, model.ErrAlreadyExists)
-	}
-	if err := os.Rename(lock, aside); err != nil {
-		return fmt.Errorf("move enrolment lock aside: %w", err)
-	}
-	return nil
+	// The move never replaces an existing aside and re-checks what moved, so a
+	// lock a live enrolment created after the type check is put back, not moved.
+	return moveEnrolLockAside(lock, lock+".unprobeable")
 }
 
 // EnrolMarkerPath is the durable enrolment marker file.

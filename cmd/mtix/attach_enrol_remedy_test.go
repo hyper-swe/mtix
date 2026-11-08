@@ -12,22 +12,23 @@ import (
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
-func TestAttachErrorRemedy_PerCause_NamesTheRowThatPrintsTheCommand(t *testing.T) {
+func TestAttachErrorRemedy_PerCause_ExactFix(t *testing.T) {
 	for _, tt := range []struct {
 		name string
 		err  error
 		want string
 	}{
-		{"running", service.ErrEnrolInProgress, "wait for worktree enrollment"},
-		{"interrupted", service.ErrEnrolInterrupted, "board.enrol-interrupted"},
-		{"torn marker", errors.Join(service.ErrEnrolMarkerUnreadable, errors.New("decode")), "board.enrol-interrupted"},
-		{"lock probe", errors.Join(service.ErrEnrolLockUnprobeable, errors.New("open")), "board.enrol-lock"},
+		{"running", service.ErrEnrolInProgress, "wait for worktree enrollment to finish; then run mtix doctor"},
+		{"interrupted", service.ErrEnrolInterrupted, "mtix doctor"},
+		{"torn marker", errors.Join(service.ErrEnrolMarkerUnreadable, errors.New("decode")),
+			"run mtix doctor; its board.enrol-interrupted row prints the exact command for the unreadable enrollment marker"},
+		{"lock probe", errors.Join(service.ErrEnrolLockUnprobeable, errors.New("open")),
+			"run mtix doctor; its board.enrol-lock row prints the exact command for the unprobeable enrollment lock"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			class, fix := attachErrorRemedy(&boardEnrolGuardError{cause: tt.err}, "fallback")
 			assert.Equal(t, attachAlertEnrolBlocked, class)
-			assert.Contains(t, fix, tt.want)
-			assert.Contains(t, fix, "mtix doctor")
+			assert.Equal(t, tt.want, fix)
 		})
 	}
 	class, fix := attachErrorRemedy(errors.New("other"), "fallback")

@@ -92,10 +92,8 @@ func recoveryCase(t *testing.T, binary, mode, rowID string) {
 
 	fixOut, fixErr := runPrintedFix(t, root, binary, row.Fix)
 	if strings.HasPrefix(row.Fix, "mtix doctor") {
-		var exit *exec.ExitError // other doctor FAIL rows may set exit 1; the row itself must clear
-		if fixErr != nil {
-			require.ErrorAs(t, fixErr, &exit, string(fixOut))
-		}
+		// The repaired row must show pass in the fix run itself; other rows may fail the exit code.
+		assert.NotContains(t, string(fixOut), "[FAIL] "+rowID, "the fix run must not still print the repaired row as FAIL")
 	} else {
 		require.NoError(t, fixErr, "the printed fix must work when run: %s", fixOut)
 	}
@@ -130,19 +128,20 @@ func TestEnrolGuard_RealBinary_TornMarkerOneAside_FixRestoresOriginalStore(t *te
 	root := listedBoardCheckout(t, st)
 	prepareEnrolGuardCase(t, root, "torn-marker")
 	aside := filepath.Join(root, ".mtix", "data.pre-enrol-20261108")
-	require.NoError(t, os.MkdirAll(aside, 0o700))
+	// A crash right after the move: the live data directory is gone.
+	require.NoError(t, os.Rename(filepath.Join(root, ".mtix", "data"), aside))
 	require.NoError(t, os.WriteFile(filepath.Join(aside, "original.db"), []byte("original"), 0o600))
 
 	row := recoveryRow(runDoctorRows(t, binary, root), "board.enrol-interrupted")
 	require.NotNil(t, row)
+	_, statErr := os.Lstat(filepath.Join(root, ".mtix", "data"))
+	assert.True(t, os.IsNotExist(statErr), "doctor must not create or open a store while the marker is torn")
 	out, err := runPrintedFix(t, root, binary, row.Fix)
 	require.NoError(t, err, string(out))
 
 	body, err := os.ReadFile(filepath.Join(root, ".mtix", "data", "original.db"))
 	require.NoError(t, err, "the original store must be back in place")
 	assert.Equal(t, "original", string(body))
-	_, err = os.Stat(filepath.Join(root, ".mtix", "data.kept-aside"))
-	assert.NoError(t, err, "the partial store is kept, never deleted")
 	assert.Nil(t, recoveryRow(runDoctorRows(t, binary, root), "board.enrol-interrupted"))
 }
 
@@ -223,6 +222,7 @@ func TestEnrolGuard_RealBinary_UnprobeableRegularLock_NeverMovedByFix(t *testing
 	row := recoveryRow(runDoctorRows(t, binary, root), "board.enrol-lock")
 	require.NotNil(t, row, "an unprobeable lock must still get a doctor row")
 	assert.Contains(t, row.Fix, "project maintainer")
+	assert.Contains(t, row.Fix, lockDir+" a real directory", "the prose must name the lock directory, whose owner or link can also fail the probe")
 	assert.NotContains(t, row.Fix, "doctor --fix")
 
 	cmd := exec.CommandContext(t.Context(), binary, "doctor", "--fix", "--json")
@@ -232,4 +232,66 @@ func TestEnrolGuard_RealBinary_UnprobeableRegularLock_NeverMovedByFix(t *testing
 	assert.NoError(t, statErr, "an unprovable lock is never moved")
 	_, statErr = os.Lstat(lock + ".unprobeable")
 	assert.True(t, os.IsNotExist(statErr))
+}
+
+// F1: after a torn marker, one aside directory is this enrolment's original only
+// when the live store is gone. A successful enrolment leaves its aside behind, so
+// with a live store the single aside may be a stale old store: the row must print
+// the STOP prose, no command, and move nothing.
+func TestEnrolGuard_RealBinary_TornMarkerOneStaleAsideLiveStore_NeverAutoRestores(t *testing.T) {
+	binary := buildRecoveryBinary(t)
+	st := testutil.OperatorState(t)
+	root := listedBoardCheckout(t, st) // has a live store
+	prepareEnrolGuardCase(t, root, "torn-marker")
+	mtix := filepath.Join(root, ".mtix")
+	aside := filepath.Join(mtix, "data.pre-enrol-20260101T000000Z")
+	require.NoError(t, os.MkdirAll(aside, 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(aside, "stale.db"), []byte("stale"), 0o600))
+	before := enrolDataSnapshot(t, root)
+
+	row := recoveryRow(runDoctorRows(t, binary, root), "board.enrol-interrupted")
+	require.NotNil(t, row)
+	assert.True(t, strings.HasPrefix(row.Fix, "STOP:"), row.Fix)
+	assert.Contains(t, row.Fix, aside)
+	assert.NotContains(t, row.Fix, "mv ")
+	assert.NotContains(t, row.Fix, "rm ")
+	assert.Equal(t, before, enrolDataSnapshot(t, root), "doctor must change nothing")
+}
+
+// F2: an unprobeable lock may be held by another user's enrolment. Doctor prints
+// its rows without creating or opening a store in the data directory.
+func TestEnrolGuard_RealBinary_UnprobeableLock_DoctorDoesNotCreateStore(t *testing.T) {
+	binary := buildRecoveryBinary(t)
+	st := testutil.OperatorState(t)
+	root := listedBoardCheckout(t, st)
+	prepareEnrolGuardCase(t, root, "probe-error")
+	data := filepath.Join(root, ".mtix", "data")
+	moved := filepath.Join(root, ".mtix", "data.pre-enrol-x") // a live enrolment moved the store away
+	require.NoError(t, os.Rename(data, moved))
+
+	row := recoveryRow(runDoctorRows(t, binary, root), "board.enrol-lock")
+	require.NotNil(t, row, "the row must still print")
+	_, statErr := os.Lstat(data)
+	assert.True(t, os.IsNotExist(statErr), "doctor must not create the data directory past an unprobeable lock")
+}
+
+// F3: after a successful fix the same run shows the lock row clear.
+func TestEnrolGuard_RealBinary_LockFix_RowShowsPassInTheSameRun(t *testing.T) {
+	binary := buildRecoveryBinary(t)
+	st := testutil.OperatorState(t)
+	root := listedBoardCheckout(t, st)
+	prepareEnrolGuardCase(t, root, "probe-error")
+
+	cmd := exec.CommandContext(t.Context(), binary, "doctor", "--fix", "--json")
+	cmd.Dir = root
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	_ = cmd.Run() // other rows may fail; the lock row must not
+	var rows []recoveryDoctorRow
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &rows), stdout.String())
+	row := recoveryRow(rows, "board.enrol-lock")
+	require.NotNil(t, row)
+	assert.Equal(t, "pass", strings.ToLower(row.Status), row.Detail)
+	_, statErr := os.Lstat(filepath.Join(root, ".mtix", "enroll.d", "data", "enroll.lock.unprobeable"))
+	assert.NoError(t, statErr, "the lock object was moved aside")
 }

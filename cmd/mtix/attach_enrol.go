@@ -26,6 +26,6 @@ func attachErrorRemedy(err error, fallbackFix string) (string, string) {
 	case errors.Is(err, service.ErrEnrolLockUnprobeable):
 		return attachAlertEnrolBlocked, "run mtix doctor; its board.enrol-lock row prints the exact command for the unprobeable enrollment lock"
 	default:
-		return attachAlertEnrolBlocked, "run mtix doctor; its board.enrol-interrupted row prints the exact recovery"
+		return attachAlertEnrolBlocked, "mtix doctor"
 	}
 }

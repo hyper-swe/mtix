@@ -20,7 +20,7 @@ import (
 // command exiting with the decode error (MTIX-112.17.16.21.2).
 func registerEnrolTornMarkerDoctor(svc *service.DoctorService, mtixDir string, readErr error) error {
 	detail := "the enrolment marker cannot be read (" + format.SafeLine(readErr.Error()) + ")"
-	fix := tornMarkerFix(mtixDir)
+	fix := tornMarkerFix(mtixDir, readErr)
 	return svc.Register(service.DoctorCheck{ID: "board.enrol-interrupted", Run: func(context.Context) service.DoctorResult {
 		return service.DoctorResult{Status: service.DoctorFail, Detail: detail, Fix: fix,
 			Data: map[string]any{"marker_path": service.EnrolMarkerPath(mtixDir)}}
@@ -35,8 +35,19 @@ func registerEnrolTornMarkerDoctor(svc *service.DoctorService, mtixDir string, r
 // behind, so beside a live store a single aside may be a stale old store. In
 // every other case the project maintainer must choose: the fix is words, never a
 // command, and nothing is picked or moved (MTIX-112.17.16.21.2).
-func tornMarkerFix(mtixDir string) string {
+//
+// A marker that could not be read for a reason other than its content (another
+// user's 0600 marker, an I/O error), or any lock state other than free, means an
+// enrolment may be live: the row prints STOP prose and no command, whatever the
+// asides look like (MTIX-112.17.16.21.2.4).
+func tornMarkerFix(mtixDir string, readErr error) string {
 	marker := service.EnrolMarkerPath(mtixDir)
+	if !errors.Is(readErr, service.ErrEnrolMarkerUndecodable) {
+		return enrolMayBeLiveFix(mtixDir, "the marker could not be read ("+format.SafeLine(readErr.Error())+"), so it may belong to a live enrolment")
+	}
+	if fix := liveEnrolmentFix(mtixDir); fix != "" {
+		return fix
+	}
 	asides, err := service.EnrolAsideDirs(mtixDir)
 	switch {
 	case err != nil:
@@ -50,6 +61,21 @@ func tornMarkerFix(mtixDir string) string {
 			"; no command is printed because choosing wrongly loses data" + staleAsideNote(len(asides)) +
 			". After choosing, move it to " + mtixDir + "/data (keeping the current data directory aside, never deleting it) and remove " + marker
 	}
+}
+
+// liveEnrolmentFix returns STOP prose when the enrolment lock is not provably
+// free (unprobeable, or held), and "" when a command is safe to print.
+func liveEnrolmentFix(mtixDir string) string {
+	if err := service.ProbeEnrolLock(mtixDir); err != nil {
+		return enrolMayBeLiveFix(mtixDir, "the enrolment lock is not free ("+format.SafeLine(err.Error())+")")
+	}
+	return ""
+}
+
+// enrolMayBeLiveFix is the STOP prose for a possibly-live enrolment: no mv, no rm.
+func enrolMayBeLiveFix(mtixDir, why string) string {
+	return "STOP: an enrolment may still be running, so no command is printed: " + why +
+		". See the board.enrol-lock row, and ask the owner of the enrolment or the project maintainer before changing anything in " + mtixDir
 }
 
 func staleAsideNote(count int) string {

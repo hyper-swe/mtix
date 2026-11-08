@@ -198,7 +198,8 @@ Doctor shows these rows only when they apply:
   If the marker is torn (cannot be decoded) or the enrollment lock cannot be
   probed, `mtix doctor` still runs and prints a FAIL row with the exact command:
   `board.enrol-interrupted` for a torn marker, `board.enrol-lock` for an
-  unprobeable lock. Run that command as printed, then rerun `mtix doctor`.
+  unprobeable lock. Run a printed command as printed, then rerun `mtix doctor`;
+  a row whose fix starts with STOP prints no command (see below).
   The lock fix is `mtix doctor --fix`: it moves the lock aside, never removes
   it, only when it is not a regular file (nothing can hold it) and refuses a lock
   that a live enrollment holds. A regular lock that cannot be probed cannot be
@@ -211,7 +212,13 @@ Doctor shows these rows only when they apply:
   that the aside store is this enrollment's original. With a live store, or with
   several aside stores, the row names them and asks the project maintainer to
   choose, and prints no command, because an aside store left by an earlier
-  enrollment must not replace a live store. After `mtix doctor --fix` repairs the
+  enrollment must not replace a live store. A possibly-live enrollment never gets
+  a command either: when the lock cannot be probed (it may belong to another
+  user's running enrollment), or the marker could not be read for a reason other
+  than its content (for example a permission error), the row starts with STOP,
+  names `board.enrol-lock`, and asks the enrollment's owner or the project
+  maintainer; it prints no mv or rm. Only a marker whose content cannot be
+  decoded, with a free lock, gets a command. After `mtix doctor --fix` repairs the
   lock, the row shows pass in the same run.
 - `attach.failures`: recent `attach.protocol-skew`, `attach.verb-failure` and
   `attach.enrol-blocked`

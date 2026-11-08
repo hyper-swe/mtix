@@ -45,8 +45,13 @@ func registerEnrolInterruptedDoctor(svc *service.DoctorService, mtixDir string) 
 // already in place and only the marker goes; moving it aside would strand it.
 // When it moved and no data directory exists (a crash right after the move)
 // there is no partial store to keep, and moving a missing directory would stop
-// the recovery; otherwise the partial store is kept aside, never deleted.
+// the recovery; otherwise the partial store is kept aside, never deleted. When
+// the enrolment lock is unprobeable or held, an enrolment may be live and the
+// fix is STOP prose without mv or rm (MTIX-112.17.16.21.2.4).
 func enrolInterruptedFix(mtixDir string, marker *service.EnrolMarker) string {
+	if fix := liveEnrolmentFix(mtixDir); fix != "" {
+		return fix // a possibly-live enrolment never gets a store-moving command
+	}
 	markerPath := shellQuote(filepath.Join(mtixDir, "enroll.d", "in-progress.json"))
 	if !marker.Moved() {
 		return "rm " + markerPath

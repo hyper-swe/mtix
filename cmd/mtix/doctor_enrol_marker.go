@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +21,9 @@ import (
 // (MTIX-112.17.16, ADR-007 section 4.2).
 func registerEnrolInterruptedDoctor(svc *service.DoctorService, mtixDir string) error {
 	marker, err := service.ReadEnrolMarker(mtixDir)
+	if errors.Is(err, service.ErrEnrolMarkerUnreadable) {
+		return registerEnrolTornMarkerDoctor(svc, mtixDir, err)
+	}
 	if err != nil {
 		return fmt.Errorf("read enrolment marker: %w", err)
 	}
@@ -52,7 +56,7 @@ func enrolInterruptedFix(mtixDir string, marker *service.EnrolMarker) string {
 	// The original store goes back, so an accept-hub record that names it is
 	// stale: it is removed with the marker (rm -f: there may be none).
 	accepted := shellQuote(service.HubAcceptedPath(mtixDir))
-	if _, err := os.Lstat(data); err != nil {
+	if _, err := os.Lstat(data); err != nil { //nolint:gosec // G703: data is the worktree's own .mtix/data, joined from the discovered .mtix directory
 		return fmt.Sprintf("mv %s %s && rm %s && rm -f %s", aside, shellQuote(data), markerPath, accepted)
 	}
 	return fmt.Sprintf("mv %s %s && mv %s %s && rm %s && rm -f %s", shellQuote(data), shellQuote(data+".kept-aside"), aside, shellQuote(data), markerPath, accepted)
@@ -116,6 +120,9 @@ func registerEnrolDoctorChecks(svc *service.DoctorService, mtixDir string) error
 	}
 	if err := registerEnrolHubAcceptedDoctor(svc, mtixDir); err != nil {
 		return fmt.Errorf("register accept-hub check: %w", err)
+	}
+	if err := registerEnrolLockDoctor(svc, mtixDir); err != nil {
+		return fmt.Errorf("register enrolment lock check: %w", err)
 	}
 	return nil
 }

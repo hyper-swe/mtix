@@ -10,15 +10,22 @@ import (
 )
 
 // attachErrorRemedy keeps an enrolment cause separate from a subsequent adapter
-// alert, and gives doctor the guard's recovery rather than an unrelated fix.
+// alert, and gives each cause a fix that works when run: doctor prints rows for
+// every enrolment cause, including a torn marker and an unprobeable lock, and
+// each row carries the exact command (MTIX-112.17.16.21.2).
 func attachErrorRemedy(err error, fallbackFix string) (string, string) {
 	var guard *boardEnrolGuardError
 	if !errors.As(err, &guard) {
 		return attachAlertVerbFailure, fallbackFix
 	}
-	fix := "mtix doctor"
-	if errors.Is(err, service.ErrEnrolInProgress) {
-		fix = "wait for worktree enrollment to finish; then run mtix doctor"
+	switch {
+	case errors.Is(err, service.ErrEnrolInProgress):
+		return attachAlertEnrolBlocked, "wait for worktree enrollment to finish; then run mtix doctor"
+	case errors.Is(err, service.ErrEnrolMarkerUnreadable):
+		return attachAlertEnrolBlocked, "run mtix doctor; its board.enrol-interrupted row prints the exact command for the unreadable enrollment marker"
+	case errors.Is(err, service.ErrEnrolLockUnprobeable):
+		return attachAlertEnrolBlocked, "run mtix doctor; its board.enrol-lock row prints the exact command for the unprobeable enrollment lock"
+	default:
+		return attachAlertEnrolBlocked, "mtix doctor"
 	}
-	return attachAlertEnrolBlocked, fix
 }

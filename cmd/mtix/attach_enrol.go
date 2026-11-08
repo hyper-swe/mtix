@@ -22,7 +22,7 @@ func attachErrorRemedy(err error, fallbackFix string) (string, string) {
 	case errors.Is(err, service.ErrEnrolInProgress):
 		return attachAlertEnrolBlocked, "wait for worktree enrollment to finish; then run mtix doctor"
 	case errors.Is(err, service.ErrEnrolMarkerUnreadable):
-		return attachAlertEnrolBlocked, "run mtix doctor; its board.enrol-interrupted row prints the exact command for the unreadable enrollment marker"
+		return attachAlertEnrolBlocked, "run mtix doctor; its board.enrol-interrupted row prints the exact command, or STOP prose when an enrollment may still be live"
 	case errors.Is(err, service.ErrEnrolLockUnprobeable):
 		return attachAlertEnrolBlocked, "run mtix doctor; its board.enrol-lock row prints the exact command for the unprobeable enrollment lock"
 	default:

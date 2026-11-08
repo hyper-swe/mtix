@@ -21,7 +21,7 @@ func TestAttachErrorRemedy_PerCause_ExactFix(t *testing.T) {
 		{"running", service.ErrEnrolInProgress, "wait for worktree enrollment to finish; then run mtix doctor"},
 		{"interrupted", service.ErrEnrolInterrupted, "mtix doctor"},
 		{"torn marker", errors.Join(service.ErrEnrolMarkerUnreadable, errors.New("decode")),
-			"run mtix doctor; its board.enrol-interrupted row prints the exact command for the unreadable enrollment marker"},
+			"run mtix doctor; its board.enrol-interrupted row prints the exact command, or STOP prose when an enrollment may still be live"},
 		{"lock probe", errors.Join(service.ErrEnrolLockUnprobeable, errors.New("open")),
 			"run mtix doctor; its board.enrol-lock row prints the exact command for the unprobeable enrollment lock"},
 	} {

@@ -283,8 +283,12 @@ Doctor shows these rows only when they apply:
   a command either: when the lock cannot be probed (it may belong to another
   user's running enrollment), or the marker could not be read for a reason other
   than its content (for example a permission error), the row starts with STOP,
-  names `board.enrol-lock`, and asks the enrollment's owner or the project
-  maintainer; it prints no mv or rm. Only a marker whose content cannot be
+  names `board.enrol-lock` only when the lock cannot be probed (for an unreadable
+  marker it names the marker to make readable instead), and asks the enrollment's
+  owner or the project maintainer; it prints no mv or rm. When the lock path
+  itself cannot be inspected (a directory on it is not searchable, or is a file),
+  `board.enrol-lock` prints no `mtix doctor --fix` and names the directories to
+  repair, because the repair would fail the same inspection. Only a marker whose content cannot be
   decoded, with a free lock, gets a command. After `mtix doctor --fix` repairs the
   lock, the row shows pass in the same run.
 - `attach.failures`: recent `attach.protocol-skew`, `attach.verb-failure` and

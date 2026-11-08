@@ -299,7 +299,6 @@ func TestEnrolGuard_RealBinary_LockFix_RowShowsPassInTheSameRun(t *testing.T) {
 func assertNoStoreMovingCommand(t *testing.T, fix string) {
 	t.Helper()
 	assert.True(t, strings.HasPrefix(fix, "STOP:"), fix)
-	assert.Contains(t, fix, "board.enrol-lock")
 	assert.NotContains(t, fix, "mv ")
 	assert.NotContains(t, fix, "rm ")
 }

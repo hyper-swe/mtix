@@ -43,7 +43,9 @@ func registerEnrolTornMarkerDoctor(svc *service.DoctorService, mtixDir string, r
 func tornMarkerFix(mtixDir string, readErr error) string {
 	marker := service.EnrolMarkerPath(mtixDir)
 	if !errors.Is(readErr, service.ErrEnrolMarkerUndecodable) {
-		return enrolMayBeLiveFix(mtixDir, "the marker could not be read ("+format.SafeLine(readErr.Error())+"), so it may belong to a live enrolment")
+		// An unreadable marker with a free lock gets no lock row: it is not registered then.
+		return enrolMayBeLiveFix(mtixDir, "the marker could not be read ("+format.SafeLine(readErr.Error())+"), so it may belong to a live enrolment",
+			errors.Is(service.ProbeEnrolLock(mtixDir), service.ErrEnrolLockUnprobeable))
 	}
 	if fix := liveEnrolmentFix(mtixDir); fix != "" {
 		return fix
@@ -67,15 +69,22 @@ func tornMarkerFix(mtixDir string, readErr error) string {
 // free (unprobeable, or held), and "" when a command is safe to print.
 func liveEnrolmentFix(mtixDir string) string {
 	if err := service.ProbeEnrolLock(mtixDir); err != nil {
-		return enrolMayBeLiveFix(mtixDir, "the enrolment lock is not free ("+format.SafeLine(err.Error())+")")
+		return enrolMayBeLiveFix(mtixDir, "the enrolment lock is not free ("+format.SafeLine(err.Error())+")",
+			errors.Is(err, service.ErrEnrolLockUnprobeable))
 	}
 	return ""
 }
 
 // enrolMayBeLiveFix is the STOP prose for a possibly-live enrolment: no mv, no rm.
-func enrolMayBeLiveFix(mtixDir, why string) string {
+// It names the board.enrol-lock row only when that row is registered (lockRow),
+// and otherwise says what to repair for an unreadable marker.
+func enrolMayBeLiveFix(mtixDir, why string, lockRow bool) string {
+	next := "make the marker " + service.EnrolMarkerPath(mtixDir) + " readable by the current user (its owner or mode), then run mtix doctor again"
+	if lockRow {
+		next = "see the board.enrol-lock row"
+	}
 	return "STOP: an enrolment may still be running, so no command is printed: " + why +
-		". See the board.enrol-lock row, and ask the owner of the enrolment or the project maintainer before changing anything in " + mtixDir
+		". " + next + ", and ask the owner of the enrolment or the project maintainer before changing anything in " + mtixDir
 }
 
 func staleAsideNote(count int) string {
@@ -120,7 +129,13 @@ func registerEnrolLockDoctor(svc *service.DoctorService, mtixDir string) error {
 	}
 	lock := service.EnrolLockPath(mtixDir)
 	fix := "mtix doctor --fix"
-	if info, statErr := os.Lstat(lock); statErr == nil && info.Mode().IsRegular() {
+	if _, statErr := os.Lstat(lock); statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
+		// The lock path itself cannot be inspected (EACCES, ENOTDIR on a parent):
+		// the repair would fail the same Lstat, so no command is offered.
+		dir := filepath.Dir(lock)
+		fix = "the project maintainer must make " + dir + " and " + filepath.Dir(dir) +
+			" real directories the current user can search, or ask their owner; then run mtix doctor (" + format.SafeLine(statErr.Error()) + ")"
+	} else if info, statErr := os.Lstat(lock); statErr == nil && info.Mode().IsRegular() {
 		// A regular file that cannot be probed cannot be proven unheld: no command
 		// is safe, so the row asks the project maintainer and the repair would refuse anyway.
 		dir := filepath.Dir(lock)

@@ -190,6 +190,16 @@ Doctor shows these rows only when they apply:
   Retry after enrollment finishes; if interrupted, follow `mtix doctor` first.
   Never remove enrollment locks, markers or store data to force a drain;
   remove an interrupted marker only when doctor explicitly instructs it.
+  If the marker is torn (cannot be decoded) or the enrollment lock cannot be
+  probed, `mtix doctor` still runs and prints a FAIL row with the exact command:
+  `board.enrol-interrupted` for a torn marker, `board.enrol-lock` for an
+  unprobeable lock. Run that command as printed, then rerun `mtix doctor`.
+  The lock fix is `mtix doctor --fix`: it moves the lock aside, never removes
+  it, only when it is not a regular file (nothing can hold it) and refuses a lock
+  that a live enrollment holds. A regular lock that cannot be probed cannot be
+  proven unheld, so its row asks the project maintainer instead of printing a command. When a
+  torn marker leaves several aside stores the row names them and asks the project maintainer to
+  choose, and prints no command.
 - `attach.failures`: recent `attach.protocol-skew`, `attach.verb-failure` and
   `attach.enrol-blocked`
   operator alerts from the hidden attach verbs, with counts. These verbs are

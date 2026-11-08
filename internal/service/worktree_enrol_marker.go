@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -35,6 +36,13 @@ var (
 	// ErrEnrolInterrupted is returned while a durable enrolment marker is left
 	// by a process that died mid-enrolment (MTIX-112.17.16).
 	ErrEnrolInterrupted = fmt.Errorf("worktree enrolment was interrupted: %w", model.ErrConflict)
+	// ErrEnrolMarkerUnreadable is returned when the durable marker exists but
+	// cannot be read or decoded (a torn marker). Top-level doctor tolerates it
+	// so it can print the recovery row (MTIX-112.17.16.21.2).
+	ErrEnrolMarkerUnreadable = fmt.Errorf("worktree enrolment marker is unreadable: %w", model.ErrConflict)
+	// ErrEnrolLockUnprobeable is returned when the enroll lock file exists but
+	// cannot be probed, which is neither held nor free (MTIX-112.17.16.21.2).
+	ErrEnrolLockUnprobeable = fmt.Errorf("worktree enrolment lock cannot be probed: %w", model.ErrConflict)
 )
 
 // EnrolMarker is the durable record written before the store moves and removed
@@ -104,11 +112,11 @@ func ReadEnrolMarker(mtixDir string) (*EnrolMarker, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read enrolment marker: %w", err)
+		return nil, fmt.Errorf("read enrolment marker: %w: %w", ErrEnrolMarkerUnreadable, err)
 	}
 	var m EnrolMarker
 	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, fmt.Errorf("decode enrolment marker: %w", err)
+		return nil, fmt.Errorf("decode enrolment marker: %w: %w", ErrEnrolMarkerUnreadable, err)
 	}
 	return &m, nil
 }
@@ -140,27 +148,103 @@ func (m *EnrolMarker) RecoveryHint() string {
 // left). A worktree that never ran an enrolment has no lock file and passes at
 // no cost. allowInterrupted lets doctor report the marker (MTIX-112.17.16).
 func CheckEnrolGuard(mtixDir string, allowInterrupted bool) error {
-	lockFile := filepath.Join(enrolDir(mtixDir), "data", enrolLockName)
-	if _, err := os.Lstat(lockFile); err == nil {
-		lock, lockErr := acquireEnrolLock(mtixDir)
-		if errors.Is(lockErr, pushlock.ErrLockHeld) {
-			return fmt.Errorf("%w%s; retry when it finishes", ErrEnrolInProgress, holderSuffix(mtixDir))
-		}
-		if lockErr != nil {
-			return fmt.Errorf("probe enrolment lock: %w", lockErr)
-		}
-		if relErr := lock.Release(); relErr != nil {
-			return fmt.Errorf("release enrolment probe: %w", relErr)
+	// Doctor reports an unprobeable lock as the board.enrol-lock row.
+	if err := ProbeEnrolLock(mtixDir); err != nil {
+		if !allowInterrupted || !errors.Is(err, ErrEnrolLockUnprobeable) {
+			return err
 		}
 	}
 	m, err := ReadEnrolMarker(mtixDir)
 	if err != nil {
+		if allowInterrupted && errors.Is(err, ErrEnrolMarkerUnreadable) {
+			return nil // doctor reports the board.enrol-interrupted row
+		}
 		return err
 	}
 	if m != nil && !allowInterrupted {
 		return fmt.Errorf("%w: %s", ErrEnrolInterrupted, m.RecoveryHint())
 	}
 	return nil
+}
+
+// ProbeEnrolLock reports whether the enroll lock is held (ErrEnrolInProgress),
+// cannot be probed (ErrEnrolLockUnprobeable), or is free or absent (nil). It is
+// the lock half of CheckEnrolGuard (MTIX-112.17.16.21.2).
+func ProbeEnrolLock(mtixDir string) error {
+	lockFile := filepath.Join(enrolDir(mtixDir), "data", enrolLockName)
+	if _, err := os.Lstat(lockFile); err != nil {
+		return nil
+	}
+	lock, lockErr := acquireEnrolLock(mtixDir)
+	if errors.Is(lockErr, pushlock.ErrLockHeld) {
+		return fmt.Errorf("%w%s; retry when it finishes", ErrEnrolInProgress, holderSuffix(mtixDir))
+	}
+	if lockErr != nil {
+		return fmt.Errorf("probe enrolment lock: %w: %w", ErrEnrolLockUnprobeable, lockErr)
+	}
+	if relErr := lock.Release(); relErr != nil {
+		return fmt.Errorf("release enrolment probe: %w: %w", ErrEnrolLockUnprobeable, relErr)
+	}
+	return nil
+}
+
+// EnrolLockPath is the enroll lock file the guard probes.
+func EnrolLockPath(mtixDir string) string {
+	return filepath.Join(enrolDir(mtixDir), "data", enrolLockName)
+}
+
+// MoveAsideUnprobeableEnrolLock repairs a lock path the guard cannot probe, and
+// only when that is provably safe. A lock held by a live enrolment is a regular
+// file the same primitive can see, so it is never touched: a held lock refuses
+// with ErrEnrolInProgress. A regular file that still cannot be probed (ownership
+// or mode) cannot be proven unheld, so it is refused and left for the project maintainer. An
+// object that is not a regular file (a directory, a link) can never be held
+// through this name, because the lock refuses it, and is moved aside, never
+// removed or truncated (MTIX-112.17.16.21.2).
+func MoveAsideUnprobeableEnrolLock(mtixDir string) error {
+	lock := EnrolLockPath(mtixDir)
+	info, err := os.Lstat(lock)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("inspect enrolment lock: %w", err)
+	}
+	if info.Mode().IsRegular() {
+		probeErr := ProbeEnrolLock(mtixDir)
+		if probeErr == nil {
+			return nil // free after all: nothing to repair
+		}
+		return fmt.Errorf("refusing to move %s: no proof that no process holds it; the project maintainer must stop the holder or restore its owner and mode: %w", lock, probeErr)
+	}
+	aside := lock + ".unprobeable"
+	if _, statErr := os.Lstat(aside); statErr == nil {
+		return fmt.Errorf("refusing to move %s: %s already exists: %w", lock, aside, model.ErrAlreadyExists)
+	}
+	if err := os.Rename(lock, aside); err != nil {
+		return fmt.Errorf("move enrolment lock aside: %w", err)
+	}
+	return nil
+}
+
+// EnrolMarkerPath is the durable enrolment marker file.
+func EnrolMarkerPath(mtixDir string) string { return enrolMarkerPath(mtixDir) }
+
+// EnrolAsideDirs lists the directories a moved original store may be in. A torn
+// marker no longer names its aside directory, so doctor looks for them.
+func EnrolAsideDirs(mtixDir string) ([]string, error) {
+	// A literal prefix match on the directory's own entries; no pattern input.
+	entries, err := os.ReadDir(mtixDir)
+	if err != nil {
+		return nil, fmt.Errorf("list %s: %w", mtixDir, err)
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), asideDirPrefix) {
+			out = append(out, filepath.Join(mtixDir, e.Name()))
+		}
+	}
+	return out, nil
 }
 
 // acquireEnrolLock takes the enroll lock, retrying for a moment on contention:

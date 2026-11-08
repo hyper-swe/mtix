@@ -171,8 +171,10 @@ enrolls the hub's values, and reports lost fields on nodes this store's own
 journal touched, with a doctor warning until its record is cleared. This is the
 existing service API; no public enrollment command ships in this build.
 
-A plain old `mtix done` or cancel (from a build that did not yet carry the
-completion time in its event) stamps `closed_at` in the store from one clock
+A terminal transition (done, cancel or invalidate) whose event carries no
+`closed_at` (from a build that did not yet carry the completion time in its
+event, or a plain terminal transition that backfill or status repair of a
+legacy winner emits) stamps `closed_at` in the store from one clock
 read and in the event from a second. When the two reads fall either side of a
 second, the hub clone's `closed_at` differs from the store's by one second, and
 enrollment accepts that one case. It does so only when the clone took its

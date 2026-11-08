@@ -58,7 +58,7 @@ func (s *Store) nodeWinner(ctx context.Context, n stampedNode) (heldWorkflow, bo
 }
 
 // stampedNodes lists the live nodes that hold a completion stamp.
-func (s *Store) stampedNodes(ctx context.Context) ([]stampedNode, error) {
+func (s *Store) stampedNodes(ctx context.Context) (out []stampedNode, err error) {
 	// Live nodes holding a closed_at, with the uid that scopes their events.
 	rows, err := s.ReadDB().QueryContext(ctx, `
 		SELECT id, COALESCE(uid, ''), closed_at FROM nodes
@@ -66,8 +66,11 @@ func (s *Store) stampedNodes(ctx context.Context) ([]stampedNode, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read stamped nodes: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
-	var out []stampedNode
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			out, err = nil, fmt.Errorf("close stamped nodes: %w", closeErr)
+		}
+	}()
 	for rows.Next() {
 		var n stampedNode
 		if err := rows.Scan(&n.id, &n.uid, &n.closedAt); err != nil {

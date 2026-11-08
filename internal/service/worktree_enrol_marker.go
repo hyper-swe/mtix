@@ -43,6 +43,11 @@ var (
 	// ErrEnrolLockUnprobeable is returned when the enroll lock file exists but
 	// cannot be probed, which is neither held nor free (MTIX-112.17.16.21.2).
 	ErrEnrolLockUnprobeable = fmt.Errorf("worktree enrolment lock cannot be probed: %w", model.ErrConflict)
+	// ErrEnrolMarkerUndecodable marks, in addition to ErrEnrolMarkerUnreadable, a
+	// marker that was read but whose content is not valid JSON. A read that failed
+	// for permission or I/O does not carry it: the marker may be another user's
+	// live enrolment, so a caller must not treat it as torn (MTIX-112.17.16.21.2.4).
+	ErrEnrolMarkerUndecodable = errors.New("worktree enrolment marker content cannot be decoded")
 )
 
 // EnrolMarker is the durable record written before the store moves and removed
@@ -116,7 +121,7 @@ func ReadEnrolMarker(mtixDir string) (*EnrolMarker, error) {
 	}
 	var m EnrolMarker
 	if err := json.Unmarshal(body, &m); err != nil {
-		return nil, fmt.Errorf("decode enrolment marker: %w: %w", ErrEnrolMarkerUnreadable, err)
+		return nil, fmt.Errorf("decode enrolment marker: %w: %w: %w", ErrEnrolMarkerUnreadable, ErrEnrolMarkerUndecodable, err)
 	}
 	return &m, nil
 }
@@ -168,12 +173,18 @@ func CheckEnrolGuard(mtixDir string, allowInterrupted bool) error {
 }
 
 // ProbeEnrolLock reports whether the enroll lock is held (ErrEnrolInProgress),
-// cannot be probed (ErrEnrolLockUnprobeable), or is free or absent (nil). It is
+// cannot be probed (ErrEnrolLockUnprobeable, including any Lstat failure other
+// than not-exist), or is free or absent (nil). It is
 // the lock half of CheckEnrolGuard (MTIX-112.17.16.21.2).
 func ProbeEnrolLock(mtixDir string) error {
 	lockFile := filepath.Join(enrolDir(mtixDir), "data", enrolLockName)
-	if _, err := os.Lstat(lockFile); err != nil {
+	// Only a lock that is absent is free. Any other Lstat failure (a directory that
+	// cannot be searched, an I/O error) leaves the lock unknown, so the probe fails
+	// closed (MTIX-112.17.16.21.2.4).
+	if _, err := os.Lstat(lockFile); errors.Is(err, os.ErrNotExist) {
 		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect enrolment lock: %w: %w", ErrEnrolLockUnprobeable, err)
 	}
 	lock, lockErr := acquireEnrolLock(mtixDir)
 	if errors.Is(lockErr, pushlock.ErrLockHeld) {

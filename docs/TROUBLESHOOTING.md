@@ -175,7 +175,23 @@ Doctor shows these rows only when they apply:
   counted as rejected in the row's detail, no command is built from it, and the
   row prints the generic command with placeholders. The glue path never imports
   `tasks.json` and never triggers hooks, whatever `sync.auto_sync` says.
-- `attach.failures`: recent `attach.protocol-skew` and `attach.verb-failure`
+  Before opening the matched board store, this drain checks the enrollment
+  guard. While the original store still matches, a running or interrupted
+  enrollment leaves its queue untouched and produces an enrollment reason on
+  stderr plus an `attach.enrol-blocked` alert in `mtix doctor` (`attach.failures`),
+  with the enrollment remedy; a missing harness adapter cannot overwrite it.
+  The hook still exits 0. After the store moves aside or its identity changes,
+  the predicate declines instead: glue prints `board not attached on this host`,
+  without an enrollment alert; run `mtix doctor` for recovery guidance.
+  Pi wait checks enrollment before opening and before its poll reads, claims
+  and result writes; each host dispatcher board open uses the same guard and
+  a refused board is skipped for that pass. These are checks, not held locks:
+  enrollment starting after a check can overlap an in-flight open or write.
+  Retry after enrollment finishes; if interrupted, follow `mtix doctor` first.
+  Never remove enrollment locks, markers or store data to force a drain;
+  remove an interrupted marker only when doctor explicitly instructs it.
+- `attach.failures`: recent `attach.protocol-skew`, `attach.verb-failure` and
+  `attach.enrol-blocked`
   operator alerts from the hidden attach verbs, with counts. These verbs are
   entry points for harness glue, not for agents. They always exit 0, even on
   arguments they cannot parse or a verb this build does not know, print one

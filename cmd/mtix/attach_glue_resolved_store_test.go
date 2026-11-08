@@ -109,7 +109,9 @@ func TestOpenPiWaitBoard_OpensOnlyTheResolvedStore(t *testing.T) {
 	opened, closeStore, err := openPiWaitBoard(attach.WithStoreRoot(t.Context(), resolved))
 	require.NoError(t, err)
 	defer func() { require.NoError(t, closeStore()) }()
-	store, ok := opened.(*sqlite.Store)
+	store, ok := opened.(interface {
+		StoreInstanceID(context.Context) (string, error)
+	})
 	require.True(t, ok)
 	got, err := store.StoreInstanceID(t.Context())
 	require.NoError(t, err)

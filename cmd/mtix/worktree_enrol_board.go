@@ -154,18 +154,12 @@ func (h boundedHub) PullEvents(ctx context.Context, after transport.PullCursor, 
 // boundedCloneExport exports a fresh scratch clone built from only the hub
 // events local has applied (appliedBound).
 func boundedCloneExport(ctx context.Context, logger *slog.Logger, root, scratch string, local *sqlite.Store, hub cursorPuller) ([]byte, error) {
-	body, _, err := boundedCloneExportWithEvidence(ctx, logger, root, scratch, local, hub)
-	return body, err
-}
-
-// boundedCloneExportWithEvidence is boundedCloneExport with the evidence the
-// comparison of the two replicas may use (MTIX-112.17.16.19.1).
-func boundedCloneExportWithEvidence(ctx context.Context, logger *slog.Logger, root, scratch string, local *sqlite.Store, hub cursorPuller) ([]byte, *service.CloneEvidence, error) {
 	bound, err := readAppliedBound(ctx, local)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return cloneExportWithin(ctx, logger, root, scratch, bound, hub)
+	body, _, err := cloneExportWithin(ctx, logger, root, scratch, bound, hub)
+	return body, err
 }
 
 // cloneEvidence reads, from the clone store, which nodes it stamped closed_at

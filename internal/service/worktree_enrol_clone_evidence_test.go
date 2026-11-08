@@ -41,6 +41,8 @@ func TestBoardHubFinding_LegacyClosedAtSkew_OnlyOnEvidenceWithinOneSecond(t *tes
 		{"empty evidence", node("done", at), node("done", next), &service.CloneEvidence{}, false},
 		{"evidence for another stamp", node("done", at), node("done", next), evidence(later), false},
 		{"two seconds apart, legacy", node("done", at), node("done", later), evidence(later), false},
+		{"hub two seconds earlier, legacy", node("done", later), node("done", at), evidence(at), false},
+		{"hub just over one second later", node("done", at), node("done", "2026-01-01T00:00:06.5Z"), evidence("2026-01-01T00:00:06.5Z"), false},
 		{"different status", node("done", at), node("cancelled", next), evidence(next), false},
 		{"non-terminal status", node("open", at), node("open", next), evidence(next), false},
 		{"stamp missing on the store", node("done", ""), node("done", next), evidence(next), false},

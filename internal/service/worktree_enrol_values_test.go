@@ -26,13 +26,13 @@ func TestBoardHubFinding_DigestBindsTheValuesNotJustTheNames(t *testing.T) {
 	l2, _ := titled("another branch title", "hub title")
 	_, c3 := titled("branch title", "another hub title")
 
-	f1, err := service.BoardHubFinding([]byte(l1), []byte(c1))
+	f1, err := service.BoardHubFinding([]byte(l1), []byte(c1), nil)
 	require.NoError(t, err)
-	same, err := service.BoardHubFinding([]byte(l1), []byte(c1))
+	same, err := service.BoardHubFinding([]byte(l1), []byte(c1), nil)
 	require.NoError(t, err)
-	local, err := service.BoardHubFinding([]byte(l2), []byte(c1))
+	local, err := service.BoardHubFinding([]byte(l2), []byte(c1), nil)
 	require.NoError(t, err)
-	hub, err := service.BoardHubFinding([]byte(l1), []byte(c3))
+	hub, err := service.BoardHubFinding([]byte(l1), []byte(c3), nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, f1.Digest(), same.Digest(), "the same difference has one digest")
@@ -43,7 +43,7 @@ func TestBoardHubFinding_DigestBindsTheValuesNotJustTheNames(t *testing.T) {
 
 func TestBoardHubFinding_ReportCarriesNoValues(t *testing.T) {
 	l, c := titled("SECRET-LOCAL", "SECRET-HUB")
-	f, err := service.BoardHubFinding([]byte(l), []byte(c))
+	f, err := service.BoardHubFinding([]byte(l), []byte(c), nil)
 	require.NoError(t, err)
 	body, err := json.Marshal(f.Diff)
 	require.NoError(t, err)
@@ -68,7 +68,7 @@ func TestBoardHubFinding_HubRowsOnly_ShapeIsClassified(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f, err := service.BoardHubFinding([]byte(tt.local), []byte(tt.hub))
+			f, err := service.BoardHubFinding([]byte(tt.local), []byte(tt.hub), nil)
 			require.NoError(t, err)
 			require.NotNil(t, f)
 			assert.Equal(t, tt.hubRowsOnly, f.HubRowsOnly())
@@ -81,7 +81,7 @@ func TestBoardHubFinding_HubRowsOnly_ShapeIsClassified(t *testing.T) {
 
 func board(t *testing.T, local, hub string) *service.WorktreeBoardError {
 	t.Helper()
-	f, err := service.BoardHubFinding([]byte(local), []byte(hub))
+	f, err := service.BoardHubFinding([]byte(local), []byte(hub), nil)
 	require.NoError(t, err)
 	require.NotNil(t, f)
 	return &service.WorktreeBoardError{BoardFinding: *f, Report: "/w/.mtix/enroll-diff-x.json"}
@@ -90,10 +90,10 @@ func board(t *testing.T, local, hub string) *service.WorktreeBoardError {
 // confirmed builds a refusal and checks its rows against the full hub clone.
 func confirmed(t *testing.T, local, bounded, full string) *service.WorktreeBoardError {
 	t.Helper()
-	f, err := service.BoardHubFinding([]byte(local), []byte(bounded))
+	f, err := service.BoardHubFinding([]byte(local), []byte(bounded), nil)
 	require.NoError(t, err)
 	require.NotNil(t, f)
-	require.NoError(t, f.ConfirmAgainstHub([]byte(local), []byte(full)))
+	require.NoError(t, f.ConfirmAgainstHub([]byte(local), []byte(full), nil))
 	return &service.WorktreeBoardError{BoardFinding: *f, Report: "/w/.mtix/enroll-diff-x.json"}
 }
 
@@ -152,7 +152,7 @@ func TestBoardSnapshotHubFinding(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			f, err := service.BoardSnapshotHubFinding([]byte(tt.local), []byte(tt.hub))
+			f, err := service.BoardSnapshotHubFinding([]byte(tt.local), []byte(tt.hub), nil)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantNil, f == nil)
 			if f != nil {
@@ -160,10 +160,10 @@ func TestBoardSnapshotHubFinding(t *testing.T) {
 			}
 		})
 	}
-	mixed, err := service.BoardSnapshotHubFinding([]byte(edited), []byte(two))
+	mixed, err := service.BoardSnapshotHubFinding([]byte(edited), []byte(two), nil)
 	require.NoError(t, err)
 	assert.Equal(t, service.BoardDiff{"TEST-1": {"title"}}, mixed.Diff, "a hub row is not reported in snapshot mode")
-	_, err = service.BoardSnapshotHubFinding([]byte("{bad"), []byte(one))
+	_, err = service.BoardSnapshotHubFinding([]byte("{bad"), []byte(one), nil)
 	require.Error(t, err)
 }
 

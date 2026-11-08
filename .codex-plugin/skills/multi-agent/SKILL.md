@@ -195,6 +195,35 @@ Doctor shows these rows only when they apply:
   Retry after enrollment finishes; if interrupted, follow `mtix doctor` first.
   Never remove enrollment locks, markers or store data to force a drain;
   remove an interrupted marker only when doctor explicitly instructs it.
+  If the marker is torn (cannot be decoded) or the enrollment lock cannot be
+  probed, `mtix doctor` still runs and prints a FAIL row with the exact command:
+  `board.enrol-interrupted` for a torn marker, `board.enrol-lock` for an
+  unprobeable lock. Run a printed command as printed, then rerun `mtix doctor`;
+  a row whose fix starts with STOP prints no command (see below).
+  The lock fix is `mtix doctor --fix`: it moves the lock aside, never removes
+  it, only when it is not a regular file (nothing can hold it) and refuses a lock
+  that a live enrollment holds. A regular lock that cannot be probed cannot be
+  proven unheld, so its row asks the project maintainer instead of printing a command; the prose
+  also names the lock directory, because its owner or a link there fails the probe too.
+  While the marker is torn or the lock cannot be probed, doctor prints its rows
+  without creating or opening a store, because a live enrollment may have moved
+  the store away. For a torn marker the row prints a command only when exactly one
+  aside store exists and the live data directory is missing or empty, the evidence
+  that the aside store is this enrollment's original. With a live store, or with
+  several aside stores, the row names them and asks the project maintainer to
+  choose, and prints no command, because an aside store left by an earlier
+  enrollment must not replace a live store. A possibly-live enrollment never gets
+  a command either: when the lock cannot be probed (it may belong to another
+  user's running enrollment), or the marker could not be read for a reason other
+  than its content (for example a permission error), the row starts with STOP,
+  names `board.enrol-lock` only when the lock cannot be probed (for an unreadable
+  marker it names the marker to make readable instead), and asks the enrollment's
+  owner or the project maintainer; it prints no mv or rm. When the lock path
+  itself cannot be inspected (a directory on it is not searchable, or is a file),
+  `board.enrol-lock` prints no `mtix doctor --fix` and names the directories to
+  repair, because the repair would fail the same inspection. Only a marker whose content cannot be
+  decoded, with a free lock, gets a command. After `mtix doctor --fix` repairs the
+  lock, the row shows pass in the same run.
 - `attach.failures`: recent `attach.protocol-skew`, `attach.verb-failure` and
   `attach.enrol-blocked`
   operator alerts from the hidden attach verbs, with counts. These verbs are

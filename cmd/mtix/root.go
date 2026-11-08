@@ -236,6 +236,13 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 		return guardErr
 	}
 
+	// Doctor prints its enrolment rows without creating or opening a store while
+	// the marker is torn or the lock cannot be probed (MTIX-112.17.16.21.2).
+	if isTopLevelDoctor(cmd) && doctorMustNotOpenStore(mtixDir) {
+		app.mtixDir = mtixDir // the enrolment rows are registered from it; no store is opened
+		return nil
+	}
+
 	// Ensure data directory exists (FR-15.2a: fresh clone has no .mtix/data/).
 	dbDir := filepath.Join(mtixDir, "data")
 	if mkErr := os.MkdirAll(dbDir, 0755); mkErr != nil {

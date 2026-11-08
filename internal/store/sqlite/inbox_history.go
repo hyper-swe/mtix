@@ -155,8 +155,8 @@ func CountUnackedInboxFile(ctx context.Context, dbPath string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("count unacknowledged inbox events: %w", err)
 	}
-	if info.Size() == 0 {
-		return 0, fmt.Errorf("count unacknowledged inbox events: %s is 0 bytes, not a database", dbPath)
+	if info.Size() <= 1 {
+		return 0, fmt.Errorf("count unacknowledged inbox events: %s has %d bytes (empty or one-byte database); SQLite read skipped", dbPath, info.Size())
 	}
 	n, err := countUnackedRO(ctx, dbPath, "mode=ro")
 	if err != nil {

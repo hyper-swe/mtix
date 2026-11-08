@@ -6,6 +6,7 @@ package sqlite
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -45,7 +46,9 @@ func TestRecoverInboxJournal_RealIntegrityTimeout_ExplainsUnprovenCoverage(t *te
 	require.Positive(t, limit)
 	require.ErrorIs(t, checkInboxIntegrity(t.Context(), s.readDB, limit), context.DeadlineExceeded)
 	res := &RecoverResult{}
-	journal := recoverInboxJournal(t.Context(), s.dbPath, nil, res, limit)
+	sourceBefore, statErr := os.Stat(s.dbPath)
+	require.NoError(t, statErr)
+	journal := recoverInboxJournal(t.Context(), s.dbPath, nil, res, limit, sourceBefore)
 	require.True(t, res.InboxIncomplete)
 	require.Len(t, journal.Events, 1)
 	require.False(t, journal.Events[0].Acked)

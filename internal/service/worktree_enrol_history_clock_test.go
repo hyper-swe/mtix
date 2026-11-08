@@ -28,7 +28,7 @@ func TestCompareBoardDocs_HistoryDeletedAt_TwoClockReadings_AreNoDifference(t *t
 	d, err := service.CompareBoardDocs([]byte(a), []byte(b))
 	require.NoError(t, err)
 	assert.Empty(t, d, "a clone stamps its own clock in the deletion row")
-	f, err := service.BoardHubFinding([]byte(a), []byte(b))
+	f, err := service.BoardHubFinding([]byte(a), []byte(b), nil)
 	require.NoError(t, err)
 	assert.Nil(t, f)
 }
@@ -67,13 +67,13 @@ func TestBoardHubFinding_HistoryDeletedAtClock_DigestIsStableAcrossRefusals(t *t
 		return `{"nodes":[{"id":"TEST-1","uid":"u1","title":"` + title + `","history":[` + deleteRow(stamp, "change") + `]}]}`
 	}
 	local := doc("mine", `\"2026-01-01T00:00:01Z\"`)
-	one, err := service.BoardHubFinding([]byte(local), []byte(doc("hub", `\"2026-01-01T00:00:02Z\"`)))
+	one, err := service.BoardHubFinding([]byte(local), []byte(doc("hub", `\"2026-01-01T00:00:02Z\"`)), nil)
 	require.NoError(t, err)
-	two, err := service.BoardHubFinding([]byte(local), []byte(doc("hub", `\"2026-01-01T00:00:09Z\"`)))
+	two, err := service.BoardHubFinding([]byte(local), []byte(doc("hub", `\"2026-01-01T00:00:09Z\"`)), nil)
 	require.NoError(t, err)
 	require.NotNil(t, one)
 	assert.Equal(t, one.Digest(), two.Digest())
-	other, err := service.BoardHubFinding([]byte(local), []byte(doc("hub other", `\"2026-01-01T00:00:02Z\"`)))
+	other, err := service.BoardHubFinding([]byte(local), []byte(doc("hub other", `\"2026-01-01T00:00:02Z\"`)), nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, one.Digest(), other.Digest(), "the digest still follows the values that matter")
 }

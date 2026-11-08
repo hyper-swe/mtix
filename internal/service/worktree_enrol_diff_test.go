@@ -138,7 +138,7 @@ func TestBoardFindings_NilWhenEqual_ReasonWhenNot(t *testing.T) {
 	same, err := service.BoardFileFinding([]byte(baseBoard), []byte(baseBoard))
 	require.NoError(t, err)
 	assert.Nil(t, same)
-	same, err = service.BoardHubFinding([]byte(baseBoard), []byte(baseBoard))
+	same, err = service.BoardHubFinding([]byte(baseBoard), []byte(baseBoard), nil)
 	require.NoError(t, err)
 	assert.Nil(t, same)
 
@@ -148,14 +148,14 @@ func TestBoardFindings_NilWhenEqual_ReasonWhenNot(t *testing.T) {
 	require.NotNil(t, f)
 	assert.Equal(t, service.BoardFileDiffers, f.Reason)
 	assert.Equal(t, []string{"TEST-1"}, f.IDs())
-	h, err := service.BoardHubFinding([]byte(baseBoard), []byte(other))
+	h, err := service.BoardHubFinding([]byte(baseBoard), []byte(other), nil)
 	require.NoError(t, err)
 	require.NotNil(t, h)
 	assert.Equal(t, service.BoardHubDiffers, h.Reason)
 
 	_, err = service.BoardFileFinding([]byte("{bad"), []byte(baseBoard))
 	require.Error(t, err)
-	_, err = service.BoardHubFinding([]byte(baseBoard), []byte("{bad"))
+	_, err = service.BoardHubFinding([]byte(baseBoard), []byte("{bad"), nil)
 	require.Error(t, err)
 }
 
@@ -210,7 +210,7 @@ func TestBoardFileFinding_AppliesNoExclusions(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, file, "the file rule has no exclusions")
 			assert.Equal(t, service.BoardFileDiffers, file.Reason)
-			hub, err := service.BoardHubFinding([]byte(other), []byte(baseBoard))
+			hub, err := service.BoardHubFinding([]byte(other), []byte(baseBoard), nil)
 			require.NoError(t, err)
 			if name == "annotation addressee" {
 				require.NotNil(t, hub)

@@ -69,11 +69,11 @@ func OwnEntities(events []OwnEvent) []string {
 // list field the clone only adds to (a teammate's comment next to this store's
 // own) is not a difference. Nil when there is none. A difference on an entity
 // no own event touched is the hub moving on, not something this store wrote.
-func FindLostLocal(asideExport, cloneExport []byte, own []string) (*LostLocal, error) {
+func FindLostLocal(asideExport, cloneExport []byte, own []string, ev *CloneEvidence) (*LostLocal, error) {
 	if len(own) == 0 {
 		return nil, nil
 	}
-	c, err := compareReplicas(asideExport, cloneExport)
+	c, err := compareReplicas(asideExport, cloneExport, ev)
 	if err != nil {
 		return nil, err
 	}

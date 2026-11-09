@@ -41,6 +41,9 @@ type inboxJournalEvent struct {
 func (s *Store) ExportWithInbox(ctx context.Context, project, version string) (*ExportData, error) {
 	var journal *InboxJournal
 	data, err := s.readExportSnapshotWith(ctx, func(tx *sql.Tx) error {
+		if checkErr := checkAckIndexAgreesWithTable(ctx, tx); checkErr != nil {
+			return checkErr
+		}
 		var readErr error
 		journal, readErr = readInboxJournal(ctx, tx)
 		return readErr

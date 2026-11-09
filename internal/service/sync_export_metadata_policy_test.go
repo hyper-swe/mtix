@@ -182,3 +182,32 @@ func TestDirectorySync_NilLoggerDoesNotConsumeWarning(t *testing.T) {
 	require.NoError(t, exportDirectorySyncResult(newDirectoryWarner(slog.New(slog.NewTextHandler(&out, nil))), path, syscall.EINVAL, nil))
 	require.Contains(t, out.String(), "export directory sync unsupported")
 }
+
+// A warner without a logger is silent, never panics and records nothing, so the
+// same path warns exactly once through a later logging warner (MTIX-130.14).
+func TestDirectoryWarner_NilLogger_StaysSilentAndDoesNotConsumePath(t *testing.T) {
+	tests := []struct {
+		name   string
+		warner *directoryWarner
+	}{
+		{"nil warner", nil},
+		{"warner with nil logger", newDirectoryWarner(nil)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "silent-first")
+			require.NotPanics(t, func() {
+				require.NoError(t, exportDirectorySyncResult(tt.warner, path, syscall.EINVAL, nil))
+			})
+			var out bytes.Buffer
+			logging := newDirectoryWarner(slog.New(slog.NewTextHandler(&out, nil)))
+			require.NoError(t, exportDirectorySyncResult(logging, path, syscall.EINVAL, nil))
+			require.NoError(t, exportDirectorySyncResult(logging, path, syscall.EINVAL, nil))
+			require.Equal(t, 1, strings.Count(out.String(), "export directory sync unsupported"))
+		})
+	}
+	silent := newDirectoryWarner(nil)
+	require.False(t, silent.shouldWarn("p"))
+	_, recorded := silent.warned.Load("p")
+	require.False(t, recorded, "a silent warner must not record the path")
+}

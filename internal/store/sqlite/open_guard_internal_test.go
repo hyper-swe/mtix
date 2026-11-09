@@ -5,6 +5,7 @@ package sqlite
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -58,6 +59,41 @@ func TestGuardEmptyDatabaseWAL_WALStatError_Refuses(t *testing.T) {
 	require.NoError(t, os.WriteFile(path, make([]byte, 100), 0o600))
 	require.NoError(t, os.Symlink(filepath.Base(path)+"-wal", path+"-wal"))
 	require.Error(t, guardEmptyDatabaseWAL(path))
+}
+
+// NFR-2.8: a database that cannot be examined is not "a healthy database".
+// The stat of the resolved database alone fails with something other than
+// not-exist while its nonempty -wal stats fine; the open is refused and the
+// WAL is left byte-for-byte intact.
+func TestOpenSQLite_DatabaseStatError_RefusesAndLeavesWAL(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "x.db")
+	require.NoError(t, os.WriteFile(path, nil, 0o600))
+	committed := []byte("committed\x00wal\xffbytes")
+	require.NoError(t, os.WriteFile(path+"-wal", committed, 0o600))
+	resolved, err := resolveDatabasePath(path)
+	require.NoError(t, err)
+
+	injected := errors.New("injected database stat failure")
+	var failed int
+	original := statDatabaseBeforeOpen
+	t.Cleanup(func() { statDatabaseBeforeOpen = original })
+	statDatabaseBeforeOpen = func(name string) (os.FileInfo, error) {
+		if name == resolved {
+			failed++
+			return nil, injected
+		}
+		return os.Stat(name)
+	}
+
+	db, err := openSQLite(path)
+	if db != nil {
+		require.NoError(t, db.Close())
+	}
+	require.ErrorIs(t, err, injected)
+	require.Positive(t, failed)
+	wal, readErr := os.ReadFile(path + "-wal")
+	require.NoError(t, readErr)
+	require.Equal(t, committed, wal)
 }
 
 // fakeFileInfo lets a test state the size the source had before salvage.

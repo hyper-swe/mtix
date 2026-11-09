@@ -140,6 +140,11 @@ func guardWALWithAdvice(path, advice string) error {
 	return nil
 }
 
+// statDatabaseBeforeOpen stats the resolved database in guardWALBeside. It is
+// a variable so an internal test can inject a stat failure that no real
+// filesystem produces on the database alone while its -wal stats fine.
+var statDatabaseBeforeOpen = os.Stat
+
 // guardWALBeside refuses when a nonempty WAL sits beside candidate while the
 // database SQLite will open (resolved) is empty, one byte or missing.
 func guardWALBeside(candidate, resolved, advice string) error {
@@ -156,7 +161,7 @@ func guardWALBeside(candidate, resolved, advice string) error {
 	}
 	// Observe the WAL first, then the database: a concurrent first opener may
 	// initialize the database before committing its first WAL transaction.
-	info, err := os.Stat(resolved)
+	info, err := statDatabaseBeforeOpen(resolved)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("stat database before open: %w", err)
 	}

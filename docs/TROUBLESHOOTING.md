@@ -296,6 +296,19 @@ The switch lives in the tracked `.mtix/config.yaml`, so a clone that pulls
 row fails there when an older build is seen, and the fix is
 `mtix config set history.export false` until that machine is upgraded.
 
+## mtix export refuses: acknowledgment index disagrees with its table
+`mtix export` (and any explicit export that carries inbox mail) refuses with
+"acknowledgment index disagrees with its table" (or "holds N keys but the table
+holds M", or "acknowledgment index unreadable") when the index over the
+acknowledgment table no longer matches the table. Exporting anyway would mark
+the wrong mail acknowledged. Nothing is written and the store is not changed.
+The refusal itself confirms the damage: `mtix doctor` does not compare this index
+with its table, so a green doctor does not clear it. Repair the store: restore the
+store from a good backup, or recover it with `mtix recover`, which treats
+acknowledgment coverage as unverified and redelivers mail as unread. Export
+again afterwards. `mtix export --board-only` and the automatic `.mtix/tasks.json`
+mirror carry no mail and are not refused.
+
 ## Common Errors
 
 ### Pull sync lock is busy

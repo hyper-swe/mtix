@@ -18,7 +18,7 @@ import (
 
 // AutoExport publishes changed DB content to .mtix/tasks.json per FR-15.3,
 // retaining the existing bytes and timestamp when content is unchanged,
-// (exportBoard), unless that would overwrite a board that changed on disk
+// (exportBoardPassWith), unless that would overwrite a board that changed on disk
 // and was not imported (MTIX-95.31.2, keepPulledBoard): it then runs the
 // automatic import first, and when that does not import the board, keeps
 // it, records the refusal as pending and says so in one line.
@@ -61,14 +61,6 @@ func (s *SyncService) runAutoExportMode(ctx context.Context, mtixDir string, pas
 	return nil
 }
 
-// exportBoard writes the current DB state to .mtix/tasks.json per FR-15.3,
-// without the MTIX-95.31.2 check AutoExport makes first: deterministic
-// export, atomic temp+rename write, then the file hash and the DB hash for
-// conflict detection.
-func (s *SyncService) exportBoard(ctx context.Context, mtixDir string) error {
-	return s.exportBoardProtected(ctx, mtixDir, false)
-}
-
 func (s *SyncService) exportBoardProtected(ctx context.Context, mtixDir string, protect bool) error {
 	_, err := s.exportBoardPass(ctx, mtixDir, protect)
 	return err
@@ -104,6 +96,11 @@ func (s *SyncService) exportBoardPass(ctx context.Context, mtixDir string, prote
 	return s.exportBoardPassWith(ctx, mtixDir, protect, recordExportRequest)
 }
 
+// exportBoardPassWith writes the current DB state to .mtix/tasks.json per
+// FR-15.3 (deterministic export, atomic temp+rename write, then the file
+// hash and the DB hash for conflict detection). A busy sync lock writes
+// nothing and returns false; mode decides whether a pending export request
+// is recorded first and which warning is logged (MTIX-130.19).
 func (s *SyncService) exportBoardPassWith(ctx context.Context, mtixDir string, protect bool, mode contendedMode) (bool, error) {
 	start := s.clock()
 	lockFile, lockErr := s.acquireLock(mtixDir, lockExclusive)

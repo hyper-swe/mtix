@@ -19,7 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/oplocal"
-	"github.com/hyper-swe/mtix/internal/procinfo"
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
@@ -329,31 +328,23 @@ func TestDaemonPIDFile_OtherMtixProcessOnReusedPID_NotLive(t *testing.T) {
 	// another project's reads not live. Darwin cannot read another process's working directory,
 	// so the same daemon reads live through the documented fail-safe (an undetermined project
 	// counts as live: skipping duty is recoverable, a double pull or hook firing is not).
-	// The cases decided by argv alone read not live on every platform. A linux host that denies
-	// ptrace-read access to /proc/<pid>/cwd takes the same fail-safe as darwin, so the expectation
-	// follows whether the helper's working directory is actually readable, not the GOOS alone.
+	// The cases decided by argv alone read not live on every platform.
+	otherProjectLive := runtime.GOOS == "darwin"
 	for _, tt := range []struct {
-		name       string
-		args       []string
-		cwdDecides bool
-		why        string
+		name     string
+		args     []string
+		wantLive bool
+		why      string
 	}{
-		{"another-project-daemon", []string{"-C", t.TempDir(), "daemon"}, true, "another project's daemon is stale where the cwd is readable and live through the unreadable-cwd fail-safe"},
+		{"another-project-daemon", []string{"-C", t.TempDir(), "daemon"}, otherProjectLive, "another project's daemon is stale where the cwd is readable and live through the unreadable-cwd fail-safe on darwin"},
 		{"mtix-mcp-server", []string{"-C", root, "mcp"}, false, "argv alone: not a daemon"},
 		{"mtix-without-daemon", []string{}, false, "argv alone: not a daemon"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			pid := startLegacyDaemonHelper(t, "", tt.args...)
-			require.NoError(t, writeDaemonPID(mtixDir, pid))
-			wantLive := false
-			if tt.cwdDecides {
-				// An unreadable identity or working directory fails safe as live (pidIsLegacyDaemon).
-				proc, err := procinfo.Info(pid)
-				wantLive = err != nil || runtime.GOOS == "darwin" || proc.Cwd == ""
-			}
+			require.NoError(t, writeDaemonPID(mtixDir, startLegacyDaemonHelper(t, "", tt.args...)))
 			live, _, err := daemonPIDFileLive(mtixDir)
 			require.NoError(t, err)
-			require.Equal(t, wantLive, live, tt.why)
+			require.Equal(t, tt.wantLive, live, tt.why)
 		})
 	}
 }

@@ -61,26 +61,26 @@ func (s *SyncService) runAutoExportMode(ctx context.Context, mtixDir string, pas
 	return nil
 }
 
+// exportBoard writes the current DB state to .mtix/tasks.json per FR-15.3,
+// without the MTIX-95.31.2 check AutoExport makes first: deterministic
+// export, atomic temp+rename write, then the file hash and the DB hash for
+// conflict detection.
+func (s *SyncService) exportBoard(ctx context.Context, mtixDir string) error {
+	return s.exportBoardProtected(ctx, mtixDir, false)
+}
+
 func (s *SyncService) exportBoardProtected(ctx context.Context, mtixDir string, protect bool) error {
 	_, err := s.exportBoardPass(ctx, mtixDir, protect)
 	return err
 }
 
 // contendedExportWarning is logged when the sync lock is busy; a durable
-// pending export request has been recorded before it is logged.
-const contendedExportWarning = "sync lock busy: auto-export deferred; pending export request recorded and will be retried; run 'mtix sync --fix' to export now"
+// pending export request has been recorded before it is logged. It points
+// only at the read-only mtix sync status, never at mtix sync --fix, which
+// discards a pulled board (MTIX-130.19).
+const contendedExportWarning = "sync lock busy: auto-export deferred; pending export request recorded and will be retried; run 'mtix sync status' to check it"
 
-// contendedForceExportWarning is logged when mtix sync --fix finds the sync
-// lock busy. It does not point back at mtix sync --fix, which just failed
-// (ErrForceExportContended); a durable request has been recorded first.
-const contendedForceExportWarning = "sync lock busy: forced export not written; pending export request recorded and will be retried when the lock is free"
-
-// ErrForceExportContended is returned by ForceExport when the sync lock is
-// busy: nothing was exported, and a pending export request was recorded.
-var ErrForceExportContended = errors.New("sync lock busy: tasks.json was not rewritten; " +
-	"a pending export request was recorded and will be retried; retry once the other mtix process finishes")
-
-// The ways an export pass treats a busy lock.
+// contendedMode is the way an export pass treats a busy lock (MTIX-130.19).
 type contendedMode int
 
 const (
@@ -88,8 +88,6 @@ const (
 	recordExportRequest contendedMode = iota
 	// exportRequestRecorded logs the automatic warning: the caller already recorded a request.
 	exportRequestRecorded
-	// forcedExport records a pending request and logs the forced warning (mtix sync --fix).
-	forcedExport
 )
 
 func (s *SyncService) exportBoardPass(ctx context.Context, mtixDir string, protect bool) (bool, error) {
@@ -111,11 +109,7 @@ func (s *SyncService) exportBoardPassWith(ctx context.Context, mtixDir string, p
 				return false, errors.Join(lockErr, fmt.Errorf("record pending export request: %w", err))
 			}
 		}
-		if mode == forcedExport {
-			s.logger.Warn(contendedForceExportWarning, "error", lockErr)
-		} else {
-			s.logger.Warn(contendedExportWarning, "error", lockErr)
-		}
+		s.logger.Warn(contendedExportWarning, "error", lockErr)
 		return false, nil
 	}
 	defer s.releaseLock(lockFile)

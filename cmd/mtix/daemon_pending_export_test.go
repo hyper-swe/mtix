@@ -163,7 +163,7 @@ func (daemonPendingHandler) Enabled(context.Context, slog.Level) bool { return t
 func (h daemonPendingHandler) WithAttrs([]slog.Attr) slog.Handler     { return h }
 func (h daemonPendingHandler) WithGroup(string) slog.Handler          { return h }
 func (h daemonPendingHandler) Handle(_ context.Context, record slog.Record) error {
-	if record.Message == "sync lock busy: auto-export deferred; pending export request recorded and will be retried; run 'mtix sync --fix' to export now" {
+	if record.Message == "sync lock busy: auto-export deferred; pending export request recorded and will be retried; run 'mtix sync status' to check it" {
 		_, err := fmt.Fprintln(os.Stdout, "attempted")
 		return err
 	}

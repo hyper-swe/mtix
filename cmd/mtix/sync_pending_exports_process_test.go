@@ -77,15 +77,11 @@ func runPendingDiagnosticChild(t *testing.T, dir, mode string) []byte {
 	cmd.Dir = filepath.Dir(dir)
 	for _, value := range hostguard.Environ() {
 		key, _, _ := strings.Cut(value, "=")
-		// The child inherits the parent's host isolation (MTIX_TEST_*): stripping it would make
-		// the child re-derive a scratch tree from HOME, which depends on how the parent was run.
-		hostIsolation := strings.HasPrefix(key, "MTIX_TEST_")
-		if hostIsolation || (!strings.HasPrefix(key, "MTIX_") && !strings.HasPrefix(key, "PG") && key != "XDG_CONFIG_HOME") {
+		if !strings.HasPrefix(key, "MTIX_") && !strings.HasPrefix(key, "PG") && key != "XDG_CONFIG_HOME" {
 			cmd.Env = append(cmd.Env, value)
 		}
 	}
-	operator, err := os.MkdirTemp(os.Getenv(hostguard.RootEnv), "operator-")
-	require.NoError(t, err)
+	operator := t.TempDir()
 	cmd.Env = append(cmd.Env, "XDG_CONFIG_HOME="+operator)
 	var out, errOut bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errOut

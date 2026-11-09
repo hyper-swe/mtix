@@ -14,7 +14,8 @@ import (
 
 // A path below a regular file makes lstat fail with ENOTDIR. SQLite cannot
 // open such a path, so no WAL can be lost through it: the walk must return
-// the rest of the path joined as written, with a nil error, not refuse.
+// the remaining parts joined and lexically cleaned (so "f/child/.." comes
+// back as "f"), with a nil error, not refuse.
 func TestResolveDatabasePath_BelowRegularFile_ReturnsPathWithoutError(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("ENOTDIR from lstat below a file is a Unix behaviour")

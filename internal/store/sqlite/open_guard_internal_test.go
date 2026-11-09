@@ -61,11 +61,13 @@ func TestGuardEmptyDatabaseWAL_WALStatError_Refuses(t *testing.T) {
 	require.Error(t, guardEmptyDatabaseWAL(path))
 }
 
-// NFR-2.8: a database that cannot be examined is not "a healthy database".
-// The stat of the resolved database alone fails with something other than
-// not-exist while its nonempty -wal stats fine; the open is refused and the
-// WAL is left byte-for-byte intact.
-func TestOpenSQLite_DatabaseStatError_RefusesAndLeavesWAL(t *testing.T) {
+// TestGuardWALWithStat_DatabaseStatError_RefusesAndLeavesWAL pins NFR-2.8 for
+// MTIX-112.50.6: a database that cannot be examined is not a healthy
+// database. The stat of the resolved database alone fails with something
+// other than not-exist while its nonempty -wal stats fine; the guard that
+// every open runs first (openSQLite calls guardEmptyDatabaseWAL) refuses,
+// and the WAL is left byte-for-byte intact.
+func TestGuardWALWithStat_DatabaseStatError_RefusesAndLeavesWAL(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "x.db")
 	require.NoError(t, os.WriteFile(path, nil, 0o600))
 	committed := []byte("committed\x00wal\xffbytes")
@@ -75,9 +77,7 @@ func TestOpenSQLite_DatabaseStatError_RefusesAndLeavesWAL(t *testing.T) {
 
 	injected := errors.New("injected database stat failure")
 	var failed int
-	original := statDatabaseBeforeOpen
-	t.Cleanup(func() { statDatabaseBeforeOpen = original })
-	statDatabaseBeforeOpen = func(name string) (os.FileInfo, error) {
+	statDatabase := func(name string) (os.FileInfo, error) {
 		if name == resolved {
 			failed++
 			return nil, injected
@@ -85,10 +85,8 @@ func TestOpenSQLite_DatabaseStatError_RefusesAndLeavesWAL(t *testing.T) {
 		return os.Stat(name)
 	}
 
-	db, err := openSQLite(path)
-	if db != nil {
-		require.NoError(t, db.Close())
-	}
+	err = guardWALWithStat(path, storeRefusalAdvice, statDatabase)
+
 	require.ErrorIs(t, err, injected)
 	require.Positive(t, failed)
 	wal, readErr := os.ReadFile(path + "-wal")

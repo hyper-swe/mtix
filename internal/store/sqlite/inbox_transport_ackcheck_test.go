@@ -11,6 +11,7 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -153,4 +154,26 @@ func TestExportWithInbox_ExplicitRowidAck_ExportsAckedAt(t *testing.T) {
 			require.Equal(t, "2026-11-05T00:00:00Z", e.AckedAt)
 		}
 	}
+}
+
+// MTIX-112.49: the inbox carry reads acks through the same index, so a flipped
+// ack index key refuses the carry with the export's error and repair hint.
+func TestExportInboxCarry_FlippedAckIndexKey_RefusesNamingRecover(t *testing.T) {
+	s := openAckFixture(t, true)
+	carry, err := s.ExportInboxCarry(t.Context())
+	require.Error(t, err)
+	require.Nil(t, carry)
+	require.ErrorIs(t, err, model.ErrConflict)
+	require.Contains(t, err.Error(), "acknowledgment index")
+	require.Contains(t, err.Error(), "mtix recover")
+}
+
+// MTIX-112.49: a clean store carries its one acknowledgment unchanged.
+func TestExportInboxCarry_CleanAckIndex_CarriesAck(t *testing.T) {
+	s := openAckFixture(t, false)
+	carry, err := s.ExportInboxCarry(t.Context())
+	require.NoError(t, err)
+	require.Len(t, carry.Acks, 1)
+	require.Equal(t, "damage-251", carry.Acks[0].EventID)
+	require.Equal(t, "2026-11-05T00:00:00Z", carry.Acks[0].AckedAt.UTC().Format(time.RFC3339Nano))
 }

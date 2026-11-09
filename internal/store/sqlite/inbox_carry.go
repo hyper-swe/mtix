@@ -64,8 +64,13 @@ FROM inbox_deliveries d JOIN sync_events e ON e.rowid = d.event_seq`
 // ExportInboxCarry reads what a hub clone must keep of this store's inbox: the
 // acknowledged (agent, event id) pairs, from the per-event ledger and from the
 // events at or below an agent's watermark, and the hook deliveries. An event the
-// agent did not acknowledge is never listed (MTIX-112.17.16). Read-only.
+// agent did not acknowledge is never listed (MTIX-112.17.16). It refuses, as an
+// explicit export does, when the acknowledgment index disagrees with its table
+// (MTIX-112.49). Read-only.
 func (s *Store) ExportInboxCarry(ctx context.Context) (*InboxCarry, error) {
+	if err := checkAckIndexAgreesWithTable(ctx, s.readDB); err != nil {
+		return nil, err
+	}
 	carry := &InboxCarry{}
 	seen := map[[2]string]bool{}
 	if err := s.collectLedgerAcks(ctx, carry, seen); err != nil {

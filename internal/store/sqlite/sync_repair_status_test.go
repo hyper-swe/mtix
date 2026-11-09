@@ -143,13 +143,6 @@ func eventWallClock(t *testing.T, raw *sql.DB, eventID string) int64 {
 	return ms
 }
 
-// wallClockClosedAt is closed_at as the table stamps it from an event's
-// wall_clock_ts: RFC 3339 UTC in whole seconds.
-func wallClockClosedAt(t *testing.T, raw *sql.DB, eventID string) string {
-	t.Helper()
-	return time.UnixMilli(eventWallClock(t, raw, eventID)).UTC().Format(time.RFC3339)
-}
-
 // wallClockText is a winner's wall clock as the report prints it.
 func wallClockText(t *testing.T, raw *sql.DB, eventID string) string {
 	t.Helper()
@@ -570,21 +563,34 @@ func TestRepairNodeStatus_ClosedAt_FromWallClockAsAtIngest(t *testing.T) {
 // An event is emitted only when the status changes.
 func TestRepairNodeStatus_OwnEventReplays_RestoreTheWinner(t *testing.T) {
 	ctx := context.Background()
+	doneStamp := time.Date(2026, 9, 20, 8, 30, 0, 999_000_000, time.UTC)
+	repairLaterTime := time.Date(2100, 1, 1, 0, 0, 0, 0, time.UTC)
 	tests := []struct {
 		name      string
 		setup     func(t *testing.T, s *sqlite.Store, raw *sql.DB) sql.NullString
 		matched   model.OpType
-		want      []string // column: stored -> expected, "<replay>" is the replay's stamp, "<wall>" the winner's closed_at
+		want      []string // column: stored -> expected, "<replay>" is the replay's stamp
 		row       map[string]string
 		wantEvent bool
 	}{
 		{"a replayed start cleared closed_at of a done node", func(t *testing.T, s *sqlite.Store, raw *sql.DB) sql.NullString {
+			// closed_at is stamped from the store clock and the event's
+			// wall_clock_ts from a separate wall-clock read, so the expected
+			// closed_at is the injected stamp, never the event's wall clock
+			// (MTIX-112.55). The stamp carries milliseconds and sits months
+			// before the real wall clock, so a read of the wrong clock fails.
+			s.SetClock(func() time.Time { return doneStamp })
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusInProgress, "start", "agent-a"))
 			markEventsPushed(t, raw)
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
+			// The repair runs later, on a third clock after the real wall
+			// clock, so the done stamp, the event wall clock and the repair
+			// time are three distinct values and only the event's closed_at
+			// snapshot satisfies the expectation (MTIX-112.55).
+			s.SetClock(func() time.Time { return repairLaterTime })
 			return replayTransitionAsBefore952(t, raw, "MTIX-1", model.StatusInProgress)
-		}, model.OpTransitionStatus, []string{"status: in_progress -> done", "closed_at: NULL -> <wall>"},
-			map[string]string{"status": "done", "progress": "1"}, true},
+		}, model.OpTransitionStatus, []string{"status: in_progress -> done", "closed_at: NULL -> " + doneStamp.Format(time.RFC3339)},
+			map[string]string{"status": "done", "progress": "1", "closed_at": doneStamp.Format(time.RFC3339)}, true},
 		{"a replayed cancel after a reopen", func(t *testing.T, s *sqlite.Store, raw *sql.DB) sql.NullString {
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", false))
 			markEventsPushed(t, raw)
@@ -665,7 +671,6 @@ func TestRepairNodeStatus_OwnEventReplays_RestoreTheWinner(t *testing.T) {
 			var want []string
 			for _, w := range tt.want {
 				w = strings.ReplaceAll(w, "<replay>", replayed.String)
-				w = strings.ReplaceAll(w, "<wall>", wallClockClosedAt(t, raw, winner))
 				want = append(want, w)
 			}
 			require.Equal(t, want, got)

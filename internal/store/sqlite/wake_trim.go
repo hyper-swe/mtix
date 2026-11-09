@@ -31,14 +31,25 @@ func trimWakeToJournal(ctx context.Context, tx *sql.Tx) error {
 		// (ADR-007 A12, MTIX-112.2.2.1.1). Lower only marks above the tail.
 		`UPDATE agent_registrations SET returned_seq_mark = (SELECT COALESCE(MAX(rowid), 0) FROM sync_events)
          WHERE returned_seq_mark > (SELECT COALESCE(MAX(rowid), 0) FROM sync_events)`,
-		// The per-id meta mark of an agent with no registration row, lowered the same way
-		// (the literal is inboxReturnedMetaPrefix, 19 bytes).
-		`UPDATE meta SET value = CAST((SELECT COALESCE(MAX(rowid), 0) FROM sync_events) AS TEXT)
-         WHERE substr(key, 1, 19) = 'inbox.returned_seq.' AND CAST(value AS INTEGER) > (SELECT COALESCE(MAX(rowid), 0) FROM sync_events)`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("trim wake bookkeeping to the journal: %w", err)
 		}
+	}
+	return trimReturnedMetaMarks(ctx, tx)
+}
+
+// trimReturnedMetaMarks lowers the per-id meta returned-seq marks (agents with
+// no registration row, and the registered ids' durable copy) above the tail.
+// The key prefix is bound as a parameter so the constant cannot drift from the
+// SQL (ADR-007 A12, MTIX-112.2.2.1.1).
+func trimReturnedMetaMarks(ctx context.Context, tx *sql.Tx) error {
+	// Lower only meta marks above the surviving journal tail; rowid is the event seq.
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE meta SET value = CAST((SELECT COALESCE(MAX(rowid), 0) FROM sync_events) AS TEXT)
+         WHERE substr(key, 1, ?) = ? AND CAST(value AS INTEGER) > (SELECT COALESCE(MAX(rowid), 0) FROM sync_events)`,
+		len(inboxReturnedMetaPrefix), inboxReturnedMetaPrefix); err != nil {
+		return fmt.Errorf("trim returned marks to the journal: %w", err)
 	}
 	return nil
 }

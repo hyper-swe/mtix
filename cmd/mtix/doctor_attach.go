@@ -30,6 +30,12 @@ type attachDoctorDeps struct {
 	// unavailable explains why operator state cannot be read at all; then only
 	// an INFO attach.state row is shown, with unavailableFix as its remedy.
 	unavailable, unavailableFix string
+	// glue evaluates the glue activation predicate for the invoking directory
+	// (MTIX-112.19.8); nil registers no glue.tracked-store row.
+	glue func(ctx context.Context) attach.GlueDecision
+	// pending lists the attach queue rows of the board doctor runs in
+	// (glue.stranded-queue); nil registers no such row.
+	pending func(ctx context.Context, d attach.GlueDecision) (queuedRows, error)
 }
 
 // operatorStateFix is the remedy for unreadable operator state: the hooks
@@ -69,6 +75,11 @@ func registerAttachDoctorChecks(ctx context.Context, svc *service.DoctorService,
 	sort.Strings(harnesses)
 	for _, h := range harnesses {
 		checks = append(checks, glueDoctorCheck(deps, h))
+	}
+	for _, build := range []func(context.Context, attachDoctorDeps) (service.DoctorCheck, bool){trackedStoreCheck, strandedQueueCheck, storeIdentityCheck, checkoutCheck} {
+		if check, ok := build(ctx, deps); ok {
+			checks = append(checks, check)
+		}
 	}
 	if failures := attachFailureAlerts(ctx, deps); len(failures) > 0 {
 		checks = append(checks, attachFailuresCheck(deps))
@@ -164,7 +175,7 @@ func attachFailureAlerts(ctx context.Context, deps attachDoctorDeps) []oplocal.A
 	}
 	var out []oplocal.Alert
 	for _, row := range rows {
-		if row.Class == attachAlertProtocolSkew || row.Class == attachAlertVerbFailure {
+		if row.Class == attachAlertProtocolSkew || row.Class == attachAlertVerbFailure || row.Class == attachAlertEnrolBlocked {
 			out = append(out, row)
 		}
 	}
@@ -232,7 +243,7 @@ func productionAttachDoctorDeps(ctx context.Context) (attachDoctorDeps, error) {
 	if err != nil {
 		return attachDoctorDeps{}, err
 	}
-	deps := attachDoctorDeps{state: st, registry: reg, current: attach.Protocol, serviceInstalled: hostDispatcherInstalled(st), clock: func() time.Time { return time.Now().UTC() }}
+	deps := attachDoctorDeps{state: st, registry: reg, current: attach.Protocol, serviceInstalled: hostDispatcherInstalled(st), clock: func() time.Time { return time.Now().UTC() }, glue: productionGluePredicate, pending: productionPendingRows}
 	if app.store == nil {
 		return deps, nil
 	}

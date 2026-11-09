@@ -5,7 +5,7 @@
 # PostgreSQL CI jobs and the remote bar. Its tests are split into SHARDS
 # groups by a stable hash of the test name, so a new test is assigned to a
 # shard automatically and never runs twice or not at all. The listed names
-# come from the compiled test binary (go test -list), the same source go test
+# come from the compiled test binary (go test -race -list), the same source go test
 # -run selects from.
 #
 #   bash scripts/cmd-mtix-shards.sh check            fail unless the split is exact
@@ -44,7 +44,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/mtix-cmd-shards.XXXXXX")
 cleanup() {
 	rm -f "$scratch/listing" "$scratch/names" "$scratch/assigned" "$scratch/odd" \
-		"$scratch/selected" "$scratch/twice" "$scratch/never"
+		"$scratch/selected" "$scratch/twice" "$scratch/never" "$scratch/expected"
 	rmdir "$scratch"
 }
 trap cleanup EXIT
@@ -53,7 +53,7 @@ trap 'exit 143' TERM
 
 # List every test the binary can run (tests, examples, fuzz seeds). The list
 # is read from a file so that a failed go test is not hidden by a pipe.
-go test -list '.*' ./cmd/mtix/ >"$scratch/listing" || die 'cannot list the cmd/mtix tests'
+go test -race -list '.*' ./cmd/mtix/ >"$scratch/listing" || die 'cannot list the cmd/mtix tests'
 # A listed test whose name falls outside the safe character set would be in no
 # shard, so refuse it instead of dropping it silently.
 grep -E '^(Test|Example|Fuzz)' "$scratch/listing" | grep -vE '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' >"$scratch/odd" || true
@@ -64,6 +64,8 @@ if [ -s "$scratch/odd" ]; then
 fi
 grep -E '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' "$scratch/listing" | sort -u >"$scratch/names" || true
 [ -s "$scratch/names" ] || die 'no tests listed for cmd/mtix'
+# Independently retain every listed name so a dropped hash input cannot pass.
+awk '/^(Test|Example|Fuzz)/ { print $1 }' "$scratch/listing" | sort -u >"$scratch/expected"
 
 # shard = djb2(name) mod SHARDS + 1. awk doubles stay exact: h < 2^32, h*33 < 2^38.
 awk -v n="$SHARDS" '
@@ -93,15 +95,15 @@ fi
 # shard's real run pattern. The names each shard selects are collected, then
 # compared per name: a name in two shards and a name in none both fail, even
 # when the counts happen to add up.
-total=$(wc -l <"$scratch/names" | tr -d ' ')
+total=$(wc -l <"$scratch/expected" | tr -d ' ')
 : >"$scratch/selected"
 for s in $(seq 1 "$SHARDS"); do
 	p=$(pattern_of "$s")
 	[ -n "$p" ] || die "empty shard $s"
-	grep -E "$p" "$scratch/names" >>"$scratch/selected" || true
+	grep -E "$p" "$scratch/expected" >>"$scratch/selected" || true
 done
 sort "$scratch/selected" | uniq -d >"$scratch/twice"
-sort -u "$scratch/selected" | comm -23 "$scratch/names" - >"$scratch/never"
+sort -u "$scratch/selected" | comm -23 "$scratch/expected" - >"$scratch/never"
 problems=0
 if [ -s "$scratch/twice" ]; then
 	printf 'cmd-mtix-shards: tests selected by more than one shard:\n' >&2

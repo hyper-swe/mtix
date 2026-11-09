@@ -44,6 +44,7 @@ var healthExpected = []string{
 	"test-go-shard (macos-latest, other)",
 	"test-go-sqlite (macos-latest, shard 1)", "test-go-sqlite (macos-latest, shard 2)", "test-go-sqlite (macos-latest, shard 3)",
 	"test-go-cmd (macos-latest, shard 1)", "test-go-cmd (macos-latest, shard 2)", "test-go-cmd (macos-latest, shard 3)",
+	"test-go-service (macos-latest, shard 1)", "test-go-service (macos-latest, shard 2)",
 }
 
 func hJob(name, conclusion string) string {
@@ -160,7 +161,7 @@ func healthCases() []healthCase {
 		{"cancelled macOS job", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(map[string]string{"test-go-cmd (macos-latest, shard 1)": "cancelled"})}, false, "shard 1)=cancelled", "11", ""},
 		{"timed out macOS job", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(map[string]string{"test-go-cmd (macos-latest, shard 1)": "timed_out"})}, false, "=timed_out", "11", ""},
 		{"skipped macOS job is red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(map[string]string{"test-go-cmd (macos-latest, shard 1)": "skipped"})}, false, "=skipped", "11", ""},
-		{"all macOS jobs skipped is red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(map[string]string{healthExpected[0]: "skipped", healthExpected[1]: "skipped", healthExpected[2]: "skipped", healthExpected[3]: "skipped", healthExpected[4]: "skipped", healthExpected[5]: "skipped", healthExpected[6]: "skipped"})}, false, "=skipped", "11", ""},
+		{"all macOS jobs skipped is red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(map[string]string{healthExpected[0]: "skipped", healthExpected[1]: "skipped", healthExpected[2]: "skipped", healthExpected[3]: "skipped", healthExpected[4]: "skipped", healthExpected[5]: "skipped", healthExpected[6]: "skipped", healthExpected[7]: "skipped", healthExpected[8]: "skipped"})}, false, "=skipped", "11", ""},
 		{"missing one expected job is red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(nil, healthExpected[6])}, false, "missing expected macOS jobs: test-go-cmd (macos-latest, shard 3)", "11", ""},
 		{"no macOS jobs is red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJob("lint", "success") + "\n"}, false, "missing expected macOS jobs", "11", ""},
 		{"unexpected macOS job red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(nil) + hJob("extra (macos-14)", "failure") + "\n"}, false, "extra (macos-14)=failure", "11", ""},

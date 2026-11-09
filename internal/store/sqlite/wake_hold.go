@@ -47,6 +47,10 @@ func (s *Store) SetWakeHold(ctx context.Context, key model.WakeKey, advanceTo in
 		flag = 1
 	}
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+		matches, err := wakeEventMatches(ctx, tx, key)
+		if err != nil || !matches {
+			return err
+		}
 		if !hold && advanceTo > 0 {
 			if guardErr := guardHeldAdvance(ctx, tx, key, advanceTo); guardErr != nil {
 				return guardErr
@@ -105,6 +109,7 @@ func (s *Store) HeldWakeCandidates(ctx context.Context, hostID, uid, agent strin
 			if event.Seq > marks[i] {
 				key := base
 				key.EventSeq = event.Seq
+				key.EventID = event.EventID
 				keys = append(keys, key)
 			}
 		}

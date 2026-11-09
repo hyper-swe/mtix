@@ -69,7 +69,13 @@ func attachTestDeps(st *oplocal.State, current int, adapters map[string]attach.A
 		adapters: adapters,
 		state:    func() (*oplocal.State, error) { return st, nil },
 		clock:    func() time.Time { return attachTestNow },
+		glue:     attachedGlue,
 	}
+}
+
+// attachedGlue is the predicate of a directory whose board is attached on this host.
+func attachedGlue(context.Context) attach.GlueDecision {
+	return attach.GlueDecision{Act: true, BoardRoot: "/attached/board", StoreRoot: "/attached/board"}
 }
 
 func attachAlerts(t *testing.T, st *oplocal.State) []oplocal.Alert {
@@ -213,6 +219,7 @@ func TestAttachVerb_AlertUnwritable_StillExitZeroAndSaysSo(t *testing.T) {
 		current: 2, adapters: map[string]attach.Adapter{},
 		state: func() (*oplocal.State, error) { return nil, errors.New("operator state unavailable") },
 		clock: func() time.Time { return attachTestNow },
+		glue:  attachedGlue,
 	}
 	_, stderr, err := runAttachVerbForTest(t, deps, "session-start", "--harness", "codex", "--protocol", "2")
 	require.NoError(t, err)
@@ -233,7 +240,7 @@ func TestAttachVerb_UnknownFlagsAndArgs_Tolerated(t *testing.T) {
 func TestAttachCommand_ProductionBuild_HiddenNoAdapterAlertsExitZero(t *testing.T) {
 	saveAndResetApp(t)
 	st := testutil.OperatorState(t)
-	t.Chdir(t.TempDir()) // no .mtix: attach verbs never open a store
+	t.Chdir(listedBoardCheckout(t, st)) // the production predicate must see an attached board
 	root := newRootCmd()
 	attachCmd, _, err := root.Find([]string{"attach"})
 	require.NoError(t, err)
@@ -262,7 +269,7 @@ func TestAttachVerb_FlagParseErrors_ExitZeroAndAlert(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			saveAndResetApp(t)
 			st := testutil.OperatorState(t)
-			t.Chdir(t.TempDir())
+			t.Chdir(listedBoardCheckout(t, st)) // an attached board: failures are reported and alerted
 			root := newRootCmd()
 			var errOut bytes.Buffer
 			root.SetErr(&errOut)

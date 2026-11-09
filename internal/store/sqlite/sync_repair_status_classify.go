@@ -251,7 +251,7 @@ func cancelActivityAfter(row workflowRow, wallMS int64) bool {
 //
 // With no closing event the node never had a closed_at.
 func originatorClosedAt(chain []workflowWinner, table workflowColumn, now string) workflowColumn {
-	if !chain[0].local {
+	if !chain[0].local || chain[0].payload.closedAt != nil {
 		return table
 	}
 	for _, e := range chain {

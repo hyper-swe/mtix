@@ -21,7 +21,7 @@ func TestClaudeHook_ReArmWithDeliveredUnackedMail_WaitsForNewMail(t *testing.T) 
 	r.claims.claimed[5] = true // delivered by the previous run; still unacked in the inbox
 	calls := 0
 	var skipped5, skipped9 bool
-	r.deps.Wait = func(_ context.Context, skip func(int64) bool) ([]sqlite.InboxEvent, error) {
+	r.deps.Wait = func(_ context.Context, skip func(sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) {
 		calls++
 		all := []sqlite.InboxEvent{hookEvent(5, "old")}
 		if calls > 1 {
@@ -29,11 +29,11 @@ func TestClaudeHook_ReArmWithDeliveredUnackedMail_WaitsForNewMail(t *testing.T) 
 		}
 		var out []sqlite.InboxEvent
 		for _, e := range all {
-			if !skip(e.Seq) {
+			if !skip(e) {
 				out = append(out, e)
 			}
 		}
-		skipped5, skipped9 = skip(5), skip(9)
+		skipped5, skipped9 = skip(hookEvent(5, "old")), skip(hookEvent(9, "new"))
 		return out, nil
 	}
 
@@ -52,12 +52,12 @@ func TestClaudeHook_ReArmWithOnlyDeliveredMail_ExitsEmptyAtTimeout(t *testing.T)
 	r := newHookRig(t)
 	r.claims.claimed[5] = true
 	calls := 0
-	r.deps.Wait = func(_ context.Context, skip func(int64) bool) ([]sqlite.InboxEvent, error) {
+	r.deps.Wait = func(_ context.Context, skip func(sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) {
 		calls++
 		if calls == 1 {
 			return []sqlite.InboxEvent{hookEvent(5, "old")}, nil
 		}
-		assert.True(t, skip(5))
+		assert.True(t, skip(hookEvent(5, "old")))
 		return nil, nil // the wait timed out with nothing new
 	}
 

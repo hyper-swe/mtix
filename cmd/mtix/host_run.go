@@ -121,7 +121,7 @@ func openHostBoard(_ context.Context, row oplocal.ListedBoard, st *oplocal.State
 		return nil, err
 	}
 	dir := filepath.Join(row.Path, ".mtix")
-	store, err := sqlite.New(filepath.Join(dir, "data", "mtix.db"), slog.Default())
+	store, err := openEnrolGuardedStore(row.Path, slog.Default())
 	if err != nil {
 		return nil, err
 	}

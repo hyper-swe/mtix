@@ -101,6 +101,9 @@ func New(dbPath string, logger *slog.Logger) (*Store, error) {
 // newWithRetry is New with an injected open-retry policy (MTIX-147).
 func newWithRetry(dbPath string, logger *slog.Logger, rt openRetry) (*Store, error) {
 	dbPath = resolveDBPath(dbPath)
+	if err := guardEmptyDatabaseWAL(dbPath); err != nil {
+		return nil, err
+	}
 	ctx := context.Background()
 
 	// Filesystem-safety preflight (MTIX-54/58): on a FUSE/network filesystem

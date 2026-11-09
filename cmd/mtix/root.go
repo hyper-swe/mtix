@@ -190,9 +190,13 @@ func autoImportForCommand(cmd *cobra.Command) {
 	}
 }
 
-// skipsStoreInit names commands that never open a store. Attach verbs run in
-// any directory a harness opens; they never open or create a store, and they
-// always exit 0 (ADR-007 §6.5, A5).
+// skipsStoreInit bypasses ordinary application store startup. Version, help and
+// permission recovery open no board store; top-level recover reads the damaged
+// store for salvage. The attach predicate reads identity; session-start drains
+// and pi wait use guarded existing-store opens, as does each dispatcher board
+// pass. Attach always exits 0. These enrolment checks do not hold the lock
+// across in-flight operations
+// (ADR-007 §6.5, A5, MTIX-112.17.16.21).
 func skipsStoreInit(cmd *cobra.Command) bool {
 	switch cmd.Name() {
 	case "version", "help", "recover":
@@ -224,6 +228,19 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 	app.configSvc, err = service.NewConfigService(configPath)
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
+	}
+
+	// A running or interrupted worktree enrolment owns the board: refuse before
+	// anything creates a store in the data directory it moved (MTIX-112.17.16).
+	if guardErr := service.CheckEnrolGuard(mtixDir, isTopLevelDoctor(cmd)); guardErr != nil {
+		return guardErr
+	}
+
+	// Doctor prints its enrolment rows without creating or opening a store while
+	// the marker is torn or the lock cannot be probed (MTIX-112.17.16.21.2).
+	if isTopLevelDoctor(cmd) && doctorMustNotOpenStore(mtixDir) {
+		app.mtixDir = mtixDir // the enrolment rows are registered from it; no store is opened
+		return nil
 	}
 
 	// Ensure data directory exists (FR-15.2a: fresh clone has no .mtix/data/).

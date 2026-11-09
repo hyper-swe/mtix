@@ -217,7 +217,7 @@ func TestExportCommand_UnackedInbox_NoteOnStderrJSONOnStdout(t *testing.T) {
 		return runErr
 	})
 	require.NoError(t, err)
-	assert.Contains(t, stderr, "2 unacknowledged inbox event(s)")
+	assert.Contains(t, stderr, "2 addressed inbox event(s)")
 	assert.NotContains(t, stdout, "unacknowledged")
 	var data sqlite.ExportData
 	require.NoError(t, json.Unmarshal([]byte(stdout), &data), "stdout is the export document alone")
@@ -235,7 +235,7 @@ func TestExportCommand_NoUnackedInbox_PrintsNoNote(t *testing.T) {
 	assert.NotContains(t, stderr, "unacknowledged")
 }
 
-func TestExportCommand_CountFails_ExportStillSucceedsWithWarning(t *testing.T) {
+func TestExportCommand_JournalUnreadable_RefusesIncompleteExport(t *testing.T) {
 	initTestApp(t)
 	envelopeCLIEvents(t, "mail")
 	_, err := app.store.WriteDB().ExecContext(t.Context(), `DROP TABLE agent_inbox_ack`)
@@ -246,9 +246,9 @@ func TestExportCommand_CountFails_ExportStillSucceedsWithWarning(t *testing.T) {
 		stdout, runErr = cliBehaviorOutput(t, func() error { return runExport("json") })
 		return runErr
 	})
-	require.NoError(t, err, "a finished export must not fail because the note could not be counted")
-	assert.Contains(t, stderr, "could not count unacknowledged inbox events")
-	assert.Contains(t, stdout, `"nodes"`)
+	require.ErrorContains(t, err, "read addressed journal")
+	assert.Empty(t, stderr)
+	assert.Empty(t, stdout, "an incomplete private export is not published")
 }
 
 // The recover command, end to end: it names the unread mail of the damaged
@@ -258,7 +258,7 @@ func TestRecoverCommand_UnackedInbox_NamesCountAfterReport(t *testing.T) {
 	events := envelopeCLIEvents(t, "mail one", "mail two")
 	out, err := cliBehaviorOutput(t, func() error { _, runErr := runRecover(); return runErr })
 	require.NoError(t, err)
-	assert.Contains(t, out, "the damaged database holds 2 unacknowledged inbox event(s)")
+	assert.Contains(t, out, "the source database holds 2 unacknowledged inbox event(s)")
 	assert.Contains(t, out, "Salvage complete")
 
 	for _, e := range events {

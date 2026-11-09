@@ -39,6 +39,8 @@ func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop in
 		return wakeNotAttempted, fmt.Errorf("claim wake candidate: %w", err)
 	}
 	switch state {
+	case claimReplaced:
+		return wakeNotAttempted, nil
 	case claimBudgetHeld:
 		return wakeBudgetHeld, nil
 	case claimInFlight:

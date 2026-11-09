@@ -103,23 +103,27 @@ func countCIMacOSLegs(t *testing.T, event string) int {
 
 func TestCIWorkflow_PullRequest_RunsFullLinuxPlusExactlyOneMacOSJob(t *testing.T) {
 	jobs := readCIJobs(t)
-	require.Equal(t, 23, countCIChecks(t, "pull_request"))
+	require.Equal(t, 25, countCIChecks(t, "pull_request"))
 	require.Equal(t, 1, countCIMacOSLegs(t, "pull_request"))
 	shards := jobs["test-go-shards"].Strategy.Matrix
 	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, shards.OS.For("pull_request"))
 	require.Equal(t, []string{"other"}, shards.Shard)
-	for _, name := range []string{"test-go-sqlite", "test-go-cmd"} {
+	for _, name := range []string{"test-go-sqlite", "test-go-cmd", "test-go-service"} {
 		m := jobs[name].Strategy.Matrix
 		require.Equal(t, []string{"ubuntu-22.04"}, m.OS.For("pull_request"), name)
-		require.Equal(t, []string{"1", "2", "3"}, m.Shard, name)
+		wantShards := []string{"1", "2", "3"}
+		if name == "test-go-service" {
+			wantShards = []string{"1", "2"}
+		}
+		require.Equal(t, wantShards, m.Shard, name)
 	}
 }
 
 func TestCIWorkflow_PushAndSchedule_RunEveryMacOSLeg(t *testing.T) {
 	for _, event := range []string{"push", "schedule"} {
-		require.Equal(t, 29, countCIChecks(t, event), event)
-		require.Equal(t, 7, countCIMacOSLegs(t, event), event)
-		for _, name := range []string{"test-go-shards", "test-go-sqlite", "test-go-cmd"} {
+		require.Equal(t, 33, countCIChecks(t, event), event)
+		require.Equal(t, 9, countCIMacOSLegs(t, event), event)
+		for _, name := range []string{"test-go-shards", "test-go-sqlite", "test-go-cmd", "test-go-service"} {
 			require.Equal(t, []string{"ubuntu-22.04", "macos-latest"},
 				readCIJobs(t)[name].Strategy.Matrix.OS.For(event), event+"/"+name)
 		}
@@ -143,10 +147,10 @@ func TestCIWorkflow_Triggers_IncludeNightlyScheduleAndMainPush(t *testing.T) {
 	require.Regexp(t, `^\d+ \d+ \* \* \*$`, workflow.On.Cron[0].Cron)
 }
 
-func TestCIWorkflow_OSAxis_OnlyTheTwoSQLiteAndCmdJobsAreEventConditioned(t *testing.T) {
+func TestCIWorkflow_OSAxis_OnlyTheSQLiteCmdAndServiceJobsAreEventConditioned(t *testing.T) {
 	for name, job := range readCIJobs(t) {
 		m := job.Strategy.Matrix
-		if name == "test-go-sqlite" || name == "test-go-cmd" {
+		if name == "test-go-sqlite" || name == "test-go-cmd" || name == "test-go-service" {
 			require.Equal(t, `${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-22.04"]' || '["ubuntu-22.04","macos-latest"]') }}`,
 				m.OS.expr, name)
 			require.Equal(t, []string{"ubuntu-22.04"}, m.OS.For("pull_request"), name)
@@ -162,7 +166,7 @@ func TestCIWorkflow_OSAxis_OnlyTheTwoSQLiteAndCmdJobsAreEventConditioned(t *test
 func TestCIWorkflow_TestGo_KeepsNameNeedsAndStrictAggregateOnEveryEvent(t *testing.T) {
 	job := readCIJobs(t)["test-go"]
 	require.Equal(t, "test-go", job.Name)
-	require.Equal(t, []string{"test-go-shards", "test-go-sqlite", "test-go-cmd"}, job.Needs)
+	require.Equal(t, []string{"test-go-shards", "test-go-sqlite", "test-go-cmd", "test-go-service"}, job.Needs)
 	require.Equal(t, "${{ always() }}", job.If)
 	var aggregate *ciGoStep
 	for i := range job.Steps {
@@ -174,7 +178,7 @@ func TestCIWorkflow_TestGo_KeepsNameNeedsAndStrictAggregateOnEveryEvent(t *testi
 	require.Empty(t, aggregate.If, "absent legs are absent from the matrix; the aggregate never tolerates skipped needs")
 	for _, bad := range []string{"skipped", "cancelled", "failure", ""} {
 		cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", aggregate.Run)
-		cmd.Env = append(os.Environ(), "SHARD_RESULT=success", "SQLITE_RESULT="+bad, "CMD_RESULT=success")
+		cmd.Env = append(os.Environ(), "SHARD_RESULT=success", "SQLITE_RESULT="+bad, "CMD_RESULT=success", "SERVICE_RESULT=success")
 		out, err := cmd.CombinedOutput()
 		require.Error(t, err, fmt.Sprintf("sqlite=%q: %s", bad, out))
 	}
@@ -258,7 +262,7 @@ func TestMainMacOSExpectedJobs_TrackTheWorkflowMatrix(t *testing.T) {
 	listed := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	var rendered []string
 	jobs := readCIJobs(t)
-	for _, key := range []string{"test-go-shards", "test-go-sqlite", "test-go-cmd"} {
+	for _, key := range []string{"test-go-shards", "test-go-sqlite", "test-go-cmd", "test-go-service"} {
 		job := jobs[key]
 		for _, osName := range job.Strategy.Matrix.OS.For("push") {
 			if !strings.HasPrefix(osName, "macos") {

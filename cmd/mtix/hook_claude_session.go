@@ -108,7 +108,7 @@ func newClaudeSessionHook(agent string, wait time.Duration, now func() time.Time
 			return registrationEpoch(ctx, key)
 		},
 		Wakeable: func(ctx context.Context) (bool, string, error) { return perms.Wakeable(ctx, board, agent) },
-		Wait: func(ctx context.Context, skip func(int64) bool) ([]sqlite.InboxEvent, error) {
+		Wait: func(ctx context.Context, skip func(sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) {
 			remaining, expired := budget.remaining()
 			if expired {
 				return nil, nil
@@ -178,7 +178,7 @@ const claudeHookPollInterval = 250 * time.Millisecond
 // the board listener lease (MTIX-112.20.4), except that events for which skip
 // is true do not end it: a re-arm waits for new mail only. A signal or the
 // timeout (0 = none) ends it quietly with no events.
-func claudeHookWait(ctx context.Context, agent string, timeout time.Duration, skip func(int64) bool, join claudeHookJoin) ([]sqlite.InboxEvent, error) {
+func claudeHookWait(ctx context.Context, agent string, timeout time.Duration, skip func(sqlite.InboxEvent) bool, join claudeHookJoin) ([]sqlite.InboxEvent, error) {
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	defer join(agent, io.Discard)()
@@ -204,7 +204,7 @@ func claudeHookWait(ctx context.Context, agent string, timeout time.Duration, sk
 		}
 		var fresh []sqlite.InboxEvent
 		for _, e := range events {
-			if !skip(e.Seq) {
+			if !skip(e) {
 				fresh = append(fresh, e)
 			}
 		}

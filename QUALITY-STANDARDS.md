@@ -95,15 +95,16 @@ The PG-gated cmd tests create a unique disposable database per test (MTIX-107.67
 
 ### 3.2b Go race shards and merge checks (MTIX-112.17.22)
 
-Ordinary CI keeps three explicit package lists. A push to main and the nightly
+Ordinary CI keeps four explicit package lists. A push to main and the nightly
 run use each supported OS; a pull request uses Linux plus one macOS job.
-SQLite and `cmd/mtix` each run in three test-name shards; the remaining
+SQLite and `cmd/mtix` each run in three test-name shards; `internal/service`
+runs in two test-name shards using the same exact-partition guard; the remaining
 packages have their own package-shard runner.
 Every job checks that the manifests cover `go list ./...` excluding
 `node_modules` exactly once. Missing, duplicate or stale entries fail the
 guard. Race detection, count 1 and the 20-minute per-package limit remain
 unchanged, with no new test skips. The aggregate `test-go` job must reject
-failed, cancelled or skipped shard results. All 23 checks of a PR (29 on a main
+failed, cancelled or skipped shard results. All 25 checks of a PR (33 on a main
 push and nightly) must succeed before merge or release, and the merger runs
 `scripts/main-macos-health.sh` immediately before every merge; see [CI and release gates](docs/CI-GATES.md).
 The release preflight keeps its serialized, PostgreSQL-enabled full suite.

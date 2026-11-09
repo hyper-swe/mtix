@@ -144,12 +144,13 @@ func TestSyncRepairStatus_Apply_RestoresDoneAndClosedAt(t *testing.T) {
 	status, closedAt := statusAndClosedAt(t, st.WriteDB(), "TEST-1")
 	require.Equal(t, "done", status)
 	require.True(t, closedAt.Valid, "the restored node has closed_at set")
+	require.Equal(t, "2026-03-14T12:00:00Z", closedAt.String, "the original completion time is retained")
 	require.Equal(t, events+1, syncEventCount(t, st), "exactly one event is emitted")
 	var payload string
 	// The newest event is the repair's status change.
 	require.NoError(t, st.WriteDB().QueryRow(`SELECT payload FROM sync_events
 		WHERE op_type = 'transition_status' ORDER BY lamport_clock DESC LIMIT 1`).Scan(&payload))
-	require.JSONEq(t, `{"from":"in_progress","to":"done","reason":"sync repair"}`, payload)
+	require.JSONEq(t, `{"from":"in_progress","to":"done","reason":"sync repair","closed_at":"2026-03-14T12:00:00Z"}`, payload)
 
 	// The backup is a verified copy of the store as it was before the repair.
 	backup, err := sql.Open("sqlite", wantBackup+"?mode=ro")

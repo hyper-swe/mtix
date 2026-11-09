@@ -69,7 +69,7 @@ mtix create "Subtask title" --under PROJ-1 \
 ### 6. Export State
 
 ```bash
-mtix export  # Export task state to .mtix/tasks.json
+mtix export --board-only > .mtix/tasks.json  # Refresh the journal-free board mirror
 ```
 
 ## Sharing a ticket link
@@ -81,7 +81,7 @@ To point a person at a ticket, run `mtix url <id>` (for example `mtix url MTIX-1
 1. **Always read the context chain** before starting work (`mtix context <id>`)
 2. **Never skip task creation** — every change must be tracked
 3. **Report blockers** with `mtix comment <id> "blocked: reason"`
-4. **Run `mtix export`** before committing — include tasks.json in your commit
+4. **Run `mtix export --board-only > .mtix/tasks.json`** before committing — include tasks.json in your commit
 
 ## Waiting for inbox events
 

@@ -1,9 +1,9 @@
 # CI and release gates
 
-Pull requests run **23 CI checks**: the full Linux matrix plus exactly one
+Pull requests run **25 CI checks**: the full Linux matrix plus exactly one
 macOS job (`test-go-shard (macos-latest, other)`). Every push to `main` and the
-nightly schedule (03:17 UTC, default branch) run **29 CI checks**, which adds
-the six macOS SQLite and `cmd/mtix` shard legs. Merge only the reviewed commit
+nightly schedule (03:17 UTC, default branch) run **33 CI checks**, which adds
+the eight macOS SQLite, `cmd/mtix` and service shard legs. Merge only the reviewed commit
 with every check successful; a skipped or cancelled check is not a passing
 check. `test-go` is the required status check on `main` and keeps that exact
 name; it is the only required check.
@@ -13,7 +13,8 @@ name; it is the only required check.
 | `test-go-shard (OS, other)` | 2 | The other-package shard on each of `ubuntu-22.04` and `macos-latest` |
 | `test-go-sqlite (OS, shard N)` | 6 (PR: 3) | Three SQLite test shards; macOS legs run on push and nightly only |
 | `test-go-cmd (OS, shard N)` | 6 (PR: 3) | Three `cmd/mtix` test shards; macOS legs run on push and nightly only |
-| `test-go` | 1 | Require every Go shard job the event generates (fourteen on push and nightly, eight on a PR) to succeed; on a PR also run the main macOS health check |
+| `test-go-service (OS, shard N)` | 4 (PR: 2) | Two service test shards; macOS legs run on push and nightly only |
+| `test-go` | 1 | Require every Go shard job the event generates (eighteen on push and nightly, ten on a PR) to succeed; on a PR also run the main macOS health check |
 | `test-web` | 1 | Web tests |
 | `lint` | 1 | Pinned Go lint |
 | `pg-16 package`, `pg-17 package` | 4 | Transport and end-to-end suites against each PostgreSQL version |
@@ -102,6 +103,7 @@ The explicit package lists are in `scripts/ci-go-shards/`:
 
 - `sqlite.txt`: `internal/store/sqlite`, run in the separate three-test-shard matrix (macOS legs on push and nightly only).
 - `cli.txt`: `cmd/mtix`, run in the separate three-test-shard `test-go-cmd` matrix (macOS legs on push and nightly only).
+- `service.txt`: `internal/service`, run in the separate two-test-shard `test-go-service` matrix (macOS legs on push and nightly only).
 - `other.txt`: every remaining selected package.
 
 Each OS verifies the complete partition before running a shard. The guard
@@ -119,17 +121,55 @@ per package. No test is skipped by the shard command; the existing
 `node_modules` package exclusion is unchanged. Full Git history remains
 available, including to the bookkeeping test.
 
-Both shard matrices have `fail-fast: false`, so one failed shard does not
-cancel the others. The aggregate job named exactly `test-go` needs both
-`test-go-shards`, `test-go-sqlite` and `test-go-cmd` and uses `always()` so failed or
+All shard matrices have `fail-fast: false`, so one failed shard does not
+cancel the others. The aggregate job named exactly `test-go` needs
+`test-go-shards`, `test-go-sqlite`, `test-go-cmd` and `test-go-service` and uses `always()` so failed or
 skipped dependencies cannot skip the gate. It accepts only `success` from all
-three matrices; failure, cancellation, skipping or a missing result from any of the three
+four matrices; failure, cancellation, skipping or a missing result from any of the four
 fails the aggregate. The build continues to depend on this gate.
 
 The workflow tests execute the aggregate's actual shell for those outcomes
 and check the OS/shard matrix, flags and check count. The package-guard tests
 include an unlisted package that must fail until it is explicitly assigned,
 as well as duplicate membership and failed inventory enumeration.
+
+## Service test shards and child diagnostics (MTIX-112.51)
+
+The service race suite exhausted the unchanged 20-minute package budget on
+macOS while newly started tests appeared in the timeout dump. A hosted
+service-only diagnostic run [42348872854](https://github.com/hyper-swe/mtix/actions/runs/42348872854)
+passed all 1,580 root tests in 903.292 seconds; its longest test took 33 seconds.
+That measurement shows cumulative suite cost, with no long single-test stall
+reproduced. The earlier multi-package jobs had different contention; the
+standalone timing is not a measurement of the new CI shards.
+
+Service now has its own two-shard matrix on both OSes, using the same stable
+hash and compiled-test partition checker already used by the remote bar:
+
+```bash
+bash scripts/ci-go-shards.sh test-check internal/service 2
+bash scripts/ci-go-shards.sh test-pattern internal/service 2 1
+```
+
+The inventory is listed with `go test -race -list`, using the same race build as the job. Every compiled test, example and fuzz seed matches exactly one shard pattern;
+subtests follow their parent. Each job checks package and test ownership before
+running `go test ./internal/service/ -race -count=1 -timeout 20m -run "$pattern"`.
+No test is skipped and no deadline is raised. `scripts/ci_service_workflow_test.go`
+checks the compiled inventory and executes the workflow's guard/run commands,
+including failure propagation. Package-ownership tests execute the real job
+commands so service cannot silently remain in `other` or go untested. All four
+service jobs are required by the strict `test-go` aggregate, bringing ordinary
+CI to 33 checks. Record actual per-shard hosted durations in the PR evidence;
+the full remote bar runs the code and guards, but does not execute changed
+`ci.yml` jobs.
+
+The native export child helper drains stdout in bounded chunks even when a line
+exceeds 64 KiB. It retains a head and tail totaling up to 32 KiB per stream,
+both stdout and stderr, and marks omitted bytes so a late failure stays visible. On an early exit or unsuccessful joined exit,
+it reports retained stdout, stderr and process status after joining the reader
+and process. Existing handshakes and 60-second guards are unchanged. This makes
+the next child failure diagnosable; it does not establish or fix the historical
+ManyWriters failure's cause.
 
 ## SQLite test shards (MTIX-112.17.29)
 
@@ -156,7 +196,7 @@ or timeout is weakened, and no skip flag is added.
 
 The two old SQLite job names are replaced by six `test-go-sqlite` checks.
 Together with the four CLI/other jobs, the aggregate and the remaining checks,
-this changes the merge requirement from 21 successful checks to **25 of 25**; the `cmd/mtix` split below makes it **29 of 29**; from MTIX-112.17.42 a PR needs **23 of 23** (the macOS SQLite and `cmd/mtix` legs run on main only).
+this changes the merge requirement from 21 successful checks to **25 of 25**; the `cmd/mtix` split below makes it **29 of 29**, and the service split above makes it **33 of 33** on a push; from MTIX-112.17.42 a PR needs **25 of 25** (the macOS SQLite, `cmd/mtix` and service legs run on main only).
 
 Before the split, the last five completed main CI runs measured these SQLite
 package times (seconds from the original Go output; setup is excluded):
@@ -390,7 +430,7 @@ that a changed remote-bar workflow ran.
 ## Release gates
 
 Run [the release checklist](RELEASE-CHECKLIST.md) on the exact CI-green commit
-before tagging. All 29 ordinary CI checks of the main push run (the full matrix), including the fourteen race shards and
+before tagging. All 33 ordinary CI checks of the main push run (the full matrix), including the eighteen race shards and
 `test-go` aggregate, must pass alongside independent review and the other
 documented quality gates.
 

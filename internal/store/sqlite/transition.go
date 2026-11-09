@@ -52,12 +52,12 @@ func (s *Store) executeTransitionTx(ctx context.Context, tx *sql.Tx, req transit
 		return validErr
 	}
 
-	now := time.Now().UTC()
+	now := clockOrDefault(s.clock)().UTC()
 	if err := applyTransitionUpdate(ctx, tx, req, fromStatus, now); err != nil {
 		return err
 	}
 
-	if err := s.emitPayload(ctx, tx, emitParams{
+	if err := s.emitTransitionSnapshot(ctx, tx, emitParams{
 		NodeID:      id,
 		ProjectCode: projectPrefixFromNodeID(id),
 		OpType:      model.OpTransitionStatus,

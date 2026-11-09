@@ -64,30 +64,60 @@ FROM inbox_deliveries d JOIN sync_events e ON e.rowid = d.event_seq`
 // ExportInboxCarry reads what a hub clone must keep of this store's inbox: the
 // acknowledged (agent, event id) pairs, from the per-event ledger and from the
 // events at or below an agent's watermark, and the hook deliveries. An event the
-// agent did not acknowledge is never listed (MTIX-112.17.16). Read-only.
-func (s *Store) ExportInboxCarry(ctx context.Context) (*InboxCarry, error) {
-	carry := &InboxCarry{}
-	seen := map[[2]string]bool{}
-	if err := s.collectLedgerAcks(ctx, carry, seen); err != nil {
+// agent did not acknowledge is never listed (MTIX-112.17.16). It refuses, as an
+// explicit export does, when the acknowledgment index disagrees with its table
+// (MTIX-112.49). The check and every read share one read-only WAL snapshot, as
+// ExportWithInbox does, so a write between them cannot go unchecked. Read-only.
+func (s *Store) ExportInboxCarry(ctx context.Context) (carry *InboxCarry, err error) {
+	// The reader pool begins deferred; a WAL snapshot never takes writer ownership.
+	tx, err := s.readDB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return nil, fmt.Errorf("begin inbox carry snapshot: %w", err)
+	}
+	defer func() {
+		if rollbackErr := tx.Rollback(); rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			carry = nil
+			err = errors.Join(err, fmt.Errorf("rollback inbox carry snapshot: %w", rollbackErr))
+		}
+	}()
+	if err := checkAckIndexAgreesWithTable(ctx, tx); err != nil {
 		return nil, err
 	}
-	agents, err := s.carryAgents(ctx)
+	out, err := readInboxCarry(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit inbox carry snapshot: %w", err)
+	}
+	return out, nil
+}
+
+// readInboxCarry reads the ledger acks, watermark acks and hook deliveries
+// through q, which is the carry's snapshot transaction.
+func readInboxCarry(ctx context.Context, q inboxQuerier) (*InboxCarry, error) {
+	carry := &InboxCarry{}
+	seen := map[[2]string]bool{}
+	if err := collectLedgerAcks(ctx, q, carry, seen); err != nil {
+		return nil, err
+	}
+	agents, err := carryAgents(ctx, q)
 	if err != nil {
 		return nil, err
 	}
 	for _, agent := range agents {
-		if err := s.collectWatermarkAcks(ctx, agent, carry, seen); err != nil {
+		if err := collectWatermarkAcks(ctx, q, agent, carry, seen); err != nil {
 			return nil, err
 		}
 	}
-	if err := s.collectDeliveries(ctx, carry); err != nil {
+	if err := collectDeliveries(ctx, q, carry); err != nil {
 		return nil, err
 	}
 	return carry, nil
 }
 
-func (s *Store) carryAgents(ctx context.Context) ([]string, error) {
-	rows, err := s.readDB.QueryContext(ctx, carryAgentsSQL)
+func carryAgents(ctx context.Context, q inboxQuerier) ([]string, error) {
+	rows, err := q.QueryContext(ctx, carryAgentsSQL)
 	if err != nil {
 		return nil, fmt.Errorf("list inbox agents: %w", err)
 	}
@@ -108,8 +138,8 @@ func (s *Store) carryAgents(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
-func (s *Store) collectLedgerAcks(ctx context.Context, carry *InboxCarry, seen map[[2]string]bool) error {
-	rows, err := s.readDB.QueryContext(ctx, carryLedgerSQL)
+func collectLedgerAcks(ctx context.Context, q inboxQuerier, carry *InboxCarry, seen map[[2]string]bool) error {
+	rows, err := q.QueryContext(ctx, carryLedgerSQL)
 	if err != nil {
 		return fmt.Errorf("read inbox ack ledger: %w", err)
 	}
@@ -131,8 +161,8 @@ func (s *Store) collectLedgerAcks(ctx context.Context, carry *InboxCarry, seen m
 	return rows.Err()
 }
 
-func (s *Store) collectWatermarkAcks(ctx context.Context, agent string, carry *InboxCarry, seen map[[2]string]bool) error {
-	hist, err := s.InboxHistory(ctx, agent)
+func collectWatermarkAcks(ctx context.Context, q inboxQuerier, agent string, carry *InboxCarry, seen map[[2]string]bool) error {
+	hist, err := inboxHistory(ctx, q, agent)
 	if err != nil {
 		return err
 	}
@@ -147,8 +177,8 @@ func (s *Store) collectWatermarkAcks(ctx context.Context, agent string, carry *I
 	return nil
 }
 
-func (s *Store) collectDeliveries(ctx context.Context, carry *InboxCarry) error {
-	rows, err := s.readDB.QueryContext(ctx, carryDeliveriesSQL)
+func collectDeliveries(ctx context.Context, q inboxQuerier, carry *InboxCarry) error {
+	rows, err := q.QueryContext(ctx, carryDeliveriesSQL)
 	if err != nil {
 		return fmt.Errorf("read inbox deliveries: %w", err)
 	}

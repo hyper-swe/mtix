@@ -61,11 +61,19 @@ func (s *SyncService) exportBoardProtected(ctx context.Context, mtixDir string, 
 	return err
 }
 
+// contendedExportWarning is logged when the sync lock is busy; a durable
+// pending export request has been recorded before it is logged.
+const contendedExportWarning = "sync lock busy: auto-export deferred; pending export request recorded and will be retried; run 'mtix sync --fix' to export now"
+
 func (s *SyncService) exportBoardPass(ctx context.Context, mtixDir string, protect bool) (bool, error) {
 	start := s.clock()
 	lockFile, lockErr := s.acquireLock(mtixDir, lockExclusive)
 	if lockErr != nil {
-		s.logger.Warn("could not acquire sync lock, skipping auto-export", "error", lockErr)
+		// The warning promises a retry, so a durable request must back it.
+		if err := s.RequestExport(mtixDir); err != nil {
+			return false, errors.Join(lockErr, fmt.Errorf("record pending export request: %w", err))
+		}
+		s.logger.Warn(contendedExportWarning, "error", lockErr)
 		return false, nil
 	}
 	defer s.releaseLock(lockFile)

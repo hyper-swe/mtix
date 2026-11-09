@@ -24,7 +24,13 @@ import (
 // it, records the refusal as pending and says so in one line.
 func (s *SyncService) AutoExport(ctx context.Context, mtixDir string) error {
 	markErr := s.RequestExport(mtixDir)
-	return errors.Join(markErr, s.runAutoExport(ctx, mtixDir, automaticExportPasses))
+	// A recorded request already backs the contended warning, so a busy lock
+	// needs no second request write; a failed one leaves the pass to write it.
+	mode := exportRequestRecorded
+	if markErr != nil {
+		mode = recordExportRequest
+	}
+	return errors.Join(markErr, s.runAutoExportMode(ctx, mtixDir, automaticExportPasses, mode))
 }
 
 const automaticExportPasses = 3
@@ -32,11 +38,18 @@ const automaticExportPasses = 3
 // runAutoExport bounds catch-up work and releases each lock before the next
 // pass. Contention, refusal, metadata errors and publication errors stop it.
 func (s *SyncService) runAutoExport(ctx context.Context, mtixDir string, passes int) error {
+	return s.runAutoExportMode(ctx, mtixDir, passes, recordExportRequest)
+}
+
+// runAutoExportMode is runAutoExport with the busy-lock handling of each
+// pass: a later pass runs only while requests are pending, so a request
+// recorded before the first pass still backs its warning.
+func (s *SyncService) runAutoExportMode(ctx context.Context, mtixDir string, passes int, mode contendedMode) error {
 	for pass := 0; pass < passes; pass++ {
 		if blocked, err := s.keepPulledBoard(ctx, mtixDir); blocked || err != nil {
 			return err
 		}
-		completed, err := s.exportBoardPass(ctx, mtixDir, true)
+		completed, err := s.exportBoardPassWith(ctx, mtixDir, true, mode)
 		if err != nil || !completed {
 			return err
 		}
@@ -61,11 +74,51 @@ func (s *SyncService) exportBoardProtected(ctx context.Context, mtixDir string, 
 	return err
 }
 
+// contendedExportWarning is logged when the sync lock is busy; a durable
+// pending export request has been recorded before it is logged.
+const contendedExportWarning = "sync lock busy: auto-export deferred; pending export request recorded and will be retried; run 'mtix sync --fix' to export now"
+
+// contendedForceExportWarning is logged when mtix sync --fix finds the sync
+// lock busy. It does not point back at mtix sync --fix, which just failed
+// (ErrForceExportContended); a durable request has been recorded first.
+const contendedForceExportWarning = "sync lock busy: forced export not written; pending export request recorded and will be retried when the lock is free"
+
+// ErrForceExportContended is returned by ForceExport when the sync lock is
+// busy: nothing was exported, and a pending export request was recorded.
+var ErrForceExportContended = errors.New("sync lock busy: tasks.json was not rewritten; " +
+	"a pending export request was recorded and will be retried; retry once the other mtix process finishes")
+
+// The ways an export pass treats a busy lock.
+type contendedMode int
+
+const (
+	// recordExportRequest records a pending request, then logs the automatic warning.
+	recordExportRequest contendedMode = iota
+	// exportRequestRecorded logs the automatic warning: the caller already recorded a request.
+	exportRequestRecorded
+	// forcedExport records a pending request and logs the forced warning (mtix sync --fix).
+	forcedExport
+)
+
 func (s *SyncService) exportBoardPass(ctx context.Context, mtixDir string, protect bool) (bool, error) {
+	return s.exportBoardPassWith(ctx, mtixDir, protect, recordExportRequest)
+}
+
+func (s *SyncService) exportBoardPassWith(ctx context.Context, mtixDir string, protect bool, mode contendedMode) (bool, error) {
 	start := s.clock()
 	lockFile, lockErr := s.acquireLock(mtixDir, lockExclusive)
 	if lockErr != nil {
-		s.logger.Warn("could not acquire sync lock, skipping auto-export", "error", lockErr)
+		// The warning promises a retry, so a durable request must back it.
+		if mode != exportRequestRecorded {
+			if err := s.RequestExport(mtixDir); err != nil {
+				return false, errors.Join(lockErr, fmt.Errorf("record pending export request: %w", err))
+			}
+		}
+		if mode == forcedExport {
+			s.logger.Warn(contendedForceExportWarning, "error", lockErr)
+		} else {
+			s.logger.Warn(contendedExportWarning, "error", lockErr)
+		}
 		return false, nil
 	}
 	defer s.releaseLock(lockFile)

@@ -25,6 +25,10 @@ func renameThenRecheck(oldPath, newPath string) error {
 	return nil
 }
 
+// enrolAsideLstat is the post-move check of moveEnrolLockAside; tests replace it
+// to inject a failing check.
+var enrolAsideLstat = os.Lstat
+
 // moveEnrolLockAside moves a non-regular lock object to aside without ever
 // replacing an existing aside, then re-checks what was moved. If the object that
 // moved is a regular file, an enrolment created a real lock after the type
@@ -34,8 +38,11 @@ func moveEnrolLockAside(lock, aside string) error {
 	if err := renameNoReplace(lock, aside); err != nil {
 		return fmt.Errorf("move enrolment lock aside: %w", err)
 	}
-	info, err := os.Lstat(aside)
-	if err != nil || !info.Mode().IsRegular() {
+	info, err := enrolAsideLstat(aside)
+	if err != nil {
+		return fmt.Errorf("verify moved enrolment lock: %w", err)
+	}
+	if !info.Mode().IsRegular() {
 		return nil
 	}
 	if backErr := renameThenRecheck(aside, lock); backErr != nil {

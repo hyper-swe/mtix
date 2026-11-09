@@ -3095,6 +3095,15 @@ every other field still compare exactly. A longer gap, an event that carries its
 own `closed_at`, another status or a missing value still refuses and names
 `closed_at`.
 
+The accepted case is silent on purpose: enrollment does not list or report the
+stamps it excuses, and its result has no field for them. The record matters only
+for legacy events that carry no `closed_at` snapshot, such as a plain 0.5.4 done.
+An event that carries a `closed_at` snapshot is never excused, even when the gap is one second or less.
+Events written by 0.6.0 and later carry the snapshot, with one exception: status
+repair of a legacy winner emits a terminal event without it, and that stamp is
+still excused when the other conditions hold. Treat any other `closed_at`
+refusal as a real difference, not as clock skew.
+
 A 0.5.x per-project service (the `mtix daemon` unit or a running per-project
 daemon) keeps pull and hook duty for its board until that board is migrated.
 While one is live the host dispatcher runs only the wake scanner for the board:

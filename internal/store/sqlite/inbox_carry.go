@@ -80,15 +80,15 @@ func (s *Store) ExportInboxCarry(ctx context.Context) (carry *InboxCarry, err er
 			err = errors.Join(err, fmt.Errorf("rollback inbox carry snapshot: %w", rollbackErr))
 		}
 	}()
-	if err := checkAckIndexAgreesWithTable(ctx, tx); err != nil {
-		return nil, err
+	if checkErr := checkAckIndexAgreesWithTable(ctx, tx); checkErr != nil {
+		return nil, checkErr
 	}
 	out, err := readInboxCarry(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit inbox carry snapshot: %w", err)
+	if commitErr := tx.Commit(); commitErr != nil {
+		return nil, fmt.Errorf("commit inbox carry snapshot: %w", commitErr)
 	}
 	return out, nil
 }

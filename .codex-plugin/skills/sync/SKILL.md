@@ -186,6 +186,13 @@ every other field still compare exactly. A longer gap, an event that carries its
 own `closed_at`, another status or a missing value still refuses and names
 `closed_at`.
 
+The accepted case is silent on purpose: enrollment does not list or report the
+stamps it excuses, and its result has no field for them. The rule exists only for legacy 0.5.4 events, which carry no `closed_at` snapshot.
+Events from 0.6.0 and later always carry the snapshot, so enrollment compares
+their `closed_at` exactly and never excuses it, even when the gap is one second
+or less. Treat any `closed_at` refusal on a board written by 0.6.0 or later as
+a real difference, not as clock skew.
+
 Only enrolled checkouts contact the hub under `sync.hub_contact`: activity,
 interval or manual. Activity lets an idle scale-to-zero database sleep; interval
 keeps it awake, and manual makes no automatic hub contact. Contact costs apply

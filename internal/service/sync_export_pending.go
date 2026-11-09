@@ -34,15 +34,11 @@ func (s *SyncService) RequestExport(mtixDir string) error {
 	return errors.Join(legacyErr, markErr)
 }
 
-// defaultDirectorySync is the default directory durability hook. It is a
-// variable only so tests can confirm the service passes its injected logger.
-var defaultDirectorySync = syncExportDirectory
-
 func (s *SyncService) syncDirectory(path string) error {
 	if s.directorySync != nil {
 		return s.directorySync(path)
 	}
-	return defaultDirectorySync(s.logger, path)
+	return syncExportDirectoryWith(s.dirWarner, path, s.directoryFileSync)
 }
 
 func markPendingExportWithSync(mtixDir string, syncDir func(string) error) error {

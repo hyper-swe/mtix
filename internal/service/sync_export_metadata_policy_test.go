@@ -85,7 +85,7 @@ func TestPendingExport_UnsupportedDirectoryPipelineRetiresRequests(t *testing.T)
 			calls := 0
 			svc.directorySync = func(path string) error {
 				calls++
-				return exportDirectorySyncResult(svc.logger, path, errno, nil)
+				return exportDirectorySyncResult(svc.dirWarner, path, errno, nil)
 			}
 			require.NoError(t, svc.AutoExport(context.Background(), dir))
 			require.GreaterOrEqual(t, calls, 2, "publication must use directory policy; coalesced mark/retirement use FULL WAL")
@@ -137,7 +137,7 @@ func TestDirectorySync_EINVAL_WarnsOnceViaInjectedLogger(t *testing.T) {
 	calls := map[string]int{}
 	svc.directorySync = func(path string) error {
 		calls[path]++
-		return exportDirectorySyncResult(svc.logger, path, syscall.EINVAL, nil)
+		return exportDirectorySyncResult(svc.dirWarner, path, syscall.EINVAL, nil)
 	}
 	for i := 0; i < 3; i++ {
 		pendingProcessNode(t, store, i+2)
@@ -150,27 +150,28 @@ func TestDirectorySync_EINVAL_WarnsOnceViaInjectedLogger(t *testing.T) {
 	require.NotContains(t, global.String(), msg, "global default logger must not receive the warning")
 }
 
-// The production default path (no directorySync override) must hand the
-// service's own logger to syncExportDirectory.
+// The production default path (no directorySync override) must warn through
+// the service's own logger and never the global default (MTIX-130.14). The
+// service-level directoryFileSync hook makes the directory handle's Sync
+// report EINVAL, so the real default path (syncDirectory -> syncExportDirectoryWith
+// -> exportDirectorySyncResult) runs with no package-level seam.
 func TestDirectorySync_DefaultPathPassesServiceLogger(t *testing.T) {
+	var global bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&global, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
 	dir := t.TempDir()
 	store := pendingProcessStore(t, dir)
 	pendingProcessNode(t, store, 1)
-	injected := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
-	svc := NewSyncService(store, injected, pendingProcessClock)
+	var own bytes.Buffer
+	svc := NewSyncService(store, slog.New(slog.NewTextHandler(&own, nil)), pendingProcessClock)
 	require.Nil(t, svc.directorySync, "test must exercise the default path")
-	previous := defaultDirectorySync
-	t.Cleanup(func() { defaultDirectorySync = previous })
-	var seen []*slog.Logger
-	defaultDirectorySync = func(logger *slog.Logger, path string) error {
-		seen = append(seen, logger)
-		return previous(logger, path)
-	}
+	svc.directoryFileSync = func(*os.File) error { return syscall.EINVAL }
 	require.NoError(t, svc.AutoExport(context.Background(), dir))
-	require.NotEmpty(t, seen, "default path must sync directories")
-	for _, logger := range seen {
-		require.Same(t, injected, logger, "default path must pass the service logger")
-	}
+	const msg = "export directory sync unsupported"
+	require.Contains(t, own.String(), msg, "default path must warn via the service logger")
+	require.NotContains(t, global.String(), msg, "global default logger must not receive the warning")
 }
 
 // A nil-logger (silent) call must not consume a directory's single warning.
@@ -178,6 +179,6 @@ func TestDirectorySync_NilLoggerDoesNotConsumeWarning(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "silent-then-logged")
 	require.NoError(t, exportDirectorySyncResult(nil, path, syscall.EINVAL, nil))
 	var out bytes.Buffer
-	require.NoError(t, exportDirectorySyncResult(slog.New(slog.NewTextHandler(&out, nil)), path, syscall.EINVAL, nil))
+	require.NoError(t, exportDirectorySyncResult(newDirectoryWarner(slog.New(slog.NewTextHandler(&out, nil))), path, syscall.EINVAL, nil))
 	require.Contains(t, out.String(), "export directory sync unsupported")
 }

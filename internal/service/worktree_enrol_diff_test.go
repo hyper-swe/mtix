@@ -189,8 +189,14 @@ func TestBoardDiff_DeferUntilIsALocalByDesignDifference(t *testing.T) {
 	clone := `{"nodes":[{"id":"TEST-1","status":"deferred"}]}`
 	moved := `{"nodes":[{"id":"TEST-1","status":"deferred","defer_until":"2026-06-05T00:00:00Z"}]}`
 
-	for name, other := range map[string]string{"clone holds no wake time": clone, "clone holds another wake time": moved} {
-		got, err := service.CompareBoardDocs([]byte(local), []byte(other))
+	sameDay := `{"nodes":[{"id":"TEST-1","status":"deferred","defer_until":"2026-06-04T06:00:00Z"}]}`
+	for name, pair := range map[string][2]string{
+		"clone holds no wake time":              {local, clone},
+		"only the clone holds a wake time":      {clone, local},
+		"clone holds another wake time":         {local, moved},
+		"wake times differ by hours in one day": {local, sameDay},
+	} {
+		got, err := service.CompareBoardDocs([]byte(pair[0]), []byte(pair[1]))
 		require.NoError(t, err, name)
 		assert.Equal(t, service.BoardDiff{"TEST-1": {"defer_until"}}, got, name)
 	}

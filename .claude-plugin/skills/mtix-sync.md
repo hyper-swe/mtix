@@ -171,10 +171,9 @@ journal touched, with a doctor warning until its record is cleared. This is the
 existing service API; no public enrollment command ships in this build.
 
 A defer wake time (`defer_until`, set by `mtix defer --until`) stays on the
-machine that set it in sync protocol 1: a local defer travels as a status
-change, so the hub and every other machine hold the node as deferred with no
-wake time. This is by design for protocol 1; protocol 2 carries the wake time
-in a `defer` event. Enrollment therefore counts `defer_until` as a real
+machine that set it in this build: a local defer travels as a status change,
+so the hub and every other machine hold the node as deferred with no wake
+time. Replicating the wake time is planned, not shipped. Enrollment therefore counts `defer_until` as a real
 difference: a store with a local wake time refuses and the report names
 `defer_until`. Keep the copy using the printed `mtix backup <path>` command.
 If you accept the hub's values, re-run `mtix defer <id> --until <time>` on

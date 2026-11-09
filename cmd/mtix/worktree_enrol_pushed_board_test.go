@@ -111,8 +111,10 @@ func TestEnrolWorktree_RealPath_FullyPushedBoard_Enrols(t *testing.T) {
 }
 
 // TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference: a pushed board
-// with pre-.15 comment creation events differs on activity, creation stamps,
+// with pre-.15 comment creation events differs on activity, update stamps,
 // annotations and agent registrations before the exclusions hide those fields.
+// Creation stamps no longer differ: a clone takes created_at from the create
+// event's time (MTIX-112.17.16.13).
 // Legacy backfill without an addressee now refuses separately.
 func TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference(t *testing.T) {
 	ctx := context.Background()
@@ -139,15 +141,10 @@ func TestEnrolWorktree_RealPath_ExclusionsEachHideARealDifference(t *testing.T) 
 
 	raw, err := service.CompareBoardDocsWith(local, clone, nil)
 	require.NoError(t, err)
-	for _, field := range []string{"activity", "created_at", "annotations"} {
-		found := false
-		for _, fields := range raw {
-			for _, f := range fields {
-				found = found || f == field
-			}
-		}
-		assert.True(t, found, "an unfiltered comparison differs on "+field)
+	for _, field := range []string{"activity", "updated_at", "annotations"} {
+		assert.True(t, rawDiffersOn(raw, field), "an unfiltered comparison differs on "+field)
 	}
+	assert.False(t, rawDiffersOn(raw, "created_at"), "a clone reproduces created_at from the create event")
 	assert.Contains(t, raw, "agents:lane-a", "the agents section differs on a pushed board")
 	filtered, err := service.CompareBoardDocs(local, clone)
 	require.NoError(t, err)
@@ -271,4 +268,16 @@ func preReplicatedFieldsEvents(t *testing.T, events []*model.SyncEvent) []*model
 		out = append(out, &copied)
 	}
 	return out
+}
+
+// rawDiffersOn reports whether any node in diff differs on field.
+func rawDiffersOn(diff service.BoardDiff, field string) bool {
+	for _, fields := range diff {
+		for _, f := range fields {
+			if f == field {
+				return true
+			}
+		}
+	}
+	return false
 }

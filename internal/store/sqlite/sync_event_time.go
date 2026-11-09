@@ -3,7 +3,11 @@
 
 package sqlite
 
-import "time"
+import (
+	"time"
+
+	"github.com/hyper-swe/mtix/internal/model"
+)
 
 // Stored times at apply (MTIX-95.26; FR-18.9).
 //
@@ -53,4 +57,14 @@ func eventTime(wallClockMS int64, applyTime time.Time) time.Time {
 		return applyTime.UTC()
 	}
 	return t
+}
+
+// storedEventTime is the RFC3339 text a pulled event stamps into created_at
+// and updated_at: its own time in whole seconds, or this replica's apply time
+// when the event's time is out of range (eventTime). Every replica that applies
+// the same in-range event stores the same text (ADR-006 I1; MTIX-112.17.16.13).
+// updated_at is written as MAX(updated_at, this text), so it only moves forward
+// and does not depend on arrival order.
+func (a syncApplier) storedEventTime(e *model.SyncEvent) string {
+	return eventTime(e.WallClockTS, a.clock().UTC()).Format(time.RFC3339)
 }

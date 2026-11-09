@@ -27,7 +27,7 @@ func writeWorkflowColumns(ctx context.Context, tx *sql.Tx, id string, w workflow
 	_, err := tx.ExecContext(ctx, `
 		UPDATE nodes SET
 		  status          = ?,
-		  updated_at      = ?,
+		  updated_at      = MAX(updated_at, ?),
 		  assignee        = CASE WHEN ? THEN ? ELSE assignee END,
 		  agent_state     = CASE WHEN ? THEN ? ELSE agent_state END,
 		  previous_status = CASE WHEN ? THEN ? ELSE previous_status END,

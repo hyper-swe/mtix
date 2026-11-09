@@ -292,6 +292,7 @@ func restoreUnblockedNode(ctx context.Context, tx *sql.Tx, nodeID string, previo
 		OpType:      model.OpTransitionStatus,
 		Author:      "", // MTIX-24: emit resolves the default author (env/meta/'cli')
 		Payload:     payload,
+		Clock:       clockOrDefault(clocks...),
 	}); emitErr != nil {
 		return fmt.Errorf("emit auto-unblock event for %s: %w", nodeID, emitErr)
 	}

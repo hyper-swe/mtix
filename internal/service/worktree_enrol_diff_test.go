@@ -60,7 +60,8 @@ func TestCompareBoardDocs_WhatDiffers(t *testing.T) {
 		{"a history row on one side only is real", edit(t, `"priority":3,`, `"priority":3,"history":[{"id":"h1","kind":"field"}],`), service.BoardDiff{"TEST-1": {"history"}}},
 		{"a top-level history row on one side only is real", edit(t, `"agents":[`, `"history":[{"id":"h1","kind":"field"}],"agents":[`), service.BoardDiff{"history:(row)": {"(history)"}}},
 		{"activity is metadata", edit(t, `"priority":3,`, `"priority":3,"activity":[{"x":1}],`), service.BoardDiff{}},
-		{"created_at and updated_at are metadata", edit(t, `"priority":3,`, `"priority":3,"created_at":"a","updated_at":"b",`), service.BoardDiff{}},
+		{"updated_at is metadata", edit(t, `"priority":3,`, `"priority":3,"updated_at":"b",`), service.BoardDiff{}},
+		{"created_at is the create event's time and compares", edit(t, `"priority":3,`, `"priority":3,"created_at":"a",`), service.BoardDiff{"TEST-1": {"created_at"}}},
 		{"annotation id and stamp are not compared", edit(t, `{"id":"a1","text":"hello"}`, `{"id":"zz","text":"hello","created_at":"later"}`), service.BoardDiff{}},
 		{"annotation author", edit(t, `{"id":"a1","text":"hello"}`, `{"id":"a1","text":"hello","author":"x"}`), service.BoardDiff{"TEST-1": {"annotations"}}},
 		{"annotation addressee is content", edit(t, `{"id":"a1","text":"hello"}`, `{"id":"a1","text":"hello","addressee":"lane-a"}`), service.BoardDiff{"TEST-1": {"annotations"}}},
@@ -169,6 +170,8 @@ func TestBoardExclusions_EachHasAReasonAndIsASmallNamedSet(t *testing.T) {
 	}
 	assert.True(t, paths["nodes.annotations.id"])
 	assert.True(t, paths["nodes.annotations.created_at"])
+	assert.True(t, paths["nodes.updated_at"], "updated_at moves on local edits that carry no event")
+	assert.False(t, paths["nodes.created_at"], "created_at is the create event's time (ADR-006 I1)")
 	for _, never := range []string{"nodes.deleted_at", "nodes.deleted_by", "nodes.defer_until", "nodes.status", "nodes.title", "nodes.annotations.text", "nodes.annotations.author", "nodes.annotations.resolved", "nodes.annotations.addressee", "nodes.closed_at"} {
 		assert.False(t, paths[never], never+" can hide user content or a deletion")
 	}

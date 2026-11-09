@@ -159,7 +159,11 @@ explicit migration; do not remove them as part of trying the experiment.
 Worktree enrollment compares annotation addressees and exact completion times
 (`closed_at`), including a missing value. A fully pushed current-client addressed
 comment and rerun retain those values on the hub clone. Annotation IDs and
-creation times remain excluded because older events may use different ones.
+annotation creation times remain excluded because older events may use
+different ones. A node's creation time (`created_at`) is compared: a pull
+stores it from the create event's own time, not the pulling machine's clock.
+A node's update time (`updated_at`) stays excluded, because local edits such
+as a parent's progress roll-up move it without an event.
 An old backfill without an addressee or an old workflow event without the
 completion time can therefore refuse, naming `annotations` or `closed_at` in
 the report. Keep the copy using the refusal's printed `mtix backup <path>`

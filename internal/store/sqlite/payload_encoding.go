@@ -32,5 +32,8 @@ func (s *Store) emitPayload(ctx context.Context, tx *sql.Tx, p emitParams, value
 		return fmt.Errorf("encode %s payload for %s: %w", p.OpType, p.NodeID, err)
 	}
 	p.Payload = payload
+	if p.Clock == nil {
+		p.Clock = s.clock
+	}
 	return emitEvent(ctx, tx, p)
 }

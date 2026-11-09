@@ -74,6 +74,7 @@ func requireReverseUnorderedInEffect(t *testing.T, conn *sql.Conn, want bool) {
 
 	rows, err := conn.QueryContext(ctx, "SELECT rowid FROM agent_inbox_ack NOT INDEXED")
 	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
 	var rowids []int64
 	for rows.Next() {
 		var id int64
@@ -81,7 +82,6 @@ func requireReverseUnorderedInEffect(t *testing.T, conn *sql.Conn, want bool) {
 		rowids = append(rowids, id)
 	}
 	require.NoError(t, rows.Err())
-	require.NoError(t, rows.Close())
 	require.Greater(t, len(rowids), 1, "need several rows to observe scan direction")
 	for i := 1; i < len(rowids); i++ {
 		if want {

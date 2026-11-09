@@ -73,20 +73,33 @@ func applyAnnotationSnapshot(ctx context.Context, tx *sql.Tx, e *model.SyncEvent
 	return append(current, value), nil
 }
 
+// annotationWinnerNoUIDSQL finds the winning comment event for an annotation
+// on UID-less events, matched by display number.
+// The unary plus on op_type keeps the planner off idx_sync_events_op_type, which
+// would scan every comment event in the table (quadratic clone and pull), and
+// on idx_sync_events_node instead. MTIX-112.17.16.15.2.
+const annotationWinnerNoUIDSQL = `SELECT event_id FROM sync_events WHERE +op_type = 'comment' AND node_id = ?
+   AND json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END, '$.annotation.id') = ?
+   ORDER BY lamport_clock DESC, event_id DESC LIMIT 1`
+
+// annotationWinnerUIDSQL finds the winning comment event for an annotation
+// scoped by node uid, falling back to the display number for UID-less events.
+// The unary plus on op_type keeps the planner on idx_sync_events_uid and
+// idx_sync_events_node rather than a scan of idx_sync_events_op_type.
+const annotationWinnerUIDSQL = `SELECT event_id FROM sync_events WHERE +op_type = 'comment'
+   AND ((uid = ? AND uid <> '') OR ((uid IS NULL OR uid = '') AND node_id = ?))
+   AND json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END, '$.annotation.id') = ?
+   ORDER BY lamport_clock DESC, event_id DESC LIMIT 1`
+
 func annotationSnapshotWinner(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, id string) (string, error) {
 	// UID scopes protect a reused display number; old UID-less events match by
 	// the event's number, just as the workflow winner lookup does.
 	var winner string
 	var err error
 	if e.UID == "" {
-		err = tx.QueryRowContext(ctx, `SELECT event_id FROM sync_events WHERE op_type = 'comment' AND node_id = ?
-   AND json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END, '$.annotation.id') = ?
-   ORDER BY lamport_clock DESC, event_id DESC LIMIT 1`, e.NodeID, id).Scan(&winner)
+		err = tx.QueryRowContext(ctx, annotationWinnerNoUIDSQL, e.NodeID, id).Scan(&winner)
 	} else {
-		err = tx.QueryRowContext(ctx, `SELECT event_id FROM sync_events WHERE op_type = 'comment'
-   AND ((uid = ? AND uid <> '') OR ((uid IS NULL OR uid = '') AND node_id = ?))
-   AND json_extract(CASE WHEN json_valid(payload) THEN payload ELSE '{}' END, '$.annotation.id') = ?
-   ORDER BY lamport_clock DESC, event_id DESC LIMIT 1`, e.UID, e.NodeID, id).Scan(&winner)
+		err = tx.QueryRowContext(ctx, annotationWinnerUIDSQL, e.UID, e.NodeID, id).Scan(&winner)
 	}
 	if err != nil {
 		return "", fmt.Errorf("read annotation snapshot winner: %w", err)

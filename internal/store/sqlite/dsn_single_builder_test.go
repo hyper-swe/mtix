@@ -244,7 +244,7 @@ func TestDSNViolations_PlantedBreaches_AreCaught(t *testing.T) {
 		{"sqlite subpackage import", "x/imp4.go", "package x\n\nimport lib \"modernc.org/sqlite/lib\"\n\nvar _ = lib.X\n", "imported outside the error-type files"},
 		{"same basename as an error-type file in another directory", "other/internal/store/sqlite/open_retry.go", "package sqlite\n\nimport sqlite3 \"modernc.org/sqlite\"\n\nvar _ *sqlite3.Error\n", "imported outside the error-type files"},
 		{"named sqlite import in store.go", driverRegistrationFile, "package sqlite\n\nimport s \"modernc.org/sqlite\"\n\nvar _ *s.Error\n", "imported outside the error-type files"},
-		{"vacuum literal","x/v.go", plantedSource(std, `"VACUUM INTO '" + p + "'"`), "not a bound parameter"},
+		{"vacuum literal", "x/v.go", plantedSource(std, `"VACUUM INTO '" + p + "'"`), "not a bound parameter"},
 		{"vacuum sprintf", "x/s.go", plantedSource(std, `fmt.Sprintf("VACUUM INTO '%s'", p)`), "not a bound parameter"},
 	}
 	ok, err := dsnViolations(clean, 2)

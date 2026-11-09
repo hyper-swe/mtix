@@ -151,3 +151,30 @@ func TestLegacyClosedStamps_OnlyTheWinningWorkflowEventCounts(t *testing.T) {
 		})
 	}
 }
+
+// The winner is scoped as apply scopes it: by the node's uid when its events
+// carry one, by node id only when none does. Here the uid-scoped winner is a
+// plain done of the stamp's second, while a later uid-less reopen is the
+// highest event under the node id; the node is named from the uid walk.
+func TestLegacyClosedStamps_UIDScopedWinner_BeatsNodeIDScopedWinner(t *testing.T) {
+	ctx := context.Background()
+	wall := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	const stamp = "2026-03-04T05:06:07Z"
+	s, raw := replicaWithNode(t)
+	uid := nodeRow(t, raw, "MTIX-1")["uid"]
+	require.NotEqual(t, nullColumn, uid)
+	done := foreignWorkflowEvent(t, "MTIX-1", model.OpTransitionStatus, transition(model.StatusInProgress, model.StatusDone), 2, "")
+	done.UID = uid
+	done.WallClockTS = wall.UnixMilli()
+	reopen := foreignWorkflowEvent(t, "MTIX-1", model.OpTransitionStatus, transition(model.StatusDone, model.StatusOpen), 3, "")
+	reopen.WallClockTS = wall.UnixMilli()
+	pullEvents(t, s, []*model.SyncEvent{done, reopen})
+	_, err := raw.ExecContext(ctx, `UPDATE nodes SET closed_at = ? WHERE id = 'MTIX-1'`, stamp)
+	require.NoError(t, err)
+
+	got, err := s.LegacyClosedStamps(ctx)
+
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"MTIX-1": stamp}, got,
+		"the uid-carrying done is the winner; the uid-less reopen is outside the uid walk")
+}

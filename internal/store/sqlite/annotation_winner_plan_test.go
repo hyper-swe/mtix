@@ -113,8 +113,9 @@ func annotationWinnerFor(t *testing.T, s *Store, e *model.SyncEvent) string {
 	return got
 }
 
-// The UID form matches the event's uid and falls back to the display number
-// only for UID-less events; other nodes' comments never win.
+// The UID form matches the event's uid on any node_id (a renumbered node keeps
+// its uid) and falls back to the display number only for UID-less events;
+// other nodes' comments win only when they carry the same uid.
 func TestAnnotationSnapshotWinner_UIDForm_FallsBackToNodeForUIDLess(t *testing.T) {
 	s, raw := applyTestStore(t)
 	insertAnnotationComment(t, raw, "with-uid", "MTIX-1", "uid-1", 5)
@@ -129,6 +130,11 @@ func TestAnnotationSnapshotWinner_UIDForm_FallsBackToNodeForUIDLess(t *testing.T
 
 	insertAnnotationComment(t, raw, "with-uid-high", "MTIX-1", "uid-1", 9)
 	require.Equal(t, "with-uid-high", annotationWinnerFor(t, s, e))
+
+	// Same-uid event under another display number (renumbered node) wins on
+	// the highest lamport, beating all other-node noise.
+	insertAnnotationComment(t, raw, "same-uid-renumbered", "MTIX-200", "uid-1", 200)
+	require.Equal(t, "same-uid-renumbered", annotationWinnerFor(t, s, e))
 }
 
 // On a lamport tie the higher event_id wins, in both query forms and whatever

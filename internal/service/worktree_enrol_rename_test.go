@@ -71,11 +71,9 @@ func TestMoveEnrolLockAside_PostMoveLstatFails_ReturnsError(t *testing.T) {
 	lock, aside := filepath.Join(dir, "enroll.lock"), filepath.Join(dir, "enroll.lock.unprobeable")
 	require.NoError(t, os.Mkdir(lock, 0o700))
 	injected := errors.New("injected lstat failure")
-	orig := enrolAsideLstat
-	enrolAsideLstat = func(string) (os.FileInfo, error) { return nil, injected }
-	t.Cleanup(func() { enrolAsideLstat = orig })
+	failingLstat := func(string) (os.FileInfo, error) { return nil, injected }
 
-	err := moveEnrolLockAside(lock, aside)
+	err := moveEnrolLockAsideWith(lock, aside, failingLstat)
 	require.ErrorIs(t, err, injected)
 	assert.Contains(t, err.Error(), "verify moved enrolment lock")
 }

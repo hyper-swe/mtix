@@ -25,20 +25,22 @@ func renameThenRecheck(oldPath, newPath string) error {
 	return nil
 }
 
-// enrolAsideLstat is the post-move check of moveEnrolLockAside; tests replace it
-// to inject a failing check.
-var enrolAsideLstat = os.Lstat
-
 // moveEnrolLockAside moves a non-regular lock object to aside without ever
 // replacing an existing aside, then re-checks what was moved. If the object that
 // moved is a regular file, an enrolment created a real lock after the type
 // check: it is put back and the move is refused, so a held lock is never moved
 // (MTIX-112.17.16.21.2).
 func moveEnrolLockAside(lock, aside string) error {
+	return moveEnrolLockAsideWith(lock, aside, os.Lstat)
+}
+
+// moveEnrolLockAsideWith is moveEnrolLockAside with the post-move check
+// injected, so a test can make that check fail without package state.
+func moveEnrolLockAsideWith(lock, aside string, lstat func(string) (os.FileInfo, error)) error {
 	if err := renameNoReplace(lock, aside); err != nil {
 		return fmt.Errorf("move enrolment lock aside: %w", err)
 	}
-	info, err := enrolAsideLstat(aside)
+	info, err := lstat(aside)
 	if err != nil {
 		return fmt.Errorf("verify moved enrolment lock: %w", err)
 	}

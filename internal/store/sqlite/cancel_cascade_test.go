@@ -439,16 +439,18 @@ func TestCascadeCancel_SoftDeletedDescendant_LeftUntouched(t *testing.T) {
 	assert.Nil(t, got.ClosedAt, "the deleted grandchild was never closed")
 }
 
-// TestCascadeCancel_WithDescendants_EmitsNoPerDescendantEvents pins the
-// 0.5.x sync behaviour the docs describe (ADR-006 D10, OD-2 for v2): the
-// cascade emits one transition_status for the root and one for each
-// dependent it unblocks, and none for the descendants it cancels.
-func TestCascadeCancel_WithDescendants_EmitsNoPerDescendantEvents(t *testing.T) {
+// TestCascadeCancel_WithDescendants_EmitsOneEventPerCancelledDescendant pins
+// the sync behaviour of a cascade (MTIX-112.17.16.12): one transition_status
+// for the root, one for each descendant it cancels (from the status the
+// descendant held), and one for each dependent it unblocks. A descendant that
+// was already terminal gets none.
+func TestCascadeCancel_WithDescendants_EmitsOneEventPerCancelledDescendant(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
 	seedCascadeNodes(t, s,
 		ccNode(ccRoot, model.StatusOpen), ccNode(ccChild, model.StatusOpen),
-		ccNode(ccGrandchild, model.StatusOpen), ccNode(ccOutside, model.StatusOpen))
+		ccNode(ccGrandchild, model.StatusOpen), ccNode(ccChild2, model.StatusDone),
+		ccNode(ccOutside, model.StatusOpen))
 	addBlocker(ctx, t, s, ccGrandchild, ccOutside, cascadeTestTime)
 	baseline := maxLamport(t, s)
 
@@ -457,25 +459,31 @@ func TestCascadeCancel_WithDescendants_EmitsNoPerDescendantEvents(t *testing.T) 
 	events := transitionEventsSince(t, s, baseline)
 	require.Len(t, events[ccRoot], 1, "one event for the root")
 	assert.Equal(t, model.StatusCancelled, events[ccRoot][0].To)
+	for _, id := range []string{ccChild, ccGrandchild} {
+		require.Len(t, events[id], 1, "one event for cancelled descendant %s", id)
+		assert.Equal(t, model.StatusOpen, events[id][0].From)
+		assert.Equal(t, model.StatusCancelled, events[id][0].To)
+		assert.Equal(t, "feature dropped", events[id][0].Reason)
+	}
+	assert.Empty(t, events[ccChild2], "no event for a descendant that was already done")
 	require.Len(t, events[ccOutside], 1, "one event for the unblocked dependent")
 	assert.Equal(t, model.StatusBlocked, events[ccOutside][0].From)
 	assert.Equal(t, model.StatusOpen, events[ccOutside][0].To)
-	assert.Empty(t, events[ccChild], "no event for a cancelled descendant")
-	assert.Empty(t, events[ccGrandchild], "no event for a cancelled descendant")
-	assert.Len(t, events, 2, "no other transition_status event")
+	assert.Len(t, events, 4, "no other transition_status event")
 }
 
-// TestCascadeCancel_PulledByReplica_DescendantsKeepTheirStatus pins what
-// another replica sees of a cascade in 0.5.x: the root's cancel and the
-// dependent's unblock arrive as events, the descendants' cancellation does
-// not, so there the descendant stays open while the dependent it blocked is
-// unblocked.
-func TestCascadeCancel_PulledByReplica_DescendantsKeepTheirStatus(t *testing.T) {
+// TestCascadeCancel_PulledByReplica_DescendantsAreCancelled is the two-store
+// proof (MTIX-112.17.16.12): the replica ends with the same cancelled
+// descendants, the same unblocked dependent and the same parent progress as
+// the origin, and applying one event per descendant does not cascade again.
+func TestCascadeCancel_PulledByReplica_DescendantsAreCancelled(t *testing.T) {
 	ctx := context.Background()
 	origin, rawOrigin := mutationTestStore(t)
 	replica, _ := mutationTestStore(t)
 	mustCreateNode(t, origin, "MTIX-1", "")
 	mustCreateNode(t, origin, "MTIX-1.1", "MTIX-1")
+	mustCreateNode(t, origin, "MTIX-1.1.1", "MTIX-1.1")
+	mustCreateNode(t, origin, "MTIX-1.2", "MTIX-1")
 	mustCreateNode(t, origin, "MTIX-2", "")
 	require.NoError(t, origin.AddDependency(ctx, &model.Dependency{
 		FromID: "MTIX-1.1", ToID: "MTIX-2", DepType: model.DepTypeBlocks,
@@ -487,11 +495,15 @@ func TestCascadeCancel_PulledByReplica_DescendantsKeepTheirStatus(t *testing.T) 
 	require.NoError(t, origin.CancelNode(ctx, "MTIX-1", "feature dropped", "pm-1", true))
 	pullEvents(t, replica, pushPendingOwnEvents(t, rawOrigin))
 
-	assert.Equal(t, model.StatusCancelled, statusOf(t, replica, "MTIX-1"), "the root's cancel is synced")
-	assert.Equal(t, model.StatusOpen, statusOf(t, replica, "MTIX-1.1"),
-		"no event for the descendant: the replica keeps it open")
-	assert.Equal(t, model.StatusOpen, statusOf(t, replica, "MTIX-2"),
-		"the dependent's unblock is synced as its own event")
+	for _, id := range []string{"MTIX-1", "MTIX-1.1", "MTIX-1.1.1", "MTIX-1.2"} {
+		assert.Equal(t, model.StatusCancelled, statusOf(t, replica, id), "%s is cancelled on the replica", id)
+		want, err := origin.GetNode(ctx, id)
+		require.NoError(t, err)
+		got, err := replica.GetNode(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, want.Progress, got.Progress, "%s progress matches the origin", id)
+	}
+	assert.Equal(t, model.StatusOpen, statusOf(t, replica, "MTIX-2"), "the dependent is unblocked")
 }
 
 // TestCancelNode_WithoutCascade_KeepsSingleNodeBehaviour guards the

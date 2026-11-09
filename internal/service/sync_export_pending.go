@@ -20,7 +20,9 @@ func pendingExportDir(mtixDir string) string {
 // nonblocking lock attempt. A request conveys no authority to overwrite a
 // pulled board. Empty O_EXCL files avoid read/modify/write races among writers.
 func markPendingExport(mtixDir string) error {
-	return markPendingExportWithSync(mtixDir, syncExportDirectory)
+	return markPendingExportWithSync(mtixDir, func(path string) error {
+		return syncExportDirectory(nil, path)
+	})
 }
 
 // RequestExport records work before a long-running exporter starts its debounce.
@@ -32,11 +34,15 @@ func (s *SyncService) RequestExport(mtixDir string) error {
 	return errors.Join(legacyErr, markErr)
 }
 
+// defaultDirectorySync is the default directory durability hook. It is a
+// variable only so tests can confirm the service passes its injected logger.
+var defaultDirectorySync = syncExportDirectory
+
 func (s *SyncService) syncDirectory(path string) error {
 	if s.directorySync != nil {
 		return s.directorySync(path)
 	}
-	return syncExportDirectory(path)
+	return defaultDirectorySync(s.logger, path)
 }
 
 func markPendingExportWithSync(mtixDir string, syncDir func(string) error) error {

@@ -186,11 +186,13 @@ own `closed_at`, another status or a missing value still refuses and names
 `closed_at`.
 
 The accepted case is silent on purpose: enrollment does not list or report the
-stamps it excuses, and its result has no field for them. The rule exists only for legacy 0.5.4 events, which carry no `closed_at` snapshot.
-Events from 0.6.0 and later always carry the snapshot, so enrollment compares
-their `closed_at` exactly and never excuses it, even when the gap is one second
-or less. Treat any `closed_at` refusal on a board written by 0.6.0 or later as
-a real difference, not as clock skew.
+stamps it excuses, and its result has no field for them. The record matters only
+for legacy events that carry no `closed_at` snapshot, such as a plain 0.5.4 done.
+An event that carries a `closed_at` snapshot is never excused, even when the gap is one second or less.
+Events written by 0.6.0 and later carry the snapshot, with one exception: status
+repair of a legacy winner emits a terminal event without it, and that stamp is
+still excused when the other conditions hold. Treat any other `closed_at`
+refusal as a real difference, not as clock skew.
 
 Only enrolled checkouts contact the hub under `sync.hub_contact`: activity,
 interval or manual. Activity lets an idle scale-to-zero database sleep; interval

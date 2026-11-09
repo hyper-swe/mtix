@@ -462,12 +462,14 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 // comparisons, compare the exact value.
 //
 // The closed_at excuse is silent by design (MTIX-112.17.16.32): enrolment does
-// not list the stamps it excuses. The record matters only for legacy 0.5.4
-// events, which carry no closed_at snapshot, so the author's store and the
-// clone could read the clock either side of a second. Events from 0.6.0 and
-// later always carry the snapshot and are never excused, even within one
-// second; skewedLegacyClosedAt requires clone evidence that the stamp came from
-// an event with no snapshot.
+// not list the stamps it excuses. The record matters only for legacy events that
+// carry no closed_at snapshot, such as a plain 0.5.4 done, where the author's
+// store and the clone could read the clock either side of a second. An event
+// that carries a closed_at snapshot is never excused, even within one second.
+// Events from 0.6.0 and later carry the snapshot, except that status repair of
+// a legacy winner emits a terminal event without it; skewedLegacyClosedAt
+// excuses a stamp only on clone evidence that it came from an event with no
+// snapshot.
 func (c *boardCmp) sameNodeField(k, id string, a, b map[string]any) bool {
 	switch k {
 	case "labels":

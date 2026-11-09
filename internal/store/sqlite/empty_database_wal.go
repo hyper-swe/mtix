@@ -23,6 +23,10 @@ const storeRefusalAdvice = "run 'mtix recover'; " + preserveDatabaseSidecars
 // store is healthy, so recover does not apply.
 const backupRefusalAdvice = "the destination has a stale WAL beside an empty, one-byte or missing file, and the live store is healthy, so do not run recover: choose another destination, or move that file and its -wal and -shm together out of the way (never only the file)"
 
+// backupWalkFailureAdvice closes a refusal of a backup destination whose walk
+// could not finish: nothing is known about a WAL beside it.
+const backupWalkFailureAdvice = "mtix cannot tell which file the destination names: choose another destination"
+
 // maxLinkHops bounds the walk along database and directory links. SQLite
 // itself follows up to 200; a walk that runs past this cap fails closed.
 const maxLinkHops = 255
@@ -114,23 +118,26 @@ func resolveDatabasePath(path string) (string, error) {
 // the path cannot be walked to its end the guard refuses: it never answers
 // "no WAL here" from a path it worked out differently from the kernel.
 func guardEmptyDatabaseWAL(path string) error {
-	return guardWALWithAdvice(path, storeRefusalAdvice)
+	return guardWALWithAdvice(path, storeRefusalAdvice, storeRefusalAdvice)
 }
 
 // guardBackupDestinationWAL is the guard for a backup destination. The live
 // store is healthy there; the refusal is about the destination file, so its
 // advice is to choose another destination or move that file and its WAL aside
-// together, never to run recover (NFR-2.8).
+// together, never to run recover (NFR-2.8). When the destination cannot be
+// walked, nothing is known about a WAL beside it, so that refusal only asks
+// for another destination.
 func guardBackupDestinationWAL(path string) error {
-	return guardWALWithAdvice(path, backupRefusalAdvice)
+	return guardWALWithAdvice(path, backupWalkFailureAdvice, backupRefusalAdvice)
 }
 
-// guardWALWithAdvice is the shared guard; advice is the closing guidance of
-// the refusal, which differs between the live store and a backup destination.
-func guardWALWithAdvice(path, advice string) error {
+// guardWALWithAdvice is the shared guard; walkAdvice closes a refusal of a
+// path that cannot be walked and advice closes a refusal of a nonempty WAL
+// beside it. Both differ between the live store and a backup destination.
+func guardWALWithAdvice(path, walkAdvice, advice string) error {
 	resolved, err := resolveDatabasePath(path)
 	if err != nil {
-		return fmt.Errorf("refusing to open %s: cannot tell which file SQLite would open: %w: %w; %s", path, model.ErrCorrupted, err, advice)
+		return fmt.Errorf("refusing to open %s: cannot tell which file SQLite would open: %w: %w; %s", path, model.ErrCorrupted, err, walkAdvice)
 	}
 	for _, candidate := range []string{resolved, path} {
 		if err := guardWALBeside(candidate, resolved, advice); err != nil {

@@ -26,6 +26,15 @@ func trimWakeToJournal(ctx context.Context, tx *sql.Tx) error {
 		// Preserve live lease ownership while lowering above-tail progress.
 		`UPDATE wake_leases SET high_water = (SELECT COALESCE(MAX(rowid), 0) FROM sync_events)
          WHERE high_water > (SELECT COALESCE(MAX(rowid), 0) FROM sync_events)`,
+		// A returned-seq mark above the tail would make a fresh event that reuses a
+		// freed seq look already returned, so the inbox read would not charge it
+		// (ADR-007 A12, MTIX-112.2.2.1.1). Lower only marks above the tail.
+		`UPDATE agent_registrations SET returned_seq_mark = (SELECT COALESCE(MAX(rowid), 0) FROM sync_events)
+         WHERE returned_seq_mark > (SELECT COALESCE(MAX(rowid), 0) FROM sync_events)`,
+		// The per-id meta mark of an agent with no registration row, lowered the same way
+		// (the literal is inboxReturnedMetaPrefix, 19 bytes).
+		`UPDATE meta SET value = CAST((SELECT COALESCE(MAX(rowid), 0) FROM sync_events) AS TEXT)
+         WHERE substr(key, 1, 19) = 'inbox.returned_seq.' AND CAST(value AS INTEGER) > (SELECT COALESCE(MAX(rowid), 0) FROM sync_events)`,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("trim wake bookkeeping to the journal: %w", err)

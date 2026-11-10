@@ -28,6 +28,10 @@ var unreadableFixCases = []struct {
 	{"several paths", []string{"/u/a.service", "/u/b c.service", "/u/it's.service"},
 		`ls -l -- '/u/a.service' '/u/b c.service' '/u/it'\''s.service'`},
 	{"leading dash path", []string{"-rf"}, "ls -l -- '-rf'"},
+	{"path with newline", []string{"/u/a\nb.service"}, "ls -l -- '/u/a\nb.service'"},
+	{"path with backslash", []string{`/u/a\b.service`}, `ls -l -- '/u/a\b.service'`},
+	{"path with dollar sign", []string{"/u/$HOME.service"}, "ls -l -- '/u/$HOME.service'"},
+	{"path with backtick", []string{"/u/a`id`.service"}, "ls -l -- '/u/a`id`.service'"},
 }
 
 func TestUnreadableUnitFix_HostilePaths_ExactQuotedCommand(t *testing.T) {

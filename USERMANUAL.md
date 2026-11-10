@@ -1983,7 +1983,7 @@ ws.onmessage = (event) => {
 | `node.claimed` | Agent claimed a node |
 | `node.unclaimed` | Agent released a node |
 | `node.cancelled` | Node cancelled |
-| `status.changed` | Status transitioned |
+| `status.changed` | Status transitioned. A cascade cancel fires it once for each descendant it cancels, on this machine and on every machine that pulls it |
 | `progress.changed` | Progress recalculated |
 | `nodes.invalidated` | Batch invalidation |
 | `dependency.added` | Dependency created |

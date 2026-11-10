@@ -31,23 +31,41 @@ func deleteEventCounts(t *testing.T, raw *sql.DB) map[string]int {
 
 // TestDeleteNode_Cascade_EmitsOneDeleteEventPerDescendant: the root and each
 // descendant the cascade removes get exactly one delete event; a descendant
-// deleted earlier keeps its single earlier event; an unrelated node gets none.
+// deleted earlier keeps its single earlier event; unrelated nodes, including a
+// live sibling whose id shares the root's prefix (MTIX-10 next to MTIX-1) and
+// that sibling's child, get none. The events come in the documented order (the
+// root, then the descendants in id order, even when they were created out of
+// order) and carry the deleting author.
 func TestDeleteNode_Cascade_EmitsOneDeleteEventPerDescendant(t *testing.T) {
 	ctx := context.Background()
 	s, raw := mutationTestStore(t)
 	mustCreateNode(t, s, "MTIX-1", "")
+	mustCreateNode(t, s, "MTIX-1.2", "MTIX-1")
 	mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
 	mustCreateNode(t, s, "MTIX-1.1.1", "MTIX-1.1")
-	mustCreateNode(t, s, "MTIX-1.2", "MTIX-1")
 	mustCreateNode(t, s, "MTIX-2", "")
+	mustCreateNode(t, s, "MTIX-10", "")
+	mustCreateNode(t, s, "MTIX-10.1", "MTIX-10")
 	require.NoError(t, s.DeleteNode(ctx, "MTIX-1.1.1", false, "alice"))
 
-	require.NoError(t, s.DeleteNode(ctx, "MTIX-1", true, "alice"))
+	require.NoError(t, s.DeleteNode(ctx, "MTIX-1", true, "bob"))
 
 	assert.Equal(t, map[string]int{
 		"MTIX-1": 1, "MTIX-1.1": 1, "MTIX-1.2": 1,
 		"MTIX-1.1.1": 1, // deleted earlier on its own; the cascade skips it
-	}, deleteEventCounts(t, raw))
+	}, deleteEventCounts(t, raw), "MTIX-10 and MTIX-10.1 share the prefix text but are not descendants")
+	var order, authors []string
+	for _, ev := range readEventsByOp(t, raw, model.OpDelete) {
+		order = append(order, ev.NodeID)
+		authors = append(authors, ev.AuthorID)
+	}
+	assert.Equal(t, []string{"MTIX-1.1.1", "MTIX-1", "MTIX-1.1", "MTIX-1.2"}, order,
+		"the earlier delete, then the root, then the descendants in id order")
+	assert.Equal(t, []string{"alice", "bob", "bob", "bob"}, authors, "each event names its deleter")
+	for _, id := range []string{"MTIX-10", "MTIX-10.1"} {
+		_, err := s.GetNode(ctx, id)
+		require.NoError(t, err, "%s stays live on the origin", id)
+	}
 }
 
 // TestDeleteNode_NoCascade_EmitsOnlyTheTargetsDeleteEvent: a non-cascade delete
@@ -76,6 +94,8 @@ func TestDeleteNode_Cascade_PulledByReplica_DeletesEveryDescendant(t *testing.T)
 	mustCreateNode(t, origin, "MTIX-1.1.1", "MTIX-1.1")
 	mustCreateNode(t, origin, "MTIX-1.2", "MTIX-1")
 	mustCreateNode(t, origin, "MTIX-2", "")
+	mustCreateNode(t, origin, "MTIX-10", "") // shares the root's prefix text
+	mustCreateNode(t, origin, "MTIX-10.1", "MTIX-10")
 	pullEvents(t, replica, pushPendingOwnEvents(t, rawOrigin))
 
 	require.NoError(t, origin.DeleteNode(ctx, "MTIX-1", true, "alice"))
@@ -85,6 +105,8 @@ func TestDeleteNode_Cascade_PulledByReplica_DeletesEveryDescendant(t *testing.T)
 		_, err := replica.GetNode(ctx, id)
 		require.ErrorIs(t, err, model.ErrNotFound, "%s is deleted on the replica", id)
 	}
-	_, err := replica.GetNode(ctx, "MTIX-2")
-	require.NoError(t, err, "an unrelated node stays")
+	for _, id := range []string{"MTIX-2", "MTIX-10", "MTIX-10.1"} {
+		_, err := replica.GetNode(ctx, id)
+		require.NoError(t, err, "%s is not a descendant and stays live on the replica", id)
+	}
 }

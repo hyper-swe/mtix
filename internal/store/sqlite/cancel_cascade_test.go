@@ -6,8 +6,9 @@
 // a dependent of a cancelled descendant stayed blocked and the progress of
 // the root and of every cancelled intermediate node went stale. A cascade
 // must leave the store as a single-node cancel of each node it cancels
-// would, in one transaction. The cascade still emits no sync event for the
-// descendants in 0.5.x (ADR-006 D10); those tests pin what replicas see.
+// would, in one transaction. Since MTIX-112.17.16.12 the cascade also emits
+// one transition_status sync event for each descendant it cancels (the applier
+// never cascades); the emit and replica tests below pin what replicas see.
 package sqlite_test
 
 import (
@@ -439,37 +440,91 @@ func TestCascadeCancel_SoftDeletedDescendant_LeftUntouched(t *testing.T) {
 	assert.Nil(t, got.ClosedAt, "the deleted grandchild was never closed")
 }
 
+// orderedTransitionEvent is one transition_status event as stored, with the
+// author that wrote it.
+type orderedTransitionEvent struct {
+	nodeID  string
+	author  string
+	payload model.TransitionStatusPayload
+}
+
+// transitionEventSequence returns every transition_status event emitted after
+// lamport clock `after`, in clock order.
+func transitionEventSequence(t *testing.T, s *sqlite.Store, after int64) []orderedTransitionEvent {
+	t.Helper()
+	// Every transition_status event newer than the baseline clock, in order.
+	rows, err := s.Query(context.Background(),
+		`SELECT node_id, author_id, payload FROM sync_events
+		 WHERE op_type = ? AND lamport_clock > ? ORDER BY lamport_clock`,
+		string(model.OpTransitionStatus), after)
+	require.NoError(t, err)
+	defer func() { _ = rows.Close() }()
+	var out []orderedTransitionEvent
+	for rows.Next() {
+		var ev orderedTransitionEvent
+		var payload string
+		require.NoError(t, rows.Scan(&ev.nodeID, &ev.author, &payload))
+		require.NoError(t, json.Unmarshal([]byte(payload), &ev.payload))
+		out = append(out, ev)
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
 // TestCascadeCancel_WithDescendants_EmitsOneEventPerCancelledDescendant pins
 // the sync behaviour of a cascade (MTIX-112.17.16.12): one transition_status
-// for the root, one for each descendant it cancels (from the status the
-// descendant held), and one for each dependent it unblocks. A descendant that
-// was already terminal gets none.
+// for the root, one for each descendant it cancels carrying the status that
+// descendant held (open, in progress, blocked or deferred), and one for each
+// dependent it unblocks, in that order. The root and the descendants are by the cancelling author. A
+// descendant that was already terminal gets none, and neither does a live
+// sibling whose id shares the root's prefix (PROJ-10 next to PROJ-1) or that
+// sibling's child.
 func TestCascadeCancel_WithDescendants_EmitsOneEventPerCancelledDescendant(t *testing.T) {
 	s := newTestStore(t)
 	ctx := context.Background()
+	// The descendants are created out of id order so a missing sort shows.
 	seedCascadeNodes(t, s,
-		ccNode(ccRoot, model.StatusOpen), ccNode(ccChild, model.StatusOpen),
-		ccNode(ccGrandchild, model.StatusOpen), ccNode(ccChild2, model.StatusDone),
-		ccNode(ccOutside, model.StatusOpen))
+		ccNode(ccRoot, model.StatusOpen),
+		ccNode("PROJ-1.4", model.StatusOpen), ccNode("PROJ-1.3", model.StatusOpen),
+		ccNode(ccChild2, model.StatusDone), ccNode(ccChild, model.StatusOpen),
+		ccNode(ccGrandchild, model.StatusInProgress),
+		ccNode(ccOutside, model.StatusOpen), ccNode(ccOutsider, model.StatusOpen),
+		ccNode("PROJ-10", model.StatusOpen), ccNode("PROJ-10.1", model.StatusOpen))
 	addBlocker(ctx, t, s, ccGrandchild, ccOutside, cascadeTestTime)
+	addBlocker(ctx, t, s, ccOutsider, "PROJ-1.3", cascadeTestTime)
+	require.NoError(t, s.TransitionStatus(ctx, "PROJ-1.4", model.StatusDeferred, "later", "test"))
 	baseline := maxLamport(t, s)
 
 	require.NoError(t, s.CancelNode(ctx, ccRoot, "feature dropped", "pm-1", true))
 
-	events := transitionEventsSince(t, s, baseline)
-	require.Len(t, events[ccRoot], 1, "one event for the root")
-	assert.Equal(t, model.StatusCancelled, events[ccRoot][0].To)
-	for _, id := range []string{ccChild, ccGrandchild} {
-		require.Len(t, events[id], 1, "one event for cancelled descendant %s", id)
-		assert.Equal(t, model.StatusOpen, events[id][0].From)
-		assert.Equal(t, model.StatusCancelled, events[id][0].To)
-		assert.Equal(t, "feature dropped", events[id][0].Reason)
+	got := transitionEventSequence(t, s, baseline)
+	var order []string
+	for _, ev := range got {
+		order = append(order, ev.nodeID)
+		if ev.nodeID != ccOutside { // the unblock event's author is not this change's concern
+			assert.Equal(t, "pm-1", ev.author, "%s: the event names the cancelling author", ev.nodeID)
+		}
 	}
-	assert.Empty(t, events[ccChild2], "no event for a descendant that was already done")
-	require.Len(t, events[ccOutside], 1, "one event for the unblocked dependent")
-	assert.Equal(t, model.StatusBlocked, events[ccOutside][0].From)
-	assert.Equal(t, model.StatusOpen, events[ccOutside][0].To)
-	assert.Len(t, events, 4, "no other transition_status event")
+	assert.Equal(t, []string{ccRoot, ccChild, ccGrandchild, "PROJ-1.3", "PROJ-1.4", ccOutside}, order,
+		"the root, its descendants in id order, then the dependent they unblock; no sibling, no done node")
+	byNode := map[string]model.TransitionStatusPayload{}
+	for _, ev := range got {
+		byNode[ev.nodeID] = ev.payload
+	}
+	for id, from := range map[string]model.Status{
+		ccRoot: model.StatusOpen, ccChild: model.StatusOpen, ccGrandchild: model.StatusInProgress,
+		"PROJ-1.3": model.StatusBlocked, "PROJ-1.4": model.StatusDeferred,
+	} {
+		assert.Equal(t, from, byNode[id].From, "%s: the event names the status it held", id)
+		assert.Equal(t, model.StatusCancelled, byNode[id].To, id)
+	}
+	for _, id := range []string{ccChild, ccGrandchild, "PROJ-1.3", "PROJ-1.4"} {
+		assert.Equal(t, "feature dropped", byNode[id].Reason, "%s carries the cancel reason", id)
+	}
+	assert.Equal(t, model.StatusBlocked, byNode[ccOutside].From)
+	assert.Equal(t, model.StatusOpen, byNode[ccOutside].To)
+	assert.Equal(t, model.StatusOpen, statusOf(t, s, "PROJ-10"), "the prefix sibling is untouched")
+	assert.Equal(t, model.StatusOpen, statusOf(t, s, "PROJ-10.1"), "the prefix sibling's child is untouched")
 }
 
 // TestCascadeCancel_PulledByReplica_DescendantsAreCancelled is the two-store
@@ -485,6 +540,8 @@ func TestCascadeCancel_PulledByReplica_DescendantsAreCancelled(t *testing.T) {
 	mustCreateNode(t, origin, "MTIX-1.1.1", "MTIX-1.1")
 	mustCreateNode(t, origin, "MTIX-1.2", "MTIX-1")
 	mustCreateNode(t, origin, "MTIX-2", "")
+	mustCreateNode(t, origin, "MTIX-10", "") // shares the root's prefix text
+	mustCreateNode(t, origin, "MTIX-10.1", "MTIX-10")
 	require.NoError(t, origin.AddDependency(ctx, &model.Dependency{
 		FromID: "MTIX-1.1", ToID: "MTIX-2", DepType: model.DepTypeBlocks,
 		CreatedAt: cascadeTestTime, CreatedBy: "pm-1",
@@ -504,6 +561,9 @@ func TestCascadeCancel_PulledByReplica_DescendantsAreCancelled(t *testing.T) {
 		assert.Equal(t, want.Progress, got.Progress, "%s progress matches the origin", id)
 	}
 	assert.Equal(t, model.StatusOpen, statusOf(t, replica, "MTIX-2"), "the dependent is unblocked")
+	for _, id := range []string{"MTIX-10", "MTIX-10.1"} {
+		assert.Equal(t, model.StatusOpen, statusOf(t, replica, id), "%s is not a descendant and stays open", id)
+	}
 }
 
 // TestCancelNode_WithoutCascade_KeepsSingleNodeBehaviour guards the

@@ -143,10 +143,10 @@ func requirePRPackageOwnership(t *testing.T) {
 	service := jobs["test-go-service"]
 	for _, platform := range []string{"ubuntu-22.04", "macos-latest"} {
 		t.Run(platform, func(t *testing.T) {
-			require.Contains(t, ordinary.Strategy.Matrix.OS, platform)
-			require.Contains(t, sqlite.Strategy.Matrix.OS, platform)
-			require.Contains(t, cmdJob.Strategy.Matrix.OS, platform)
-			require.Contains(t, service.Strategy.Matrix.OS, platform)
+			require.Contains(t, ordinary.Strategy.Matrix.OS.For("push"), platform)
+			require.Contains(t, sqlite.Strategy.Matrix.OS.For("push"), platform)
+			require.Contains(t, cmdJob.Strategy.Matrix.OS.For("push"), platform)
+			require.Contains(t, service.Strategy.Matrix.OS.For("push"), platform)
 			owners := map[string][]string{}
 			for _, shard := range ordinary.Strategy.Matrix.Shard {
 				for _, pkg := range expandedPRPackages(t, prJobPackages(t, root, ordinary, shard, ""), inventory) {

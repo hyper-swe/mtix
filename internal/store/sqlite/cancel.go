@@ -73,7 +73,7 @@ func (s *Store) executeCancelTx(ctx context.Context, tx *sql.Tx, req transitionR
 	}
 
 	if cascade {
-		cancelled, err := cascadeCancel(ctx, tx, s, id, author, nowStr)
+		cancelled, err := s.cascadeCancel(ctx, tx, req, nowStr)
 		if err != nil {
 			return fmt.Errorf("cascade cancel from %s: %w", id, err)
 		}
@@ -166,24 +166,89 @@ type cancelledNode struct {
 // step, including the descendant update itself, rolls back the whole cancel
 // (TestCascadeCancel_FailureMidCascade_RollsBackWholeCancel).
 //
-// Sync (0.5.x): the cascade emits no per-descendant sync events (ADR-006
-// D10; per-descendant cancel events are OD-2, for v2). Other replicas
-// receive only the root's transition_status (emitted by executeCancelTx)
-// and the transition_status that autoUnblockNode emits for each dependent
-// it restores. They never see the descendants cancelled: there the
-// descendants keep their previous status, and a dependent restored here
-// shows unblocked while the descendant that blocked it is not cancelled.
-func cascadeCancel(ctx context.Context, tx *sql.Tx, h historyToucher, rootID, author, nowStr string) ([]cancelledNode, error) {
+// Sync (MTIX-112.17.16.12): the applier never cascades a cancel, so each
+// descendant it cancels gets its own transition_status event (from the status
+// it held, to cancelled, with the cancel reason), emitted in id order after
+// the root's and before the events of the dependents it unblocks. A
+// descendant that was already terminal is not cancelled and gets none.
+func (s *Store) cascadeCancel(ctx context.Context, tx *sql.Tx, req transitionRequest, nowStr string) ([]cancelledNode, error) {
+	rootID := req.id
+	prior, err := liveDescendantStatuses(ctx, tx, rootID)
+	if err != nil {
+		return nil, err
+	}
 	cancelled, err := cancelDescendants(ctx, tx, rootID, nowStr)
 	if err != nil {
 		return nil, err
 	}
+	if err := s.emitCascadeCancelEvents(ctx, tx, req, cancelled, prior); err != nil {
+		return nil, err
+	}
 	for _, n := range cancelled {
-		if err := unblockDependents(ctx, tx, h, n.id, author); err != nil {
+		if err := unblockDependents(ctx, tx, s, n.id, req.author); err != nil {
 			return nil, fmt.Errorf("auto-unblock dependents of cascade-cancelled %s: %w", n.id, err)
 		}
 	}
 	return cancelled, nil
+}
+
+// emitCascadeCancelEvents emits one transition_status event for each cancelled
+// descendant, in id order, carrying the status it held before the cancel
+// (MTIX-112.17.16.12).
+func (s *Store) emitCascadeCancelEvents(ctx context.Context, tx *sql.Tx, req transitionRequest, cancelled []cancelledNode, prior map[string]model.Status) error {
+	ordered := append([]cancelledNode(nil), cancelled...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].id < ordered[j].id })
+	for _, n := range ordered {
+		if err := s.emitTransitionSnapshot(ctx, tx, emitParams{
+			NodeID:      n.id,
+			ProjectCode: projectPrefixFromNodeID(n.id),
+			OpType:      model.OpTransitionStatus,
+			Author:      req.author,
+		}, &model.TransitionStatusPayload{
+			From:   prior[n.id],
+			To:     model.StatusCancelled,
+			Reason: req.reason,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// liveDescendantStatuses returns the status of every live, non-terminal
+// descendant of rootID, read before the cascade cancels them so each event can
+// name the status it came from (MTIX-112.17.16.12). The selection matches
+// cancelDescendants.
+func liveDescendantStatuses(ctx context.Context, tx *sql.Tx, rootID string) (statuses map[string]model.Status, err error) {
+	// Same filter as the cascade UPDATE: escaped prefix, live, non-terminal.
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id, status FROM nodes
+		 WHERE id LIKE ? ESCAPE '\'
+		   AND deleted_at IS NULL
+		   AND status NOT IN (?, ?, ?)`,
+		escapeLIKEPrefix(rootID)+".%",
+		string(model.StatusDone), string(model.StatusCancelled), string(model.StatusInvalidated),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("read statuses of descendants of %s: %w", rootID, err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close statuses of descendants of %s: %w", rootID, closeErr)
+		}
+	}()
+	statuses = map[string]model.Status{}
+	for rows.Next() {
+		var id, status string
+		if scanErr := rows.Scan(&id, &status); scanErr != nil {
+			return nil, fmt.Errorf("scan status of a descendant of %s: %w", rootID, scanErr)
+		}
+		statuses[id] = model.Status(status)
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, fmt.Errorf("read statuses of descendants of %s: %w", rootID, iterErr)
+	}
+	return statuses, nil
 }
 
 // cancelDescendants sets every live, non-terminal descendant of rootID to

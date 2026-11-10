@@ -243,16 +243,23 @@ Known residual in 0.5.x:
   falls back to the apply time on that replica, so the node stays
   readable but its `closed_at` differs from the other replicas'.
 - Local writes that emit no event (an auto-block when a dependency is
-  added, the descendants of a cascade cancel) are invisible to the
-  winner check, so status can still differ there. Example: replica A
-  claims a node while replica B adds a dependency that blocks it; B's
-  auto-block emits no event, so after both pull A shows `blocked` and
-  B `in_progress`. A dependent that a cascade cancel unblocks does
-  travel, as its own `transition_status`, so other replicas show it
-  unblocked while the descendant that blocked it is not cancelled
-  there (MTIX-95.21). Descendants cancelled by a cascade cancel, which
-  other replicas keep in their previous status, can differ
-  the same way.
+  added) are invisible to the winner check, so status can still differ
+  there. Example: replica A claims a node while replica B adds a
+  dependency that blocks it; B's auto-block emits no event, so after
+  both pull A shows `blocked` and B `in_progress`.
+- Cascades (MTIX-112.17.16.12): the applier never cascades, so a
+  cascade cancel emits a `transition_status` to `cancelled` for the
+  named node and for each descendant it cancels (in id order, each
+  from the status the descendant held, with the cancel reason), then
+  the `transition_status` of each dependent it unblocks (MTIX-95.21).
+  A descendant that was already `done`, `cancelled` or `invalidated`
+  gets none. A cascade delete emits a `delete` for the named node and
+  for each live descendant it removes; a descendant that was already
+  deleted keeps its earlier event. Applying one event per descendant
+  recomputes progress above each (idempotent) and does not cascade
+  again. A cascade made before this change emitted none for its
+  descendants, so on other replicas those keep their previous status
+  or stay live. An undelete still emits nothing.
 - Unknown to-status: a `transition_status` to a status this build
   does not know (for example one added by a newer client) writes the
   status column (and `updated_at`) alone and logs a warning naming the

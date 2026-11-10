@@ -27,6 +27,9 @@ func installTestShim(t *testing.T, st *oplocal.State) (shimPath, target string) 
 	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
+	// t.TempDir honours the process umask; a permissive umask (002) leaves
+	// the directory group-writable, which the shim validator rightly refuses.
+	require.NoError(t, os.Chmod(dir, 0o700))
 	target = filepath.Join(dir, "mtix")
 	require.NoError(t, os.WriteFile(target, []byte("#!/bin/sh\n"), 0o700)) //nolint:gosec // fixture executable
 	shimPath, err = attach.NewShimWriter(st, attach.Protocol, attach.ValidateShimTarget).Install(context.Background(), target, os.Getuid())

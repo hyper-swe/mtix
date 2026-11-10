@@ -8,12 +8,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/sync/pushlock"
 )
 
 func doctorRow(t *testing.T, mtixDir, id string) *service.DoctorResult {
@@ -192,6 +194,51 @@ func TestDoctor_EnrolInterrupted_DetailSaysTheCommandHoldsOnlyUntilDataChanges(t
 				keys = append(keys, k)
 			}
 			assert.ElementsMatch(t, []string{"aside_dir", "backup_path", "started_at", "pid"}, keys)
+		})
+	}
+}
+
+// TestDoctor_EnrolInterrupted_TimeBoundSentenceOnlyWithACommand: a readable
+// marker whose fix is STOP prose (the enrolment lock is held) gets no time-bound
+// sentence, and a torn marker gets it exactly when its fix is a command (wi-28).
+func TestDoctor_EnrolInterrupted_TimeBoundSentenceOnlyWithACommand(t *testing.T) {
+	tear := func(t *testing.T, w *recoveryWorld) {
+		t.Helper()
+		require.NoError(t, os.WriteFile(w.marker, []byte("{torn"), 0o600))
+	}
+	cases := []struct {
+		name        string
+		prepare     func(t *testing.T, w *recoveryWorld)
+		wantSTOP    bool
+		wantCommand string // prefix of the Fix when it is a command
+	}{
+		{"lock held prints STOP prose", func(t *testing.T, w *recoveryWorld) {
+			lock, err := pushlock.AcquireNamed(filepath.Join(w.mtix, "enroll.d"), "enroll.lock")
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, lock.Release()) })
+		}, true, ""},
+		{"torn marker, one aside, data absent", tear, false, "mv "},
+		{"torn marker, several asides", func(t *testing.T, w *recoveryWorld) {
+			tear(t, w)
+			require.NoError(t, os.MkdirAll(filepath.Join(w.mtix, "data.pre-enrol-20261106T010203Z"), 0o700))
+		}, true, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newRecoveryWorld(t, "aside", "")
+			tc.prepare(t, w)
+
+			row := doctorRow(t, w.mtix, "board.enrol-interrupted")
+
+			require.NotNil(t, row)
+			assert.Equal(t, service.DoctorFail, row.Status)
+			if tc.wantSTOP {
+				assert.True(t, strings.HasPrefix(row.Fix, "STOP:"), row.Fix)
+				assert.NotContains(t, row.Detail, enrolFixTimeBound, "STOP prose prints no command")
+				return
+			}
+			assert.True(t, strings.HasPrefix(row.Fix, tc.wantCommand), row.Fix)
+			assert.Contains(t, row.Detail, "; "+enrolFixTimeBound)
 		})
 	}
 }

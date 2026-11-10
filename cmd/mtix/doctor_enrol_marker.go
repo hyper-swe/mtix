@@ -20,6 +20,16 @@ import (
 // directory is wrong once one exists, and the reverse (wi-28).
 const enrolFixTimeBound = "the printed command was chosen for the data directory as it is now and is valid only until that directory changes; run mtix doctor again after any change to it"
 
+// withEnrolFixTimeBound appends enrolFixTimeBound to a board.enrol-interrupted
+// detail when its fix is a printed command (mv or rm). STOP prose and other
+// words print no command, so they get no such sentence.
+func withEnrolFixTimeBound(detail, fix string) string {
+	if strings.HasPrefix(fix, "mv ") || strings.HasPrefix(fix, "rm ") {
+		return detail + "; " + enrolFixTimeBound
+	}
+	return detail
+}
+
 // registerEnrolInterruptedDoctor adds board.enrol-interrupted when a worktree
 // enrolment left its durable marker behind (the process died between the move of
 // the store and the end of the enrolment). It prints the exact recovery
@@ -38,9 +48,7 @@ func registerEnrolInterruptedDoctor(svc *service.DoctorService, mtixDir string) 
 	return svc.Register(service.DoctorCheck{ID: "board.enrol-interrupted", Run: func(context.Context) service.DoctorResult {
 		fix := enrolInterruptedFix(mtixDir, marker)
 		detail := "a worktree enrolment was interrupted; " + marker.RecoveryHint()
-		if !strings.HasPrefix(fix, "STOP:") { // STOP prose prints no command
-			detail += "; " + enrolFixTimeBound
-		}
+		detail = withEnrolFixTimeBound(detail, fix)
 		return service.DoctorResult{
 			Status: service.DoctorFail,
 			Detail: detail,

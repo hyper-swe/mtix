@@ -22,7 +22,7 @@ func rerunRetainedTask(t *testing.T) (*sqlite.Store, func() []*model.SyncEvent) 
 	}
 	return s, func() []*model.SyncEvent { return pushPendingOwnEvents(t, db) }
 }
-func TestReplicatedFieldsR2_WorkflowAfterRerun(t *testing.T) {
+func TestWorkflowOps_AfterRerun_ReplicateStatusAndClosedAt(t *testing.T) {
 	for _, name := range []string{"claim", "unclaim", "force reclaim", "unblock"} {
 		t.Run(name, func(t *testing.T) {
 			s, events := rerunRetainedTask(t)
@@ -52,7 +52,7 @@ func TestReplicatedFieldsR2_WorkflowAfterRerun(t *testing.T) {
 		})
 	}
 }
-func TestReplicatedFieldsR2_BackfillPreservesAvailableFields(t *testing.T) {
+func TestBackfill_AnnotatedOpenOrDoneNode_ReplicatesAnnotationsAndClosedAt(t *testing.T) {
 	for _, status := range []model.Status{model.StatusOpen, model.StatusDone} {
 		t.Run(string(status), func(t *testing.T) {
 			s, db := mutationTestStore(t)
@@ -82,7 +82,7 @@ func TestReplicatedFieldsR2_BackfillPreservesAvailableFields(t *testing.T) {
 		})
 	}
 }
-func TestReplicatedFieldsR2_EmptyIdentityEmitRollsBack(t *testing.T) {
+func TestAppendAnnotation_EmptyIdentity_RollsBack(t *testing.T) {
 	s, db := mutationTestStore(t)
 	mustCreateNode(t, s, "MTIX-1", "")
 	before, err := s.GetNode(t.Context(), "MTIX-1")
@@ -99,7 +99,7 @@ func TestReplicatedFieldsR2_EmptyIdentityEmitRollsBack(t *testing.T) {
 	require.Equal(t, count, afterCount)
 }
 
-func TestReplicatedFieldsR2_UnrelatedAnnotationsSurviveEveryOrder(t *testing.T) {
+func TestAnnotationReplication_AnyApplyOrder_PreservesUnrelatedAnnotations(t *testing.T) {
 	source, db := mutationTestStore(t)
 	mustCreateNode(t, source, "MTIX-1", "")
 	at := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
@@ -126,7 +126,7 @@ func TestReplicatedFieldsR2_UnrelatedAnnotationsSurviveEveryOrder(t *testing.T) 
 	}
 }
 
-func TestReplicatedFieldsR2_LegacyRepairPayloadExact(t *testing.T) {
+func TestRepairNodeStatus_LegacyDoneEvent_EmitsExactPayload(t *testing.T) {
 	a, db := replicaWithPendingNode(t)
 	a.SetClock(foreignWallClock)
 	require.NoError(t, a.ClaimNode(t.Context(), "MTIX-1", "agent-a"))
@@ -150,7 +150,7 @@ func TestReplicatedFieldsR2_LegacyRepairPayloadExact(t *testing.T) {
 	require.Equal(t, foreignClosedAt, got.ClosedAt.Format(time.RFC3339))
 }
 
-func TestReplicatedFieldsR2_BackfillZeroAndPreEpochCreation(t *testing.T) {
+func TestBackfill_ZeroOrPreEpochAnnotationTime_PreservesCreatedAt(t *testing.T) {
 	for _, at := range []time.Time{{}, time.Date(1960, 1, 2, 3, 4, 5, 123456789, time.UTC)} {
 		t.Run(at.Format(time.RFC3339Nano), func(t *testing.T) {
 			source, db := mutationTestStore(t)
@@ -170,7 +170,7 @@ func TestReplicatedFieldsR2_BackfillZeroAndPreEpochCreation(t *testing.T) {
 	}
 }
 
-func TestReplicatedFieldsR2_BackfillMissingTimeUsesExactNodeTime(t *testing.T) {
+func TestBackfill_MissingAnnotationTime_UsesExactNodeCreatedAt(t *testing.T) {
 	source, db := mutationTestStore(t)
 	mustCreateNode(t, source, "MTIX-1", "")
 	at := time.Date(2026, 1, 2, 3, 4, 5, 123456789, time.FixedZone("offset", 19800))

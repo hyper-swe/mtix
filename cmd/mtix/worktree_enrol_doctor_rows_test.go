@@ -150,3 +150,48 @@ func TestEnrolInterruptedFix_NoAcceptRecord_StillRuns(t *testing.T) {
 	require.NoError(t, err, "%s\n%s", row.Fix, out)
 	assert.Equal(t, "ORIGINAL", w.read(t, filepath.Join(w.data, "mtix.db")))
 }
+
+// TestDoctor_EnrolInterrupted_DetailSaysTheCommandHoldsOnlyUntilDataChanges: for
+// each printed-command branch the detail says the command was chosen for the
+// data directory as it is now, while the Fix text and the row's data keys stay
+// exactly as before (wi-28).
+func TestDoctor_EnrolInterrupted_DetailSaysTheCommandHoldsOnlyUntilDataChanges(t *testing.T) {
+	q := func(s string) string { return "'" + s + "'" } // temp paths hold no quote
+	restore := func(w *recoveryWorld) string {
+		return "mv " + q(w.data) + " " + q(w.data+".kept-aside") + " && mv " + q(w.aside) + " " + q(w.data) +
+			" && rm " + q(w.marker) + " && rm -f " + q(service.HubAcceptedPath(w.mtix))
+	}
+	cases := []struct {
+		name                  string
+		originalIn, partialIn string
+		emptyData             bool
+		wantFix               func(w *recoveryWorld) string
+	}{
+		{"data absent", "aside", "", false, func(w *recoveryWorld) string {
+			return "mv " + q(w.aside) + " " + q(w.data) + " && rm " + q(w.marker) + " && rm -f " + q(service.HubAcceptedPath(w.mtix))
+		}},
+		{"data empty", "aside", "", true, restore},
+		{"data live", "aside", "data", false, restore},
+		{"store never moved", "data", "", false, func(w *recoveryWorld) string { return "rm " + q(w.marker) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newRecoveryWorld(t, tc.originalIn, tc.partialIn)
+			if tc.emptyData {
+				require.NoError(t, os.MkdirAll(w.data, 0o700))
+			}
+
+			row := doctorRow(t, w.mtix, "board.enrol-interrupted")
+
+			require.NotNil(t, row)
+			assert.Equal(t, service.DoctorFail, row.Status)
+			assert.Contains(t, row.Detail, "; the printed command was chosen for the data directory as it is now and is valid only until that directory changes; run mtix doctor again after any change to it")
+			assert.Equal(t, tc.wantFix(w), row.Fix, "the Fix text is unchanged")
+			keys := make([]string, 0, len(row.Data))
+			for k := range row.Data {
+				keys = append(keys, k)
+			}
+			assert.ElementsMatch(t, []string{"aside_dir", "backup_path", "started_at", "pid"}, keys)
+		})
+	}
+}

@@ -15,6 +15,11 @@ import (
 	"github.com/hyper-swe/mtix/internal/service"
 )
 
+// enrolFixTimeBound tells the operator the printed recovery was chosen for the
+// data directory as doctor saw it: a command picked for an absent data
+// directory is wrong once one exists, and the reverse (wi-28).
+const enrolFixTimeBound = "the printed command was chosen for the data directory as it is now and is valid only until that directory changes; run mtix doctor again after any change to it"
+
 // registerEnrolInterruptedDoctor adds board.enrol-interrupted when a worktree
 // enrolment left its durable marker behind (the process died between the move of
 // the store and the end of the enrolment). It prints the exact recovery
@@ -31,10 +36,15 @@ func registerEnrolInterruptedDoctor(svc *service.DoctorService, mtixDir string) 
 		return nil
 	}
 	return svc.Register(service.DoctorCheck{ID: "board.enrol-interrupted", Run: func(context.Context) service.DoctorResult {
+		fix := enrolInterruptedFix(mtixDir, marker)
+		detail := "a worktree enrolment was interrupted; " + marker.RecoveryHint()
+		if !strings.HasPrefix(fix, "STOP:") { // STOP prose prints no command
+			detail += "; " + enrolFixTimeBound
+		}
 		return service.DoctorResult{
 			Status: service.DoctorFail,
-			Detail: "a worktree enrolment was interrupted; " + marker.RecoveryHint(),
-			Fix:    enrolInterruptedFix(mtixDir, marker),
+			Detail: detail,
+			Fix:    fix,
 			Data:   map[string]any{"aside_dir": marker.Aside, "backup_path": marker.Backup, "started_at": marker.Started, "pid": marker.PID},
 		}
 	}})

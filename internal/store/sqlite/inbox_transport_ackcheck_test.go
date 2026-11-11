@@ -7,10 +7,12 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -153,4 +155,50 @@ func TestExportWithInbox_ExplicitRowidAck_ExportsAckedAt(t *testing.T) {
 			require.Equal(t, "2026-11-05T00:00:00Z", e.AckedAt)
 		}
 	}
+}
+
+// MTIX-112.49: the inbox carry reads acks through the same index, so a flipped
+// ack index key refuses the carry with the export's error and repair hint.
+func TestExportInboxCarry_FlippedAckIndexKey_RefusesNamingRecover(t *testing.T) {
+	s := openAckFixture(t, true)
+	carry, err := s.ExportInboxCarry(t.Context())
+	require.Error(t, err)
+	require.Nil(t, carry)
+	require.ErrorIs(t, err, model.ErrConflict)
+	require.Contains(t, err.Error(), "acknowledgment index")
+	require.Contains(t, err.Error(), "mtix recover")
+}
+
+// MTIX-112.49: a clean store carries its ledger ack, its watermark acks and its
+// hook deliveries unchanged: the index check adds nothing and drops nothing.
+func TestExportInboxCarry_CleanAckIndex_CarriesAck(t *testing.T) {
+	path, _, _ := damageMailFixture(t, "")
+	setDamageCoverage(t, path, 100, 251) // watermark through seq 100, ledger ack on 251
+	db, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = db.Exec(`INSERT INTO inbox_deliveries(agent_id,event_seq,hook_name,delivered_at) VALUES('recipient',260,'notify','2026-11-05T00:00:01Z')`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+	s, err := sqlite.New(path, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	carry, err := s.ExportInboxCarry(t.Context())
+	require.NoError(t, err)
+
+	// One ledger ack with its time, then one timeless ack per event at or
+	// below the watermark (damage-001 .. damage-100), nothing else.
+	require.Len(t, carry.Acks, 101)
+	require.Equal(t, "recipient", carry.Acks[0].AgentID)
+	require.Equal(t, "damage-251", carry.Acks[0].EventID)
+	require.Equal(t, "2026-11-05T00:00:00Z", carry.Acks[0].AckedAt.UTC().Format(time.RFC3339Nano))
+	for i, a := range carry.Acks[1:] {
+		require.Equal(t, "recipient", a.AgentID)
+		require.Equal(t, fmt.Sprintf("damage-%03d", i+1), a.EventID)
+		require.True(t, a.AckedAt.IsZero(), a.EventID)
+	}
+
+	require.Equal(t, []sqlite.CarriedDelivery{{
+		AgentID: "recipient", EventID: "damage-260", HookName: "notify", DeliveredAt: "2026-11-05T00:00:01Z",
+	}}, carry.Deliveries)
 }

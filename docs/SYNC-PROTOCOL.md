@@ -231,6 +231,12 @@ Known residual in 0.5.x:
   client emits a `defer` event: a local defer emits `transition_status`,
   so the hub never carries the wake time. A `defer` event whose wake time
   falls outside UTC years 1 to 9999 stores none.
+  A wake time therefore stays local to the store that set it in protocol
+  1, by design (MTIX-112.17.16.11): a pulled `deferred` node has no
+  `defer_until`, and a re-defer that only changes the wake time emits no
+  event. Protocol 2 carries the wake time in a `defer` event. Worktree
+  enrolment keeps `defer_until` out of its exclusion set, so a local wake
+  time is reported as a difference rather than silently lost.
 - `update_field` on `status`, `assignee` or `agent_state` keeps its
   per-field register above and is not compared with workflow events.
 - `closed_at` on the originating store can differ from the replicas':
@@ -247,16 +253,23 @@ Known residual in 0.5.x:
   falls back to the apply time on that replica, so the node stays
   readable but its `closed_at` differs from the other replicas'.
 - Local writes that emit no event (an auto-block when a dependency is
-  added, the descendants of a cascade cancel) are invisible to the
-  winner check, so status can still differ there. Example: replica A
-  claims a node while replica B adds a dependency that blocks it; B's
-  auto-block emits no event, so after both pull A shows `blocked` and
-  B `in_progress`. A dependent that a cascade cancel unblocks does
-  travel, as its own `transition_status`, so other replicas show it
-  unblocked while the descendant that blocked it is not cancelled
-  there (MTIX-95.21). Descendants cancelled by a cascade cancel, which
-  other replicas keep in their previous status, can differ
-  the same way.
+  added) are invisible to the winner check, so status can still differ
+  there. Example: replica A claims a node while replica B adds a
+  dependency that blocks it; B's auto-block emits no event, so after
+  both pull A shows `blocked` and B `in_progress`.
+- Cascades (MTIX-112.17.16.12): the applier never cascades, so a
+  cascade cancel emits a `transition_status` to `cancelled` for the
+  named node and for each descendant it cancels (in id order, each
+  from the status the descendant held, with the cancel reason), then
+  the `transition_status` of each dependent it unblocks (MTIX-95.21).
+  A descendant that was already `done`, `cancelled` or `invalidated`
+  gets none. A cascade delete emits a `delete` for the named node and
+  for each live descendant it removes; a descendant that was already
+  deleted keeps its earlier event. Applying one event per descendant
+  recomputes progress above each (idempotent) and does not cascade
+  again. A cascade made before this change emitted none for its
+  descendants, so on other replicas those keep their previous status
+  or stay live. An undelete still emits nothing.
 - Unknown to-status: a `transition_status` to a status this build
   does not know (for example one added by a newer client) writes the
   status column (and `updated_at`) alone and logs a warning naming the

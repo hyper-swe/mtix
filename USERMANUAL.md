@@ -467,7 +467,7 @@ That record also carries the node's deletion time and author, and mtix uses it o
 
 After `mtix rerun --strategy delete`, undeleting a direct child restores its subtree removed by that rerun. Previously deleted descendants stay deleted.
 
-Undelete is local: it emits no sync event. Other replicas keep the node deleted.
+A cascade delete sends one sync delete event for the node and one for each descendant it removes (not for a descendant that was already deleted), so other replicas delete the same nodes. A cascade delete made by an earlier version sent an event for the named node only: on other replicas its descendants stay live. Undelete is local: it emits no sync event. Other replicas keep the node deleted.
 
 Soft-deleted nodes are automatically purged after the retention period (default 30 days, configurable via `data.soft_delete_retention`).
 
@@ -712,15 +712,13 @@ unblocked, and the progress of every node above a cancelled descendant,
 up to the top of the tree, is recomputed. Descendants that are already
 `done` keep their status.
 
-With sync, a cascade cancel in this version sends other machines no
-event for the descendants it cancels: they receive the cancel of the
-node you named and the unblock of each task it released, nothing else.
-On other machines the descendants are therefore not cancelled and keep
-their previous status, and a task that the cascade unblocked shows as
-unblocked there even though the descendant that blocked it is not
-cancelled. If other machines must see every descendant cancelled,
-cancel the descendants one at a time, deepest first, without
-`--cascade`.
+With sync, a cascade cancel sends other machines one event for the node
+you named, one for each descendant it cancels (not for a descendant that
+was already `done`, `cancelled` or `invalidated`), and one for each task
+it released. Other machines therefore show the same descendants
+cancelled and the same tasks unblocked. A cascade cancel made by an
+earlier version sent no event for its descendants: on other machines
+they keep their previous status, and upgrading does not send them.
 
 A cascade cancel made by an earlier version unblocked only the tasks
 the named node was blocking, and upgrading does not repair what it
@@ -1985,7 +1983,7 @@ ws.onmessage = (event) => {
 | `node.claimed` | Agent claimed a node |
 | `node.unclaimed` | Agent released a node |
 | `node.cancelled` | Node cancelled |
-| `status.changed` | Status transitioned |
+| `status.changed` | Status transitioned. A cascade cancel fires it once for each descendant it cancels, on this machine and on every machine that pulls it |
 | `progress.changed` | Progress recalculated |
 | `nodes.invalidated` | Batch invalidation |
 | `dependency.added` | Dependency created |
@@ -3098,6 +3096,22 @@ intend to drop that difference, retry the enrollment service with the printed
 enrolls the hub's values, and reports lost fields on nodes this store's own
 journal touched, with a doctor warning until its record is cleared. This is the
 existing service API; no public enrollment command ships in this build.
+Before it carries inbox acknowledgments to the hub clone, enrollment compares
+the acknowledgment index with its table, as `mtix export` does, and refuses
+with "acknowledgment index disagrees with its table" (or "holds N keys but the
+table holds M", or "acknowledgment index unreadable") when they differ. Nothing
+is carried. Restore the store from a good backup or run `mtix recover`, then
+retry; a green `mtix doctor` does not clear this refusal.
+
+A defer wake time (`defer_until`, set by `mtix defer --until`) stays on the
+machine that set it in this build: a local defer travels as a status change,
+so the hub and every other machine hold the node as deferred with no wake
+time. Replicating the wake time is planned, not shipped. Enrollment therefore counts `defer_until` as a real
+difference: a store with a local wake time refuses and the report names
+`defer_until`. Keep the copy using the printed `mtix backup <path>` command.
+If you accept the hub's values, re-run `mtix defer <id> --until <time>` on
+the machine that should wake the node afterwards, because only that machine
+holds the wake time.
 
 A terminal transition (done, cancel or invalidate) whose event carries no
 `closed_at` (from a build that did not yet carry the completion time in its
@@ -3113,6 +3127,15 @@ completion time on that node, so it accepts that as well; the node's status and
 every other field still compare exactly. A longer gap, an event that carries its
 own `closed_at`, another status or a missing value still refuses and names
 `closed_at`.
+
+The accepted case is silent on purpose: enrollment does not list or report the
+stamps it excuses, and its result has no field for them. The record matters only
+for legacy events that carry no `closed_at` snapshot, such as a plain 0.5.4 done.
+An event that carries a `closed_at` snapshot is never excused, even when the gap is one second or less.
+Events written by 0.6.0 and later carry the snapshot, with one exception: status
+repair of a legacy winner emits a terminal event without it, and that stamp is
+still excused when the other conditions hold. Treat any other `closed_at`
+refusal as a real difference, not as clock skew.
 
 A 0.5.x per-project service (the `mtix daemon` unit or a running per-project
 daemon) keeps pull and hook duty for its board until that board is migrated.
@@ -3558,6 +3581,17 @@ zero has no limit, and already pending events return even if the initial
 database lookup outlasts a positive timeout. That lookup remains interruptible
 by caller cancellation (CLI SIGINT or SIGTERM). After an empty lookup, waiting
 for new events uses only the remaining timeout budget measured from entry.
+The timeout is wall-clock time, not run time: on every 250 ms poll tick the wait
+ends when either the monotonic elapsed time or the wall-clock elapsed time
+reaches the timeout, whichever comes first. The wall clock covers a sleeping
+machine (monotonic time pauses), and the monotonic time covers a wall clock
+stepped backwards, so a sleeping machine does not stretch it, and an empty wait
+exits 5 within about one tick of the deadline once the machine is awake. With a
+wake policy, a parked wait is cheap: each tick only counts the inbox, and the
+full read with the wake policy runs when the counts change and at least every 2
+seconds, so a change in hub state, permissions or budget window is noticed
+within about 2 seconds. Without a wake policy, each tick runs the plain inbox
+list query.
 Events mean exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM
 means exit 7.
 A negative timeout is refused. Keep foreground waits within the harness's tool
@@ -4091,8 +4125,8 @@ nothing. This holds for claims and status changes, which travel as
 events. Two automatic changes do not travel as events, so status can
 still differ there: if one machine claims a task while another adds a
 dependency that blocks it, the task can end up blocked on one machine
-and in progress on the other, and tasks cancelled as descendants of a
-cascade cancel can differ the same way. Beyond status nothing is
+and in progress on the other, and tasks cancelled by a cascade cancel
+made by an earlier version can differ the same way. Beyond status nothing is
 guaranteed to agree. The assignee and the other fields that go with it
 can still differ between machines when changes arrive out of order: if
 two agents claim the same task between
@@ -4726,7 +4760,9 @@ look at the node with `mtix show <id>` when in doubt.
 - a blocked node that still has an unresolved blocker, since a block
   added by a new dependency is not synced as an event;
 - a node cancelled by `mtix cancel --cascade` on an ancestor, which has
-  no cancel event of its own (one that has is flagged, see above);
+  no cancel event of its own (a cascade made by an earlier version;
+  this version sends one, and a node with one that differs is flagged,
+  see above);
 - an assignee set after the winning event with `mtix update
   --assignee` (when it arrives by import, the difference is flagged,
   so `--apply` without `--force` leaves it alone);

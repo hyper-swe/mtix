@@ -71,8 +71,9 @@ func pushedWork(ctx context.Context, t *testing.T, st *sqlite.Store) {
 }
 
 // notReplicated is work whose effect a clone of the hub does not reproduce
-// today: a defer wake time, a cascade delete, an undelete. Each stays a real
-// difference.
+// today: a defer wake time and an undelete. Each stays a real difference. A
+// cascade delete and a cascade cancel are in the board too: they replicate
+// (MTIX-112.17.16.12), so the report must not name them.
 func notReplicated(ctx context.Context, t *testing.T, st *sqlite.Store) {
 	t.Helper()
 	now := time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
@@ -82,7 +83,10 @@ func notReplicated(ctx context.Context, t *testing.T, st *sqlite.Store) {
 	require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-6", "", 0, 6, "deleted then restored")))
 	until := now.Add(48 * time.Hour)
 	require.NoError(t, st.DeferNode(ctx, "TEST-3", &until, "later", "lane"))
+	require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-8", "", 0, 8, "cascade cancelled")))
+	require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-8.1", "TEST-8", 1, 1, "cancelled child")))
 	require.NoError(t, st.DeleteNode(ctx, "TEST-5", true, "lane"))
+	require.NoError(t, st.CancelNode(ctx, "TEST-8", "dropped", "lane", true))
 	require.NoError(t, st.DeleteNode(ctx, "TEST-6", false, "lane"))
 	require.NoError(t, st.UndeleteNode(ctx, "TEST-6"))
 }
@@ -191,8 +195,7 @@ func TestEnrolWorktree_RealPath_LegacyBackfilledAddressee_Refuses(t *testing.T) 
 }
 
 // TestEnrolWorktree_RealPath_NotReplicatedWork_RefusesNamesItAndAcceptHubGoes:
-// a defer wake time, a cascade delete and an undelete are not on a clone of the
-// hub today, so the board refuses and the report names the fields. accept-hub
+// a defer wake time and an undelete are not on a clone of the hub today, so the board refuses and the report names the fields. accept-hub
 // then enrols, keeps the old store, and doctor warns.
 func TestEnrolWorktree_RealPath_NotReplicatedWork_RefusesNamesItAndAcceptHubGoes(t *testing.T) {
 	ctx := context.Background()
@@ -208,6 +211,8 @@ func TestEnrolWorktree_RealPath_NotReplicatedWork_RefusesNamesItAndAcceptHubGoes
 	assert.Equal(t, service.BoardHubDiffers, refusal.Reason)
 	assert.Contains(t, refusal.Diff["TEST-3"], "defer_until")
 	assert.Contains(t, refusal.Diff["TEST-6"], "deleted_at")
+	assert.Equal(t, []string{"TEST-3", "TEST-6"}, refusal.IDs(),
+		"the cascade delete (TEST-5) and the cascade cancel (TEST-8) replicate")
 	report := string(fileBytes(t, refusal.Report))
 	assert.Contains(t, report, "defer_until")
 	assert.NotContains(t, report, "deferred", "ids and field names only, no content")

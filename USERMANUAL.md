@@ -3077,6 +3077,12 @@ intend to drop that difference, retry the enrollment service with the printed
 enrolls the hub's values, and reports lost fields on nodes this store's own
 journal touched, with a doctor warning until its record is cleared. This is the
 existing service API; no public enrollment command ships in this build.
+Before it carries inbox acknowledgments to the hub clone, enrollment compares
+the acknowledgment index with its table, as `mtix export` does, and refuses
+with "acknowledgment index disagrees with its table" (or "holds N keys but the
+table holds M", or "acknowledgment index unreadable") when they differ. Nothing
+is carried. Restore the store from a good backup or run `mtix recover`, then
+retry; a green `mtix doctor` does not clear this refusal.
 
 A terminal transition (done, cancel or invalidate) whose event carries no
 `closed_at` (from a build that did not yet carry the completion time in its

@@ -5,6 +5,7 @@ package service
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -21,6 +22,7 @@ import (
 type ConfigService struct {
 	wake        *WakeConfigOptions
 	reevaluator WakeReevaluator
+	logger      *slog.Logger // re-evaluation failures; nil uses the default logger (MTIX-130.14)
 	ignoredWake map[string]string
 	values      map[string]string
 	path        string // Path to config file.

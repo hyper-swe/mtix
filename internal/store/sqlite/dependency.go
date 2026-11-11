@@ -159,10 +159,25 @@ func (s *Store) GetBlockers(ctx context.Context, nodeID string) ([]*model.Depend
 	return deps, rows.Err()
 }
 
+// withStoreClock returns clocks unchanged when the caller passed one, else the
+// store clock of a *Store h, so a derived block or unblock stamps updated_at
+// and its emitted wall_clock_ts from the injected clock, never the process
+// clock (MTIX-112.17.16.13; ADR-006 I1).
+func withStoreClock(h historyToucher, clocks []func() time.Time) []func() time.Time {
+	if len(clocks) > 0 {
+		return clocks
+	}
+	if cp, ok := h.(interface{ storeClock() func() time.Time }); ok {
+		return []func() time.Time{cp.storeClock()}
+	}
+	return clocks
+}
+
 // autoBlockNode auto-sets a node to blocked if it's open or in_progress per FR-3.8.
 // Saves previous_status for auto-restore.
 // Does NOT auto-block deferred, done, canceled, or invalidated nodes.
 func autoBlockNode(ctx context.Context, tx *sql.Tx, h historyToucher, nodeID string, clocks ...func() time.Time) error {
+	clocks = withStoreClock(h, clocks)
 	if err := h.touchHistory(ctx, tx, nodeID); err != nil {
 		return err
 	}
@@ -209,11 +224,7 @@ func autoUnblockNode(ctx context.Context, tx *sql.Tx, h historyToucher, nodeID s
 	// A *Store caller that passes no clock (RemoveDependency, RefreshBlocked)
 	// stamps both updated_at and the emitted wall_clock_ts from the store's
 	// injected clock, never the process clock (MTIX-112.17.16.13; ADR-006 I1).
-	if len(clocks) == 0 {
-		if cp, ok := h.(interface{ storeClock() func() time.Time }); ok {
-			clocks = append(clocks, cp.storeClock())
-		}
-	}
+	clocks = withStoreClock(h, clocks)
 	if err := h.touchHistory(ctx, tx, nodeID); err != nil {
 		return err
 	}

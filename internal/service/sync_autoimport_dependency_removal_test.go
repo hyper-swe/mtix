@@ -16,18 +16,27 @@ import (
 	"github.com/hyper-swe/mtix/internal/store"
 )
 
+// TestAutoImport_TeammateDependencyRemoval_Applies: a teammate's dependency
+// removal reaches this machine and applies. Both replicas run on ONE
+// consistent timeline (store and service clocks on a and on b), so the
+// auto-block on a and the auto-unblock on b stamp updated_at in causal order.
+// Clock skew between replicas is not covered here: it can make a pulled copy
+// look older than the local one and turn into a replace-import refusal, which
+// is tracked separately as MTIX-112.17.16.36.
 func TestAutoImport_TeammateDependencyRemoval_Applies(t *testing.T) {
 	for _, typ := range model.AllDepTypes() {
 		t.Run(string(typ), func(t *testing.T) {
 			ctx := context.Background()
 			a := dependencyRemovalFixture(t)
+			a.store.SetClock(func() time.Time { return a.now })
 			require.NoError(t, a.store.AddDependency(ctx, &model.Dependency{FromID: "TEST-1", ToID: "TEST-2", DepType: typ}))
 			require.NoError(t, a.svc.AutoExport(ctx, a.mtixDir))
 			b := dependencyRemovalClone(t, a)
 			before, err := b.store.GetNode(ctx, "TEST-1")
 			require.NoError(t, err)
 			now := before.UpdatedAt.Add(time.Hour)
-			b.store.SetClock(func() time.Time { return now })
+			b.now = now
+			b.store.SetClock(func() time.Time { return b.now })
 			require.NoError(t, b.store.RemoveDependency(ctx, "TEST-1", "TEST-2", typ))
 			after, err := b.store.GetNode(ctx, "TEST-1")
 			require.NoError(t, err)

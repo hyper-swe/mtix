@@ -78,3 +78,27 @@ func TestEmit_AutoUnblock_FromInjectedClock(t *testing.T) {
 		})
 	}
 }
+
+// TestAutoBlock_AddDependency_FromInjectedClock: the auto-block that a new
+// blocks dependency applies to its target stamps the target's updated_at from
+// the store's injected clock, never the process clock (MTIX-112.17.16.13;
+// ADR-006 I1), the same rule the auto-unblock cases above pin.
+func TestAutoBlock_AddDependency_FromInjectedClock(t *testing.T) {
+	t.Parallel()
+	s, raw := mutationTestStore(t)
+	ctx := context.Background()
+	setup := time.Date(2031, 5, 6, 7, 8, 9, 0, time.UTC)
+	s.SetClock(func() time.Time { return setup })
+	mustCreateNode(t, s, "MTIX-1", "")
+	mustCreateNode(t, s, "MTIX-2", "")
+	linkAt := time.Date(2032, 6, 7, 8, 9, 10, 0, time.UTC)
+	s.SetClock(func() time.Time { return linkAt })
+	require.NoError(t, s.AddDependency(ctx, &model.Dependency{FromID: "MTIX-1", ToID: "MTIX-2", DepType: model.DepTypeBlocks}))
+
+	var status, updatedAt string
+	require.NoError(t, raw.QueryRow(
+		`SELECT status, updated_at FROM nodes WHERE id = 'MTIX-2'`).Scan(&status, &updatedAt))
+	require.Equal(t, string(model.StatusBlocked), status)
+	require.Equal(t, linkAt.UTC().Format(time.RFC3339), updatedAt,
+		"the auto-blocked target's updated_at comes from the injected clock")
+}

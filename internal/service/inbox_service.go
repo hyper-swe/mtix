@@ -30,6 +30,9 @@ type InboxService struct {
 	reeval   WakeReevaluator
 	logger   *slog.Logger // re-evaluation failures; nil uses the default logger (MTIX-130.14)
 	policy   InboxPolicy
+
+	waitClock func() time.Time // wall clock for the wait timeout; nil uses the system clock (MTIX-245)
+	waitMono  func() time.Time // monotonic clock for the wait timeout and floor; nil uses time.Now (MTIX-245)
 }
 
 // InboxEvent is the per-agent event contract per FR-19.4, with unchanged JSON.

@@ -16,11 +16,12 @@ import (
 
 var (
 	// attachSQLRe matches ATTACH as SQL text: ATTACH DATABASE, or
-	// ATTACH <target> AS <name>. Prose such as "drain attach queue" does not
-	// match.
-	attachSQLRe = regexp.MustCompile(`(?i)\battach\s+database\b|\battach\s+(\?|:\w+|@\w+|\$\w+|'[^']*'|"[^"]*")\s+as\s`)
-	// vacuumIntoRe matches VACUUM INTO as SQL text.
-	vacuumIntoRe = regexp.MustCompile(`(?i)\bvacuum\s+into\b`)
+	// ATTACH <any expression> AS <name>. Prose such as "drain attach queue"
+	// does not match.
+	attachSQLRe = regexp.MustCompile(`(?i)\battach\s+database\b|\battach\s+[^;]+?\s+as\s`)
+	// vacuumIntoRe matches VACUUM INTO as SQL text, with or without a schema
+	// name between VACUUM and INTO.
+	vacuumIntoRe = regexp.MustCompile(`(?i)\bvacuum\s+(\S+\s+)?into\b`)
 )
 
 // isDriverImport reports the imports whose Open, OpenDB or Driver reach a
@@ -69,10 +70,11 @@ func funcName(decl *ast.FuncDecl) string {
 
 // driverReaches parses one non-test source and lists the other ways it can
 // open or reset a SQLite database: any Open, OpenDB or Driver taken from the
-// SQLite driver or database/sql/driver import under any local name, a call of
-// a method named Driver, an import of the SQLite driver outside the
-// error-type files, SQL text that ATTACHes a database, and SQL text
-// VACUUM INTO outside Store.Backup in backup.go. A dot import of those
+// SQLite driver or database/sql/driver import under any local name, a
+// selector named Driver, NewBackup or NewRestore (called or not), an import of
+// the SQLite driver outside the error-type files, SQL text that ATTACHes a
+// database, and SQL text VACUUM [schema] INTO outside Store.Backup in
+// backup.go. A dot import of those
 // packages and an unparseable source are reported too.
 func driverReaches(filePath, text string) []string {
 	file, err := parser.ParseFile(token.NewFileSet(), filePath, text, parser.SkipObjectResolution)
@@ -119,10 +121,8 @@ func nodeReaches(where string, root ast.Node, fn string, driverNames map[string]
 		case *ast.SelectorExpr:
 			if id, ok := v.X.(*ast.Ident); ok && driverNames[id.Name] && isDriverReach(v.Sel.Name) {
 				out = append(out, where+": driver reached without the helper ("+id.Name+"."+v.Sel.Name+")")
-			}
-		case *ast.CallExpr:
-			if sel, ok := v.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Driver" {
-				out = append(out, where+": driver reached without the helper (a Driver() call)")
+			} else if isAnyReceiverReach(v.Sel.Name) {
+				out = append(out, where+": driver reached without the helper (a "+v.Sel.Name+" selector)")
 			}
 		case *ast.BasicLit:
 			out = append(out, literalReaches(where, v, fn)...)
@@ -134,6 +134,13 @@ func nodeReaches(where string, root ast.Node, fn string, driverNames map[string]
 
 func isDriverReach(name string) bool {
 	return name == "Open" || name == "OpenDB" || name == "Driver"
+}
+
+// isAnyReceiverReach reports the selectors that reach a SQLite connection
+// whatever they are taken from, called or held as a method value: Driver
+// (a *sql.DB's driver) and NewBackup or NewRestore (the driver's backup API).
+func isAnyReceiverReach(name string) bool {
+	return name == "Driver" || name == "NewBackup" || name == "NewRestore"
 }
 
 // literalReaches judges one string literal: ATTACH anywhere, VACUUM INTO

@@ -169,12 +169,14 @@ jobs:
       # The gate script always comes from the BASE branch, never from the PR,
       # so a PR cannot quietly edit its own gate. A PR that changes the script
       # or this step is a gate change: reviewers treat it as one, and it merges
-      # through the main-macos-fix label.
+      # through the main-macos-fix label. The ref is the base BRANCH tip, not
+      # the base SHA stored at the PR's last sync (that can predate the script,
+      # MTIX-112.17.42.5). No repository input, so it is always the base repo.
       - name: Check out the base branch's health script
         if: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'main-macos-fix') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.base_ref }}
           persist-credentials: false
       - name: Require every Go shard to succeed
         env:

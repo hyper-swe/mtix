@@ -38,8 +38,12 @@ is present and `success` on that run. A skipped, cancelled, missing or unknown
 macOS job is red. The script runs in two places.
 
 1. **PR check (advisory).** The `test-go` job runs it on `pull_request`, from
-   the BASE branch's copy of the script (the step checks out the base SHA), so
-   a PR cannot quietly edit its own gate. A PR can still edit `ci.yml` itself,
+   the BASE branch's copy of the script (the step checks out the current tip of the
+   base branch, `github.base_ref`, never the base SHA stored at the PR's last
+   sync, which can predate the script and fail with "No such file or
+   directory"; it names no repository, so it is always the base repo, with no
+   PR code and `persist-credentials: false`), so a PR cannot quietly edit its
+   own gate. A PR can still edit `ci.yml` itself,
    so for a hostile PR this check is advisory. Reviewers treat any change to the
    script, its expected-job list or the step as a gate change. The PR that
    introduces the script has no base copy and merges through the override label.

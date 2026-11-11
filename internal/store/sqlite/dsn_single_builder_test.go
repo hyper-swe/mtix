@@ -241,7 +241,12 @@ func TestDSNViolations_PlantedBreaches_AreCaught(t *testing.T) {
 		{"quoted-schema vacuum into", "x/v4.go", plantedSource(std, `db.Exec("VACUUM \"other\" INTO ?", p)`), "VACUUM INTO outside"},
 		{"attach a concatenated expression", "x/att4.go", plantedSource(std, `db.Exec("ATTACH '/x/' || ? AS other", p)`), "ATTACH in SQL text"},
 		{"attach a function call", "x/att5.go", plantedSource(std, `db.Exec("ATTACH printf('%s', ?) AS other", p)`), "ATTACH in SQL text"},
-		{"attach across lines", "x/att6.go", plantedSource(std, "db.Exec(`ATTACH\n\t?\n\tAS other`, p)"), "ATTACH in SQL text"},
+		{"attach a numbered parameter", "x/att7.go", plantedSource(std, `db.Exec("ATTACH ?1 AS other", p)`), "ATTACH in SQL text"},
+		{"attach a parenthesised parameter", "x/att8.go", plantedSource(std, `db.Exec("ATTACH (?) AS other", p)`), "ATTACH in SQL text"},
+		{"attach a bare identifier", "x/att9.go", plantedSource(std, `db.Exec("ATTACH x AS y")`), "ATTACH in SQL text"},
+		// Regression row, not red-first: the older matcher also caught this form
+		// because \s matches a newline. It stays to pin the multi-line case.
+		{"regression: attach across lines", "x/att6.go", plantedSource(std, "db.Exec(`ATTACH\n\t?\n\tAS other`, p)"), "ATTACH in SQL text"},
 		{"driver held as a method value", "x/dmv.go", plantedSource(std, `getDriver := db.Driver`), "driver reached without the helper"},
 		{"driver backup api", "x/nb.go", plantedSource(std, `bck, err := c.NewBackup("main")`), "driver reached without the helper"},
 		{"driver restore api", "x/nr.go", plantedSource(std, `rst, err := c.NewRestore("main")`), "driver reached without the helper"},

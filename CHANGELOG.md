@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Security: the build toolchain is now go1.26.11, which fixes a standard-library `net/http` advisory (GO-2026-6859) that `govulncheck` reported against go1.26.10. CI selects the patched toolchain from `go.mod` (MTIX-246).
 - The `board.enrol-interrupted` row's detail now says that its printed command was chosen for the data directory as it is now, is valid only until that directory changes, and that `mtix doctor` should be run again after any change. This holds for a readable marker and for a marker that cannot be read, whenever the fix is an `mv` or `rm` command. The fix text and the `--json` shape of the row are unchanged; STOP prose and other wording that prints no command get no such sentence.
 - The sync skill, its plugin mirrors, the user manual and the managed sync section now say that a defer wake time (`mtix defer --until`) stays on the machine that set it, and that worktree enrolment reports it as a difference instead of hiding it. A new test pins `defer_until` out of the enrolment exclusion lists (MTIX-112.17.16.11).
 - Fixed: the automatic export no longer logs "could not acquire sync lock, skipping auto-export" when another mtix process holds the sync lock. The export is deferred, not dropped: a pending export request is recorded first and retried, and the warning says so and points to the read-only `mtix sync status`. When the request cannot be recorded the warning is not logged and the error is returned (MTIX-130.19).

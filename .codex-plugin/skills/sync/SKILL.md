@@ -171,6 +171,16 @@ enrolls the hub's values, and reports lost fields on nodes this store's own
 journal touched, with a doctor warning until its record is cleared. This is the
 existing service API; no public enrollment command ships in this build.
 
+A defer wake time (`defer_until`, set by `mtix defer --until`) stays on the
+machine that set it in this build: a local defer travels as a status change,
+so the hub and every other machine hold the node as deferred with no wake
+time. Replicating the wake time is planned, not shipped. Enrollment therefore counts `defer_until` as a real
+difference: a store with a local wake time refuses and the report names
+`defer_until`. Keep the copy using the printed `mtix backup <path>` command.
+If you accept the hub's values, re-run `mtix defer <id> --until <time>` on
+the machine that should wake the node afterwards, because only that machine
+holds the wake time.
+
 A terminal transition (done, cancel or invalidate) whose event carries no
 `closed_at` (from a build that did not yet carry the completion time in its
 event, or a plain terminal transition that backfill or status repair of a
@@ -185,6 +195,15 @@ completion time on that node, so it accepts that as well; the node's status and
 every other field still compare exactly. A longer gap, an event that carries its
 own `closed_at`, another status or a missing value still refuses and names
 `closed_at`.
+
+The accepted case is silent on purpose: enrollment does not list or report the
+stamps it excuses, and its result has no field for them. The record matters only
+for legacy events that carry no `closed_at` snapshot, such as a plain 0.5.4 done.
+An event that carries a `closed_at` snapshot is never excused, even when the gap is one second or less.
+Events written by 0.6.0 and later carry the snapshot, with one exception: status
+repair of a legacy winner emits a terminal event without it, and that stamp is
+still excused when the other conditions hold. Treat any other `closed_at`
+refusal as a real difference, not as clock skew.
 
 Only enrolled checkouts contact the hub under `sync.hub_contact`: activity,
 interval or manual. Activity lets an idle scale-to-zero database sleep; interval

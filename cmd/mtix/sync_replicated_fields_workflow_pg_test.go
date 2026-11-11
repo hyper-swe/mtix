@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func TestSyncReplicatedFieldsR2_RealPushClone_AfterRerun(t *testing.T) {
+func TestSyncPushClone_WorkflowAfterRerun_ReplicatesStatusAndClosedAt(t *testing.T) {
 	for _, name := range []string{"claim", "claim and unclaim", "block and unblock"} {
 		t.Run(name, func(t *testing.T) {
 			_ = openCmdHub(t)

@@ -128,12 +128,22 @@ func guardBackupDestinationWAL(path string) error {
 // guardWALWithAdvice is the shared guard; advice is the closing guidance of
 // the refusal, which differs between the live store and a backup destination.
 func guardWALWithAdvice(path, advice string) error {
+	return guardWALWithStat(path, advice, os.Stat)
+}
+
+// statFunc stats a path; os.Stat in production.
+type statFunc func(name string) (os.FileInfo, error)
+
+// guardWALWithStat is guardWALWithAdvice with the database stat passed in, so
+// an internal test can fail the stat of the database alone while its -wal
+// stats fine, which no real filesystem produces (NFR-2.8, MTIX-112.50.6).
+func guardWALWithStat(path, advice string, statDatabase statFunc) error {
 	resolved, err := resolveDatabasePath(path)
 	if err != nil {
 		return fmt.Errorf("refusing to open %s: cannot tell which file SQLite would open: %w: %w; %s", path, model.ErrCorrupted, err, advice)
 	}
 	for _, candidate := range []string{resolved, path} {
-		if err := guardWALBeside(candidate, resolved, advice); err != nil {
+		if err := guardWALBeside(candidate, resolved, advice, statDatabase); err != nil {
 			return err
 		}
 	}
@@ -142,7 +152,8 @@ func guardWALWithAdvice(path, advice string) error {
 
 // guardWALBeside refuses when a nonempty WAL sits beside candidate while the
 // database SQLite will open (resolved) is empty, one byte or missing.
-func guardWALBeside(candidate, resolved, advice string) error {
+// statDatabase stats resolved; a stat error other than not-exist refuses.
+func guardWALBeside(candidate, resolved, advice string, statDatabase statFunc) error {
 	walPath := candidate + "-wal"
 	wal, err := os.Stat(walPath)
 	if os.IsNotExist(err) {
@@ -156,7 +167,7 @@ func guardWALBeside(candidate, resolved, advice string) error {
 	}
 	// Observe the WAL first, then the database: a concurrent first opener may
 	// initialize the database before committing its first WAL transaction.
-	info, err := os.Stat(resolved)
+	info, err := statDatabase(resolved)
 	if err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("stat database before open: %w", err)
 	}

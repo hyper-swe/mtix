@@ -82,12 +82,19 @@ func cancelledScannerTx(s interface {
 	})
 }
 
-// TestWithTx_CancelledScannerWriters_AllOrNothingAndPoolsAgree pins why the
-// MTIX-112.2.2.1 review saw the writer and read pool differ: a cancelled
-// WithTx is all-or-nothing against the error it returns, an acknowledged write
-// is never lost while other writers run, and the pools differ only while
-// writers are still running. After the writers are quiet, the writer and the
-// read pool agree, including after cancelled read transactions.
+// TestWithTx_CancelledScannerWriters_AllOrNothingAndPoolsAgree pins the
+// invariants behind the MTIX-112.2.2.1 review observation that the writer and
+// read pool differed after cancelled scans. That observation was NOT
+// reproduced (MTIX-112.17.44); this test pins the invariants instead: a
+// cancelled WithTx is all-or-nothing against the error it returns, and an
+// acknowledged write is never lost while other writers run. Writer and read
+// pool agreement is asserted only after the writers are quiet, including after
+// cancelled read transactions.
+//
+// Guard boundary: this test does not detect a no-op settle step, because
+// database/sql itself ends a context-cancelled COMMIT. The settle and
+// recovery path for other commit failures is guarded by the existing
+// TestCommitFailure_* tests (tx_commit_failure_test.go).
 func TestWithTx_CancelledScannerWriters_AllOrNothingAndPoolsAgree(t *testing.T) {
 	s := newTestStore(t)
 	bg := context.Background()

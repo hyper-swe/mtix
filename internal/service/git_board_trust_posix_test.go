@@ -139,6 +139,9 @@ func TestMergeBaseBoard_TrustMetadata_RequiresExistingDirectory(t *testing.T) {
 	err = boardOwnedMode(file, true)
 	require.ErrorIs(t, err, ErrNoMergeBase)
 	require.Contains(t, err.Error(), "untrusted Git directory")
+	// t.TempDir honors the process umask; a permissive umask (e.g. 0002)
+	// leaves it group-writable, which the trust check correctly rejects.
+	require.NoError(t, os.Chmod(root, 0700))
 	require.NoError(t, boardOwnedMode(root, true))
 }
 

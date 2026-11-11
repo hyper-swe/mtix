@@ -21,6 +21,10 @@ func TestIngestAll_StoreClock_StampsAppliedRows(t *testing.T) {
 	fixed := time.Date(2001, 2, 3, 4, 5, 6, 123456789, time.UTC)
 	r.store.SetClock(func() time.Time { return fixed })
 	e := event(t, model.OpCreateNode, "PROJ-1", 1, &model.CreateNodePayload{Title: "remote"})
+	// ADR-006 I1: a pulled row's updated_at is the event's own time, never the
+	// apply clock; applied_at (the local apply record) keeps the store clock.
+	eventAt := time.Date(2000, 1, 2, 3, 4, 5, 0, time.UTC)
+	e.WallClockTS = eventAt.UnixMilli()
 	r.publish(t, fleetKey, marshalEvents(t, e)...)
 	in, err := ingest.New(r.config())
 	require.NoError(t, err)
@@ -33,7 +37,7 @@ func TestIngestAll_StoreClock_StampsAppliedRows(t *testing.T) {
 	require.Equal(t, fixed.Format(time.RFC3339Nano), applied)
 	require.NoError(t, r.store.QueryRow(context.Background(),
 		`SELECT updated_at FROM nodes WHERE id = ?`, e.NodeID).Scan(&updated))
-	require.Equal(t, fixed.Format(time.RFC3339), updated)
+	require.Equal(t, eventAt.Format(time.RFC3339), updated)
 }
 
 func (f *fakeStore) IdempotentApply(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {

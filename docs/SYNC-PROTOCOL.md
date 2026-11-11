@@ -187,6 +187,10 @@ teammate's concurrent claim or status change.
   `invalidated`) it is the winning event's `wall_clock_ts` as RFC 3339
   in whole seconds (milliseconds truncated), never the apply time;
   for any other status it is cleared.
+  `updated_at` is the later of its stored value and the winning event's
+  time in whole seconds (ADR-006 I1: it only moves forward, so arrival
+  order does not matter); an event time outside years 1 to 9999 uses the apply
+  time for both.
 - **A losing event** is still mirrored into `sync_events`, its clocks
   are merged and it is recorded in `applied_events`, so a re-pull is a
   no-op. It changes no node column and writes **no** `sync_conflicts`

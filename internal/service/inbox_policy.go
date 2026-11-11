@@ -101,7 +101,7 @@ func (s *InboxService) InboxRead(ctx context.Context, agent string, opt InboxRea
 	if err != nil {
 		return InboxResult{}, wrapAPIOperation("apply inbox policy", err)
 	}
-	notifyReevaluator(ctx, s.reeval, agent, "inbox list")
+	notifyReevaluator(ctx, s.logger, s.reeval, agent, "inbox list")
 	return res, nil
 }
 

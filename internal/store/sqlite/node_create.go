@@ -187,6 +187,9 @@ func (s *Store) insertAndClaimNode(ctx context.Context, tx *sql.Tx, node *model.
 		OpType:      model.OpCreateNode,
 		Author:      node.Creator,
 		Payload:     payload,
+		// The event's time is the node's created_at, so a replica that applies
+		// it stores the same created_at (ADR-006 I1; MTIX-112.17.16.13).
+		WallClockTS: createEventWall(node),
 		EventID:     node.UID, // uid == create-event id (ADR-003 §2)
 	}); err != nil {
 		return err
@@ -415,4 +418,13 @@ func searchString(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// createEventWall is the create event's wall_clock_ts: the node's created_at
+// in Unix milliseconds, or 0 (the emit clock) when the caller left it unset.
+func createEventWall(node *model.Node) int64 {
+	if node.CreatedAt.IsZero() {
+		return 0
+	}
+	return node.CreatedAt.UnixMilli()
 }

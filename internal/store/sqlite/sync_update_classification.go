@@ -49,7 +49,7 @@ func decodeIssueTypeUpdate(raw json.RawMessage) (any, error) {
 
 // applyIssueTypeField persists a validated classification update per FR-3.1.
 func applyIssueTypeField(ctx context.Context, tx *sql.Tx, id string, value any, now string) error {
-	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET issue_type = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`, value, now, id); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE nodes SET issue_type = ?, updated_at = MAX(updated_at, ?) WHERE id = ? AND deleted_at IS NULL`, value, now, id); err != nil {
 		return fmt.Errorf("apply issue type to %s: %w", id, err)
 	}
 	return nil

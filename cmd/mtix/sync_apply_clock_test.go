@@ -37,6 +37,16 @@ func requireNodeApplyClock(t *testing.T, id string) {
 	require.Equal(t, clockApplyTime().UTC().Format(time.RFC3339), updated)
 }
 
+// requireNodeEventTime checks that a node the sync apply wrote last carries the
+// time of the event that wrote it, not the store clock (ADR-006 I1).
+func requireNodeEventTime(t *testing.T, id string, last *model.SyncEvent) {
+	t.Helper()
+	var updated string
+	require.NoError(t, app.store.QueryRow(context.Background(),
+		`SELECT updated_at FROM nodes WHERE id = ?`, id).Scan(&updated))
+	require.Equal(t, time.UnixMilli(last.WallClockTS).UTC().Format(time.RFC3339), updated)
+}
+
 func TestSyncApply_StoreClock_ReachesCloneAndPull(t *testing.T) {
 	for _, route := range []string{"clone", "pull"} {
 		t.Run(route, func(t *testing.T) {
@@ -53,7 +63,7 @@ func TestSyncApply_StoreClock_ReachesCloneAndPull(t *testing.T) {
 			for _, e := range events {
 				requireAppliedClock(t, e)
 			}
-			requireNodeApplyClock(t, "TEST-9")
+			requireNodeEventTime(t, "TEST-9", events[len(events)-1])
 		})
 	}
 }
@@ -72,7 +82,7 @@ func TestSyncApply_StoreClock_ReachesQuarantineRetry(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, result.applied)
 	requireAppliedClock(t, events[0])
-	requireNodeApplyClock(t, "TEST-9")
+	requireNodeEventTime(t, "TEST-9", events[0])
 }
 
 func TestSyncApply_StoreClock_ReachesOwnAcknowledgement(t *testing.T) {

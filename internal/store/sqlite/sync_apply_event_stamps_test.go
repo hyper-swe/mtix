@@ -6,6 +6,7 @@ package sqlite_test
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -154,4 +155,56 @@ func TestApply_PulledEvents_AnyArrivalOrder_HoldSameStamps(t *testing.T) {
 	require.Equal(t, "2026-09-01T14:00:00Z", fwd["updated_at"], "the latest event's time")
 	require.Equal(t, fwd["updated_at"], rev["updated_at"])
 	require.Equal(t, fwd["created_at"], rev["created_at"])
+}
+
+// TestApply_PulledOps_EarlierEventArrivingLate_KeepsLaterUpdatedAt: for every
+// op that stamps updated_at, an event with an earlier time that arrives after
+// a later one still applies its change but leaves updated_at at the later
+// time (the MAX rule; ADR-006 I1: arrival order must not matter). The later
+// event is a comment, or a prompt change when the op under test is the
+// comment, so it never conflicts with the op under test.
+func TestApply_PulledOps_EarlierEventArrivingLate_KeepsLaterUpdatedAt(t *testing.T) {
+	t.Parallel()
+	const lateWall = stampOpWall + 3_600_000 // 2026-09-01T14:00:00.250Z
+	issueType, err := json.Marshal("bug")
+	require.NoError(t, err)
+	tests := []struct {
+		name    string
+		op      model.OpType
+		payload any
+		effect  map[string]string // columns that prove the earlier event applied
+	}{
+		{"claim", model.OpClaim, &model.ClaimPayload{AgentID: "agent-b"}, map[string]string{"status": "in_progress", "assignee": "agent-b"}},
+		{"unclaim", model.OpUnclaim, &model.UnclaimPayload{}, map[string]string{"status": "open"}},
+		{"defer", model.OpDefer, &model.DeferPayload{}, map[string]string{"status": "deferred"}},
+		{"transition_status", model.OpTransitionStatus, transition(model.StatusOpen, model.StatusInProgress), map[string]string{"status": "in_progress"}},
+		{"delete", model.OpDelete, &model.DeletePayload{}, map[string]string{"deleted_by": "peer-b"}},
+		{"set_acceptance", model.OpSetAcceptance, &model.SetAcceptancePayload{AcceptanceText: "a"}, map[string]string{"acceptance": "a"}},
+		{"set_prompt", model.OpSetPrompt, &model.SetPromptPayload{PromptText: "p"}, map[string]string{"prompt": "p"}},
+		{"update_field", model.OpUpdateField, titleUpdate(t, "renamed"), map[string]string{"title": "renamed"}},
+		{"update_field issue_type", model.OpUpdateField, &model.UpdateFieldPayload{FieldName: "issue_type", NewValue: issueType}, map[string]string{"issue_type": "bug"}},
+		{"comment", model.OpComment, &model.CommentPayload{AuthorID: "peer-b", Body: "n"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			s, raw := mutationTestStore(t)
+			s.SetClock(func() time.Time { return time.Date(2031, 1, 2, 3, 4, 5, 0, time.UTC) })
+			create := pulledEvent(t, model.OpCreateNode, "MTIX-9",
+				&model.CreateNodePayload{Title: "t", NodeType: model.NodeTypeStory, Creator: "peer-b"}, 1, stampCreatedWall)
+			var later *model.SyncEvent
+			if tt.op == model.OpComment {
+				later = pulledEvent(t, model.OpSetPrompt, "MTIX-9", &model.SetPromptPayload{PromptText: "late"}, 2, lateWall)
+			} else {
+				later = pulledEvent(t, model.OpComment, "MTIX-9", &model.CommentPayload{AuthorID: "peer-b", Body: "late"}, 2, lateWall)
+			}
+			earlier := pulledEvent(t, tt.op, "MTIX-9", tt.payload, 3, stampOpWall)
+			pullOnStoreClock(t, s, create, later, earlier)
+			row := nodeRow(t, raw, "MTIX-9")
+			require.Equal(t, "2026-09-01T14:00:00Z", row["updated_at"], "updated_at must stay at the later event's time")
+			for col, want := range tt.effect {
+				require.Equal(t, want, row[col], "the earlier event must still apply (%s)", col)
+			}
+		})
+	}
 }

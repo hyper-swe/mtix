@@ -163,8 +163,20 @@ comment and rerun retain those values on the hub clone. Annotation IDs and
 annotation creation times remain excluded because older events may use
 different ones. A node's creation time (`created_at`) is compared: a pull
 stores it from the create event's own time, not the pulling machine's clock.
-A node's update time (`updated_at`) stays excluded, because local edits such
-as a parent's progress roll-up move it without an event.
+A node's update time (`updated_at`) stays excluded: a local write stamps it
+from a clock reading taken apart from its event's time, and some local writes
+move it with no event at all (the auto-block when a dependency is added, and
+removing a dependency), so a clone, which derives it from the latest applied
+event, can differ.
+A `created_at` refusal that names only that field, on a board whose create
+events came from an older build, is a one-second difference at a second
+boundary (the older event carries its time separately from the stored
+`created_at`); it is not lost work. Recover as for any refusal: use the
+refusal's printed `accept-hub` digest, which enrols the hub's value.
+Changed-since filters (`--changed-since` on list and show) compare
+`updated_at`, which a pull now takes from the author's time, so a teammate's
+edit made before your last poll but pulled after it no longer shows as recent:
+poll after pulling, or use a window that covers the pull lag.
 An old backfill without an addressee or an old workflow event without the
 completion time can therefore refuse, naming `annotations` or `closed_at` in
 the report. Keep the copy using the refusal's printed `mtix backup <path>`

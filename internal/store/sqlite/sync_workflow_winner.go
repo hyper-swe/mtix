@@ -110,7 +110,9 @@ import (
 //   - closed_at range. When the winner's wall_clock_ts is outside years
 //     1..9999, closed_at is the apply time on that replica (eventTime,
 //     sync_event_time.go; MTIX-95.26), so it differs from the others'.
-//   - updated_at stays the apply time, and ingest writes no activity entry.
+//   - updated_at is MAX(updated_at, the event's time) (ADR-006 I1;
+//     MTIX-112.17.16.13), the same on every replica whatever the arrival
+//     order; ingest writes no activity entry.
 //   - Local writes that emit no event (auto-block on a new dependency, the
 //     descendants of a cascade cancel) are invisible to the winner check, so
 //     status can still differ there. Example: replica A claims a node while
@@ -177,7 +179,7 @@ type workflowRule struct {
 // matched in order, so the specific blocked rows precede the generic ones.
 // "-" means not written; "wall" is the event's time (eventTime) as RFC3339 in
 // whole seconds; "from" and "until" come from the payload; every row also
-// writes updated_at (the apply time).
+// writes updated_at as MAX(updated_at, the event's time).
 //
 //	op                 from → to              status       assignee  agent_state  previous_status  closed_at  progress  defer_until
 //	claim              (any)                  in_progress  agent_id  working      -                NULL       -         NULL
@@ -387,7 +389,7 @@ type workflowInput struct {
 	agentID     string          // claim payload
 	deferUntil  *time.Time      // defer payload; nil means none
 	eventAt     time.Time       // the event's time: eventTime of its wall_clock_ts (MTIX-95.26)
-	updatedAt   string          // the caller's updated_at value (apply time)
+	updatedAt   string          // the caller's updated_at value: the event's time on apply, the repair time on status repair
 	closedAt    *workflowColumn // carried completion state; nil for legacy events
 	localWinner bool            // status repair only: this replica emitted the event (MTIX-95.6)
 }

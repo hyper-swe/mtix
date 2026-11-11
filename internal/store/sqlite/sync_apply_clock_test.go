@@ -56,15 +56,19 @@ func TestIdempotentApply_StoreClock_StampsEveryOperation(t *testing.T) {
 			s.SetClock(fixedReplayTime)
 			for i, id := range []string{"TEST-1", "TEST-2"} {
 				e := makeApplyEvent(t, model.OpCreateNode, id, "alice", int64(i+1), &model.CreateNodePayload{Title: "fixture"})
+				e.WallClockTS = fixedReplayTime().UnixMilli()
 				applyWithStoreClock(t, s, e)
 				requireReplayStamp(t, raw, e, fixedReplayTime())
 			}
 			e := makeApplyEvent(t, tt.op, "TEST-1", "alice", 3, tt.payload)
-			e.WallClockTS = fixedReplayTime().Add(-time.Hour).UnixMilli()
+			// After the node was created: updated_at never moves back (ADR-006 I1).
+			e.WallClockTS = fixedReplayTime().Add(time.Hour).UnixMilli()
 			applyWithStoreClock(t, s, e)
-			want := fixedReplayTime()
-			if tt.op == model.OpComment {
-				want = time.UnixMilli(e.WallClockTS)
+			// updated_at is the event's time for every op (ADR-006 I1,
+			// MTIX-112.17.16.13); the store clock stamps only applied_at.
+			want := time.UnixMilli(e.WallClockTS)
+			if tt.op == model.OpLinkDep {
+				want = fixedReplayTime() // an edge leaves the node row, so updated_at is its create time
 			}
 			requireReplayStamp(t, raw, e, want)
 			if tt.op == model.OpTransitionStatus {
@@ -90,7 +94,9 @@ func TestIdempotentApply_StoreClock_EventTimeFallback(t *testing.T) {
 		t.Run(string(op), func(t *testing.T) {
 			s, raw := applyTestStore(t)
 			s.SetClock(fixedReplayTime)
-			applyWithStoreClock(t, s, makeApplyEvent(t, model.OpCreateNode, "TEST-1", "alice", 1, &model.CreateNodePayload{Title: "fixture"}))
+			create := makeApplyEvent(t, model.OpCreateNode, "TEST-1", "alice", 1, &model.CreateNodePayload{Title: "fixture"})
+			create.WallClockTS = fixedReplayTime().UnixMilli()
+			applyWithStoreClock(t, s, create)
 			var payload any = &model.CommentPayload{AuthorID: "alice", Body: "fallback"}
 			if op == model.OpTransitionStatus {
 				payload = &model.TransitionStatusPayload{From: model.StatusOpen, To: model.StatusDone}
@@ -114,10 +120,12 @@ func TestIdempotentApply_StoreClock_ConflictAndDedupe(t *testing.T) {
 	s, raw := applyTestStore(t)
 	s.SetClock(fixedReplayTime)
 	create := makeApplyEvent(t, model.OpCreateNode, "TEST-1", "alice", 1, &model.CreateNodePayload{Title: "fixture"})
+	create.WallClockTS = fixedReplayTime().UnixMilli()
 	applyWithStoreClock(t, s, create)
 	for _, lamp := range []int64{3, 2, 4} {
 		e := makeApplyEvent(t, model.OpUpdateField, "TEST-1", "alice", lamp,
 			&model.UpdateFieldPayload{FieldName: "title", NewValue: json.RawMessage(`"changed"`)})
+		e.WallClockTS = fixedReplayTime().UnixMilli()
 		applyWithStoreClock(t, s, e)
 	}
 	var at string

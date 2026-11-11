@@ -3,7 +3,11 @@
 
 package sqlite
 
-import "time"
+import (
+	"time"
+
+	"github.com/hyper-swe/mtix/internal/model"
+)
 
 // Stored times at apply (MTIX-95.26; FR-18.9).
 //
@@ -12,7 +16,11 @@ import "time"
 // annotation created_at and the node's updated_at (applyComment), and a
 // terminal closed_at (applyTransitionStatus through the workflow winner
 // table). Each of them converts wall_clock_ts with eventTime and nothing
-// else. Elsewhere apply uses wall_clock_ts only as an integer: stored in the
+// else. A pulled create_node stamps created_at and updated_at, and every other
+// op that changes a node stamps updated_at, from the event's time the same way
+// (storedEventTime; MTIX-112.17.16.13, ADR-006 I1), writing updated_at as
+// MAX(updated_at, that time) so it does not depend on arrival order.
+// Elsewhere apply uses wall_clock_ts only as an integer: stored in the
 // sync_events log and compared as the field LWW tie-break (detectLWWOutcome).
 //
 // The one time a payload carries, a defer's until, becomes defer_until only
@@ -53,4 +61,14 @@ func eventTime(wallClockMS int64, applyTime time.Time) time.Time {
 		return applyTime.UTC()
 	}
 	return t
+}
+
+// storedEventTime is the RFC3339 text a pulled event stamps into created_at
+// and updated_at: its own time in whole seconds, or this replica's apply time
+// when the event's time is out of range (eventTime). Every replica that applies
+// the same in-range event stores the same text (ADR-006 I1; MTIX-112.17.16.13).
+// updated_at is written as MAX(updated_at, this text), so it only moves forward
+// and does not depend on arrival order.
+func (a syncApplier) storedEventTime(e *model.SyncEvent) string {
+	return eventTime(e.WallClockTS, a.clock().UTC()).Format(time.RFC3339)
 }

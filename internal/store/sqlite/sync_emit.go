@@ -52,6 +52,9 @@ type emitParams struct {
 	Author      string
 	Payload     json.RawMessage
 	WallClockTS int64
+	// Clock supplies WallClockTS when it is zero. Callers pass the store's
+	// injected clock (FR-18.9, ADR-006 I1); nil reads the process clock.
+	Clock func() time.Time
 	// Only a repair of a legacy winner preserves the historical payload.
 	LegacyWorkflowPayload bool
 	// EventID, when set, is used as the event id instead of generating a
@@ -91,7 +94,7 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 
 	wallTS := p.WallClockTS
 	if wallTS == 0 {
-		wallTS = time.Now().UTC().UnixMilli()
+		wallTS = clockOrDefault(p.Clock)().UTC().UnixMilli()
 	}
 
 	eventID := p.EventID

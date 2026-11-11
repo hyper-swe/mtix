@@ -92,9 +92,11 @@ func cancelledScannerTx(s interface {
 // cancelled read transactions.
 //
 // Guard boundary: this test does not detect a no-op settle step, because
-// database/sql itself ends a context-cancelled COMMIT. The settle and
+// database/sql itself ends a context-cancelled COMMIT. It kills only a
+// recovery that drops RecoverAfterCommit's commit error. The settle and
 // recovery path for other commit failures is guarded by the existing
-// TestCommitFailure_* tests (tx_commit_failure_test.go).
+// TestCommitFailure_* tests (tx_commit_failure_test.go); the late-cancellation
+// outcome is pinned by TestWithTx_CancellationVisibleOnlyAfterCommit_*.
 func TestWithTx_CancelledScannerWriters_AllOrNothingAndPoolsAgree(t *testing.T) {
 	s := newTestStore(t)
 	bg := context.Background()
@@ -164,4 +166,58 @@ func cancelKeys(ctx context.Context, t *testing.T, db *sql.DB) map[string]string
 	}
 	require.NoError(t, rows.Err())
 	return out
+}
+
+// commitVisibleCtx is a context that reports cancellation only once the
+// row under key is visible on the read pool. Statements in fn use another
+// context and the read pool sees only committed data, so Err() flips to
+// Canceled strictly after a successful COMMIT. Done() is nil, so database/sql
+// never aborts the transaction on its own: only code that consults Err()
+// after the commit can observe the cancellation.
+type commitVisibleCtx struct {
+	context.Context
+	t   *testing.T
+	db  *sql.DB
+	key string
+}
+
+func (c commitVisibleCtx) Done() <-chan struct{} { return nil }
+
+func (c commitVisibleCtx) Err() error {
+	if cancelKeyExists(context.Background(), c.t, c.db, c.key) {
+		return context.Canceled
+	}
+	return nil
+}
+
+// TestWithTx_CancellationVisibleOnlyAfterCommit_ReturnsNilAndKeepsRow pins
+// Story 2 of MTIX-112.17.44: a WithTx whose cancellation becomes visible only
+// after a successful COMMIT reports no error and the acknowledged row is on
+// both the writer and the read pool. It kills mutants that return ctx.Err()
+// after a successful Commit in Store.withWriteTx. It does not cover failed
+// COMMITs or a no-op settle; the TestCommitFailure_* tests do
+// (tx_commit_failure_test.go).
+func TestWithTx_CancellationVisibleOnlyAfterCommit_ReturnsNilAndKeepsRow(t *testing.T) {
+	tests := []struct{ name, key string }{
+		{"single row", "cancel.late.one"},
+		{"second transaction on the same store", "cancel.late.two"},
+	}
+	s := newTestStore(t)
+	bg := context.Background()
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := commitVisibleCtx{Context: bg, t: t, db: s.ReadDB(), key: tt.key}
+			require.NoError(t, ctx.Err(), "not cancelled before the commit")
+
+			err := s.WithTx(ctx, func(tx *sql.Tx) error {
+				_, err := tx.ExecContext(bg, `INSERT INTO meta(key,value) VALUES(?, 'x')`, tt.key)
+				return err
+			})
+
+			require.NoError(t, err, "a committed write must not report the late cancellation")
+			require.True(t, cancelKeyExists(bg, t, s.WriteDB(), tt.key), "row on the writer")
+			require.True(t, cancelKeyExists(bg, t, s.ReadDB(), tt.key), "row on the read pool")
+			require.ErrorIs(t, ctx.Err(), context.Canceled, "the cancellation really became visible")
+		})
+	}
 }

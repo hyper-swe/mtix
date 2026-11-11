@@ -247,6 +247,12 @@ func TestDSNViolations_PlantedBreaches_AreCaught(t *testing.T) {
 		{"driver restore api", "x/nr.go", plantedSource(std, `rst, err := c.NewRestore("main")`), "driver reached without the helper"},
 		{"driver backup api held as a value", "x/nbv.go", plantedSource(std, `mk := c.NewBackup`), "driver reached without the helper"},
 		{"same basename as the allowlisted tool in another directory", "other/tools/cleanup-test-schemas.go", "package main\n\nimport \"database/sql\"\n\nvar connectFn = sql.Open\n", "outside dsn.go"},
+		{"sqlite import under an alias", "x/imp.go", "package x\n\nimport zz \"modernc.org/sqlite\"\n\nvar _ *zz.Error\n", "imported outside the error-type files"},
+		{"sqlite import under its own name", "x/imp2.go", "package x\n\nimport \"modernc.org/sqlite\"\n\nvar _ *sqlite.Error\n", "imported outside the error-type files"},
+		{"blank sqlite import outside store.go", "x/imp3.go", "package x\n\nimport _ \"modernc.org/sqlite\"\n", "imported outside the error-type files"},
+		{"sqlite subpackage import", "x/imp4.go", "package x\n\nimport lib \"modernc.org/sqlite/lib\"\n\nvar _ = lib.X\n", "imported outside the error-type files"},
+		{"same basename as an error-type file in another directory", "other/internal/store/sqlite/open_retry.go", "package sqlite\n\nimport sqlite3 \"modernc.org/sqlite\"\n\nvar _ *sqlite3.Error\n", "imported outside the error-type files"},
+		{"named sqlite import in store.go", driverRegistrationFile, "package sqlite\n\nimport s \"modernc.org/sqlite\"\n\nvar _ *s.Error\n", "imported outside the error-type files"},
 		{"vacuum literal", "x/v.go", plantedSource(std, `"VACUUM INTO '" + p + "'"`), "not a bound parameter"},
 		{"vacuum sprintf", "x/s.go", plantedSource(std, `fmt.Sprintf("VACUUM INTO '%s'", p)`), "not a bound parameter"},
 	}
@@ -287,6 +293,19 @@ func TestDSNViolations_PlantedBreaches_AreCaught(t *testing.T) {
 	t.Run("the one VACUUM INTO in Store.Backup is allowed", func(t *testing.T) {
 		src := "package sqlite\n\nfunc (s *Store) Backup() {\n\ts.db.Exec(\"VACUUM INTO ?\", p)\n}\n"
 		files := map[string]string{"internal/store/sqlite/backup.go": src}
+		for k, v := range clean {
+			files[k] = v
+		}
+		got, err := dsnViolations(files, 2)
+		require.NoError(t, err)
+		assert.Empty(t, got)
+	})
+	t.Run("sqlite error-type imports in the error-type files are allowed", func(t *testing.T) {
+		files := map[string]string{
+			"internal/store/sqlite/open_retry.go": "package sqlite\n\nimport sqlite3 \"modernc.org/sqlite\"\n\nvar _ *sqlite3.Error\n",
+			"internal/store/sqlite/durability.go": "package sqlite\n\nimport sqlite3 \"modernc.org/sqlite\"\n\nvar _ *sqlite3.Error\n",
+			driverRegistrationFile:                "package sqlite\n\nimport _ \"modernc.org/sqlite\"\n",
+		}
 		for k, v := range clean {
 			files[k] = v
 		}

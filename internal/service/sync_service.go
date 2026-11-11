@@ -56,6 +56,12 @@ type SyncService struct {
 	// platform directory durability policy. Tests simulate unsupported Sync.
 	directorySync func(string) error
 
+	// dirWarner records the directories already warned about for this
+	// service (MTIX-130.14); directoryFileSync replaces the directory
+	// handle's Sync on the default path, nil uses (*os.File).Sync.
+	dirWarner         *directoryWarner
+	directoryFileSync func(*os.File) error
+
 	// wrapExchangeFile is an instance-local receipt writer dependency.
 	wrapExchangeFile func(*os.File) io.WriteCloser
 
@@ -72,6 +78,7 @@ func NewSyncService(store *sqlite.Store, logger *slog.Logger, clock func() time.
 		clock:         clock,
 		retrySleep:    waitAutoImportRetry,
 		notices:       os.Stderr,
+		dirWarner:     newDirectoryWarner(logger),
 		MaxImportSize: DefaultMaxImportSize,
 	}
 	if len(retryClocks) > 0 {

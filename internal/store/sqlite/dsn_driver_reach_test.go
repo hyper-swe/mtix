@@ -30,6 +30,23 @@ func isDriverImport(importPath string) bool {
 	return importPath == "database/sql/driver" || importPath == "modernc.org/sqlite" || strings.HasPrefix(importPath, "modernc.org/sqlite/")
 }
 
+// sqliteErrorFiles lists, by exact repository path, the files that may import
+// modernc.org/sqlite under a name: they only read its Error type to classify
+// failures. driverRegistrationFile may import it blank, to register the driver.
+var sqliteErrorFiles = map[string]bool{
+	"internal/store/sqlite/open_retry.go": true,
+	"internal/store/sqlite/durability.go": true,
+}
+
+const driverRegistrationFile = "internal/store/sqlite/store.go"
+
+// sqliteImportAllowed reports whether a modernc.org/sqlite import under the
+// local name local is allowed in the file at filePath.
+func sqliteImportAllowed(filePath, local string) bool {
+	p := filepath.ToSlash(filePath)
+	return sqliteErrorFiles[p] || (local == "_" && p == driverRegistrationFile)
+}
+
 // backupFile and backupFunc are the one place VACUUM INTO text may appear.
 const (
 	backupFile = "internal/store/sqlite/backup.go"
@@ -54,9 +71,10 @@ func funcName(decl *ast.FuncDecl) string {
 // driverReaches parses one non-test source and lists the other ways it can
 // open or reset a SQLite database: any Open, OpenDB or Driver taken from the
 // SQLite driver or database/sql/driver import under any local name, a
-// selector named Driver, NewBackup or NewRestore (called or not), SQL text
-// that ATTACHes a database, and SQL text VACUUM [schema] INTO outside
-// Store.Backup in backup.go. A dot import of those
+// selector named Driver, NewBackup or NewRestore (called or not), an import of
+// the SQLite driver outside the error-type files, SQL text that ATTACHes a
+// database, and SQL text VACUUM [schema] INTO outside Store.Backup in
+// backup.go. A dot import of those
 // packages and an unparseable source are reported too.
 func driverReaches(filePath, text string) []string {
 	file, err := parser.ParseFile(token.NewFileSet(), filePath, text, parser.SkipObjectResolution)
@@ -76,6 +94,9 @@ func driverReaches(filePath, text string) []string {
 		}
 		if local == "." {
 			out = append(out, filePath+": dot import of "+importPath+" hides its Open")
+		}
+		if importPath != "database/sql/driver" && !sqliteImportAllowed(filePath, local) {
+			out = append(out, filePath+": "+importPath+" imported outside the error-type files")
 		}
 		names[local] = true
 	}

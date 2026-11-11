@@ -318,3 +318,29 @@ func TestInboxAckInfo_TwoWatermarkAcks_EachEventTakesTheFirstCoveringMark(t *tes
 		require.WithinDuration(t, want, *info.AckedAt, time.Nanosecond, "event %d", i)
 	}
 }
+
+// A throttled list must not open a writer transaction: with the only writer
+// connection held busy it still returns at once (MTIX-112.3).
+func TestInboxLastRead_ThrottledList_TakesNoWriterTx(t *testing.T) {
+	s := newTestStore(t)
+	t0 := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	clock, _ := ticking(t0)
+	s.SetClock(clock)
+	seedAddressed(t, s, "w", 1) // stamps t0; the clock has not moved, so the next stamp is throttled
+
+	conn, err := s.WriteDB().Conn(t.Context())
+	require.NoError(t, err)
+	defer func() { require.NoError(t, conn.Close()) }()
+
+	done := make(chan error, 1)
+	go func() {
+		_, listErr := s.InboxList(t.Context(), "w")
+		done <- listErr
+	}()
+	select {
+	case listErr := <-done:
+		require.NoError(t, listErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("a throttled list waited for the writer connection")
+	}
+}

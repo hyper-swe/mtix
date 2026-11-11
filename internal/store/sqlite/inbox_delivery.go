@@ -73,6 +73,9 @@ func (s *Store) stampRead(ctx context.Context, agent string) {
 		return
 	}
 	now := s.clock()
+	if !s.readStampDue(ctx, agent, now) {
+		return // throttled: no writer transaction for a stamp that would be refused
+	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryWriteBound)
 	defer cancel()
 	// Local bookkeeping: no export or hook callbacks (notify=false).
@@ -88,6 +91,17 @@ func (s *Store) stampRead(ctx context.Context, agent string) {
 	if err != nil {
 		s.logger.Warn("record inbox last read", slog.String("agent_id", agent), slog.Any("error", err))
 	}
+}
+
+// readStampDue reports whether agent's last read is at least InboxReadThrottle
+// old, using the read pool so a throttled list never queues on the writer. On a
+// read error it answers true: the write's own condition still decides.
+func (s *Store) readStampDue(ctx context.Context, agent string, now time.Time) bool {
+	var fresh int
+	// A row newer than the cutoff means the upsert below would change nothing.
+	err := s.readDB.QueryRowContext(ctx, `SELECT 1 FROM agent_inbox_reads WHERE agent_id=? AND last_read_at > ?`,
+		agent, deliveryTime(now.Add(-InboxReadThrottle))).Scan(&fresh)
+	return err != nil
 }
 
 // writeAckRead records last read inside the ack transaction; unlike stampRead it
@@ -129,8 +143,11 @@ func (s *Store) keepFoldedSelectiveAcks(ctx context.Context, tx *sql.Tx, agent s
 	return nil
 }
 
-// evictCursorMarks keeps the newest MaxCursorMarks marks of agent, lowest cursors
-// evicted first. An event covered only by an evicted mark reports unknown.
+// evictCursorMarks keeps the newest MaxCursorMarks marks of agent. "Oldest" means
+// the lowest cursor (the earliest event), whatever the mark's kind or when it was
+// written, so a folded selective mark and a watermark mark compete on cursor alone
+// and the lower one goes first. An event covered only by an evicted mark reports
+// unknown.
 func (s *Store) evictCursorMarks(ctx context.Context, tx *sql.Tx, agent string) error {
 	// Rank by cursor, then range start, so the oldest coverage goes first.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_inbox_cursor_marks WHERE agent_id=? AND rowid NOT IN (

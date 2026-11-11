@@ -318,3 +318,43 @@ func TestInboxWait_StampsLastReadAtEntryAndExit_OnEveryExitPath(t *testing.T) {
 		})
 	}
 }
+
+// Eviction defines "oldest" as the lowest cursor (the earliest event), not the
+// oldest advanced_at. A folded selective mark with the HIGHER cursor and the OLDER
+// time competes with a watermark mark with the LOWER cursor and the NEWER time for
+// the last slot of the bound: the lower cursor goes, whatever the times say.
+func TestInboxMarks_Eviction_DropsTheLowestCursorNotTheOldestTime(t *testing.T) {
+	s := newTestStore(t)
+	t0 := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	clock, cur := ticking(t0)
+	s.SetClock(clock)
+	seqs := seedAddressed(t, s, "w", 3)
+	older, newer := "2026-11-11T08:00:00.000000000Z", "2026-11-11T12:00:00.000000000Z"
+	insert := func(cursor, from int64, kind, at string) {
+		_, err := s.WriteDB().Exec(`INSERT INTO agent_inbox_cursor_marks(agent_id,cursor,from_cursor,kind,advanced_at)
+			VALUES('w',?,?,?,?)`, cursor, from, kind, at)
+		require.NoError(t, err)
+	}
+	_, err := s.WriteDB().Exec(`INSERT INTO agent_inbox_cursor(agent_id,cursor) VALUES('w',?)`, seqs[1])
+	require.NoError(t, err)
+	insert(seqs[0], 0, sqlite.AckWatermark, newer)         // lower cursor, newer time
+	insert(seqs[1], seqs[1]-1, sqlite.AckSelective, older) // higher cursor, older time
+	for i := 0; i < sqlite.MaxCursorMarks-2; i++ {
+		c := int64(1000 + i)
+		insert(c, c-1, sqlite.AckWatermark, newer)
+	}
+	require.Equal(t, sqlite.MaxCursorMarks, markCount(t, s, "w"))
+
+	*cur = t0.Add(2 * time.Hour)
+	require.NoError(t, s.InboxAckThrough(t.Context(), "w", seqs[2])) // one mark too many
+	require.Equal(t, sqlite.MaxCursorMarks, markCount(t, s, "w"))
+
+	var lowest int64
+	var kind string
+	require.NoError(t, s.WriteDB().QueryRow(`SELECT cursor, kind FROM agent_inbox_cursor_marks WHERE agent_id='w'
+		ORDER BY cursor ASC LIMIT 1`).Scan(&lowest, &kind))
+	require.Equal(t, seqs[1], lowest, "the lowest-cursor mark (the newer watermark one) was evicted")
+	require.Equal(t, sqlite.AckSelective, kind, "the older selective mark at the higher cursor survives")
+	requireAckState(t, s, seqs[0], sqlite.AckWatermark, false, time.Time{})
+	requireAckState(t, s, seqs[2], sqlite.AckWatermark, true, t0.Add(2*time.Hour))
+}

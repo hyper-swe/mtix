@@ -42,8 +42,9 @@ type Store struct {
 	logger          *slog.Logger
 	vcReported      atomic.Bool // this Store has seen the vector-clock prune notice issued (MTIX-95.16)
 	clock           func() time.Time
-	history         sync.Map       // *sql.Tx -> *historyTracker for the open recording transactions
-	encodePayloadFn payloadEncoder // fixed per Store before concurrent use
+	waitClock       func() time.Time // wall clock for the inbox wait deadline; nil uses the system clock (MTIX-245)
+	history         sync.Map         // *sql.Tx -> *historyTracker for the open recording transactions
+	encodePayloadFn payloadEncoder   // fixed per Store before concurrent use
 
 	// afterExportBoardRead is a nil-by-default test observer, set only before
 	// an isolated synchronous export; concurrent writers never access it.

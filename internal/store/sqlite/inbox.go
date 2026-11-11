@@ -143,6 +143,7 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 	ticker := time.NewTicker(inboxPollInterval)
 	defer ticker.Stop()
 	queryCtx := ctx
+	deadline := s.waitDeadline(timeout)
 	for {
 		events, err := s.InboxList(queryCtx, agentID)
 		if err != nil {
@@ -156,8 +157,30 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 		case <-waitCtx.Done():
 			return nil, inboxWaitError(ctx, waitCtx, waitCtx.Err())
 		case <-ticker.C:
+			// MTIX-245: the context timer stops while the system sleeps, so the
+			// deadline is also checked against the wall clock on every tick.
+			if !deadline.IsZero() && !s.waitNow().Before(deadline) {
+				return nil, nil
+			}
 		}
 	}
+}
+
+// waitNow is the wall clock InboxWait measures its timeout against, with the
+// monotonic reading stripped; a test may replace waitClock (MTIX-245).
+func (s *Store) waitNow() time.Time {
+	if s.waitClock != nil {
+		return s.waitClock()
+	}
+	return time.Now().Round(0)
+}
+
+// waitDeadline is entry plus timeout on the wall clock, zero when unbounded.
+func (s *Store) waitDeadline(timeout time.Duration) time.Time {
+	if timeout <= 0 {
+		return time.Time{}
+	}
+	return s.waitNow().Add(timeout)
 }
 
 // Only the wait's own elapsed timeout is an empty success; cancellation from

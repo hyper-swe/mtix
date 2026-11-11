@@ -4,6 +4,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -125,4 +126,24 @@ func TestRender_SameInput_IsByteIdentical(t *testing.T) {
 	two, err := Render(sums, Matrix())
 	require.NoError(t, err)
 	require.Equal(t, one, two)
+}
+
+func TestRender_UnmeasuredFooter_CountsExactlyTheUnattendedCellsWithoutSummaries(t *testing.T) {
+	unattended := 0
+	for _, c := range Matrix() {
+		if c.Status == StatusUnattended {
+			unattended++
+		}
+	}
+	require.Positive(t, unattended)
+	none, err := Render(nil, Matrix())
+	require.NoError(t, err)
+	require.Contains(t, none, fmt.Sprintf("\n%d unattended cells not measured.\n", unattended))
+	one, err := Render([]CellSummary{{Cell: "B/idle", Sent: 30, Delivered: 30}}, Matrix())
+	require.NoError(t, err)
+	require.Contains(t, one, fmt.Sprintf("\n%d unattended cells not measured.\n", unattended-1))
+	// A pending cell with a hand-run summary does not change the count.
+	pend, err := Render([]CellSummary{{Cell: "B/bypass", Sent: 5, Delivered: 5}}, Matrix())
+	require.NoError(t, err)
+	require.Contains(t, pend, fmt.Sprintf("\n%d unattended cells not measured.\n", unattended))
 }

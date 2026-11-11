@@ -16,7 +16,10 @@
 # directory, and the stale holder is re-read under that serialiser.
 # Residual risks, accepted for a test tool: a pid reused by an unrelated
 # process looks alive, and a taker killed between mkdir and rmdir of
-# <lock-path>.t blocks further takeovers until that directory is removed.
+# <lock-path>.t blocks further takeovers until that directory is removed;
+# an arm that meets such a stuck serialiser (still held after about one
+# second with no live holder) logs guard-skip-takeover-busy, so the
+# evidence tells a harness fault from a live holder.
 
 if [ "$#" -lt 4 ]; then
 	echo "usage: waiter.sh <lock-path> <log-file> <label> <command> [args...]" >&2
@@ -45,6 +48,22 @@ holder_alive() {
 	esac
 }
 
+# takeover_busy waits briefly for a contended serialiser. It returns 1
+# when a live holder appeared (a plain guard-skip) and 2 when the
+# serialiser stays held with no live holder (a stuck taker).
+takeover_busy() {
+	n=0
+	while [ "$n" -lt 10 ]; do
+		holder_alive && return 1
+		sleep 0.1
+		n=$((n + 1))
+	done
+	holder_alive && return 1
+	return 2
+}
+
+# acquire returns 0 when this arm holds the lock, 1 when a live holder
+# exists and 2 when a stale lock cannot be taken over (stuck serialiser).
 acquire() {
 	if ln -s "$ME" "$LOCK" 2>/dev/null; then
 		return 0
@@ -54,8 +73,13 @@ acquire() {
 	fi
 	# Stale: only the arm that creates the serialiser may take over.
 	if ! mkdir "$LOCK.t" 2>/dev/null; then
-		return 1
+		takeover_busy
+		return $?
 	fi
+	# Test hook: hold the serialiser while the named file exists.
+	while [ -n "$WAITER_TEST_HOLD" ] && [ -e "$WAITER_TEST_HOLD" ]; do
+		sleep 0.02
+	done
 	took=1
 	if holder_alive; then
 		took=1
@@ -76,10 +100,18 @@ release() {
 	fi
 }
 
-if ! acquire; then
+acquire
+case $? in
+0) ;;
+2)
+	log guard-skip-takeover-busy
+	exit 0
+	;;
+*)
 	log guard-skip
 	exit 0
-fi
+	;;
+esac
 trap release EXIT
 trap 'exit 143' INT TERM HUP
 log armed

@@ -161,3 +161,68 @@ func TestPercentile_Boundaries_UseNearestRank(t *testing.T) {
 func stampLine(sec int, kind, cell string, event int) string {
 	return strconv.Itoa(sec) + " " + kind + " " + cell + " " + strconv.Itoa(event) + "\n"
 }
+
+func TestSummarize_ExitWithoutTurn_CountsLostAndKeepsExit(t *testing.T) {
+	tests := []struct {
+		name                       string
+		log                        string
+		lost, delivered, exits, un int
+	}{
+		{"send exit no turn", "100 send B/idle 1\n100.5 exit B/idle 1\n", 1, 0, 1, 0},
+		{"exit stamp without send", "100.5 exit B/idle 9\n", 0, 0, 0, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Summarize(stampsOf(t, tt.log))
+			require.NoError(t, err)
+			require.Equal(t, tt.lost, got[0].Lost)
+			require.Equal(t, tt.delivered, got[0].Delivered)
+			require.Equal(t, tt.exits, got[0].ExitN)
+			require.Equal(t, tt.un, got[0].Unmatched)
+		})
+	}
+}
+
+func TestSummarize_SameInstantDuplicates_AreCounted(t *testing.T) {
+	tests := []struct {
+		name  string
+		log   string
+		dup   int
+		exitN int
+	}{
+		{"two turns at the same instant", "100 send B/idle 1\n102 turn B/idle 1\n102 turn B/idle 1\n", 1, 0},
+		// Duplicate exits are not duplicates of delivery: one event keeps one
+		// exit latency (the earliest) and is not counted in Duplicate.
+		{"two exits for one event", "100 send B/idle 1\n101 turn B/idle 1\n101 exit B/idle 1\n103 exit B/idle 1\n", 0, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := Summarize(stampsOf(t, tt.log))
+			require.NoError(t, err)
+			require.Equal(t, tt.dup, got[0].Duplicate)
+			require.Equal(t, tt.exitN, got[0].ExitN)
+		})
+	}
+}
+
+func TestPercentile_CeilVersusRound_DisagreeingSizes(t *testing.T) {
+	ramp := func(n int) []time.Duration {
+		out := make([]time.Duration, n)
+		for i := range out {
+			out[i] = time.Duration(i+1) * time.Second
+		}
+		return out
+	}
+	tests := []struct {
+		n    int
+		p    float64
+		want time.Duration
+	}{
+		{12, 95, 12 * time.Second}, // ceil(11.4)=12, round would give 11
+		{31, 95, 30 * time.Second}, // ceil(29.45)=30, round would give 29
+		{12, 50, 6 * time.Second},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, percentile(ramp(tt.n), tt.p), "N=%d p%v", tt.n, tt.p)
+	}
+}

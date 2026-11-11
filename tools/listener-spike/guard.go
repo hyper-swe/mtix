@@ -30,11 +30,15 @@ type Launch struct {
 
 // CheckLaunch refuses a launch plan that could touch anything outside the
 // scratch root or lower the session's permission checks: the working
-// directory, every --settings file and a CLAUDE_CONFIG_DIR must resolve
-// (through symlinks) inside Root; at least one file-based --settings is
-// required; and the dangerous-permission flags and the bypass permission
-// mode are never allowed (MTIX-112.40.1; the bypass case is a lead
-// hand-run, never launched by the harness).
+// directory, every --settings file, every --add-dir, a CLAUDE_CONFIG_DIR
+// and a messaging socket must resolve (through symlinks) inside Root; at
+// least one file-based --settings is required; user-level settings must be
+// kept out (CLAUDE_CONFIG_DIR inside Root, or --setting-sources without
+// user); the dangerous-permission flags, the bypass permission mode and a
+// settings file (or the project settings of Cwd) whose
+// permissions.defaultMode is bypassPermissions are never allowed
+// (MTIX-112.40.1; the bypass case is a lead hand-run, never launched by the
+// harness).
 func CheckLaunch(l Launch) error {
 	root, err := resolveRoot(l.Root)
 	if err != nil {
@@ -46,7 +50,14 @@ func CheckLaunch(l Launch) error {
 	if err := checkEnv(root, l.Env); err != nil {
 		return err
 	}
-	return checkArgs(root, l.Args)
+	if err := checkArgs(root, l.Args); err != nil {
+		return err
+	}
+	flags := collectFlags(l.Args)
+	if err := checkSettingContents(l.Cwd, flags.settings); err != nil {
+		return err
+	}
+	return checkIsolation(root, flags, l.Env)
 }
 
 func resolveRoot(root string) (string, error) {
@@ -66,8 +77,13 @@ func resolveRoot(root string) (string, error) {
 func checkEnv(root string, env []string) error {
 	for _, e := range env {
 		k, v, _ := strings.Cut(e, "=")
-		if k == "CLAUDE_CONFIG_DIR" {
+		switch k {
+		case "CLAUDE_CONFIG_DIR":
 			if err := requireInside(root, v, "config dir"); err != nil {
+				return err
+			}
+		case envMessagingSocket:
+			if err := requireInside(root, v, "messaging socket"); err != nil {
 				return err
 			}
 		}
@@ -183,13 +199,13 @@ func resolveLoose(p string) (string, error) {
 	}
 }
 
-// CheckSocket refuses a socket the driver does not own. The socket is
-// accepted only when the registry record of the driver's own child pid
-// (the record passed in, read from that pid's registry file) names exactly
-// this path, the record's pid is childPID, the record's cwd is inside the
-// scratch root, and the path is a unix socket. The socket itself may live
-// outside the root (the harness names it, not the driver), but it is never
-// a socket some other session owns.
+// CheckSocket refuses a socket the driver does not own or that lies outside
+// the scratch root. The socket is accepted only when the registry record of
+// the driver's own child pid (the record passed in, read from that pid's
+// registry file) names exactly this path, the record's pid is childPID, the
+// record's cwd is inside the scratch root, the socket path itself resolves
+// inside the scratch root (the driver sets CLAUDE_CODE_MESSAGING_SOCKET
+// there), and the path is a unix socket.
 func CheckSocket(root, path string, childPID int, rec Record) error {
 	if !rec.Present["messagingSocketPath"] || !rec.Present["pid"] {
 		return fmt.Errorf("%w: registry record lacks pid or messagingSocketPath", ErrLaunchRefused)
@@ -206,6 +222,9 @@ func CheckSocket(root, path string, childPID int, rec Record) error {
 	}
 	if cwdErr := requireInside(resolvedRoot, rec.Cwd, "registry cwd"); cwdErr != nil {
 		return cwdErr
+	}
+	if sockErr := requireInside(resolvedRoot, path, "socket"); sockErr != nil {
+		return sockErr
 	}
 	info, err := os.Lstat(path)
 	if err != nil {

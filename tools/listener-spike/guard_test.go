@@ -38,7 +38,8 @@ func goodLaunch(root string) Launch {
 	return Launch{
 		Root: root,
 		Cwd:  filepath.Join(root, "proj"),
-		Args: []string{"--model", "haiku", "--settings", filepath.Join(root, "cfg", "s.json")},
+		Args: []string{"--model", "haiku", "--settings", filepath.Join(root, "cfg", "s.json"),
+			"--setting-sources", "project,local"},
 	}
 }
 
@@ -50,7 +51,7 @@ func TestCheckLaunch_ScratchOnlyPlan_Passes(t *testing.T) {
 func TestCheckLaunch_SettingsEqualsForm_Passes(t *testing.T) {
 	root, _ := scratch(t)
 	l := goodLaunch(root)
-	l.Args = []string{"--settings=" + filepath.Join(root, "cfg", "s.json")}
+	l.Args = []string{"--settings=" + filepath.Join(root, "cfg", "s.json"), "--setting-sources=project"}
 	require.NoError(t, CheckLaunch(l))
 }
 
@@ -91,12 +92,45 @@ func TestCheckLaunch_Refusals_ReturnErrLaunchRefused(t *testing.T) {
 		{"bypass mode equals", func(l *Launch) {
 			l.Args = []string{"--permission-mode=bypassPermissions", "--settings", settings}
 		}, "permission"},
+		{"settings file sets bypass mode", func(l *Launch) {
+			l.Args[3] = writeSettings(t, root, "bypass.json", `{"permissions":{"defaultMode":"bypassPermissions"}}`)
+		}, "defaultMode"},
+		{"settings file bypass mode in other case", func(l *Launch) {
+			l.Args[3] = writeSettings(t, root, "bypass-case.json", `{"permissions":{"defaultMode":"BypassPermissions"}}`)
+		}, "defaultMode"},
+		{"settings file is not json", func(l *Launch) {
+			l.Args[3] = writeSettings(t, root, "bad.json", `{not json`)
+		}, "settings"},
+		{"project settings file sets bypass mode", func(l *Launch) {
+			writeSettingsAt(t, filepath.Join(l.Cwd, ".claude"), "settings.json", `{"permissions":{"defaultMode":"bypassPermissions"}}`)
+		}, "defaultMode"},
+		{"project local settings file sets bypass mode", func(l *Launch) {
+			writeSettingsAt(t, filepath.Join(l.Cwd, ".claude"), "settings.local.json", `{"permissions":{"defaultMode":"bypassPermissions"}}`)
+		}, "defaultMode"},
+		{"user settings are loaded: no config dir and no setting sources", func(l *Launch) {
+			l.Args = l.Args[:4]
+		}, "user settings"},
+		{"setting sources include user", func(l *Launch) { l.Args[5] = "user,project" }, "user settings"},
+		{"setting sources include user in other case", func(l *Launch) { l.Args[5] = "project, USER" }, "user settings"},
+		{"setting sources equals form includes user", func(l *Launch) {
+			l.Args = append(l.Args[:4], "--setting-sources=user")
+		}, "user settings"},
+		{"add-dir outside root", func(l *Launch) { l.Args = append(l.Args, "--add-dir", outside) }, "add-dir"},
+		{"add-dir equals form outside root", func(l *Launch) { l.Args = append(l.Args, "--add-dir="+outside) }, "add-dir"},
+		{"second add-dir value outside root", func(l *Launch) {
+			l.Args = append(l.Args, "--add-dir", filepath.Join(root, "proj"), outside)
+		}, "add-dir"},
+		{"messaging socket env outside root", func(l *Launch) {
+			l.Env = []string{"CLAUDE_CODE_MESSAGING_SOCKET=" + filepath.Join(outside, "m.sock")}
+		}, "socket"},
 		{"config dir env outside root", func(l *Launch) {
 			l.Env = []string{"CLAUDE_CONFIG_DIR=" + outside}
 		}, "config"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Rows may plant project settings; keep rows independent.
+			t.Cleanup(func() { require.NoError(t, os.RemoveAll(filepath.Join(root, "proj", ".claude"))) })
 			l := goodLaunch(root)
 			tt.mutate(&l)
 			err := CheckLaunch(l)
@@ -117,7 +151,7 @@ func TestCheckLaunch_ConfigDirInsideRootAndManualMode_Passes(t *testing.T) {
 func TestCheckLaunch_NotYetExistingSettingsInsideRoot_Passes(t *testing.T) {
 	root, _ := scratch(t)
 	l := goodLaunch(root)
-	l.Args = []string{"--settings", filepath.Join(root, "cfg", "later", "s-new.json")}
+	l.Args = []string{"--settings", filepath.Join(root, "cfg", "later", "s-new.json"), "--setting-sources", "local"}
 	require.NoError(t, CheckLaunch(l))
 }
 
@@ -193,4 +227,63 @@ func TestCheckSocket_ForeignSocketOutsideRoot_Refused(t *testing.T) {
 	rec := ownRecord(root, filepath.Join(root, "s.sock"), 4242)
 	err := CheckSocket(root, foreign, 4242, rec)
 	require.ErrorIs(t, err, ErrLaunchRefused)
+}
+
+func writeSettings(t *testing.T, root, name, body string) string {
+	t.Helper()
+	return writeSettingsAt(t, filepath.Join(root, "cfg"), name, body)
+}
+
+func writeSettingsAt(t *testing.T, dir, name, body string) string {
+	t.Helper()
+	require.NoError(t, os.MkdirAll(dir, 0o700))
+	p := filepath.Join(dir, name)
+	require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+	return p
+}
+
+func TestCheckLaunch_IsolationAlternatives_Pass(t *testing.T) {
+	root, _ := scratch(t)
+	tests := []struct {
+		name   string
+		mutate func(l *Launch)
+	}{
+		{"config dir inside root and no setting sources", func(l *Launch) {
+			l.Args = l.Args[:4]
+			l.Env = []string{"CLAUDE_CONFIG_DIR=" + filepath.Join(root, "cfg")}
+		}},
+		{"add-dir inside root", func(l *Launch) {
+			l.Args = append(l.Args, "--add-dir", filepath.Join(root, "proj"))
+		}},
+		{"messaging socket env inside root", func(l *Launch) {
+			l.Env = []string{"CLAUDE_CODE_MESSAGING_SOCKET=" + filepath.Join(root, "m.sock")}
+		}},
+		{"settings with a harmless default mode", func(l *Launch) {
+			l.Args[3] = writeSettings(t, root, "ok.json", `{"permissions":{"defaultMode":"default"},"hooks":{}}`)
+		}},
+		{"project settings without permissions", func(l *Launch) {
+			writeSettingsAt(t, filepath.Join(l.Cwd, ".claude"), "settings.json", `{"model":"haiku"}`)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Cleanup(func() { require.NoError(t, os.RemoveAll(filepath.Join(root, "proj", ".claude"))) })
+			l := goodLaunch(root)
+			tt.mutate(&l)
+			require.NoError(t, CheckLaunch(l))
+		})
+	}
+}
+
+func TestCheckSocket_OwnChildSocketOutsideRoot_Refused(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not the listener transport on windows")
+	}
+	root, outside := scratch(t)
+	sock := socketAt(t, filepath.Join(outside, "o.sock"))
+	// The registry record proves the socket is the child's own, but the
+	// story still requires it to live inside the scratch root.
+	err := CheckSocket(root, sock, 4242, ownRecord(root, sock, 4242))
+	require.ErrorIs(t, err, ErrLaunchRefused)
+	require.Contains(t, err.Error(), "outside the scratch root")
 }

@@ -48,6 +48,16 @@ func (e waiterEnv) arm(t *testing.T, label string, code int) *exec.Cmd {
 	return cmd
 }
 
+// armWithEnv is arm with extra environment entries for the script.
+func (e waiterEnv) armWithEnv(t *testing.T, label string, extra ...string) *exec.Cmd {
+	t.Helper()
+	cmd := exec.Command("sh", "waiter.sh", e.lock, e.log, label,
+		"sh", "-c", `while [ ! -e "$1" ]; do sleep 0.02; done`, "sh", e.release)
+	cmd.Env = append(os.Environ(), extra...)
+	require.NoError(t, cmd.Start())
+	return cmd
+}
+
 func (e waiterEnv) events(t *testing.T) []string {
 	t.Helper()
 	data, err := os.ReadFile(e.log)
@@ -183,4 +193,58 @@ func TestWaiterGuard_Script_IsExecutable(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		require.NotZero(t, info.Mode()&0o111, "waiter.sh must keep its executable bit")
 	}
+}
+
+// deadPID returns the pid of a process that has exited.
+func deadPID(t *testing.T) int {
+	t.Helper()
+	dead := exec.Command("sh", "-c", "exit 0")
+	require.NoError(t, dead.Run())
+	return dead.Process.Pid
+}
+
+// TestWaiterGuard_LiveHolderPlantedUnderSerialiser_IsNeverStolen drives the
+// race the serialiser re-read exists for: an arm that saw a stale lock gets
+// the serialiser after another arm has already installed a live holder.
+func TestWaiterGuard_LiveHolderPlantedUnderSerialiser_IsNeverStolen(t *testing.T) {
+	e := newWaiterEnv(t)
+	require.NoError(t, os.Symlink("pid:"+strconv.Itoa(deadPID(t)), e.lock))
+	hold := filepath.Join(filepath.Dir(e.lock), "hold")
+	require.NoError(t, os.WriteFile(hold, nil, 0o600))
+	cmd := e.armWithEnv(t, "late", "WAITER_TEST_HOLD="+hold)
+	require.Eventually(t, func() bool {
+		_, err := os.Stat(e.lock + ".t")
+		return err == nil
+	}, 10*time.Second, 10*time.Millisecond, "the arm must own the serialiser")
+	live := exec.Command("sleep", "30")
+	require.NoError(t, live.Start())
+	t.Cleanup(func() { _ = live.Process.Kill(); _ = live.Wait() })
+	require.NoError(t, os.Remove(e.lock))
+	require.NoError(t, os.Symlink("pid:"+strconv.Itoa(live.Process.Pid), e.lock))
+	require.NoError(t, os.Remove(hold))
+	// A wrongly armed waiter must exit rather than hang the suite.
+	require.NoError(t, os.WriteFile(e.release, nil, 0o600))
+	require.NoError(t, cmd.Wait())
+	require.Equal(t, []string{"guard-skip"}, e.events(t))
+	target, err := os.Readlink(e.lock)
+	require.NoError(t, err)
+	require.Equal(t, "pid:"+strconv.Itoa(live.Process.Pid), target, "the live holder's lock stays untouched")
+	_, err = os.Stat(e.lock + ".t")
+	require.ErrorIs(t, err, os.ErrNotExist, "the serialiser is released")
+}
+
+// TestWaiterGuard_StuckSerialiser_LogsDistinctTakeoverBusy covers a taker
+// killed between mkdir and rmdir: the stuck serialiser must not look like a
+// live holder in the evidence.
+func TestWaiterGuard_StuckSerialiser_LogsDistinctTakeoverBusy(t *testing.T) {
+	e := newWaiterEnv(t)
+	stale := "pid:" + strconv.Itoa(deadPID(t))
+	require.NoError(t, os.Symlink(stale, e.lock))
+	require.NoError(t, os.Mkdir(e.lock+".t", 0o700))
+	cmd := e.arm(t, "late", 0)
+	require.NoError(t, cmd.Wait())
+	require.Equal(t, []string{"guard-skip-takeover-busy"}, e.events(t))
+	target, err := os.Readlink(e.lock)
+	require.NoError(t, err)
+	require.Equal(t, stale, target, "the stale lock is left as found")
 }

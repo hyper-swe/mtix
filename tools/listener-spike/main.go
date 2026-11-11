@@ -15,7 +15,7 @@ const usageText = `usage: listener-spike <command> [args]
 commands:
   report <stamps-file>...                  print the matrix evidence table from stamp logs
   registry -pid N <samples-file>           check the registry contract over recorded samples
-  launch -root R -cwd C [-config-dir D] -- <claude args>   check a scratch launch plan (never starts a session)
+  launch -root R -cwd C [-config-dir D] [-socket S] -- <claude args>   check a scratch launch plan (never starts a session)
 `
 
 func main() {
@@ -122,6 +122,7 @@ func runLaunch(args []string, stdout, stderr io.Writer) int {
 	root := fs.String("root", "", "absolute scratch root")
 	cwd := fs.String("cwd", "", "working directory of the session")
 	configDir := fs.String("config-dir", "", "CLAUDE_CONFIG_DIR the session will get (optional)")
+	socket := fs.String("socket", "", "CLAUDE_CODE_MESSAGING_SOCKET the session will get (optional)")
 	if err := fs.Parse(args); err != nil || *root == "" || *cwd == "" {
 		fmt.Fprint(stderr, usageText)
 		return 2
@@ -129,6 +130,9 @@ func runLaunch(args []string, stdout, stderr io.Writer) int {
 	var env []string
 	if *configDir != "" {
 		env = append(env, "CLAUDE_CONFIG_DIR="+*configDir)
+	}
+	if *socket != "" {
+		env = append(env, envMessagingSocket+"="+*socket)
 	}
 	if err := CheckLaunch(Launch{Root: *root, Cwd: *cwd, Args: fs.Args(), Env: env}); err != nil {
 		fmt.Fprintln(stderr, err)

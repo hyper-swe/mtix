@@ -78,7 +78,7 @@ func TestRun_Registry_PassAndContractFailureExitCodes(t *testing.T) {
 func TestRun_Launch_AcceptsScratchPlanAndRefusesBypass(t *testing.T) {
 	root, outside := scratch(t)
 	settings := filepath.Join(root, "cfg", "s.json")
-	code, out, errs := runCLI(t, "launch", "-root", root, "-cwd", filepath.Join(root, "proj"), "--", "--model", "haiku", "--settings", settings)
+	code, out, errs := runCLI(t, "launch", "-root", root, "-cwd", filepath.Join(root, "proj"), "--", "--model", "haiku", "--settings", settings, "--setting-sources", "project")
 	require.Zero(t, code, errs)
 	require.Contains(t, out, "ok")
 	code, _, errs = runCLI(t, "launch", "-root", root, "-cwd", filepath.Join(root, "proj"), "--", "--permission-mode", "bypassPermissions", "--settings", settings)
@@ -87,6 +87,17 @@ func TestRun_Launch_AcceptsScratchPlanAndRefusesBypass(t *testing.T) {
 	code, _, errs = runCLI(t, "launch", "-root", root, "-cwd", outside, "--", "--settings", settings)
 	require.Equal(t, 1, code)
 	require.Contains(t, errs, "cwd")
+}
+
+func TestRun_Launch_SocketFlagMustStayInsideRoot(t *testing.T) {
+	root, outside := scratch(t)
+	base := []string{"launch", "-root", root, "-cwd", filepath.Join(root, "proj"), "-socket"}
+	tail := []string{"--", "--settings", filepath.Join(root, "cfg", "s.json"), "--setting-sources", "project"}
+	code, _, errs := runCLI(t, append(append(append([]string{}, base...), filepath.Join(root, "m.sock")), tail...)...)
+	require.Zero(t, code, errs)
+	code, _, errs = runCLI(t, append(append(append([]string{}, base...), filepath.Join(outside, "m.sock")), tail...)...)
+	require.Equal(t, 1, code)
+	require.Contains(t, errs, "socket")
 }
 
 func TestRun_UnknownOrMissingCommand_ExitsWithUsage(t *testing.T) {

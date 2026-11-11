@@ -95,3 +95,34 @@ func TestParseRegistry_NonObjectLine_ReturnsErrMalformedRegistry(t *testing.T) {
 	_, err := ParseRegistry(strings.NewReader("[1,2]\n"))
 	require.ErrorIs(t, err, ErrMalformedRegistry)
 }
+
+func TestCheckRegistry_EachRequiredKeyMissing_NamesThatKey(t *testing.T) {
+	all := []string{"pid", "sessionId", "cwd", "messagingSocketPath"}
+	require.ElementsMatch(t, all, requiredKeys(), "the pinned contract names exactly these keys")
+	for _, key := range all {
+		t.Run(key, func(t *testing.T) {
+			raw := map[string]string{
+				"pid": `"pid":4242`, "sessionId": `"sessionId":"s"`, "cwd": `"cwd":"/c"`,
+				"messagingSocketPath": `"messagingSocketPath":"/s"`,
+			}
+			var parts []string
+			for _, k := range all {
+				if k != key {
+					parts = append(parts, raw[k])
+				}
+			}
+			line := "{" + strings.Join(parts, ",") + "}\n"
+			recs, err := ParseRegistry(strings.NewReader(line))
+			require.NoError(t, err)
+			err = CheckRegistry(recs, 4242)
+			require.ErrorIs(t, err, ErrRegistryContract)
+			require.Contains(t, err.Error(), "required key "+key+" missing")
+		})
+	}
+}
+
+func TestCheckRegistry_OnlyIdleObserved_ReportsExactlyBusyNeverObserved(t *testing.T) {
+	err := CheckRegistry(loadSamples(t, "registry-single-idle.jsonl"), 4242)
+	require.ErrorIs(t, err, ErrRegistryContract)
+	require.Equal(t, "registry contract broken: busy status never observed", err.Error())
+}

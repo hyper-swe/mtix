@@ -54,6 +54,34 @@ func TestFindSessionProcess_SkipsShellsAndWrappers(t *testing.T) {
 	}
 }
 
+func TestFindSession_HarnessParentGuards(t *testing.T) {
+	tests := []struct {
+		name  string
+		procs table
+		want  procinfo.SessionProcess
+	}{
+		{"node child that is itself a harness stays the child", table{
+			80: {PPID: 50, Name: "node", Argv0: "codex", StartTime: "n"},
+			50: {PPID: 10, Name: "claude", StartTime: "s50"}},
+			procinfo.SessionProcess{PID: 80, Name: "node", Harness: "codex", StartTime: "n"}},
+		{"python child of a harness stays the child", table{
+			80: {PPID: 50, Name: "python", Argv0: "python", StartTime: "n"},
+			50: {PPID: 10, Name: "codex", StartTime: "s50"}},
+			procinfo.SessionProcess{PID: 80, Name: "python", StartTime: "n"}},
+		{"harness parent with empty start time is not taken", table{
+			80: {PPID: 50, Name: "node", Argv0: "node", StartTime: "n"},
+			50: {PPID: 10, Name: "codex"}},
+			procinfo.SessionProcess{PID: 80, Name: "node", StartTime: "n"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			found, sure := procinfo.FindSession(tt.procs.read, 80)
+			assert.True(t, sure)
+			assert.Equal(t, tt.want, found)
+		})
+	}
+}
+
 func TestFindSessionProcess_DepthBound_IsUnsure(t *testing.T) {
 	procs := table{}
 	for pid := 100; pid < 120; pid++ {

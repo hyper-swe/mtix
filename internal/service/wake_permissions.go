@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -47,6 +48,13 @@ type PermissionDeps struct {
 type WakePermissions struct {
 	PermissionDeps
 	reevaluator WakeReevaluator
+	logger      *slog.Logger // re-evaluation failures; nil uses the default logger (MTIX-130.14)
+}
+
+// WithLogger sets the logger for re-evaluation failures (MTIX-130.14).
+func (s *WakePermissions) WithLogger(l *slog.Logger) *WakePermissions {
+	s.logger = l
+	return s
 }
 
 // WithReevaluator injects the held-wake re-evaluator run after a committed grant change.
@@ -139,7 +147,7 @@ func (s *WakePermissions) ApplyBatch(ctx context.Context, board PermissionBoard,
 	for _, change := range changes {
 		if !seen[change.AgentID] {
 			seen[change.AgentID] = true
-			notifyReevaluator(ctx, s.reevaluator, change.AgentID, "grant change")
+			notifyReevaluator(ctx, s.logger, s.reevaluator, change.AgentID, "grant change")
 		}
 	}
 	return nil

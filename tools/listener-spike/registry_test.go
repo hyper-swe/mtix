@@ -126,3 +126,24 @@ func TestCheckRegistry_OnlyIdleObserved_ReportsExactlyBusyNeverObserved(t *testi
 	require.ErrorIs(t, err, ErrRegistryContract)
 	require.Equal(t, "registry contract broken: busy status never observed", err.Error())
 }
+
+func TestCheckRegistry_RecordedKeysAndStatusFixture_Passes(t *testing.T) {
+	recs := loadSamples(t, "registry-recorded.jsonl")
+	require.Len(t, recs, 15)
+	require.NoError(t, CheckRegistry(recs, 4242))
+	require.False(t, recs[0].Present["status"], "a real session starts without a status")
+	for _, rec := range recs {
+		require.True(t, rec.Present["peerProtocol"] && rec.Present["procStart"], "the recorded key set is carried whole")
+	}
+	for i := 1; i < len(recs); i++ {
+		require.NotEqual(t, recs[i].Status, recs[i-1].Status, "recorded status alternates idle/busy (sample %d)", i+1)
+	}
+}
+
+func TestCheckRegistry_RecordedFixtureWithOneKeyRemoved_IsRejected(t *testing.T) {
+	recs := loadSamples(t, "registry-recorded.jsonl")
+	delete(recs[4].Present, "messagingSocketPath")
+	err := CheckRegistry(recs, 4242)
+	require.ErrorIs(t, err, ErrRegistryContract)
+	require.Contains(t, err.Error(), "sample 5: required key messagingSocketPath missing")
+}

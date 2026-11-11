@@ -14,6 +14,12 @@
 # stale lock (holder dead, or lock text not "pid:<number>") is taken over
 # by exactly one arm: takeover is serialised through the <lock-path>.t
 # directory, and the stale holder is re-read under that serialiser.
+# Test-only environment variable: WAITER_TEST_HOLD names a file; while it
+# exists a taker keeps the <lock-path>.t serialiser, so a test can plant a
+# live holder deterministically. It is inert when unset or empty and must
+# never be set outside tests.
+# A TERM, INT or HUP to the script stops the wrapped command, releases the
+# lock and exits 143.
 # Residual risks, accepted for a test tool: a pid reused by an unrelated
 # process looks alive, and a taker killed between mkdir and rmdir of
 # <lock-path>.t blocks further takeovers until that directory is removed;
@@ -113,9 +119,15 @@ case $? in
 	;;
 esac
 trap release EXIT
-trap 'exit 143' INT TERM HUP
+# The wrapped command runs in the background and the script waits for it, so
+# a signal reaches the trap at once and stops the command too (a foreground
+# child would delay the trap until it returned). Its stdin is /dev/null.
+child=
+trap 'if [ -n "$child" ]; then kill "$child" 2>/dev/null; fi; exit 143' INT TERM HUP
 log armed
-"$@"
+"$@" &
+child=$!
+wait "$child"
 rc=$?
 log "exit-$rc"
 exit "$rc"

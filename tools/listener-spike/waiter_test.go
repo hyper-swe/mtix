@@ -38,13 +38,25 @@ func newWaiterEnv(t *testing.T) waiterEnv {
 	}
 }
 
+// loopScript is the wrapped command: it records its own pid, then waits for
+// the release file and gives up by itself after about a minute, so a test
+// that dies early can never leave it running for long.
+const loopScript = `echo $$ >"$3"; i=0; while [ ! -e "$1" ] && [ "$i" -lt 3000 ]; do sleep 0.02; i=$((i+1)); done; exit "$2"`
+
+// loopPIDFile is where the wrapped command of the waiter named label
+// records its pid.
+func (e waiterEnv) loopPIDFile(label string) string {
+	return filepath.Join(filepath.Dir(e.lock), "loop-"+label+".pid")
+}
+
 // arm starts one waiter whose wrapped command blocks until the release
-// file exists and then exits with code.
+// file exists and then exits with code. The waiter runs in its own process
+// group, which is killed when the test ends, pass or fail.
 func (e waiterEnv) arm(t *testing.T, label string, code int) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command("sh", "waiter.sh", e.lock, e.log, label,
-		"sh", "-c", `while [ ! -e "$1" ]; do sleep 0.02; done; exit "$2"`, "sh", e.release, strconv.Itoa(code))
-	require.NoError(t, cmd.Start())
+		"sh", "-c", loopScript, "sh", e.release, strconv.Itoa(code), e.loopPIDFile(label))
+	startInGroup(t, cmd)
 	return cmd
 }
 
@@ -52,9 +64,9 @@ func (e waiterEnv) arm(t *testing.T, label string, code int) *exec.Cmd {
 func (e waiterEnv) armWithEnv(t *testing.T, label string, extra ...string) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command("sh", "waiter.sh", e.lock, e.log, label,
-		"sh", "-c", `while [ ! -e "$1" ]; do sleep 0.02; done`, "sh", e.release)
+		"sh", "-c", loopScript, "sh", e.release, "0", e.loopPIDFile(label))
 	cmd.Env = append(os.Environ(), extra...)
-	require.NoError(t, cmd.Start())
+	startInGroup(t, cmd)
 	return cmd
 }
 

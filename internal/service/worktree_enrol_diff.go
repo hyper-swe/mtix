@@ -43,8 +43,14 @@ const (
 //
 // The rule is what a field can hide: metadata a clone stamps for itself, and
 // host-local registrations, are left out; user content never is. Deletions,
-// defer wake times and every other field stay differences, so a cascade, an
-// undelete or a defer that did not replicate refuses and the report names it.
+// defer wake times and every other field stay differences, so an undelete, a
+// defer or a cascade from before MTIX-112.17.16.12 that did not replicate
+// refuses and the report names it.
+//
+// defer_until is local by design in sync protocol 1 (MTIX-112.17.16.11): a local
+// defer travels as a status change without its wake time, so a store with a
+// wake time always differs from its clone. Protocol 2 carries it in a defer
+// event; until then it must stay out of this set.
 func BoardExclusions() []BoardExclusion {
 	return []BoardExclusion{
 		{"nodes.activity", "the activity log never replicates; it is metadata, not board content"},
@@ -61,7 +67,8 @@ func BoardExclusions() []BoardExclusion {
 // BoardPresenceOnly lists fields whose value is a clock reading a clone stamps
 // for itself, but whose presence is board content: only whether the field is
 // set is compared. A deletion the clone also holds therefore matches, while a
-// deletion on one side only (a cascade or an undelete that did not replicate)
+// deletion on one side only (an undelete, which emits no event, or a cascade
+// made before MTIX-112.17.16.12, which sent an event for the named node only)
 // is still a difference.
 func BoardPresenceOnly() []BoardExclusion {
 	return []BoardExclusion{
@@ -460,6 +467,16 @@ func compareFields(c *boardCmp, section, shown string, a, b any) {
 // labels in spacing, and closed_at by the one-second skew of a plain old
 // terminal event (skewedLegacyClosedAt). The board file and its store, and raw
 // comparisons, compare the exact value.
+//
+// The closed_at excuse is silent by design (MTIX-112.17.16.32): enrolment does
+// not list the stamps it excuses. The record matters only for legacy events that
+// carry no closed_at snapshot, such as a plain 0.5.4 done, where the author's
+// store and the clone could read the clock either side of a second. An event
+// that carries a closed_at snapshot is never excused, even within one second.
+// Events from 0.6.0 and later carry the snapshot, except that status repair of
+// a legacy winner emits a terminal event without it; skewedLegacyClosedAt
+// excuses a stamp only on clone evidence that it came from an event with no
+// snapshot.
 func (c *boardCmp) sameNodeField(k, id string, a, b map[string]any) bool {
 	switch k {
 	case "labels":

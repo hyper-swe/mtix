@@ -328,11 +328,18 @@ func (f *enrolPGFixture) localWorkPushed(t *testing.T, hard bool) {
 	require.NoError(t, st.TransitionStatus(ctx, "TEST-12", model.StatusInProgress, "start", "lane-a"))
 	require.NoError(t, st.TransitionStatus(ctx, "TEST-12", model.StatusDone, "finished", "lane-a"))
 	require.NoError(t, st.AddDependency(ctx, &model.Dependency{FromID: "TEST-12", ToID: "TEST-11", DepType: model.DepTypeBlocks, CreatedAt: now}))
+	// MTIX-112.17.16.12: a cascade delete and a cascade cancel emit one event
+	// per descendant, so a clone of the hub holds the same descendants.
+	require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-14", "", 0, 14, "cascade deleted")))
+	require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-14.1", "TEST-14", 1, 1, "cascade deleted child")))
+	require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-15", "", 0, 15, "cascade cancelled")))
+	require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-15.1", "TEST-15", 1, 1, "cascade cancelled child")))
+	require.NoError(t, st.DeleteNode(ctx, "TEST-14", true, "lane"))
+	require.NoError(t, st.CancelNode(ctx, "TEST-15", "dropped", "lane", true))
 	if hard {
 		until := now.Add(48 * time.Hour)
 		require.NoError(t, st.CreateNode(ctx, mkPGNode("TEST-13", "", 0, 13, "deferred")))
 		require.NoError(t, st.DeferNode(ctx, "TEST-13", &until, "later", "lane"))
-		require.NoError(t, st.DeleteNode(ctx, "TEST-11", true, "lane"))
 	}
 	var pushErr bytes.Buffer
 	_, err := pushLoop(ctx, &pushErr, f.pool, st)
@@ -356,6 +363,15 @@ func TestEnrolWorktree_RealHub_FullyPushedLocalWork_Enrols_PG(t *testing.T) {
 	for _, id := range []string{"TEST-1", "TEST-2", "TEST-11", "TEST-11.1", "TEST-12"} {
 		_, getErr := clone.GetNode(context.Background(), id)
 		require.NoError(t, getErr, id)
+	}
+	for _, id := range []string{"TEST-14", "TEST-14.1"} {
+		_, getErr := clone.GetNode(context.Background(), id)
+		require.ErrorIs(t, getErr, model.ErrNotFound, "%s: the cascade delete reached the hub", id)
+	}
+	for _, id := range []string{"TEST-15", "TEST-15.1"} {
+		got, getErr := clone.GetNode(context.Background(), id)
+		require.NoError(t, getErr, id)
+		assert.Equal(t, model.StatusCancelled, got.Status, "%s: the cascade cancel reached the hub", id)
 	}
 }
 
@@ -394,8 +410,10 @@ func TestEnrolWorktree_RealHub_BehindBoard_Enrols_PG(t *testing.T) {
 }
 
 // TestEnrolWorktree_RealHub_NotReplicatedWork_RefusesThenAcceptHub_PG: a defer
-// wake time and a cascade delete do not reach a clone of the hub, so the board
-// refuses with the fields named; accept-hub enrols and keeps the old store.
+// wake time does not reach a clone of the hub, so the board refuses with the
+// field named; accept-hub enrols and keeps the old store. A cascade delete and
+// a cascade cancel in the same board do reach the hub (MTIX-112.17.16.12), so
+// they are not named.
 func TestEnrolWorktree_RealHub_NotReplicatedWork_RefusesThenAcceptHub_PG(t *testing.T) {
 	f := newEnrolPGFixture(t)
 	f.localWorkPushed(t, true)
@@ -406,6 +424,7 @@ func TestEnrolWorktree_RealHub_NotReplicatedWork_RefusesThenAcceptHub_PG(t *test
 	var refusal *service.WorktreeBoardError
 	require.ErrorAs(t, err, &refusal)
 	assert.Contains(t, refusal.Diff["TEST-13"], "defer_until")
+	assert.Equal(t, []string{"TEST-13"}, refusal.IDs(), "the cascade delete and cancel replicate")
 	assert.Empty(t, f.enrolled)
 	assert.Equal(t, storeBefore, treeBytes(t, f.data), "the store is byte-identical")
 

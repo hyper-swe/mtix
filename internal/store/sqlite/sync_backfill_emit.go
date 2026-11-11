@@ -7,9 +7,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"time"
+
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/sync/clock"
-	"time"
 )
 
 // emitBackfillForNode emits all events for one node: create + per-field

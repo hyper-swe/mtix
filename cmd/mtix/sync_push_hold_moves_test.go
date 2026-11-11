@@ -205,8 +205,8 @@ func TestPushLoop_HeldTaskPurgedByGC_NothingSent(t *testing.T) {
 // No node is left for the rule to read, and TEST-5 is neither the number
 // the held creation's event names nor a current one, but the held events
 // stay held while the creation they were held for is (heldFor), and the
-// delete is of the held creation's own task, found by uid: nothing of them
-// is sent.
+// deletes (one for each task the cascade removed) are of the held creations'
+// own tasks, found by uid: nothing of them is sent.
 func TestPushLoop_HeldTaskRenumberedThenPurged_NothingSent(t *testing.T) {
 	initTestApp(t)
 	ctx := context.Background()
@@ -228,7 +228,8 @@ func TestPushLoop_HeldTaskRenumberedThenPurged_NothingSent(t *testing.T) {
 
 	require.NoError(t, pushWith(t, hub))
 	require.Empty(t, hub.calls, "nothing of the purged task reaches the hub")
-	require.Equal(t, 5, pushHoldCount(t), "creation, edit, child creation, child edit and delete are held")
+	require.Equal(t, 6, pushHoldCount(t),
+		"creation, edit, child creation, child edit and the delete of each task are held (a cascade delete sends one per descendant)")
 }
 
 // TestPushLoop_RenumberedAndPurgedBeforeAnyPush_OwnChangesHeld: a size-held

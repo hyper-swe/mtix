@@ -11,7 +11,8 @@ import (
 )
 
 // MTIX-112.17.16.19.1: every shipped sync runbook says that enrollment accepts
-// the one-second completion-time skew of a plain old done, and its limit.
+// the one-second completion-time skew of a plain old done, its limit, and that
+// an event carrying a closed_at snapshot is never excused.
 func TestEnrolDoneSkewGuidance_AllSyncSurfaces(t *testing.T) {
 	paths := []string{
 		"templates/skills/sync.md.tmpl",
@@ -25,6 +26,8 @@ func TestEnrolDoneSkewGuidance_AllSyncSurfaces(t *testing.T) {
 			require.NoError(t, err)
 			require.Contains(t, string(body), "same terminal status, and the two times are at most one second apart. It")
 			require.Contains(t, string(body), "cannot tell this skew from a real change of one second or less to the same")
+			// MTIX-112.17.16.32: the silent-by-design rule and its snapshot limit.
+			require.Contains(t, string(body), "An event that carries a `closed_at` snapshot is never excused, even when the gap is one second or less.")
 		})
 	}
 }

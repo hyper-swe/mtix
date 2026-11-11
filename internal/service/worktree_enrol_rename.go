@@ -31,11 +31,20 @@ func renameThenRecheck(oldPath, newPath string) error {
 // check: it is put back and the move is refused, so a held lock is never moved
 // (MTIX-112.17.16.21.2).
 func moveEnrolLockAside(lock, aside string) error {
+	return moveEnrolLockAsideWith(lock, aside, os.Lstat)
+}
+
+// moveEnrolLockAsideWith is moveEnrolLockAside with the post-move check
+// injected, so a test can make that check fail without package state.
+func moveEnrolLockAsideWith(lock, aside string, lstat func(string) (os.FileInfo, error)) error {
 	if err := renameNoReplace(lock, aside); err != nil {
 		return fmt.Errorf("move enrolment lock aside: %w", err)
 	}
-	info, err := os.Lstat(aside)
-	if err != nil || !info.Mode().IsRegular() {
+	info, err := lstat(aside)
+	if err != nil {
+		return fmt.Errorf("verify moved enrolment lock: %w", err)
+	}
+	if !info.Mode().IsRegular() {
 		return nil
 	}
 	if backErr := renameThenRecheck(aside, lock); backErr != nil {

@@ -111,3 +111,10 @@ func TestIsKnownLocalFilesystem_EmittedNamesOnly(t *testing.T) {
 		require.Equal(t, want, isKnownLocalFilesystem(name), name)
 	}
 }
+
+// TestIsKnownLocalFilesystem_TrimsAndLowercases pins the normalization step,
+// matching the store classifier's own trim-and-lowercase of names.
+func TestIsKnownLocalFilesystem_TrimsAndLowercases(t *testing.T) {
+	require.True(t, isKnownLocalFilesystem(" apfs "))
+	require.True(t, isKnownLocalFilesystem(" APFS "))
+}

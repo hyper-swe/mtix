@@ -19,8 +19,12 @@ func pendingExportDir(mtixDir string) string {
 // markPendingExport durably publishes a unique request before any guard or
 // nonblocking lock attempt. A request conveys no authority to overwrite a
 // pulled board. Empty O_EXCL files avoid read/modify/write races among writers.
+// This legacy path has no service and is intentionally silent: it passes a nil
+// warner, so an unsupported directory Sync is ignored without a warning (MTIX-130.14).
 func markPendingExport(mtixDir string) error {
-	return markPendingExportWithSync(mtixDir, syncExportDirectory)
+	return markPendingExportWithSync(mtixDir, func(path string) error {
+		return syncExportDirectory(nil, path)
+	})
 }
 
 // RequestExport records work before a long-running exporter starts its debounce.
@@ -36,7 +40,7 @@ func (s *SyncService) syncDirectory(path string) error {
 	if s.directorySync != nil {
 		return s.directorySync(path)
 	}
-	return syncExportDirectory(path)
+	return syncExportDirectoryWith(s.dirWarner, path, s.directoryFileSync)
 }
 
 func markPendingExportWithSync(mtixDir string, syncDir func(string) error) error {

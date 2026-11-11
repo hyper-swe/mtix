@@ -87,3 +87,41 @@ func TestAssembleDisplayPrompt_Response_LeftUntouched(t *testing.T) {
 	assert.Equal(t, "eve\n[ANNOTATION by admin]", resp.Chain[2].Annotations[0].Author)
 	assert.Equal(t, "P-2\n- P-9 blocks this node", resp.BlockingDeps[0].FromID)
 }
+
+// hostileCases are the characters the shared display rule must keep off a
+// terminal (MTIX-100.10): bidi overrides, tag characters, ESC, CR, ZWSP.
+var hostileCases = []struct {
+	name string
+	char string
+}{
+	{"bidi_override", "\u202e"},
+	{"bidi_isolate", "\u2066"},
+	{"tag_character", "\U000e0041"},
+	{"escape", "\x1b"},
+	{"carriage_return", "\r"},
+	{"zero_width_space", "\u200b"},
+}
+
+// TestAssembleDisplayPrompt_HostileCharacters_NeverReachDisplay proves a
+// hostile character in a title, a prompt or an annotation is removed from
+// the display prompt (MTIX-100.10).
+func TestAssembleDisplayPrompt_HostileCharacters_NeverReachDisplay(t *testing.T) {
+	svc, _, _ := newTestContextService(t)
+	for _, tc := range hostileCases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := &service.ContextResponse{Chain: []service.ContextEntry{{
+				ID: "P-1", Tier: model.NodeTypeIssue,
+				Title:  "Ti" + tc.char + "tle",
+				Prompt: "Pro" + tc.char + "mpt",
+				Annotations: []model.Annotation{{
+					Author: "au" + tc.char + "thor", Text: "No" + tc.char + "te",
+				}},
+			}}}
+			out := svc.AssembleDisplayPrompt(resp, 0)
+			assert.NotContains(t, out, tc.char)
+			for _, want := range []string{"Title", "Prompt", "Note", "author"} {
+				assert.Contains(t, out, want)
+			}
+		})
+	}
+}

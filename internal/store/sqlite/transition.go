@@ -140,6 +140,15 @@ func isResolvingStatus(s model.Status) bool {
 // entry is written by autoUnblockNode without an explicit author.
 func unblockDependents(ctx context.Context, tx *sql.Tx, h historyToucher, resolvedID, author string, clocks ...func() time.Time) error {
 	_ = author
+	// The auto-unblock event stamps wall_clock_ts from the writer's own clock
+	// (MTIX-112.17.16.13; ADR-006 I1): a *Store passes its injected clock
+	// through h, so the local transition, cancel, cascade-cancel and status
+	// repair paths need no clock argument of their own.
+	if len(clocks) == 0 {
+		if cp, ok := h.(interface{ storeClock() func() time.Time }); ok {
+			clocks = append(clocks, cp.storeClock())
+		}
+	}
 	rows, err := tx.QueryContext(ctx,
 		`SELECT to_id FROM dependencies
 		 WHERE from_id = ? AND dep_type = ?`,

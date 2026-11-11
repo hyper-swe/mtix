@@ -88,7 +88,8 @@ func TestWorkflowInputForApply_WellFormedEvent_CarriesPayloadAndEnvelope(t *test
 	require.True(t, ok)
 	require.Equal(t, workflowInput{
 		op: model.OpTransitionStatus, from: model.StatusBlocked, to: model.StatusOpen,
-		eventAt: time.UnixMilli(1_234).UTC(), updatedAt: "2026-09-24T00:00:00Z",
+		// updated_at is the event's time, not the apply time (ADR-006 I1).
+		eventAt: time.UnixMilli(1_234).UTC(), updatedAt: "1970-01-01T00:00:01Z",
 	}, in)
 }
 

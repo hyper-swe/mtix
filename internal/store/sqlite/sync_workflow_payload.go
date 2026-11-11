@@ -127,6 +127,6 @@ func workflowInputForApply(e *model.SyncEvent, applyTime time.Time) (workflowInp
 	}
 	return workflowInput{
 		op: e.OpType, from: p.from, to: p.to, agentID: p.agentID, deferUntil: p.deferUntil, closedAt: p.closedAt,
-		eventAt: eventTime(e.WallClockTS, applyTime), updatedAt: applyTime.Format(time.RFC3339),
+		eventAt: eventTime(e.WallClockTS, applyTime), updatedAt: eventTime(e.WallClockTS, applyTime).Format(time.RFC3339),
 	}, true
 }

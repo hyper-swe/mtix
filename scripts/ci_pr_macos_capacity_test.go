@@ -223,9 +223,9 @@ func TestCIWorkflow_MainMacOSHealth_RunsBaseScriptOnlyOnPullRequestsWithoutOverr
 	co := job.Steps[checkout]
 	require.True(t, strings.HasPrefix(co.Uses, "actions/checkout@"))
 	require.Equal(t, map[string]any{
-		"ref":                 "${{ github.event.pull_request.base.sha }}",
+		"ref":                 "${{ github.base_ref }}",
 		"persist-credentials": false,
-	}, co.With, "gate script must come from the base, with no path, repository or token override")
+	}, co.With, "gate script must come from the current base branch tip, with no path, repository or token override")
 
 	h := job.Steps[health]
 	require.Nil(t, h.ContinueOnError)
@@ -234,6 +234,27 @@ func TestCIWorkflow_MainMacOSHealth_RunsBaseScriptOnlyOnPullRequestsWithoutOverr
 		"GH_TOKEN":          "${{ github.token }}",
 		"GITHUB_REPOSITORY": "${{ github.repository }}",
 	}, h.Env, "no secret and no other value reaches the gate")
+}
+
+// The gate step checks out the base BRANCH tip, never the SHA the pull request
+// recorded at its last sync: that SHA can predate the health script, which made
+// the gate fail with "No such file or directory" (MTIX-112.17.42.5). Fork
+// safety is unchanged: the step names no repository (so it is the base repo),
+// no token and no pull request ref or head SHA, and drops its credentials.
+func TestCIWorkflow_MainMacOSHealth_CheckoutUsesBaseTipNotStoredSHAOrPRRef(t *testing.T) {
+	job := readCIJobs(t)["test-go"]
+	checkout, ok := ciTestGoSteps(t)["Check out the base branch's health script"]
+	require.True(t, ok)
+	co := job.Steps[checkout]
+	ref, _ := co.With["ref"].(string)
+	require.Equal(t, "${{ github.base_ref }}", ref)
+	for _, banned := range []string{"base.sha", "head", "pull/", "merge", "refs/", "github.sha", "github.ref"} {
+		require.NotContains(t, ref, banned, "gate checkout must not use a stored SHA or a pull request ref")
+	}
+	require.Equal(t, false, co.With["persist-credentials"])
+	for _, key := range []string{"repository", "token", "path", "submodules", "fetch-depth"} {
+		require.NotContains(t, co.With, key, "gate checkout must not redirect the repository or token")
+	}
 }
 
 func TestCIWorkflow_Permissions_OnlyTestGoReadsActions(t *testing.T) {

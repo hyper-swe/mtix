@@ -4,6 +4,7 @@
 package service
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -61,4 +62,29 @@ func TestMoveEnrolLockAside_RegularFileMoved_IsPutBack(t *testing.T) {
 	assert.Equal(t, "held", string(body))
 	_, statErr := os.Lstat(aside)
 	assert.True(t, os.IsNotExist(statErr))
+}
+
+// A failing post-move check cannot show what moved, so the move must fail
+// rather than report success.
+func TestMoveEnrolLockAside_PostMoveLstatFails_ReturnsError(t *testing.T) {
+	dir := t.TempDir()
+	lock, aside := filepath.Join(dir, "enroll.lock"), filepath.Join(dir, "enroll.lock.unprobeable")
+	require.NoError(t, os.Mkdir(lock, 0o700))
+	injected := errors.New("injected lstat failure")
+	failingLstat := func(string) (os.FileInfo, error) { return nil, injected }
+
+	err := moveEnrolLockAsideWith(lock, aside, failingLstat)
+	require.ErrorIs(t, err, injected)
+	assert.Contains(t, err.Error(), "verify moved enrolment lock")
+}
+
+// A non-regular object moved aside is a success: the move returns nil.
+func TestMoveEnrolLockAside_DirectoryMoved_Succeeds(t *testing.T) {
+	dir := t.TempDir()
+	lock, aside := filepath.Join(dir, "enroll.lock"), filepath.Join(dir, "enroll.lock.unprobeable")
+	require.NoError(t, os.Mkdir(lock, 0o700))
+	require.NoError(t, moveEnrolLockAside(lock, aside))
+	info, err := os.Lstat(aside)
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
 }

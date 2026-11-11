@@ -60,7 +60,7 @@ func (s *InboxService) InboxAckThrough(ctx context.Context, agent string, seq in
 	if err != nil {
 		return wrapAPIOperation(fmt.Sprintf("ack inbox through %d for %s", seq, agent), err)
 	}
-	notifyReevaluator(ctx, s.reeval, agent, "inbox ack through")
+	notifyReevaluator(ctx, s.logger, s.reeval, agent, "inbox ack through")
 	return nil
 }
 

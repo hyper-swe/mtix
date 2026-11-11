@@ -41,7 +41,7 @@ func (s *InboxService) InboxReadWait(ctx context.Context, agent string, timeout 
 	}
 	ticker := time.NewTicker(inboxReadPollInterval)
 	defer ticker.Stop()
-	deadline := wallDeadline(s.wallNow(), timeout)
+	win := s.openWaitWindow(timeout)
 	readCtx := ctx // the first read follows the caller, later ones the wait budget
 	last := emptyInboxResult()
 	for {
@@ -54,7 +54,7 @@ func (s *InboxService) InboxReadWait(ctx context.Context, agent string, timeout 
 		if len(res.Events) > 0 || len(res.HeldEvents) > 0 {
 			return res, nil
 		}
-		if done, werr := s.parkUntilChange(ctx, waitCtx, ticker.C, agent, probe, deadline); done {
+		if done, werr := s.parkUntilChange(ctx, waitCtx, ticker.C, agent, probe, win); done {
 			if werr != nil {
 				return InboxResult{}, werr
 			}

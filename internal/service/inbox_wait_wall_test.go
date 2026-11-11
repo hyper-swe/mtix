@@ -24,6 +24,10 @@ type waitBackend struct {
 	events []sqlite.InboxEvent
 	lists  int
 	counts int
+	// override, when set, makes InboxCount report pend/tot instead of the event
+	// count, so a test can move pending and total independently.
+	override  bool
+	pend, tot int64
 }
 
 func (b *waitBackend) InboxList(context.Context, string) ([]sqlite.InboxEvent, error) {
@@ -41,8 +45,17 @@ func (b *waitBackend) InboxCount(context.Context, string) (int64, int64, error) 
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.counts++
+	if b.override {
+		return b.pend, b.tot, nil
+	}
 	n := int64(len(b.events))
 	return n, n, nil
+}
+
+func (b *waitBackend) setCounts(pending, total int64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.override, b.pend, b.tot = true, pending, total
 }
 
 func (b *waitBackend) add(e sqlite.InboxEvent) {
@@ -146,4 +159,91 @@ func TestInboxReadWait_EligibilityFlipsWithoutInboxChange_WakesWithinFloor(t *te
 	require.NoError(t, err)
 	require.Len(t, res.Events, 1)
 	assert.Less(t, time.Since(began), inboxFullReadFloor+inboxReadPollInterval+time.Second)
+}
+
+// steppedBack returns a clock that reads start for its first n calls and one
+// hour earlier afterwards: a wall clock set backwards while the wait is parked.
+func steppedBack(start time.Time, n int64) func() time.Time {
+	var calls atomic.Int64
+	return func() time.Time {
+		if calls.Add(1) <= n {
+			return start
+		}
+		return start.Add(-time.Hour)
+	}
+}
+
+// MTIX-245 story 3 (S1 of round 1): the full-read floor is timed on the
+// monotonic clock, so a wall clock stepped back an hour while parked still lets
+// a time-dependent eligibility change wake within the floor.
+func TestInboxReadWait_WallClockSteppedBack_FloorStillWakesOnEligibilityChange(t *testing.T) {
+	backend := &waitBackend{events: []sqlite.InboxEvent{{Seq: 1, Body: "held"}}}
+	var open atomic.Bool
+	policy := InboxPolicy{Eligibility: func(context.Context, string) (InboxEligibility, error) {
+		if open.Load() {
+			return InboxEligibility{Eligible: true}, nil
+		}
+		return InboxEligibility{Reason: "unconfirmed"}, nil
+	}}
+	start := time.Date(2026, 11, 11, 8, 0, 0, 0, time.UTC)
+	svc := NewInboxService(backend).WithInboxPolicy(policy).WithWaitClock(steppedBack(start, 1))
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		open.Store(true)
+	}()
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
+	defer cancel()
+	began := time.Now()
+	res, err := svc.InboxReadWait(ctx, "w", 0, InboxReadOptions{})
+	require.NoError(t, err, "the floor must run despite the backward step, not leave the caller to time out")
+	require.Len(t, res.Events, 1)
+	assert.Less(t, time.Since(began), inboxFullReadFloor+inboxReadPollInterval+time.Second)
+}
+
+// MTIX-245: the timeout also fires on the monotonic clock when the wall clock
+// was stepped backwards; the context timer (an hour here) cannot be what ends it.
+func TestInboxReadWait_WallClockSteppedBack_TimeoutFiresOnMonotonicElapsed(t *testing.T) {
+	start := time.Date(2026, 11, 11, 8, 0, 0, 0, time.UTC)
+	var monoCalls atomic.Int64
+	mono := func() time.Time {
+		if monoCalls.Add(1) <= 1 { // the entry reading
+			return start
+		}
+		return start.Add(2 * time.Hour)
+	}
+	svc := NewInboxService(&waitBackend{}).WithInboxPolicy(eligibleNow()).
+		WithWaitClock(steppedBack(start, 1)).WithWaitMonotonic(mono)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	began := time.Now()
+	res, err := svc.InboxReadWait(ctx, "w", time.Hour, InboxReadOptions{})
+	require.NoError(t, err, "the monotonic timeout is an empty result, not an error")
+	assert.Empty(t, res.Events)
+	assert.Less(t, time.Since(began), 3*time.Second)
+}
+
+// MTIX-245 (S3 of round 1): the probe compares pending and total independently.
+// Only one moves in each case, with the events themselves unchanged, so a full
+// read follows within a tick only if that field is part of the comparison.
+func TestInboxReadWait_ProbeFieldChanges_TriggerFullRead(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		pending, tot int64
+	}{
+		{"pending only", 5, 3},
+		{"total only", 3, 6},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backend := &waitBackend{}
+			backend.setCounts(3, 3)
+			svc := NewInboxService(backend).WithInboxPolicy(eligibleNow())
+			go func() {
+				time.Sleep(300 * time.Millisecond)
+				backend.setCounts(tc.pending, tc.tot)
+			}()
+			_, err := svc.InboxReadWait(t.Context(), "w", 1200*time.Millisecond, InboxReadOptions{})
+			require.NoError(t, err)
+			assert.Equal(t, 2, backend.listCalls(), "one entry read plus one read after the probe moved, none from the floor")
+		})
+	}
 }

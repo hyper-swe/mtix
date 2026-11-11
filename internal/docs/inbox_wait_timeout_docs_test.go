@@ -32,6 +32,10 @@ func TestInboxWaitTimeoutDocs_AllCopiesStateWallClockSemantics(t *testing.T) {
 			"a sleeping machine does not stretch it",
 			"exits 5 within about one tick of the deadline",
 			"at least every 2 seconds",
+			"whichever comes first",
+			"monotonic time covers a wall clock stepped backwards",
+			"With a wake policy, a parked wait is cheap",
+			"Without a wake policy, each tick runs the plain inbox list query",
 		} {
 			require.Contains(t, text, phrase, path)
 		}

@@ -143,7 +143,7 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 	ticker := time.NewTicker(inboxPollInterval)
 	defer ticker.Stop()
 	queryCtx := ctx
-	deadline := s.waitDeadline(timeout)
+	win := s.openWaitWindow(timeout)
 	for {
 		events, err := s.InboxList(queryCtx, agentID)
 		if err != nil {
@@ -158,8 +158,8 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 			return nil, inboxWaitError(ctx, waitCtx, waitCtx.Err())
 		case <-ticker.C:
 			// MTIX-245: the context timer stops while the system sleeps, so the
-			// deadline is also checked against the wall clock on every tick.
-			if !deadline.IsZero() && !s.waitNow().Before(deadline) {
+			// timeout is also checked on both clocks every tick.
+			if win.spent(s.waitNow(), s.waitMonoNow()) {
 				return nil, nil
 			}
 		}
@@ -175,12 +175,31 @@ func (s *Store) waitNow() time.Time {
 	return time.Now().Round(0)
 }
 
-// waitDeadline is entry plus timeout on the wall clock, zero when unbounded.
-func (s *Store) waitDeadline(timeout time.Duration) time.Time {
-	if timeout <= 0 {
-		return time.Time{}
+func (s *Store) waitMonoNow() time.Time {
+	if s.waitMono != nil {
+		return s.waitMono()
 	}
-	return s.waitNow().Add(timeout)
+	return time.Now()
+}
+
+// waitWindow is the timeout of one wait, anchored on both clocks at entry. It
+// is spent when EITHER clock has advanced by the timeout: the wall clock covers
+// system sleep (monotonic time pauses), the monotonic clock covers a wall clock
+// stepped backwards (MTIX-245). The zero timeout never expires.
+type waitWindow struct {
+	wall, mono time.Time
+	timeout    time.Duration
+}
+
+func (s *Store) openWaitWindow(timeout time.Duration) waitWindow {
+	return waitWindow{wall: s.waitNow(), mono: s.waitMonoNow(), timeout: timeout}
+}
+
+func (w waitWindow) spent(wall, mono time.Time) bool {
+	if w.timeout <= 0 {
+		return false
+	}
+	return mono.Sub(w.mono) >= w.timeout || wall.Sub(w.wall) >= w.timeout
 }
 
 // Only the wait's own elapsed timeout is an empty success; cancellation from

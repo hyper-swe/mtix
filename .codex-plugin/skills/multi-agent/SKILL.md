@@ -280,13 +280,17 @@ zero has no limit, and already pending events return even if the initial
 database lookup outlasts a positive timeout. That lookup remains interruptible
 by caller cancellation (CLI SIGINT or SIGTERM). After an empty lookup, waiting
 for new events uses only the remaining timeout budget measured from entry.
-The timeout is wall-clock time, not run time: it is checked against the wall
-clock on every 250 ms poll tick, so a sleeping machine does not stretch it, and
-an empty wait exits 5 within about one tick of the deadline once the machine is
-awake. A parked wait is cheap: each tick only counts the inbox, and the full
-read with the wake policy runs when the counts change and at least every 2
+The timeout is wall-clock time, not run time: on every 250 ms poll tick the wait
+ends when either the monotonic elapsed time or the wall-clock elapsed time
+reaches the timeout, whichever comes first. The wall clock covers a sleeping
+machine (monotonic time pauses), and the monotonic time covers a wall clock
+stepped backwards, so a sleeping machine does not stretch it, and an empty wait
+exits 5 within about one tick of the deadline once the machine is awake. With a
+wake policy, a parked wait is cheap: each tick only counts the inbox, and the
+full read with the wake policy runs when the counts change and at least every 2
 seconds, so a change in hub state, permissions or budget window is noticed
-within about 2 seconds.
+within about 2 seconds. Without a wake policy, each tick runs the plain inbox
+list query.
 Events mean exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM
 means exit 7.
 A negative timeout is refused. Keep foreground waits within the harness's tool

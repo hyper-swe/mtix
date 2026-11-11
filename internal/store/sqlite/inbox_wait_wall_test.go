@@ -38,3 +38,32 @@ func TestInboxWait_WallClockJumpPastTimeout_ReturnsEmptyWithinOneTick(t *testing
 	assert.Empty(t, events)
 	assert.Less(t, time.Since(began), 3*time.Second)
 }
+
+// MTIX-245: the store wait also ends on the monotonic clock when the wall clock
+// was stepped backwards; the one-hour context timer cannot be what ends it.
+func TestInboxWait_WallClockSteppedBack_TimeoutFiresOnMonotonicElapsed(t *testing.T) {
+	s, err := New(filepath.Join(t.TempDir(), "mono.db"), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	start := time.Date(2026, 11, 11, 8, 0, 0, 0, time.UTC)
+	var wallCalls, monoCalls atomic.Int64
+	s.waitClock = func() time.Time {
+		if wallCalls.Add(1) <= 1 {
+			return start
+		}
+		return start.Add(-time.Hour)
+	}
+	s.waitMono = func() time.Time {
+		if monoCalls.Add(1) <= 1 {
+			return start
+		}
+		return start.Add(2 * time.Hour)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	began := time.Now()
+	events, err := s.InboxWait(ctx, "w", time.Hour)
+	require.NoError(t, err)
+	assert.Empty(t, events)
+	assert.Less(t, time.Since(began), 3*time.Second)
+}

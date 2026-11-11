@@ -143,7 +143,6 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 	ticker := time.NewTicker(inboxPollInterval)
 	defer ticker.Stop()
 	queryCtx := ctx
-	win := s.openWaitWindow(timeout)
 	for {
 		events, err := s.InboxList(queryCtx, agentID)
 		if err != nil {
@@ -157,49 +156,8 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 		case <-waitCtx.Done():
 			return nil, inboxWaitError(ctx, waitCtx, waitCtx.Err())
 		case <-ticker.C:
-			// MTIX-245: the context timer stops while the system sleeps, so the
-			// timeout is also checked on both clocks every tick.
-			if win.spent(s.waitNow(), s.waitMonoNow()) {
-				return nil, nil
-			}
 		}
 	}
-}
-
-// waitNow is the wall clock InboxWait measures its timeout against, with the
-// monotonic reading stripped; a test may replace waitClock (MTIX-245).
-func (s *Store) waitNow() time.Time {
-	if s.waitClock != nil {
-		return s.waitClock()
-	}
-	return time.Now().Round(0)
-}
-
-func (s *Store) waitMonoNow() time.Time {
-	if s.waitMono != nil {
-		return s.waitMono()
-	}
-	return time.Now()
-}
-
-// waitWindow is the timeout of one wait, anchored on both clocks at entry. It
-// is spent when EITHER clock has advanced by the timeout: the wall clock covers
-// system sleep (monotonic time pauses), the monotonic clock covers a wall clock
-// stepped backwards (MTIX-245). The zero timeout never expires.
-type waitWindow struct {
-	wall, mono time.Time
-	timeout    time.Duration
-}
-
-func (s *Store) openWaitWindow(timeout time.Duration) waitWindow {
-	return waitWindow{wall: s.waitNow(), mono: s.waitMonoNow(), timeout: timeout}
-}
-
-func (w waitWindow) spent(wall, mono time.Time) bool {
-	if w.timeout <= 0 {
-		return false
-	}
-	return mono.Sub(w.mono) >= w.timeout || wall.Sub(w.wall) >= w.timeout
 }
 
 // Only the wait's own elapsed timeout is an empty success; cancellation from

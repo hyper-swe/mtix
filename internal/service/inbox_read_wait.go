@@ -13,7 +13,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
-// inboxReadPollInterval is how often a policy-applying wait probes the inbox.
+// inboxReadPollInterval is how often a policy-applying wait re-reads the inbox.
 const inboxReadPollInterval = 250 * time.Millisecond
 
 func emptyInboxResult() InboxResult {
@@ -36,16 +36,14 @@ func (s *InboxService) InboxReadWait(ctx context.Context, agent string, timeout 
 		waitCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
+	ticker := time.NewTicker(inboxReadPollInterval)
+	defer ticker.Stop()
 	if s.policy.Eligibility == nil {
 		return s.waitUnpolicied(ctx, agent, timeout) // no policy: the store's own wait
 	}
-	ticker := time.NewTicker(inboxReadPollInterval)
-	defer ticker.Stop()
-	win := s.openWaitWindow(timeout)
 	readCtx := ctx // the first read follows the caller, later ones the wait budget
 	last := emptyInboxResult()
 	for {
-		probe := s.probeInbox(readCtx, agent)
 		res, err := s.InboxRead(readCtx, agent, opt)
 		if err != nil {
 			return s.waitReadFailed(ctx, waitCtx, last, err)
@@ -54,11 +52,13 @@ func (s *InboxService) InboxReadWait(ctx context.Context, agent string, timeout 
 		if len(res.Events) > 0 || len(res.HeldEvents) > 0 {
 			return res, nil
 		}
-		if done, werr := s.parkUntilChange(ctx, waitCtx, ticker.C, agent, probe, win); done {
-			if werr != nil {
-				return InboxResult{}, werr
+		select {
+		case <-waitCtx.Done():
+			if ctx.Err() != nil {
+				return InboxResult{}, fmt.Errorf("inbox wait interrupted: %w", ctx.Err())
 			}
 			return res, nil // the wait's own timeout: nothing eligible, held count kept
+		case <-ticker.C:
 		}
 	}
 }

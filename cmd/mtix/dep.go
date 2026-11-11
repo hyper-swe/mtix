@@ -11,7 +11,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -149,11 +148,11 @@ func runDepShow(id string) error {
 		return NewOutputWriter(true).WriteJSON(blockers)
 	}
 	if len(blockers) == 0 {
-		fmt.Printf("No blockers for %s\n", displayNodeID(id))
+		fmt.Printf("No blockers for %s\n", id)
 	} else {
-		fmt.Printf("Blockers for %s:\n", displayNodeID(id))
+		fmt.Printf("Blockers for %s:\n", id)
 		for _, b := range blockers {
-			fmt.Printf("  %s (%s)\n", displayNodeID(b.FromID), format.SafeLine(string(b.DepType)))
+			fmt.Printf("  %s (%s)\n", b.FromID, b.DepType)
 		}
 	}
 	return nil

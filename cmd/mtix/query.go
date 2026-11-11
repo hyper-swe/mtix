@@ -344,7 +344,7 @@ func runStale(project string, allProjects bool) error {
 	} else {
 		out.WriteHuman("Stale agents:\n")
 		for _, a := range agents {
-			out.WriteHuman("  %s\n", format.SafeLine(a))
+			out.WriteHuman("  %s\n", a)
 		}
 	}
 	return nil

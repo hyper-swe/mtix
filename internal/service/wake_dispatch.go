@@ -39,10 +39,12 @@ type WakeDispatcherOptions struct {
 	Send   func(context.Context, model.WakeAttempt) error
 	// Adapters are the delivery routes, selected per registration in route order.
 	// Send, when set, joins them as the legacy route. At least one of the two is required.
-	Adapters    []WakeAdapter
-	AlertAgent  string
-	Settings    WakeSettingsReader
-	Held        func(string)
+	Adapters   []WakeAdapter
+	AlertAgent string
+	Settings   WakeSettingsReader
+	Held       func(string)
+	// Logger receives the default Held line; nil uses the process default logger (MTIX-130.14).
+	Logger      *slog.Logger
 	BudgetState *oplocal.State
 	Clock       func() time.Time
 	// HostID and UID scope re-evaluation to this host's and operating-system user's
@@ -79,7 +81,11 @@ func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
 		return nil, fmt.Errorf("validate wake diagnostic agent: %w", err)
 	}
 	if opts.Held == nil {
-		opts.Held = func(line string) { slog.Warn(line) }
+		logger := opts.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		opts.Held = func(line string) { logger.Warn(line) }
 	}
 	budgets, err := newWakeBudgets(opts)
 	if err != nil {

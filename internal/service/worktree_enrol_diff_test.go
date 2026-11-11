@@ -174,6 +174,37 @@ func TestBoardExclusions_EachHasAReasonAndIsASmallNamedSet(t *testing.T) {
 	}
 }
 
+// TestBoardDiff_DeferUntilIsALocalByDesignDifference pins MTIX-112.17.16.11:
+// in sync protocol 1 a defer wake time stays on the store that set it, so a
+// clone of the hub never holds it and enrolment must report it, not hide it.
+// Adding defer_until to either documented list would silently drop a wake
+// time on accept-hub and fails here.
+func TestBoardDiff_DeferUntilIsALocalByDesignDifference(t *testing.T) {
+	for _, list := range [][]service.BoardExclusion{service.BoardExclusions(), service.BoardPresenceOnly()} {
+		for _, x := range list {
+			assert.NotContains(t, x.Path, "defer_until", "a wake time is never hidden from the comparison")
+		}
+	}
+	local := `{"nodes":[{"id":"TEST-1","status":"deferred","defer_until":"2026-06-04T00:00:00Z"}]}`
+	clone := `{"nodes":[{"id":"TEST-1","status":"deferred"}]}`
+	moved := `{"nodes":[{"id":"TEST-1","status":"deferred","defer_until":"2026-06-05T00:00:00Z"}]}`
+
+	sameDay := `{"nodes":[{"id":"TEST-1","status":"deferred","defer_until":"2026-06-04T06:00:00Z"}]}`
+	for name, pair := range map[string][2]string{
+		"clone holds no wake time":              {local, clone},
+		"only the clone holds a wake time":      {clone, local},
+		"clone holds another wake time":         {local, moved},
+		"wake times differ by hours in one day": {local, sameDay},
+	} {
+		got, err := service.CompareBoardDocs([]byte(pair[0]), []byte(pair[1]))
+		require.NoError(t, err, name)
+		assert.Equal(t, service.BoardDiff{"TEST-1": {"defer_until"}}, got, name)
+	}
+	same, err := service.CompareBoardDocs([]byte(local), []byte(local))
+	require.NoError(t, err)
+	assert.Empty(t, same, "an identical wake time is not a difference")
+}
+
 func TestCompareBoardDocs_DeletedAtComparesAsPresenceNotTime(t *testing.T) {
 	a := `{"nodes":[{"id":"TEST-1","deleted_at":"2026-01-01T00:00:01Z"}]}`
 	b := `{"nodes":[{"id":"TEST-1","deleted_at":"2026-01-01T00:00:09Z"}]}`

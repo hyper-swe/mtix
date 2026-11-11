@@ -29,6 +29,7 @@ func TestIdentify_ObservedProcesses_MapToHarness(t *testing.T) {
 		{"claude by kernel name", procinfo.Proc{Name: "claude"}, "claude-code"},
 		{"codex", procinfo.Proc{Name: "codex", Argv0: "codex", Exe: "/opt/homebrew/bin/codex"}, "codex"},
 		{"pi", procinfo.Proc{Name: "pi", Argv0: "pi"}, "pi"},
+		{"executable basename alone", procinfo.Proc{Name: "x", Exe: "/opt/homebrew/bin/codex"}, "codex"},
 		{"login-style argv0", procinfo.Proc{Name: "x", Argv0: "-Codex"}, "codex"},
 		{"node is not a harness", procinfo.Proc{Name: "node", Argv0: "node", Exe: "/usr/local/bin/node"}, ""},
 		{"version string alone", procinfo.Proc{Name: "2.1.296"}, ""},

@@ -285,7 +285,9 @@ row fails there when an older build is seen, and the fix is
 `mtix config set history.export false` until that machine is upgraded.
 
 ## mtix export refuses: acknowledgment index disagrees with its table
-`mtix export` (and any explicit export that carries inbox mail) refuses with
+`mtix export` (and any explicit export that carries inbox mail, including the
+inbox carry that worktree enrollment reads before it moves acknowledgments to
+the hub clone) refuses with
 "acknowledgment index disagrees with its table" (or "holds N keys but the table
 holds M", or "acknowledgment index unreadable") when the index over the
 acknowledgment table no longer matches the table. Exporting anyway would mark

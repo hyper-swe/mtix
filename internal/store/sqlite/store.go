@@ -36,18 +36,19 @@ func resolveDBPath(path string) string {
 // Store implements store.Store using SQLite with WAL mode.
 // It uses separate read and write connection pools per NFR-2.1.
 type Store struct {
-	writeDB         *sql.DB
-	rollbackWriter  RollbackWriterFunc // nil in production; a test seam for the post-commit-failure rollback (MTIX-198)
-	readDB          *sql.DB
-	logger          *slog.Logger
-	vcReported      atomic.Bool // this Store has seen the vector-clock prune notice issued (MTIX-95.16)
-	clock           func() time.Time
-	waitClock       func() time.Time              // wall clock for the inbox wait deadline; nil uses the system clock (MTIX-245)
-	waitMono        func() time.Time              // monotonic clock for the inbox wait deadline; nil uses time.Now (MTIX-245)
-	waitSeq         atomic.Int64                  // per-process token that gives each inbox wait its own waiter row (MTIX-112.3)
-	startTimeFn     func(pid int) (string, error) // process start-time reader for waiter liveness; nil uses procinfo.StartTime (MTIX-112.3)
-	history         sync.Map                      // *sql.Tx -> *historyTracker for the open recording transactions
-	encodePayloadFn payloadEncoder                // fixed per Store before concurrent use
+	writeDB               *sql.DB
+	rollbackWriter        RollbackWriterFunc // nil in production; a test seam for the post-commit-failure rollback (MTIX-198)
+	readDB                *sql.DB
+	logger                *slog.Logger
+	vcReported            atomic.Bool // this Store has seen the vector-clock prune notice issued (MTIX-95.16)
+	clock                 func() time.Time
+	waitClock             func() time.Time              // wall clock for the inbox wait deadline; nil uses the system clock (MTIX-245)
+	waitMono              func() time.Time              // monotonic clock for the inbox wait deadline; nil uses time.Now (MTIX-245)
+	waitSeq               atomic.Int64                  // per-process token that gives each inbox wait its own waiter row (MTIX-112.3)
+	startTimeFn           func(pid int) (string, error) // process start-time reader for waiter liveness; nil uses procinfo.StartTime (MTIX-112.3)
+	ackInfoAfterFirstRead func(context.Context)         // test seam: runs after InboxAckInfo's first read, inside its snapshot (MTIX-112.3)
+	history               sync.Map                      // *sql.Tx -> *historyTracker for the open recording transactions
+	encodePayloadFn       payloadEncoder                // fixed per Store before concurrent use
 
 	// afterExportBoardRead is a nil-by-default test observer, set only before
 	// an isolated synchronous export; concurrent writers never access it.

@@ -284,8 +284,12 @@ func TestSchema_DeliveryTables_AdditiveOnReleasedStoreUpgrade(t *testing.T) {
 	}
 	want := version(s)
 	// A released (0.5.4) store has none of the three tables.
-	for _, tbl := range []string{"agent_inbox_reads", "agent_inbox_cursor_marks", "agent_inbox_waiters"} {
-		_, err := s.WriteDB().Exec(`DROP TABLE ` + tbl) // test-only constant identifiers
+	for _, drop := range []string{
+		`DROP TABLE agent_inbox_reads`,
+		`DROP TABLE agent_inbox_cursor_marks`,
+		`DROP TABLE agent_inbox_waiters`,
+	} {
+		_, err := s.WriteDB().Exec(drop)
 		require.NoError(t, err)
 	}
 	require.NoError(t, s.Close())

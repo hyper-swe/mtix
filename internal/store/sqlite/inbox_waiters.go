@@ -1,3 +1,6 @@
+// Copyright 2025-2026 HyperSWE
+// SPDX-License-Identifier: Apache-2.0
+
 package sqlite
 
 import (
@@ -11,10 +14,19 @@ import (
 	"github.com/hyper-swe/mtix/internal/procinfo"
 )
 
-// InboxParked reports whether agent has a live wait on this machine. A waiter
-// row counts only when its pid is running with the recorded start time, so a
-// crashed or pid-reused waiter is never reported parked. It writes nothing.
+// InboxParked reports whether agent has a live wait on this machine (MTIX-112.3).
+// A waiter row counts only when its pid is running with the recorded start time,
+// so a crashed or pid-reused waiter is never reported parked. A store without the
+// waiters table (a released store opened read-only) reports not parked. It
+// writes nothing.
 func (s *Store) InboxParked(ctx context.Context, agent string) (Parked, error) {
+	present, err := tableExists(ctx, s.readDB, "agent_inbox_waiters")
+	if err != nil {
+		return Parked{}, err
+	}
+	if !present {
+		return Parked{}, nil
+	}
 	// Candidate waiters for the agent, earliest first.
 	rows, err := s.readDB.QueryContext(ctx, `SELECT pid, pid_start_time, since FROM agent_inbox_waiters
 		WHERE agent_id=? ORDER BY since ASC, pid ASC, token ASC`, agent)
@@ -58,6 +70,15 @@ func (s *Store) processStart(pid int) (string, error) {
 		return s.startTimeFn(pid)
 	}
 	return procinfo.StartTime(pid)
+}
+
+// RegisterInboxWaiter records a live wait of agent and returns the function that
+// removes exactly that wait's row. A wait path outside InboxWait (the policy
+// wait of the service) holds it for the whole wait and calls the remover on
+// every exit, so InboxParked is true during the wait (MTIX-112.3). Best effort:
+// it never fails the wait.
+func (s *Store) RegisterInboxWaiter(ctx context.Context, agent string) func() {
+	return s.registerWaiter(ctx, agent)
 }
 
 // registerWaiter records a live wait and returns the function that removes

@@ -14,7 +14,7 @@ import (
 
 // Exercise the common emitter, so a new caller of any workflow op cannot omit
 // the snapshot even when it constructs a legacy-shaped payload directly.
-func TestReplicatedFieldsR2_AllWorkflowEmitsCaptureSnapshot(t *testing.T) {
+func TestEmitEvent_AnyWorkflowOp_CapturesClosedAtSnapshot(t *testing.T) {
 	for _, op := range model.AllOpTypes {
 		if !isWorkflowOp(op) {
 			continue
@@ -37,7 +37,7 @@ func TestReplicatedFieldsR2_AllWorkflowEmitsCaptureSnapshot(t *testing.T) {
 		})
 	}
 }
-func TestReplicatedFieldsR2_EmptyIdentityApplyRollsBack(t *testing.T) {
+func TestApplyComment_EmptyAnnotationIdentity_RollsBack(t *testing.T) {
 	for _, body := range []string{"", "note"} {
 		t.Run(body, func(t *testing.T) {
 			s, db := applyTestStore(t)
@@ -54,7 +54,7 @@ func TestReplicatedFieldsR2_EmptyIdentityApplyRollsBack(t *testing.T) {
 		})
 	}
 }
-func TestReplicatedFieldsR2_UIDWinnerOrdersAndTies(t *testing.T) {
+func TestApplyComment_UIDWinnerAnyOrderOrTie_ConvergesAnnotation(t *testing.T) {
 	for _, mixed := range []bool{false, true} {
 		for _, order := range [][]int{{0, 1, 2}, {0, 2, 1}, {1, 0, 2}, {1, 2, 0}, {2, 0, 1}, {2, 1, 0}} {
 			t.Run(fmt.Sprint(mixed, order), func(t *testing.T) {
@@ -86,7 +86,7 @@ func TestReplicatedFieldsR2_UIDWinnerOrdersAndTies(t *testing.T) {
 	}
 }
 
-func TestReplicatedFieldsR2_EmptyIdentityRawEmitRollsBack(t *testing.T) {
+func TestEmitEvent_EmptyAnnotationIdentity_RollsBack(t *testing.T) {
 	for _, body := range []string{"", "note"} {
 		t.Run(body, func(t *testing.T) {
 			s, db := applyTestStore(t)
@@ -110,7 +110,7 @@ func TestReplicatedFieldsR2_EmptyIdentityRawEmitRollsBack(t *testing.T) {
 	}
 }
 
-func TestReplicatedFieldsR2_MalformedWorkflowEmitRollsBack(t *testing.T) {
+func TestEmitEvent_MalformedWorkflowPayload_RollsBack(t *testing.T) {
 	for _, op := range model.AllOpTypes {
 		if !isWorkflowOp(op) {
 			continue

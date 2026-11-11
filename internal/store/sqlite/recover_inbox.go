@@ -5,6 +5,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
@@ -80,14 +81,23 @@ func (r inboxRecoverer) recover(ctx context.Context, dbPath string, mirror *Expo
 	return journal
 }
 
+// sqliteOpener opens a SQLite database with DSN parameters; openSQLite in production.
+type sqliteOpener func(path string, params ...string) (*sql.DB, error)
+
 // salvageInboxJournal reads damaged files without writes or index dependence (FR-19.1, MTIX-112.2.1).
-func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult, limit time.Duration) (journal *InboxJournal, err error) {
+func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult, limit time.Duration) (*InboxJournal, error) {
+	return salvageInboxJournalWith(ctx, path, res, limit, openSQLite)
+}
+
+// salvageInboxJournalWith is salvageInboxJournal with the opener passed in, so
+// a test can prove a short source is refused before any open (MTIX-112.50.7).
+func salvageInboxJournalWith(ctx context.Context, path string, res *RecoverResult, limit time.Duration, open sqliteOpener) (journal *InboxJournal, err error) {
 	if sourceErr := checkRecoverDatabase(path); sourceErr != nil {
 		return nil, sourceErr
 	}
 	// Apply salvage pragmas on every connection through the shared DSN builder.
 	params := append(readOnlyDSNParams(), "_pragma=cell_size_check(0)")
-	db, err := openSQLite(path, params...)
+	db, err := open(path, params...)
 	if err != nil {
 		return nil, fmt.Errorf("open journal for salvage: %w", err)
 	}

@@ -82,6 +82,33 @@ func TestAlertRaise_RateMetadata_RejectsOverflowAndConflictingKey(t *testing.T) 
 	}
 }
 
+func TestAlertRaise_ExhaustedCount_RefusesWithoutMutation(t *testing.T) {
+	s := alertFixture(t)
+	row, err := s.RecordAlert(t.Context(), alertInput(), alertTime())
+	require.NoError(t, err)
+	name := alertRateName(row.Agent, row.Class)
+	row.Count = math.MaxUint64
+	dir, err := s.directory(false)
+	require.NoError(t, err)
+	require.NoError(t, s.writeAlertRecord(dir, name, row.HostID, row))
+	before, err := readData(dir, name)
+	require.NoError(t, err)
+	require.NoError(t, closeFile(dir))
+	_, err = s.RecordAlert(t.Context(), alertInput(), alertTime().Add(time.Minute))
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+	require.ErrorContains(t, err, "alert count is exhausted")
+	dir, err = s.directory(false)
+	require.NoError(t, err)
+	after, err := readData(dir, name)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	var stored Alert
+	_, err = readAlertRecord(dir, name, row.HostID, &stored)
+	require.NoError(t, err)
+	require.Equal(t, row, stored)
+	require.NoError(t, closeFile(dir))
+}
+
 func TestAlertRecent_InvalidPreparedHash_Refuses(t *testing.T) {
 	s := alertFixture(t)
 	row, err := s.RecordAlert(t.Context(), alertInput(), alertTime())

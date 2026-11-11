@@ -19,8 +19,8 @@ import (
 // (CheckEnrolGuard), so the row prints a fix that works when run instead of the
 // command exiting with the decode error (MTIX-112.17.16.21.2).
 func registerEnrolTornMarkerDoctor(svc *service.DoctorService, mtixDir string, readErr error) error {
-	detail := "the enrolment marker cannot be read (" + format.SafeLine(readErr.Error()) + ")"
 	fix := tornMarkerFix(mtixDir, readErr)
+	detail := withEnrolFixTimeBound("the enrolment marker cannot be read ("+format.SafeLine(readErr.Error())+")", fix)
 	return svc.Register(service.DoctorCheck{ID: "board.enrol-interrupted", Run: func(context.Context) service.DoctorResult {
 		return service.DoctorResult{Status: service.DoctorFail, Detail: detail, Fix: fix,
 			Data: map[string]any{"marker_path": service.EnrolMarkerPath(mtixDir)}}

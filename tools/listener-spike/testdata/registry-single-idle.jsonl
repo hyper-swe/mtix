@@ -1,0 +1,2 @@
+{"pid":4242,"sessionId":"00000000-0000-4000-8000-000000000001","cwd":"/scratch/run/proj","messagingSocketPath":"/scratch/run/sock/4242.sock","procStart":"Tue Nov 10 10:00:00 2026","version":"2.1.312"}
+{"pid":4242,"sessionId":"00000000-0000-4000-8000-000000000001","cwd":"/scratch/run/proj","messagingSocketPath":"/scratch/run/sock/4242.sock","status":"idle","statusUpdatedAt":1793178000000,"version":"2.1.312"}

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"testing"
@@ -53,4 +54,55 @@ func TestContextAssembledPrompt_Block_KeepsLinesAndCountsRunes(t *testing.T) {
 	assert.Contains(t, out, "\n"+block+"\n", "heading, attribution and prompt on separate lines, continuation indented")
 	want := len([]rune(block))
 	assert.Contains(t, out, "=== Assembled Prompt ("+strconv.Itoa(want)+" chars) ===")
+}
+
+// hostileContextCases are the characters the shared display rule must keep
+// off a terminal (MTIX-100.10): bidi overrides, tag characters, ESC, CR, ZWSP.
+var hostileContextCases = []struct {
+	name string
+	char string
+}{
+	{"bidi_override", "\u202e"},
+	{"bidi_isolate", "\u2066"},
+	{"tag_character", "\U000e0041"},
+	{"escape", "\x1b"},
+	{"carriage_return", "\r"},
+	{"zero_width_space", "\u200b"},
+}
+
+// TestContextText_HostileCharacters_NeverReachTerminal proves a hostile
+// character in a title, a prompt or an annotation is removed from the text
+// output of mtix context (MTIX-100.10).
+func TestContextText_HostileCharacters_NeverReachTerminal(t *testing.T) {
+	for _, tc := range hostileContextCases {
+		t.Run(tc.name, func(t *testing.T) {
+			initTestApp(t)
+			require.NoError(t, runCreate("Ti"+tc.char+"tle", "", "", 3, "", "Pro"+tc.char+"mpt", "", "", ""))
+			require.NoError(t, runAnnotate("TEST-1", "No"+tc.char+"te", ""))
+			out := captureStdout(t, func() { require.NoError(t, runContext("TEST-1", 0, false)) })
+			assert.NotContains(t, out, tc.char)
+			for _, want := range []string{"Title", "Prompt", "Note"} {
+				assert.Contains(t, out, want)
+			}
+		})
+	}
+}
+
+// TestContextJSON_HostileCharacters_StayRaw proves --json carries the exact
+// stored text, as show does (MTIX-100.10).
+func TestContextJSON_HostileCharacters_StayRaw(t *testing.T) {
+	for _, tc := range hostileContextCases {
+		t.Run(tc.name, func(t *testing.T) {
+			initTestApp(t)
+			require.NoError(t, runCreate("Ti"+tc.char+"tle", "", "", 3, "", "Pro"+tc.char+"mpt", "", "", ""))
+			app.jsonOutput = true
+			out := captureStdout(t, func() { require.NoError(t, runContext("TEST-1", 0, false)) })
+			var got struct {
+				AssembledPrompt string `json:"assembled_prompt"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(out), &got))
+			assert.Contains(t, got.AssembledPrompt, "Ti"+tc.char+"tle")
+			assert.Contains(t, got.AssembledPrompt, "Pro"+tc.char+"mpt")
+		})
+	}
 }

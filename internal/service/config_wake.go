@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -24,6 +25,13 @@ type WakeConfigOptions struct {
 func (cs *ConfigService) WithWakeSettings(options WakeConfigOptions) *ConfigService {
 	scoped := *cs
 	scoped.wake = &options
+	return &scoped
+}
+
+// WithLogger returns a view that logs re-evaluation failures to l (MTIX-130.14).
+func (cs *ConfigService) WithLogger(l *slog.Logger) *ConfigService {
+	scoped := *cs
+	scoped.logger = l
 	return &scoped
 }
 
@@ -106,7 +114,7 @@ func (cs *ConfigService) changeWakeSetting(key string, value *string) error {
 		return updateErr
 	}
 	// The change is committed: a loosened setting may lift a hold. Failure here is logged only.
-	notifyReevaluator(context.Background(), cs.reevaluator, options.Agent, "wake setting change")
+	notifyReevaluator(context.Background(), cs.logger, cs.reevaluator, options.Agent, "wake setting change")
 	return nil
 }
 

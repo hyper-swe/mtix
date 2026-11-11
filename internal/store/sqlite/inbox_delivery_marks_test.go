@@ -358,3 +358,90 @@ func TestInboxMarks_Eviction_DropsTheLowestCursorNotTheOldestTime(t *testing.T) 
 	requireAckState(t, s, seqs[0], sqlite.AckWatermark, false, time.Time{})
 	requireAckState(t, s, seqs[2], sqlite.AckWatermark, true, t0.Add(2*time.Hour))
 }
+
+// Marks are written only when the cursor advances, so each (from, to) interval is
+// written once and the cursor-mark insert never meets an existing key: OR IGNORE
+// and OR REPLACE are equivalent there. This pins that invariant: re-acks and lower
+// acks add no mark and never rewrite an earlier mark's time (review F9).
+func TestInboxMarks_WriteOncePerAdvance_NeverRewritesAnEarlierMark(t *testing.T) {
+	s := newTestStore(t)
+	t0 := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+	clock, cur := ticking(t0)
+	s.SetClock(clock)
+	seqs := seedAddressed(t, s, "w", 3)
+	steps := []struct {
+		at  time.Duration
+		seq int64
+	}{{0, seqs[0]}, {time.Hour, seqs[2]}, {2 * time.Hour, seqs[2]}, {3 * time.Hour, seqs[1]}}
+	for _, st := range steps {
+		*cur = t0.Add(st.at)
+		require.NoError(t, s.InboxAckThrough(t.Context(), "w", st.seq))
+	}
+	rows, err := s.WriteDB().Query(`SELECT from_cursor, cursor, advanced_at FROM agent_inbox_cursor_marks
+		WHERE agent_id='w' ORDER BY cursor`)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, rows.Close()) }()
+	type mark struct {
+		from, to int64
+		at       string
+	}
+	var got []mark
+	for rows.Next() {
+		var m mark
+		require.NoError(t, rows.Scan(&m.from, &m.to, &m.at))
+		got = append(got, m)
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, []mark{
+		{0, seqs[0], t0.UTC().Format("2006-01-02T15:04:05.000000000Z")},
+		{seqs[0], seqs[2], t0.Add(time.Hour).UTC().Format("2006-01-02T15:04:05.000000000Z")},
+	}, got)
+}
+
+// Two marks can share a cursor: a folded single-event selective mark and a
+// watermark ending at the same event. At the bound the one that starts EARLIER
+// (lower from_cursor, the wider or earlier coverage) is evicted first, then by
+// kind; the rule is cursor, then from_cursor, both lowest first (review F11).
+func TestInboxMarks_Eviction_SameCursorTie_EvictsTheLowerFromCursor(t *testing.T) {
+	tests := []struct {
+		name       string
+		loserKind  string // inserted with from_cursor 0, the LOWER one
+		keeperKind string // inserted with from_cursor c-1, the higher one
+	}{
+		{"wide watermark vs folded selective", "watermark", "selective"},
+		{"rule is from_cursor, not kind", "selective", "watermark"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newTestStore(t)
+			t0 := time.Date(2026, 11, 11, 9, 0, 0, 0, time.UTC)
+			clock, cur := ticking(t0)
+			s.SetClock(clock)
+			seqs := seedAddressed(t, s, "w", 3)
+			c := seqs[1] // the shared cursor: below the new mark and every filler
+			_, err := s.WriteDB().Exec(`INSERT INTO agent_inbox_cursor(agent_id,cursor) VALUES('w',?)`, seqs[1])
+			require.NoError(t, err)
+			insert := func(cursor, from int64, kind string) {
+				_, execErr := s.WriteDB().Exec(`INSERT INTO agent_inbox_cursor_marks(agent_id,cursor,from_cursor,kind,advanced_at)
+					VALUES('w',?,?,?,'2026-11-11T12:00:00.000000000Z')`, cursor, from, kind)
+				require.NoError(t, execErr)
+			}
+			insert(c, 0, tt.loserKind)
+			insert(c, c-1, tt.keeperKind)
+			for i := 0; i < sqlite.MaxCursorMarks-2; i++ {
+				insert(int64(5000+i), int64(4999+i), "watermark")
+			}
+			require.Equal(t, sqlite.MaxCursorMarks, markCount(t, s, "w"))
+			*cur = t0.Add(time.Hour)
+			require.NoError(t, s.InboxAckThrough(t.Context(), "w", seqs[2])) // one mark too many
+			require.Equal(t, sqlite.MaxCursorMarks, markCount(t, s, "w"))
+			var n int
+			require.NoError(t, s.WriteDB().QueryRow(`SELECT COUNT(*) FROM agent_inbox_cursor_marks
+				WHERE agent_id='w' AND cursor=? AND from_cursor=?`, c, int64(0)).Scan(&n))
+			require.Zero(t, n, "the lower-from mark at the shared cursor is evicted")
+			require.NoError(t, s.WriteDB().QueryRow(`SELECT COUNT(*) FROM agent_inbox_cursor_marks
+				WHERE agent_id='w' AND cursor=? AND from_cursor=?`, c, c-1).Scan(&n))
+			require.Equal(t, 1, n, "the higher-from mark survives")
+		})
+	}
+}

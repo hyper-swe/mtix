@@ -146,7 +146,9 @@ func (s *Store) keepFoldedSelectiveAcks(ctx context.Context, tx *sql.Tx, agent s
 // evictCursorMarks keeps the newest MaxCursorMarks marks of agent. "Oldest" means
 // the lowest cursor (the earliest event), whatever the mark's kind or when it was
 // written, so a folded selective mark and a watermark mark compete on cursor alone
-// and the lower one goes first. An event covered only by an evicted mark reports
+// and the lower one goes first. Marks can share a cursor (a folded single-event
+// selective mark and a watermark ending at the same event): the one with the lower
+// from_cursor (the earlier-starting coverage) goes first, then by kind. An event covered only by an evicted mark reports
 // unknown.
 func (s *Store) evictCursorMarks(ctx context.Context, tx *sql.Tx, agent string) error {
 	// Rank by cursor, then range start, so the oldest coverage goes first.

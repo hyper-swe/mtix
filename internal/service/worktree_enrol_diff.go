@@ -48,8 +48,7 @@ const (
 func BoardExclusions() []BoardExclusion {
 	return []BoardExclusion{
 		{"nodes.activity", "the activity log never replicates; it is metadata, not board content"},
-		{"nodes.created_at", "apply stamps the clone's own clock when it creates a node"},
-		{"nodes.updated_at", "apply stamps the clone's own clock when it changes a node"},
+		{"nodes.updated_at", "a local write stamps updated_at from a clock reading apart from its event's time, and some local writes move it with no event (the auto-block when a dependency is added, removing a dependency), so a clone derives it from the latest applied event's time and it can differ; created_at is the create event's time and still compares"},
 		{"dependencies.created_at", "apply stamps the clone's own clock on an edge it creates; the edge itself (from, to, type) still compares; it differs only when the two clocks read different seconds"},
 		{"nodes.annotations.id", "for events from before MTIX-112.17.16.15, a locally written comment keeps its local id while a clone uses the event id; comments still compare by author, text and order"},
 		{"nodes.annotations.created_at", "for events from before MTIX-112.17.16.15, a clone takes the event time rather than the annotation's stored creation time, with its own clock as fallback if the event time is out of range; author, text and order still compare"},

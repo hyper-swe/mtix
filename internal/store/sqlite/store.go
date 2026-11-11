@@ -469,3 +469,13 @@ func openReadOnlyStore(ctx context.Context, dbPath string, logger *slog.Logger,
 		dbPath:       dbPath,
 	}, nil
 }
+
+// storeClock returns the store's injected clock so write helpers that hold only
+// a historyToucher stamp the events they emit with it (MTIX-112.17.16.13;
+// ADR-006 I1). A nil Store, or one with no clock set, yields the process clock.
+func (s *Store) storeClock() func() time.Time {
+	if s == nil {
+		return clockOrDefault()
+	}
+	return clockOrDefault(s.clock)
+}

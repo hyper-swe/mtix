@@ -17,7 +17,8 @@ import (
 // blocker, the transition_status event that restores the blocked dependent
 // reads wall_clock_ts from the store's injected clock, never the process
 // clock (MTIX-112.17.16.13; ADR-006 I1). Covers the done transition, a plain
-// cancel and a cascade cancel.
+// cancel, a cascade cancel, a dependency removal and a RefreshBlocked. Each
+// case also pins the dependent's updated_at to the injected clock.
 func TestEmit_AutoUnblock_FromInjectedClock(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -34,6 +35,17 @@ func TestEmit_AutoUnblock_FromInjectedClock(t *testing.T) {
 		}},
 		{"cascade cancel", "MTIX-1.1", func(ctx context.Context, t *testing.T, s *sqlite.Store) {
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "no longer needed", "agent-1", true))
+		}},
+		{"dependency removal", "MTIX-1", func(ctx context.Context, t *testing.T, s *sqlite.Store) {
+			require.NoError(t, s.RemoveDependency(ctx, "MTIX-1", "MTIX-2", model.DepTypeBlocks))
+		}},
+		{"refresh blocked", "MTIX-1", func(ctx context.Context, t *testing.T, s *sqlite.Store) {
+			// Leave MTIX-2 sticky-blocked with no blocker row, as a missed
+			// recompute would, then ask for the manual refresh.
+			_, err := s.WriteDB().ExecContext(ctx,
+				`DELETE FROM dependencies WHERE from_id = 'MTIX-1' AND to_id = 'MTIX-2'`)
+			require.NoError(t, err)
+			require.NoError(t, s.RefreshBlocked(ctx, "MTIX-2"))
 		}},
 	}
 	for _, tt := range tests {
@@ -57,6 +69,12 @@ func TestEmit_AutoUnblock_FromInjectedClock(t *testing.T) {
 				  WHERE node_id = 'MTIX-2' AND op_type = ? AND payload LIKE '%"from":"blocked"%'`,
 				string(model.OpTransitionStatus)).Scan(&wall), "the auto-unblock event is emitted")
 			require.Equal(t, resolveAt.UnixMilli(), wall)
+
+			var updatedAt string
+			require.NoError(t, raw.QueryRow(
+				`SELECT updated_at FROM nodes WHERE id = 'MTIX-2'`).Scan(&updatedAt))
+			require.Equal(t, resolveAt.UTC().Format(time.RFC3339), updatedAt,
+				"the unblocked dependent's updated_at comes from the injected clock")
 		})
 	}
 }

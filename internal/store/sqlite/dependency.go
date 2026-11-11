@@ -206,6 +206,14 @@ func autoBlockNode(ctx context.Context, tx *sql.Tx, h historyToucher, nodeID str
 // autoUnblockNode checks if a blocked node has no more unresolved blockers
 // and auto-restores it to previous_status per FR-3.8.
 func autoUnblockNode(ctx context.Context, tx *sql.Tx, h historyToucher, nodeID string, clocks ...func() time.Time) error {
+	// A *Store caller that passes no clock (RemoveDependency, RefreshBlocked)
+	// stamps both updated_at and the emitted wall_clock_ts from the store's
+	// injected clock, never the process clock (MTIX-112.17.16.13; ADR-006 I1).
+	if len(clocks) == 0 {
+		if cp, ok := h.(interface{ storeClock() func() time.Time }); ok {
+			clocks = append(clocks, cp.storeClock())
+		}
+	}
 	if err := h.touchHistory(ctx, tx, nodeID); err != nil {
 		return err
 	}

@@ -108,8 +108,10 @@ import (
 //     as in apply before MTIX-95.10; and a restore from invalidated keeps the
 //     originator's closed_at while replicas clear it.
 //   - closed_at range. When the winner's wall_clock_ts is outside years
-//     1..9999, closed_at is the apply time on that replica (eventTime,
-//     sync_event_time.go; MTIX-95.26), so it differs from the others'.
+//     1..9999, closed_at falls back to the apply clock on that replica
+//     (eventTime, sync_event_time.go; MTIX-95.26), so it differs from the
+//     others'. updated_at takes the same fallback through eventTime, then
+//     the MAX rule below.
 //   - updated_at is MAX(updated_at, the event's time) (ADR-006 I1;
 //     MTIX-112.17.16.13), the same on every replica whatever the arrival
 //     order; ingest writes no activity entry.

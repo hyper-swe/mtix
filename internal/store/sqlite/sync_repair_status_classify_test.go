@@ -155,6 +155,20 @@ func TestStatusRepair_ImportedStateEqualToOlderEvent_FlaggedByNewerActivity(t *t
 	}
 }
 
+// dropCascadeEvent removes the cancel event a cascade emitted for id, which
+// models a store written before MTIX-112.17.16.12: those cascades emitted no
+// event for a descendant, and such stores are still in the field.
+func dropCascadeEvent(t *testing.T, raw *sql.DB, id string) {
+	t.Helper()
+	res, err := raw.Exec(`DELETE FROM sync_events WHERE node_id = ? AND op_type = ?
+		AND lamport_clock = (SELECT MAX(lamport_clock) FROM sync_events WHERE node_id = ? AND op_type = ?)`,
+		id, string(model.OpTransitionStatus), id, string(model.OpTransitionStatus))
+	require.NoError(t, err)
+	n, err := res.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n, "the cascade's event for %s", id)
+}
+
 // TestStatusRepairDiffs_CancelledNodeWithNewerAncestorCancel_Flagged: a
 // cancelled node whose derived status is not terminal is flagged, never
 // applied without force, when any ancestor holds a cancel event newer than
@@ -180,12 +194,14 @@ func TestStatusRepairDiffs_CancelledNodeWithNewerAncestorCancel_Flagged(t *testi
 			_, err := raw.Exec(`UPDATE nodes SET deleted_at = ? WHERE id = 'MTIX-1'`, replayStamp())
 			require.NoError(t, err)
 		}, "MTIX-1.1", true},
-		{"a parent cascade, the parent reopened", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
+		{"a legacy parent cascade, the parent reopened", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
+			dropCascadeEvent(t, raw, "MTIX-1.1")
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
 		}, "MTIX-1.1", true},
-		{"a grandparent cascade over a done parent, reopened", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
+		{"a legacy grandparent cascade over a done parent, reopened", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
+			dropCascadeEvent(t, raw, "MTIX-1.1.1")
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
 		}, "MTIX-1.1.1", true},
 		{"a parent whose activity cannot be read", func(t *testing.T, _ *sqlite.Store, raw *sql.DB) {
@@ -286,11 +302,12 @@ func TestStatusRepairDiffs_WinnerRuleResiduals_NeverAppliedWithoutForce(t *testi
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "restore", "agent-a"))
 			require.NotEqual(t, nullColumn, nodeRow(t, raw, "MTIX-1")["closed_at"], "the restore keeps closed_at")
 		}, ""},
-		{"cancelled and reopened, then a parent cascade, parent reopened", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
+		{"cancelled and reopened, then a legacy parent cascade, parent reopened", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
 			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1.1", "dropped", "agent-a", false))
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1.1", model.StatusOpen, "reopen", "agent-a"))
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
+			dropCascadeEvent(t, raw, "MTIX-1.1")
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
 		}, "MTIX-1.1"},
 		{"auto-blocked after its claim, blocker unresolved", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {

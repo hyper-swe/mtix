@@ -43,8 +43,9 @@ const (
 //
 // The rule is what a field can hide: metadata a clone stamps for itself, and
 // host-local registrations, are left out; user content never is. Deletions,
-// defer wake times and every other field stay differences, so a cascade, an
-// undelete or a defer that did not replicate refuses and the report names it.
+// defer wake times and every other field stay differences, so an undelete, a
+// defer or a cascade from before MTIX-112.17.16.12 that did not replicate
+// refuses and the report names it.
 //
 // defer_until is local by design in sync protocol 1 (MTIX-112.17.16.11): a local
 // defer travels as a status change without its wake time, so a store with a
@@ -66,7 +67,8 @@ func BoardExclusions() []BoardExclusion {
 // BoardPresenceOnly lists fields whose value is a clock reading a clone stamps
 // for itself, but whose presence is board content: only whether the field is
 // set is compared. A deletion the clone also holds therefore matches, while a
-// deletion on one side only (a cascade or an undelete that did not replicate)
+// deletion on one side only (an undelete, which emits no event, or a cascade
+// made before MTIX-112.17.16.12, which sent an event for the named node only)
 // is still a difference.
 func BoardPresenceOnly() []BoardExclusion {
 	return []BoardExclusion{

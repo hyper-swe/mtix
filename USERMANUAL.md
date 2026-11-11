@@ -467,7 +467,7 @@ That record also carries the node's deletion time and author, and mtix uses it o
 
 After `mtix rerun --strategy delete`, undeleting a direct child restores its subtree removed by that rerun. Previously deleted descendants stay deleted.
 
-Undelete is local: it emits no sync event. Other replicas keep the node deleted.
+A cascade delete sends one sync delete event for the node and one for each descendant it removes (not for a descendant that was already deleted), so other replicas delete the same nodes. A cascade delete made by an earlier version sent an event for the named node only: on other replicas its descendants stay live. Undelete is local: it emits no sync event. Other replicas keep the node deleted.
 
 Soft-deleted nodes are automatically purged after the retention period (default 30 days, configurable via `data.soft_delete_retention`).
 
@@ -712,15 +712,13 @@ unblocked, and the progress of every node above a cancelled descendant,
 up to the top of the tree, is recomputed. Descendants that are already
 `done` keep their status.
 
-With sync, a cascade cancel in this version sends other machines no
-event for the descendants it cancels: they receive the cancel of the
-node you named and the unblock of each task it released, nothing else.
-On other machines the descendants are therefore not cancelled and keep
-their previous status, and a task that the cascade unblocked shows as
-unblocked there even though the descendant that blocked it is not
-cancelled. If other machines must see every descendant cancelled,
-cancel the descendants one at a time, deepest first, without
-`--cascade`.
+With sync, a cascade cancel sends other machines one event for the node
+you named, one for each descendant it cancels (not for a descendant that
+was already `done`, `cancelled` or `invalidated`), and one for each task
+it released. Other machines therefore show the same descendants
+cancelled and the same tasks unblocked. A cascade cancel made by an
+earlier version sent no event for its descendants: on other machines
+they keep their previous status, and upgrading does not send them.
 
 A cascade cancel made by an earlier version unblocked only the tasks
 the named node was blocking, and upgrading does not repair what it
@@ -1985,7 +1983,7 @@ ws.onmessage = (event) => {
 | `node.claimed` | Agent claimed a node |
 | `node.unclaimed` | Agent released a node |
 | `node.cancelled` | Node cancelled |
-| `status.changed` | Status transitioned |
+| `status.changed` | Status transitioned. A cascade cancel fires it once for each descendant it cancels, on this machine and on every machine that pulls it |
 | `progress.changed` | Progress recalculated |
 | `nodes.invalidated` | Batch invalidation |
 | `dependency.added` | Dependency created |
@@ -4097,8 +4095,8 @@ nothing. This holds for claims and status changes, which travel as
 events. Two automatic changes do not travel as events, so status can
 still differ there: if one machine claims a task while another adds a
 dependency that blocks it, the task can end up blocked on one machine
-and in progress on the other, and tasks cancelled as descendants of a
-cascade cancel can differ the same way. Beyond status nothing is
+and in progress on the other, and tasks cancelled by a cascade cancel
+made by an earlier version can differ the same way. Beyond status nothing is
 guaranteed to agree. The assignee and the other fields that go with it
 can still differ between machines when changes arrive out of order: if
 two agents claim the same task between
@@ -4732,7 +4730,9 @@ look at the node with `mtix show <id>` when in doubt.
 - a blocked node that still has an unresolved blocker, since a block
   added by a new dependency is not synced as an event;
 - a node cancelled by `mtix cancel --cascade` on an ancestor, which has
-  no cancel event of its own (one that has is flagged, see above);
+  no cancel event of its own (a cascade made by an earlier version;
+  this version sends one, and a node with one that differs is flagged,
+  see above);
 - an assignee set after the winning event with `mtix update
   --assignee` (when it arrives by import, the difference is flagged,
   so `--apply` without `--force` leaves it alone);

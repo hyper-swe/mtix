@@ -73,14 +73,33 @@ func (s *Store) writeInboxAcknowledgement(ctx context.Context, tx *sql.Tx, agent
 		}
 		return nil
 	}
+	return s.advanceCumulativeAck(ctx, tx, agent, seq)
+}
+
+// advanceCumulativeAck moves the watermark to seq (never down), keeps the time of
+// every selective ack it folds, and records one mark only when the cursor really
+// advanced in this transaction.
+func (s *Store) advanceCumulativeAck(ctx context.Context, tx *sql.Tx, agent string, seq int64) error {
+	var from int64
+	// The cursor before this ack; 0 when the agent had none.
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE((SELECT cursor FROM agent_inbox_cursor WHERE agent_id=?),0)`,
+		agent).Scan(&from); err != nil {
+		return fmt.Errorf("read cumulative inbox acknowledgement: %w", err)
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO agent_inbox_cursor(agent_id,cursor) VALUES(?,?)
 		ON CONFLICT(agent_id) DO UPDATE SET cursor=MAX(cursor,excluded.cursor)`, agent, seq); err != nil {
 		return fmt.Errorf("advance cumulative inbox acknowledgement: %w", err)
+	}
+	if err := s.keepFoldedSelectiveAcks(ctx, tx, agent); err != nil {
+		return err
 	}
 	_, err := tx.ExecContext(ctx, `DELETE FROM agent_inbox_ack WHERE agent_id=?
 		AND event_seq<=(SELECT cursor FROM agent_inbox_cursor WHERE agent_id=?)`, agent, agent)
 	if err != nil {
 		return fmt.Errorf("prune selectively acknowledged prefix: %w", err)
 	}
-	return s.writeCursorMark(ctx, tx, agent)
+	if seq <= from {
+		return s.evictCursorMarks(ctx, tx, agent)
+	}
+	return s.writeCursorMark(ctx, tx, agent, from, seq)
 }

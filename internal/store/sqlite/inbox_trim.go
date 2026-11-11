@@ -32,6 +32,11 @@ func trimInboxToJournal(ctx context.Context, tx *sql.Tx) error {
 		`DELETE FROM inbox_deliveries WHERE event_seq > ` + journalTailSQL,
 		// A watermark above the tail would hide every event up to it.
 		`UPDATE agent_inbox_cursor SET cursor = ` + journalTailSQL + ` WHERE cursor > ` + journalTailSQL,
+		// Delivery marks keyed to freed rowids: drop those wholly above the tail,
+		// then clip a mark straddling it to the tail (MTIX-112.3).
+		`DELETE FROM agent_inbox_cursor_marks WHERE from_cursor >= ` + journalTailSQL,
+		`UPDATE OR IGNORE agent_inbox_cursor_marks SET cursor = ` + journalTailSQL + ` WHERE cursor > ` + journalTailSQL,
+		`DELETE FROM agent_inbox_cursor_marks WHERE cursor > ` + journalTailSQL,
 	} {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return fmt.Errorf("trim inbox bookkeeping to the journal: %w", err)

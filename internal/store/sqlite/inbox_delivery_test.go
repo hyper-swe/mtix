@@ -151,8 +151,8 @@ func TestInboxLastRead_NeverReadAndUnregisteredAgents(t *testing.T) {
 
 func TestInboxLastRead_WakeScanContext_DoesNotStamp(t *testing.T) {
 	s := newTestStore(t)
-	// The wake scanner and re-evaluation read with an empty session identity.
-	scan := sqlite.WithSessionTouch(t.Context(), sqlite.SessionTouch{})
+	// The wake scanner and re-evaluation mark their reads as internal.
+	scan := sqlite.WithoutReadStamp(t.Context())
 	_, err := s.InboxList(scan, "w")
 	require.NoError(t, err)
 	got, err := s.InboxLastRead(t.Context(), "w")
@@ -221,7 +221,7 @@ func TestInboxStatus_CrashedWaiter_NotPermanentlyParked(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newTestStore(t)
-			_, err := s.WriteDB().Exec(`INSERT INTO agent_inbox_waiters(agent_id,pid,pid_start_time,since) VALUES('w',?,?,?)`,
+			_, err := s.WriteDB().Exec(`INSERT INTO agent_inbox_waiters(agent_id,pid,pid_start_time,token,since) VALUES('w',?,?,1,?)`,
 				tt.pid, tt.start, "2026-11-11T09:00:00.000000000Z")
 			require.NoError(t, err)
 			p, err := s.InboxParked(t.Context(), "w")

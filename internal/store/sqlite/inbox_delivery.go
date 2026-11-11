@@ -9,11 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
-	"github.com/hyper-swe/mtix/internal/procinfo"
 )
 
 const (
@@ -53,30 +51,40 @@ type Parked struct {
 
 func deliveryTime(t time.Time) string { return t.UTC().Format(deliveryTimeLayout) }
 
-// noIdentity reports a context built for internal reads (the wake scanner and
-// re-evaluation attach an empty session identity): those reads are not the
-// agent reading its inbox and must not stamp last read.
-func noIdentity(ctx context.Context) bool {
-	t, ok := ctx.Value(sessionTouchKey{}).(SessionTouch)
-	return ok && t.Handle == ""
+type noReadStampKey struct{}
+
+// WithoutReadStamp marks ctx as an internal read (the wake scanner and its
+// re-evaluation): reading an inbox for those is not the agent reading it, so it
+// must not stamp last read (MTIX-112.3).
+func WithoutReadStamp(ctx context.Context) context.Context {
+	return context.WithValue(ctx, noReadStampKey{}, true)
+}
+
+func readStampSuppressed(ctx context.Context) bool {
+	v, _ := ctx.Value(noReadStampKey{}).(bool)
+	return v
 }
 
 // stampRead records that agent read its inbox now, at most once per
 // InboxReadThrottle. It is best effort: a refused or failed write is logged and
 // never fails the read (MTIX-112.3). Parameterized SQL only.
 func (s *Store) stampRead(ctx context.Context, agent string) {
-	if noIdentity(ctx) || s.preflightWrite() != nil {
+	if readStampSuppressed(ctx) || s.preflightWrite() != nil {
 		return
 	}
 	now := s.clock()
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryWriteBound)
 	defer cancel()
-	// Upsert the agent's last read; an existing row moves only when it is at
-	// least the throttle old, so a busy poller does not write on every read.
-	_, err := s.writeDB.ExecContext(wctx, `INSERT INTO agent_inbox_reads(agent_id,last_read_at) VALUES(?,?)
-		ON CONFLICT(agent_id) DO UPDATE SET last_read_at=excluded.last_read_at
-		WHERE agent_inbox_reads.last_read_at <= ?`,
-		agent, deliveryTime(now), deliveryTime(now.Add(-InboxReadThrottle)))
+	// Local bookkeeping: no export or hook callbacks (notify=false).
+	err := s.withWriteTx(wctx, func(tx *sql.Tx) error {
+		// Upsert the agent's last read; an existing row moves only when it is at
+		// least the throttle old, so a busy poller does not write on every read.
+		_, execErr := tx.ExecContext(wctx, `INSERT INTO agent_inbox_reads(agent_id,last_read_at) VALUES(?,?)
+			ON CONFLICT(agent_id) DO UPDATE SET last_read_at=excluded.last_read_at
+			WHERE agent_inbox_reads.last_read_at <= ?`,
+			agent, deliveryTime(now), deliveryTime(now.Add(-InboxReadThrottle)))
+		return execErr
+	}, false)
 	if err != nil {
 		s.logger.Warn("record inbox last read", slog.String("agent_id", agent), slog.Any("error", err))
 	}
@@ -95,19 +103,39 @@ func (s *Store) writeAckRead(ctx context.Context, tx *sql.Tx, agent string) erro
 	return nil
 }
 
-// writeCursorMark records the watermark's new position and evicts the lowest
-// cursors beyond MaxCursorMarks, all inside the ack transaction.
-func (s *Store) writeCursorMark(ctx context.Context, tx *sql.Tx, agent string) error {
-	// Mark the resulting watermark; OR IGNORE keeps the first time a cursor was reached.
-	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agent_inbox_cursor_marks(agent_id,cursor,advanced_at)
-		SELECT agent_id, cursor, ? FROM agent_inbox_cursor WHERE agent_id=?`,
-		deliveryTime(s.clock()), agent); err != nil {
+// writeCursorMark records that the watermark moved from `from` to `to` in this
+// transaction, then applies the per-agent bound.
+func (s *Store) writeCursorMark(ctx context.Context, tx *sql.Tx, agent string, from, to int64) error {
+	// A watermark mark covers exactly the events in (from, to]; anything at or
+	// below from was acked earlier and has no mark of its own.
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agent_inbox_cursor_marks(agent_id,cursor,from_cursor,kind,advanced_at)
+		VALUES(?,?,?,?,?)`, agent, to, from, AckWatermark, deliveryTime(s.clock())); err != nil {
 		return fmt.Errorf("record cursor mark: %w", err)
 	}
-	// Keep only the newest MaxCursorMarks marks of this agent (oldest cursors go first).
-	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_inbox_cursor_marks WHERE agent_id=? AND cursor NOT IN (
-		SELECT cursor FROM agent_inbox_cursor_marks WHERE agent_id=? ORDER BY cursor DESC LIMIT ?)`,
-		agent, agent, MaxCursorMarks); err != nil {
+	return s.evictCursorMarks(ctx, tx, agent)
+}
+
+// keepFoldedSelectiveAcks keeps the kind and time of selective acks the
+// watermark now covers, as single-event marks, before their ack rows are pruned.
+func (s *Store) keepFoldedSelectiveAcks(ctx context.Context, tx *sql.Tx, agent string) error {
+	// Each covered selective ack becomes a (seq-1, seq] mark with its own time;
+	// OR IGNORE keeps the first time if the same event was acked and folded before.
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agent_inbox_cursor_marks(agent_id,cursor,from_cursor,kind,advanced_at)
+		SELECT agent_id, event_seq, event_seq-1, ?, acked_at FROM agent_inbox_ack
+		WHERE agent_id=? AND event_seq<=(SELECT cursor FROM agent_inbox_cursor WHERE agent_id=?)`,
+		AckSelective, agent, agent); err != nil {
+		return fmt.Errorf("keep folded selective acks: %w", err)
+	}
+	return nil
+}
+
+// evictCursorMarks keeps the newest MaxCursorMarks marks of agent, lowest cursors
+// evicted first. An event covered only by an evicted mark reports unknown.
+func (s *Store) evictCursorMarks(ctx context.Context, tx *sql.Tx, agent string) error {
+	// Rank by cursor, then range start, so the oldest coverage goes first.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_inbox_cursor_marks WHERE agent_id=? AND rowid NOT IN (
+		SELECT rowid FROM agent_inbox_cursor_marks WHERE agent_id=?
+		ORDER BY cursor DESC, from_cursor DESC, kind ASC LIMIT ?)`, agent, agent, MaxCursorMarks); err != nil {
 		return fmt.Errorf("evict old cursor marks: %w", err)
 	}
 	return nil
@@ -138,16 +166,20 @@ func (s *Store) InboxAckInfo(ctx context.Context, agent string, seq int64) (AckI
 	if err != nil {
 		return AckInfo{}, fmt.Errorf("read ack watermark: %w", err)
 	}
-	// The first mark at or above seq is when the watermark first covered it.
-	err = s.readDB.QueryRowContext(ctx, `SELECT advanced_at FROM agent_inbox_cursor_marks
-		WHERE agent_id=? AND cursor>=? ORDER BY cursor ASC LIMIT 1`, agent, seq).Scan(&at)
+	// Only a mark that covers seq (from_cursor < seq <= cursor) names its ack time;
+	// a selective mark wins over the watermark mark around it. No covering mark
+	// (older or evicted) means the time is unknown, never a later mark's time.
+	var kind string
+	err = s.readDB.QueryRowContext(ctx, `SELECT kind, advanced_at FROM agent_inbox_cursor_marks
+		WHERE agent_id=? AND from_cursor<? AND cursor>=?
+		ORDER BY (kind=?) DESC, cursor ASC LIMIT 1`, agent, seq, seq, AckSelective).Scan(&kind, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AckInfo{Kind: AckWatermark}, nil
 	}
 	if err != nil {
 		return AckInfo{}, fmt.Errorf("read cursor mark: %w", err)
 	}
-	return ackInfoAt(AckWatermark, at), nil
+	return ackInfoAt(kind, at), nil
 }
 
 func ackInfoAt(kind, at string) AckInfo {
@@ -174,123 +206,4 @@ func (s *Store) InboxLastRead(ctx context.Context, agent string) (*time.Time, er
 		return nil, fmt.Errorf("parse last read %q: %w", at, perr)
 	}
 	return &t, nil
-}
-
-// InboxParked reports whether agent has a live wait on this machine. A waiter
-// row counts only when its pid is running with the recorded start time, so a
-// crashed or pid-reused waiter is never reported parked. It writes nothing.
-func (s *Store) InboxParked(ctx context.Context, agent string) (Parked, error) {
-	// Candidate waiters for the agent, earliest first.
-	rows, err := s.readDB.QueryContext(ctx, `SELECT pid, pid_start_time, since FROM agent_inbox_waiters
-		WHERE agent_id=? ORDER BY since ASC, pid ASC`, agent)
-	if err != nil {
-		return Parked{}, fmt.Errorf("read waiters: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-	var out Parked
-	for rows.Next() {
-		var pid int64
-		var start, since string
-		if err := rows.Scan(&pid, &start, &since); err != nil {
-			return Parked{}, fmt.Errorf("scan waiter: %w", err)
-		}
-		if !s.waiterAlive(int(pid), start) {
-			continue
-		}
-		out.Parked = true
-		out.PIDs = append(out.PIDs, pid)
-		if t, perr := time.Parse(time.RFC3339Nano, since); perr == nil && out.Since == nil {
-			out.Since = &t
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return Parked{}, fmt.Errorf("iterate waiters: %w", err)
-	}
-	return out, nil
-}
-
-// waiterAlive is true only when pid runs now with exactly the recorded start
-// time; an unreadable start time counts as not alive (never falsely parked).
-func (s *Store) waiterAlive(pid int, recorded string) bool {
-	start, err := s.processStart(pid)
-	return err == nil && start == recorded
-}
-
-func (s *Store) processStart(pid int) (string, error) {
-	if s.startTimeFn != nil {
-		return s.startTimeFn(pid)
-	}
-	return procinfo.StartTime(pid)
-}
-
-// registerWaiter records a live wait and returns the function that removes it.
-// Dead rows of the same agent are pruned here, not by a timer. Best effort: a
-// refused write or an unreadable own start time registers nothing and the wait
-// proceeds (the agent then simply does not show as parked).
-func (s *Store) registerWaiter(ctx context.Context, agent string) func() {
-	noop := func() {}
-	if s.preflightWrite() != nil {
-		return noop
-	}
-	pid := os.Getpid()
-	start, err := s.processStart(pid)
-	if err != nil || start == "" {
-		return noop
-	}
-	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryWriteBound)
-	defer cancel()
-	s.pruneDeadWaiters(wctx, agent)
-	// Record this wait; a repeated start by the same process refreshes the row.
-	if _, err := s.writeDB.ExecContext(wctx, `INSERT OR REPLACE INTO agent_inbox_waiters(agent_id,pid,pid_start_time,since)
-		VALUES(?,?,?,?)`, agent, pid, start, deliveryTime(s.clock())); err != nil {
-		s.logger.Warn("record inbox waiter", slog.String("agent_id", agent), slog.Any("error", err))
-		return noop
-	}
-	return func() { s.removeWaiter(ctx, agent, pid, start) }
-}
-
-func (s *Store) removeWaiter(ctx context.Context, agent string, pid int, start string) {
-	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), deliveryWriteBound)
-	defer cancel()
-	// Remove exactly this wait on every exit path.
-	if _, err := s.writeDB.ExecContext(dctx, `DELETE FROM agent_inbox_waiters WHERE agent_id=? AND pid=? AND pid_start_time=?`,
-		agent, pid, start); err != nil {
-		s.logger.Warn("remove inbox waiter", slog.String("agent_id", agent), slog.Any("error", err))
-	}
-}
-
-func (s *Store) pruneDeadWaiters(ctx context.Context, agent string) {
-	// Read the agent's rows first: liveness is probed outside SQL.
-	rows, err := s.writeDB.QueryContext(ctx, `SELECT pid, pid_start_time FROM agent_inbox_waiters WHERE agent_id=?`, agent)
-	if err != nil {
-		s.logger.Warn("read inbox waiters for pruning", slog.String("agent_id", agent), slog.Any("error", err))
-		return
-	}
-	dead := s.deadWaiters(rows)
-	for _, k := range dead {
-		// Drop a waiter row whose process is gone.
-		if _, derr := s.writeDB.ExecContext(ctx, `DELETE FROM agent_inbox_waiters WHERE agent_id=? AND pid=? AND pid_start_time=?`,
-			agent, k.pid, k.start); derr != nil {
-			s.logger.Warn("prune dead inbox waiter", slog.String("agent_id", agent), slog.Any("error", derr))
-		}
-	}
-}
-
-type waiterKey struct {
-	pid   int64
-	start string
-}
-
-// deadWaiters scans the rows and closes them; it returns the waiters whose
-// process is gone or has a different start time.
-func (s *Store) deadWaiters(rows *sql.Rows) []waiterKey {
-	defer func() { _ = rows.Close() }()
-	var dead []waiterKey
-	for rows.Next() {
-		var k waiterKey
-		if rows.Scan(&k.pid, &k.start) == nil && !s.waiterAlive(int(k.pid), k.start) {
-			dead = append(dead, k)
-		}
-	}
-	return dead
 }

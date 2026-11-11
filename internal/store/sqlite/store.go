@@ -44,6 +44,7 @@ type Store struct {
 	clock           func() time.Time
 	waitClock       func() time.Time              // wall clock for the inbox wait deadline; nil uses the system clock (MTIX-245)
 	waitMono        func() time.Time              // monotonic clock for the inbox wait deadline; nil uses time.Now (MTIX-245)
+	waitSeq         atomic.Int64                  // per-process token that gives each inbox wait its own waiter row (MTIX-112.3)
 	startTimeFn     func(pid int) (string, error) // process start-time reader for waiter liveness; nil uses procinfo.StartTime (MTIX-112.3)
 	history         sync.Map                      // *sql.Tx -> *historyTracker for the open recording transactions
 	encodePayloadFn payloadEncoder                // fixed per Store before concurrent use

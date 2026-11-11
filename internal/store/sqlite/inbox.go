@@ -145,6 +145,9 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 	if timeout < 0 {
 		return nil, fmt.Errorf("inbox wait: negative timeout: %w", model.ErrInvalidInput)
 	}
+	if agentID == "" {
+		return nil, fmt.Errorf("inbox wait: agent id required: %w", model.ErrInvalidInput)
+	}
 	s.stampRead(ctx, agentID)
 	defer s.registerWaiter(ctx, agentID)() // parked while waiting; removed on every exit (MTIX-112.3)
 	defer s.stampRead(ctx, agentID)

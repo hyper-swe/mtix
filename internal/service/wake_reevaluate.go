@@ -42,7 +42,7 @@ type reevaluationScope struct {
 // effective wake.live is off or whom the filter rejects (ADR-007 section 2.7).
 func (d *WakeDispatcher) Reevaluate(ctx context.Context, agent string) error {
 	// Re-evaluation never carries a session identity: reading inboxes must not refresh last_seen.
-	ctx = sqlite.WithSessionTouch(ctx, sqlite.SessionTouch{})
+	ctx = sqlite.WithoutReadStamp(sqlite.WithSessionTouch(ctx, sqlite.SessionTouch{}))
 	source, ok := d.store.(WakeHeldCandidates)
 	if !ok {
 		return fmt.Errorf("wake store cannot list held candidates: %w", model.ErrInvalidInput)

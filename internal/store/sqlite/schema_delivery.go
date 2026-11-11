@@ -15,24 +15,29 @@ CREATE TABLE IF NOT EXISTS agent_inbox_reads (
     last_read_at TEXT NOT NULL
 );
 
--- One row per cumulative ack (--through) so an event covered only by the
--- watermark can still report when it was acked: the advanced_at of the first
--- mark whose cursor is at or above the event's seq. Bounded per agent.
+-- One row per cumulative ack that advanced the cursor (kind watermark, covering
+-- from_cursor < seq <= cursor) and one per selective ack folded into a watermark
+-- (kind selective, covering exactly seq = cursor). An event reports its ack time
+-- only from a mark that covers it; otherwise the time is unknown. Bounded per agent.
 CREATE TABLE IF NOT EXISTS agent_inbox_cursor_marks (
     agent_id    TEXT    NOT NULL,
     cursor      INTEGER NOT NULL,
+    from_cursor INTEGER NOT NULL,
+    kind        TEXT    NOT NULL,
     advanced_at TEXT    NOT NULL,
-    PRIMARY KEY (agent_id, cursor)
+    PRIMARY KEY (agent_id, cursor, from_cursor, kind)
 );
 
--- One row per live inbox wait. Inserted when a wait starts, deleted when it
+-- One row per live inbox wait (token is unique per wait within a process, so
+-- overlapping waits of one agent never share a row). Inserted when a wait starts, deleted when it
 -- ends; a row left by a crashed process is ignored at read time because its
 -- pid and start time no longer match a running process.
 CREATE TABLE IF NOT EXISTS agent_inbox_waiters (
     agent_id       TEXT    NOT NULL,
     pid            INTEGER NOT NULL,
     pid_start_time TEXT    NOT NULL,
+    token          INTEGER NOT NULL,
     since          TEXT    NOT NULL,
-    PRIMARY KEY (agent_id, pid, pid_start_time)
+    PRIMARY KEY (agent_id, pid, pid_start_time, token)
 );
 `

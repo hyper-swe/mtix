@@ -85,7 +85,7 @@ func TestGuardWALWithStat_DatabaseStatError_RefusesAndLeavesWAL(t *testing.T) {
 		return os.Stat(name)
 	}
 
-	err = guardWALWithStat(path, storeRefusalAdvice, statDatabase)
+	err = guardWALWithStat(path, storeRefusalAdvice, storeRefusalAdvice, statDatabase)
 
 	require.ErrorIs(t, err, injected)
 	require.Positive(t, failed)

@@ -3086,6 +3086,16 @@ table holds M", or "acknowledgment index unreadable") when they differ. Nothing
 is carried. Restore the store from a good backup or run `mtix recover`, then
 retry; a green `mtix doctor` does not clear this refusal.
 
+A defer wake time (`defer_until`, set by `mtix defer --until`) stays on the
+machine that set it in this build: a local defer travels as a status change,
+so the hub and every other machine hold the node as deferred with no wake
+time. Replicating the wake time is planned, not shipped. Enrollment therefore counts `defer_until` as a real
+difference: a store with a local wake time refuses and the report names
+`defer_until`. Keep the copy using the printed `mtix backup <path>` command.
+If you accept the hub's values, re-run `mtix defer <id> --until <time>` on
+the machine that should wake the node afterwards, because only that machine
+holds the wake time.
+
 A terminal transition (done, cancel or invalidate) whose event carries no
 `closed_at` (from a build that did not yet carry the completion time in its
 event, or a plain terminal transition that backfill or status repair of a

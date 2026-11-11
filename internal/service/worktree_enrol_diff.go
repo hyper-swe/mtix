@@ -45,6 +45,11 @@ const (
 // host-local registrations, are left out; user content never is. Deletions,
 // defer wake times and every other field stay differences, so a cascade, an
 // undelete or a defer that did not replicate refuses and the report names it.
+//
+// defer_until is local by design in sync protocol 1 (MTIX-112.17.16.11): a local
+// defer travels as a status change without its wake time, so a store with a
+// wake time always differs from its clone. Protocol 2 carries it in a defer
+// event; until then it must stay out of this set.
 func BoardExclusions() []BoardExclusion {
 	return []BoardExclusion{
 		{"nodes.activity", "the activity log never replicates; it is metadata, not board content"},

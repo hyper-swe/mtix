@@ -30,6 +30,9 @@ func (s *Store) InboxAckCoverage(ctx context.Context, agent string, seq int64, t
 		if writeErr := s.writeInboxAcknowledgement(ctx, tx, agent, seq, through); writeErr != nil {
 			return fmt.Errorf("write inbox acknowledgement coverage: %w", writeErr)
 		}
+		if stampErr := s.writeAckRead(ctx, tx, agent); stampErr != nil {
+			return stampErr
+		}
 		after, readErr = readWakeAckMark(ctx, tx, agent)
 		if readErr != nil {
 			return fmt.Errorf("read resulting inbox acknowledgement coverage: %w", readErr)
@@ -79,5 +82,5 @@ func (s *Store) writeInboxAcknowledgement(ctx context.Context, tx *sql.Tx, agent
 	if err != nil {
 		return fmt.Errorf("prune selectively acknowledged prefix: %w", err)
 	}
-	return nil
+	return s.writeCursorMark(ctx, tx, agent)
 }

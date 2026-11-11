@@ -30,6 +30,17 @@ type InboxEvent struct {
 // durable event journal, not a separate mailbox — so it survives restarts and
 // picks up synced events with no extra delivery step (FR-19.4).
 func (s *Store) InboxList(ctx context.Context, agentID string) ([]InboxEvent, error) {
+	out, err := s.inboxList(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
+	s.stampRead(ctx, agentID) // last read for delivery status (MTIX-112.3); throttled, best effort
+	return out, nil
+}
+
+// inboxList is the unstamped read: InboxWait polls it, so a waiting agent does
+// not write on every tick.
+func (s *Store) inboxList(ctx context.Context, agentID string) ([]InboxEvent, error) {
 	if agentID == "" {
 		return nil, fmt.Errorf("inbox list: agent id required: %w", model.ErrInvalidInput)
 	}
@@ -134,6 +145,9 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 	if timeout < 0 {
 		return nil, fmt.Errorf("inbox wait: negative timeout: %w", model.ErrInvalidInput)
 	}
+	s.stampRead(ctx, agentID)
+	defer s.registerWaiter(ctx, agentID)() // parked while waiting; removed on every exit (MTIX-112.3)
+	defer s.stampRead(ctx, agentID)
 	waitCtx := ctx
 	if timeout > 0 {
 		var cancel context.CancelFunc
@@ -145,7 +159,7 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 	queryCtx := ctx
 	win := s.openWaitWindow(timeout)
 	for {
-		events, err := s.InboxList(queryCtx, agentID)
+		events, err := s.inboxList(queryCtx, agentID)
 		if err != nil {
 			return nil, inboxWaitError(ctx, queryCtx, err)
 		}

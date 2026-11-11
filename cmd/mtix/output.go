@@ -315,3 +315,12 @@ func TreeChildPrefix(parentPrefix string, isLast bool, depth int) string {
 	}
 	return parentPrefix + "│   "
 }
+
+// displayNodeID renders a node id for human output: stored or typed id text
+// goes through format.SafeLine so no control, escape, bidi, tag or zero-width
+// character reaches the terminal, then a provisional id is marked via
+// format.AnnotateID (ADR-003 §8). The stored id and --json are untouched
+// (MTIX-100.13).
+func displayNodeID(id string) string {
+	return format.AnnotateID(format.SafeLine(id))
+}

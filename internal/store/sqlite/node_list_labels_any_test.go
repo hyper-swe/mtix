@@ -115,3 +115,34 @@ func TestListNodes_LabelsAny_HostileValueIsBound(t *testing.T) {
 	assert.Empty(t, nodes)
 	assert.Zero(t, total)
 }
+
+// MTIX-255.4: nodes whose labels column is NULL, an empty array or empty text
+// are excluded by LabelsAny without error, and are still listed unfiltered.
+func TestListNodes_LabelsAny_NullAndEmptyLabelsExcluded(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	seedLabelNodes(t, s)
+	now := time.Now().UTC().Truncate(time.Second)
+	empty := makeRootNode("PROJ-6", "PROJ", "Empty array", now)
+	empty.Labels = []string{}
+	require.NoError(t, s.CreateNode(ctx, empty))
+	// PROJ-4 has no labels; force its column to SQL NULL, and PROJ-6 to '[]'.
+	_, err := s.WriteDB().ExecContext(ctx, `UPDATE nodes SET labels = NULL WHERE id = ?`, "PROJ-4")
+	require.NoError(t, err)
+	_, err = s.WriteDB().ExecContext(ctx, `UPDATE nodes SET labels = '[]' WHERE id = ?`, "PROJ-6")
+	require.NoError(t, err)
+
+	nodes, total, err := s.ListNodes(ctx,
+		store.NodeFilter{LabelsAny: []string{"desk:now", "desk:backlog", ""}}, store.ListOptions{Limit: 50})
+	require.NoError(t, err)
+	var got []string
+	for _, n := range nodes {
+		got = append(got, n.ID)
+	}
+	assert.ElementsMatch(t, []string{"PROJ-1", "PROJ-2"}, got)
+	assert.Equal(t, 2, total)
+
+	_, all, err := s.ListNodes(ctx, store.NodeFilter{}, store.ListOptions{Limit: 50})
+	require.NoError(t, err)
+	assert.Equal(t, 6, all, "NULL and empty-label nodes still list without the filter")
+}

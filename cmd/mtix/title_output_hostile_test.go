@@ -123,11 +123,11 @@ func humanCommands() []humanCommand {
 			}
 		}},
 		{"list", func(t *testing.T, _ hostileBoard) {
-			must(t, runList("", "", "", "", "", "", "", "", 0, false, 1000, "", false))
+			must(t, runList(listOptions{limit: 1000}))
 		}},
 		{"ready", func(t *testing.T, _ hostileBoard) { must(t, runReady("", false)) }},
 		{"search", func(t *testing.T, _ hostileBoard) {
-			must(t, runSearch(nil, "", "", "", "", "", "", "", 1000, "", false))
+			must(t, runSearch(searchOptions{limit: 1000}))
 		}},
 		{"tree", func(t *testing.T, b hostileBoard) { must(t, runTree(b.parent.ID, 10)) }},
 		{"progress", func(t *testing.T, b hostileBoard) { must(t, runProgress(b.parent.ID)) }},

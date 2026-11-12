@@ -95,23 +95,7 @@ func newShowCmd() *cobra.Command {
 // newListCmd creates the mtix list command per FR-6.3 / FR-17.1.
 // All filter flags accept comma-separated multiple values.
 func newListCmd() *cobra.Command {
-	var (
-		status        string
-		under         string
-		assignee      string
-		nodeType      string
-		issueType     string
-		priority      string
-		fields        string
-		changedSince  string
-		outputFormat  string
-		maxFieldChars int
-		showEmpty     bool
-		limit         int
-		project       string
-		allProjects   bool
-		labels        string
-	)
+	var o listOptions
 
 	cmd := &cobra.Command{
 		Use:     "list",
@@ -119,24 +103,24 @@ func newListCmd() *cobra.Command {
 		Short:   "List nodes with filters",
 		Aliases: []string{"ls"},
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runListLabelled(labels, status, under, assignee, nodeType, priority, fields, changedSince, outputFormat, maxFieldChars, showEmpty, limit, project, allProjects, issueType)
+			return runList(o)
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "", "Filter by status (comma-separated for multiple)")
-	cmd.Flags().StringVar(&under, "under", "", "Filter by parent subtree (comma-separated for multiple)")
-	cmd.Flags().StringVar(&assignee, "assignee", "", "Filter by assignee (comma-separated for multiple)")
-	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by hierarchy node type (epic, story, issue, micro; comma-separated); use --issue-type for work classification")
-	cmd.Flags().StringVar(&issueType, "issue-type", "", "Filter by work classification (bug, feature, task, chore, refactor, test, doc; comma-separated)")
-	cmd.Flags().StringVar(&priority, "priority", "", "Filter by priority (comma-separated for multiple)")
-	cmd.Flags().StringVar(&labels, "labels", "", "Filter by label, any-of (comma-separated; exact, case-sensitive, e.g. desk:now,desk:backlog)")
-	cmd.Flags().StringVar(&fields, "fields", "", "Restrict output to these fields (comma-separated)")
-	cmd.Flags().StringVar(&changedSince, "changed-since", "", "Only nodes updated after this RFC3339 time or relative duration (e.g. 1h, 30m)")
-	cmd.Flags().StringVar(&outputFormat, "format", "", "Output format: briefing")
-	cmd.Flags().IntVar(&maxFieldChars, "max-field-chars", 0, "Truncate field values (briefing format)")
-	cmd.Flags().BoolVar(&showEmpty, "show-empty", false, "Include empty fields (briefing format)")
-	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
-	addProjectScopeFlags(cmd, &project, &allProjects)
+	cmd.Flags().StringVar(&o.status, "status", "", "Filter by status (comma-separated for multiple)")
+	cmd.Flags().StringVar(&o.under, "under", "", "Filter by parent subtree (comma-separated for multiple)")
+	cmd.Flags().StringVar(&o.assignee, "assignee", "", "Filter by assignee (comma-separated for multiple)")
+	cmd.Flags().StringVar(&o.nodeType, "type", "", "Filter by hierarchy node type (epic, story, issue, micro; comma-separated); use --issue-type for work classification")
+	cmd.Flags().StringVar(&o.issueType, "issue-type", "", "Filter by work classification (bug, feature, task, chore, refactor, test, doc; comma-separated)")
+	cmd.Flags().StringVar(&o.priority, "priority", "", "Filter by priority (comma-separated for multiple)")
+	cmd.Flags().StringVar(&o.labels, "labels", "", "Filter by label, any-of (comma-separated; exact, case-sensitive, e.g. desk:now,desk:backlog)")
+	cmd.Flags().StringVar(&o.fields, "fields", "", "Restrict output to these fields (comma-separated)")
+	cmd.Flags().StringVar(&o.changedSince, "changed-since", "", "Only nodes updated after this RFC3339 time or relative duration (e.g. 1h, 30m)")
+	cmd.Flags().StringVar(&o.outputFormat, "format", "", "Output format: briefing")
+	cmd.Flags().IntVar(&o.maxFieldChars, "max-field-chars", 0, "Truncate field values (briefing format)")
+	cmd.Flags().BoolVar(&o.showEmpty, "show-empty", false, "Include empty fields (briefing format)")
+	cmd.Flags().IntVar(&o.limit, "limit", 50, "Maximum results")
+	addProjectScopeFlags(cmd, &o.project, &o.allProjects)
 
 	return cmd
 }
@@ -264,60 +248,64 @@ func annotationByline(a model.Annotation) string {
 	return byline
 }
 
-// runList displays nodes with status icons and aligned columns.
-// Filter values are comma-separated strings parsed via splitCSV per FR-17.1.
-// The fields parameter restricts output to the specified fields per FR-17.3.
-// The outputFormat parameter selects "briefing" format per FR-17.4.
-func runList(status, under, assignee, nodeType, priority, fields, changedSince, outputFormat string, maxFieldChars int, showEmpty bool, limit int, project string, allProjects bool, issueType ...string) error {
-	return runListLabelled("", status, under, assignee, nodeType, priority, fields, changedSince, outputFormat, maxFieldChars, showEmpty, limit, project, allProjects, issueType...)
+// listOptions carries the mtix list flags (FR-17.1). Filter values are
+// comma-separated strings parsed via splitCSV; labels is the any-of label
+// filter (MTIX-255.4).
+type listOptions struct {
+	status, under, assignee, nodeType, issueType, priority string
+	labels, fields, changedSince, outputFormat, project    string
+	maxFieldChars, limit                                   int
+	showEmpty, allProjects                                 bool
 }
 
-// runListLabelled is runList plus the --labels any-of filter (MTIX-255.4):
-// labels is a comma-separated list, a node matches when it carries any of them.
-func runListLabelled(labels, status, under, assignee, nodeType, priority, fields, changedSince, outputFormat string, maxFieldChars int, showEmpty bool, limit int, project string, allProjects bool, issueType ...string) error {
-	if app.store == nil {
-		return fmt.Errorf("not in an mtix project")
-	}
-
-	priorities, err := splitCSVInts(priority)
+// buildListFilter turns the list flags into a store filter (FR-17.1). Filter
+// values are comma-separated strings parsed via splitCSV; --labels is an
+// any-of match (MTIX-255.4).
+func buildListFilter(o listOptions) (store.NodeFilter, error) {
+	priorities, err := splitCSVInts(o.priority)
 	if err != nil {
-		return fmt.Errorf("invalid --priority value: %w: %w", err, model.ErrInvalidInput)
+		return store.NodeFilter{}, fmt.Errorf("invalid --priority value: %w: %w", err, model.ErrInvalidInput)
 	}
-
-	since, err := parseChangedSince(changedSince)
+	since, err := parseChangedSince(o.changedSince)
 	if err != nil {
-		return err
+		return store.NodeFilter{}, err
 	}
-
-	scope, err := resolveProjectScope(project, allProjects)
+	scope, err := resolveProjectScope(o.project, o.allProjects)
 	if err != nil {
-		return err
+		return store.NodeFilter{}, err
 	}
-
-	ctx := context.Background()
+	classifications, err := parseListIssueTypes([]string{o.issueType})
+	if err != nil {
+		return store.NodeFilter{}, err
+	}
 	filter := store.NodeFilter{
-		Under:        splitCSV(under),
-		Assignee:     splitCSV(assignee),
-		NodeType:     splitCSV(nodeType),
+		Under:        splitCSV(o.under),
+		Assignee:     splitCSV(o.assignee),
+		NodeType:     splitCSV(o.nodeType),
+		IssueType:    classifications,
 		Priority:     priorities,
 		Project:      scope,
 		ChangedSince: since,
-		LabelsAny:    splitCSV(labels),
+		LabelsAny:    splitCSV(o.labels),
 	}
-	for _, s := range splitCSV(status) {
+	for _, s := range splitCSV(o.status) {
 		filter.Status = append(filter.Status, model.Status(s))
 	}
+	return filter, nil
+}
 
-	classifications, classificationErr := parseListIssueTypes(issueType)
-	if classificationErr != nil {
-		return classificationErr
+// runList displays nodes with status icons and aligned columns.
+// The fields option restricts output to the specified fields per FR-17.3.
+// The outputFormat option selects "briefing" format per FR-17.4.
+func runList(o listOptions) error {
+	if app.store == nil {
+		return fmt.Errorf("not in an mtix project")
 	}
-	filter.IssueType = classifications
-
-	fieldsList := splitCSV(fields)
-
-	opts := store.ListOptions{Limit: limit}
-	nodes, total, err := app.store.ListNodes(ctx, filter, opts)
+	filter, err := buildListFilter(o)
+	if err != nil {
+		return err
+	}
+	nodes, total, err := app.store.ListNodes(context.Background(), filter, store.ListOptions{Limit: o.limit})
 	if err != nil {
 		return err
 	}
@@ -325,15 +313,20 @@ func runListLabelled(labels, status, under, assignee, nodeType, priority, fields
 	// Apply natural sort per FR-17.6.
 	format.SortNodes(nodes)
 
+	fieldsList := splitCSV(o.fields)
 	// Briefing format per FR-17.4.
-	if outputFormat == "briefing" {
+	if o.outputFormat == "briefing" {
 		return format.RenderBriefing(os.Stdout, nodes, format.BriefingOpts{
 			Fields:        fieldsList,
-			MaxFieldChars: maxFieldChars,
-			ShowEmpty:     showEmpty,
+			MaxFieldChars: o.maxFieldChars,
+			ShowEmpty:     o.showEmpty,
 		})
 	}
+	return renderListNodes(nodes, total, fieldsList)
+}
 
+// renderListNodes writes the list result as JSON or an aligned table.
+func renderListNodes(nodes []*model.Node, total int, fieldsList []string) error {
 	out := NewOutputWriter(app.jsonOutput)
 
 	if app.jsonOutput {

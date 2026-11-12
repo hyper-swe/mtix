@@ -53,7 +53,7 @@ func TestCreateCLI_HelpAndListClassification(t *testing.T) {
 	initTestApp(t)
 	app.authorID = "author"
 	require.NoError(t, runCreate("Classified work", "", "feature", 3, "", "context", "accepted", "", "worker"))
-	table := captureStdout(t, func() { require.NoError(t, runList("", "", "", "", "", "", "", "", 0, false, 50, "", false)) })
+	table := captureStdout(t, func() { require.NoError(t, runList(listOptions{limit: 50})) })
 	assert.Contains(t, table, "Node type")
 	assert.Contains(t, table, "Issue type")
 	assert.Contains(t, table, "epic")

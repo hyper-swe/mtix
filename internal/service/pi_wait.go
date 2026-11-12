@@ -101,7 +101,7 @@ func (p *PiWait) tryClaim(ctx context.Context, st PiWaitStore, hostID, uid, sess
 			if ev.Seq <= reg.HighWater || ev.Author == reg.AgentID {
 				continue
 			}
-			key := model.WakeKey{AgentID: reg.AgentID, HostID: reg.HostID, UID: reg.UID, EventSeq: ev.Seq, Epoch: reg.Epoch, EventID: ev.EventID}
+			key := model.NewWakeKey(model.WakeRecipient{AgentID: reg.AgentID, HostID: reg.HostID, UID: reg.UID}, ev.Seq, reg.Epoch, ev.EventID)
 			attempt, claimed, err := st.ClaimWake(ctx, key, p.opts.Lease)
 			if err != nil {
 				return model.WakeAttempt{}, false, fmt.Errorf("pi wait claim event %d: %w", ev.Seq, err)

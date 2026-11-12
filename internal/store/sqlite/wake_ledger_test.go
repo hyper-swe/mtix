@@ -102,7 +102,7 @@ func TestStaleWakeClaims_CrashAfterClaim_ReclaimedAfterLease(t *testing.T) {
 	require.NoError(t, s.RecordWakeOutcome(t.Context(), second, model.WakeError))
 	stats, err := s.WakeLedgerStats(t.Context())
 	require.NoError(t, err)
-	require.Equal(t, model.WakeLedgerStats{Rows: 1, Rejected: 1}, stats)
+	require.Equal(t, model.WakeLedgerStats{Rows: 1, Rejected: 1, Reclaimed: 1}, stats)
 }
 
 func TestRecordWakeOutcome_TerminalOutcomes_NeverReclaim(t *testing.T) {

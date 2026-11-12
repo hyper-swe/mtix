@@ -10,6 +10,13 @@ type WakeRecipient struct {
 	UID     string `json:"uid"`
 }
 
+// NewWakeKey is the only way a delivery route builds the ledger key of one event. Every
+// route (dispatcher, scanner, hook waiter, pi wait) uses it, so two armed routes always
+// agree on the key and the ledger claims the event once (MTIX-112.40.13, FR-20).
+func NewWakeKey(r WakeRecipient, eventSeq, epoch int64, eventID string) WakeKey {
+	return WakeKey{AgentID: r.AgentID, HostID: r.HostID, UID: r.UID, EventSeq: eventSeq, Epoch: epoch, EventID: eventID}
+}
+
 // Recipient removes the event and registration epoch from a delivery key.
 func (k WakeKey) Recipient() WakeRecipient {
 	return WakeRecipient{AgentID: k.AgentID, HostID: k.HostID, UID: k.UID}

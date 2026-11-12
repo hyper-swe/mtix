@@ -197,7 +197,8 @@ func TestWakeLedger_Reclaim_ClearsStaleRouteReasonAndTime(t *testing.T) {
 	_ = claimWakeForResult(t, s) // lease expired: the claimed row is reclaimed
 	var route, reason, at string
 	require.NoError(t, s.ReadDB().QueryRow(`SELECT route,reason,outcome_at FROM wake_ledger`).Scan(&route, &reason, &at))
-	require.Empty(t, route+reason+at)
+	require.Empty(t, route+at)
+	require.Equal(t, model.WakeReasonReclaimedAfterCrash, reason, "the stale reason is replaced by the reclaim marker")
 }
 
 func TestUpgradeWakeConfirmed_RecordsConfirmTime(t *testing.T) {

@@ -273,6 +273,12 @@ held registrations do not stop it. Retained wake rows protect deduplication
 and are not automatically pruned. Use `mtix doctor --json` to inspect the
 `wake.ledger` counts and protocol remedy; `--fix` preserves the retained rows.
 
+## Effectively-once wakes
+
+Every route that wakes a session (the hook waiter, the dispatcher and the pi wait child) builds the same ledger key for an event with one shared constructor and claims it in one ledger transaction before it delivers. A route that loses the claim skips the event. A sent event is never claimed again, so a retry never wakes it twice.
+
+A claim that stays unfinished past its lease (the claimant crashed before it recorded a result) can be taken over once. The take-over is marked `reclaimed-after-crash` in the ledger reason. When delivery evidence shows the first push landed, the event is settled as confirmed and nothing is sent again; with no evidence it is delivered once more. A second expiry closes the event as `undeliverable` with reason `reclaim-cap` and sends nothing: the retry cap is one. The guarantee is therefore effectively once: a crash between the push and the recorded result can wake a session twice, never zero times.
+
 ## Waiting for inbox events
 
 An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:

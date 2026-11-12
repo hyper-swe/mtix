@@ -66,7 +66,10 @@ type ClaudeHookDeps struct {
 	LeaseTTL   time.Duration
 	RenewEvery time.Duration // how often a long wait renews the lease; 0 = LeaseTTL/3
 	ClaimLease time.Duration
-	Now        func() time.Time // the clock; nil = time.Now
+	// Evidence says whether a reclaimed claim's first push already landed (MTIX-112.40.13);
+	// nil means no evidence is available, so a reclaim delivers once more.
+	Evidence WakeEvidence
+	Now      func() time.Time // the clock; nil = time.Now
 
 	// NewTicker builds the renewer's ticker for an interval and returns its
 	// channel and stop func; nil = time.NewTicker. A test seam that lets the
@@ -84,14 +87,29 @@ type ClaudeHookResult struct {
 }
 
 // ClaudeHook runs the Claude session hooks as a service (FR-20, ADR-007 R2/R3).
-type ClaudeHook struct{ d ClaudeHookDeps }
+type ClaudeHook struct {
+	d       ClaudeHookDeps
+	claimer *WakeClaimer // the single claim function; nil when Claims is not a full ledger
+}
 
 // NewClaudeHook builds a ClaudeHook from its dependencies.
 func NewClaudeHook(d ClaudeHookDeps) *ClaudeHook {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &ClaudeHook{d: d}
+	h := &ClaudeHook{d: d}
+	if ledger, ok := d.Claims.(WakeClaimLedger); ok {
+		h.claimer, _ = NewWakeClaimer(ledger, d.ClaimLease, d.Evidence) // a non-positive lease keeps the direct claim
+	}
+	return h
+}
+
+// claim claims one event through the single claim function when the ledger supports it.
+func (h *ClaudeHook) claim(ctx context.Context, key model.WakeKey) (model.WakeAttempt, bool, error) {
+	if h.claimer != nil {
+		return h.claimer.Claim(ctx, key)
+	}
+	return h.d.Claims.ClaimWake(ctx, key, h.d.ClaimLease)
 }
 
 // Run handles one hook event. It never returns an error and never panics out: a
@@ -342,8 +360,8 @@ func (h *ClaudeHook) claimEvents(ctx context.Context, events []sqlite.InboxEvent
 	var won []sqlite.InboxEvent
 	var attempts []model.WakeAttempt
 	for _, e := range events {
-		key := model.WakeKey{AgentID: h.d.Key.AgentID, HostID: h.d.Key.HostID, UID: h.d.Key.UID, EventSeq: e.Seq, Epoch: epoch, EventID: e.EventID}
-		attempt, claimed, cerr := h.d.Claims.ClaimWake(ctx, key, h.d.ClaimLease)
+		key := model.NewWakeKey(model.WakeRecipient{AgentID: h.d.Key.AgentID, HostID: h.d.Key.HostID, UID: h.d.Key.UID}, e.Seq, epoch, e.EventID)
+		attempt, claimed, cerr := h.claim(ctx, key)
 		if cerr != nil {
 			return won, attempts, fmt.Errorf("claim wake for event %d: %w", e.Seq, cerr)
 		}

@@ -161,7 +161,7 @@ func TestRecordWakeOutcome_StaleReplay_DoesNotReplaceNewerClaim(t *testing.T) {
 	require.Equal(t, "claimed", outcome)
 	stats, err := s.WakeLedgerStats(t.Context())
 	require.NoError(t, err)
-	require.Equal(t, model.WakeLedgerStats{Rows: 1, Claimed: 1, Rejected: 1}, stats)
+	require.Equal(t, model.WakeLedgerStats{Rows: 1, Claimed: 1, Rejected: 1, Reclaimed: 1}, stats)
 }
 
 func TestWakeLedger_MalformedSequence_RefusesScans(t *testing.T) {

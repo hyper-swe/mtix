@@ -49,3 +49,19 @@ func (s *piEnrolStore) RecordWakeResult(ctx context.Context, attempt model.WakeA
 	}
 	return s.Store.RecordWakeResult(ctx, attempt, result)
 }
+
+// UpgradeWakeConfirmed rechecks enrolment before settling a reclaimed claim as confirmed.
+func (s *piEnrolStore) UpgradeWakeConfirmed(ctx context.Context, key model.WakeKey) error {
+	if err := checkBoardEnrolGuard(s.root); err != nil {
+		return err
+	}
+	return s.Store.UpgradeWakeConfirmed(ctx, key)
+}
+
+// InboxEventAcked rechecks enrolment before reading the acknowledgement evidence.
+func (s *piEnrolStore) InboxEventAcked(ctx context.Context, agent string, seq int64) (bool, error) {
+	if err := checkBoardEnrolGuard(s.root); err != nil {
+		return false, err
+	}
+	return s.Store.InboxEventAcked(ctx, agent, seq)
+}

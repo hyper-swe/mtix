@@ -37,6 +37,10 @@ type WakeDispatcherOptions struct {
 	Store  WakeStore
 	Alerts WakeAlertWriter
 	Send   func(context.Context, model.WakeAttempt) error
+	// Evidence says whether a reclaimed claim's first push already landed (MTIX-112.40.13);
+	// nil derives the inbox acknowledgement evidence from the store when it can read the inbox
+	// (InboxAckEvidence); without such a store a reclaim delivers once more.
+	Evidence WakeEvidence
 	// Adapters are the delivery routes, selected per registration in route order.
 	// Send, when set, joins them as the legacy route. At least one of the two is required.
 	Adapters   []WakeAdapter
@@ -67,6 +71,7 @@ type WakeDispatcher struct {
 	budgets    *wakeBudgets
 	holds      WakeHoldStore
 	reeval     reevaluationScope
+	claimer    *WakeClaimer // resolves a reclaimed claim; nil when the store is not a full ledger
 }
 
 // NewWakeDispatcher requires storage, delivery and durable alert capabilities.
@@ -95,7 +100,17 @@ func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
 	if opts.Send != nil {
 		adapters = append(adapters, legacyAdapter{send: opts.Send})
 	}
-	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, adapters: orderAdapters(adapters), alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store), reeval: reevaluationScope{host: opts.HostID, uid: opts.UID, filter: opts.CandidateFilter}}, nil
+	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, adapters: orderAdapters(adapters), alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store), reeval: reevaluationScope{host: opts.HostID, uid: opts.UID, filter: opts.CandidateFilter}, claimer: dispatcherClaimer(opts)}, nil
+}
+
+// dispatcherClaimer builds the single claim function over the store when it is a full ledger.
+func dispatcherClaimer(opts WakeDispatcherOptions) *WakeClaimer {
+	ledger, ok := opts.Store.(WakeClaimLedger)
+	if !ok {
+		return nil
+	}
+	c, _ := NewWakeClaimer(ledger, time.Minute, defaultWakeEvidence(opts.Evidence, opts.Store)) // the lease is a positive constant
+	return c
 }
 
 func holdStore(store WakeStore) WakeHoldStore {

@@ -160,17 +160,61 @@ func (s *Store) evictCursorMarks(ctx context.Context, tx *sql.Tx, agent string) 
 	return nil
 }
 
+// tableExists reports whether the named table is in the database. A released
+// 0.5.4 store opened read-only has none of the delivery tables and cannot
+// create them, so the readers treat a missing table as empty (MTIX-112.3).
+func tableExists(ctx context.Context, q rowQuerier, name string) (bool, error) {
+	var present bool
+	// Look the table up in the schema catalog, never by reading it.
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name=?)`,
+		name).Scan(&present); err != nil {
+		return false, fmt.Errorf("inspect table %s: %w", name, err)
+	}
+	return present, nil
+}
+
 // InboxAckInfo reports whether agent acked the event seq, when and how. It reads
-// local state only and writes nothing.
+// local state only and writes nothing. Its queries share one read snapshot, so a
+// concurrent ack, trim or discard cannot mix two states (MTIX-112.3).
 func (s *Store) InboxAckInfo(ctx context.Context, agent string, seq int64) (AckInfo, error) {
+	return ackInfoSnapshot(ctx, s.readDB, agent, seq, nil)
+}
+
+// ackInfoSnapshot runs ackInfoIn inside one read-only snapshot of db. wrap, when
+// non-nil, decorates the snapshot's reader; production passes nil and a test
+// uses it to interleave a write between two reads without a hook in the store.
+func ackInfoSnapshot(ctx context.Context, db *sql.DB, agent string, seq int64, wrap func(rowQuerier) rowQuerier) (info AckInfo, err error) {
 	if agent == "" {
 		return AckInfo{}, fmt.Errorf("inbox ack info: agent id required: %w", model.ErrInvalidInput)
 	}
+	// The reader pool begins deferred; a WAL snapshot never takes writer ownership.
+	tx, err := db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return AckInfo{}, fmt.Errorf("begin ack info snapshot: %w", err)
+	}
+	defer func() {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+			info = AckInfo{}
+			err = errors.Join(err, fmt.Errorf("rollback ack info snapshot: %w", rbErr))
+		}
+	}()
+	var q rowQuerier = tx
+	if wrap != nil {
+		q = wrap(tx)
+	}
+	return ackInfoIn(ctx, q, agent, seq)
+}
+
+// ackInfoIn reads only through q, the caller's snapshot, so every query sees one state (MTIX-112.3).
+func ackInfoIn(ctx context.Context, q rowQuerier, agent string, seq int64) (AckInfo, error) {
 	var at string
 	// A per-event ack row names its own time.
-	err := s.readDB.QueryRowContext(ctx, `SELECT acked_at FROM agent_inbox_ack WHERE agent_id=? AND event_seq=?`,
+	err := q.QueryRowContext(ctx, `SELECT acked_at FROM agent_inbox_ack WHERE agent_id=? AND event_seq=?`,
 		agent, seq).Scan(&at)
 	switch {
+	case err == nil && at == "":
+		// Restore and carry write no time for a watermark-covered ack.
+		return AckInfo{Kind: AckWatermark}, nil
 	case err == nil:
 		return ackInfoAt(AckSelective, at), nil
 	case !errors.Is(err, sql.ErrNoRows):
@@ -178,18 +222,31 @@ func (s *Store) InboxAckInfo(ctx context.Context, agent string, seq int64) (AckI
 	}
 	var cursor int64
 	// The watermark covers every event at or below the agent's cursor.
-	err = s.readDB.QueryRowContext(ctx, `SELECT cursor FROM agent_inbox_cursor WHERE agent_id=?`, agent).Scan(&cursor)
+	err = q.QueryRowContext(ctx, `SELECT cursor FROM agent_inbox_cursor WHERE agent_id=?`, agent).Scan(&cursor)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && seq > cursor) {
 		return AckInfo{Kind: AckNone}, nil
 	}
 	if err != nil {
 		return AckInfo{}, fmt.Errorf("read ack watermark: %w", err)
 	}
-	// Only a mark that covers seq (from_cursor < seq <= cursor) names its ack time;
-	// a selective mark wins over the watermark mark around it. No covering mark
-	// (older or evicted) means the time is unknown, never a later mark's time.
-	var kind string
-	err = s.readDB.QueryRowContext(ctx, `SELECT kind, advanced_at FROM agent_inbox_cursor_marks
+	return coveringMarkInfo(ctx, q, agent, seq)
+}
+
+// coveringMarkInfo names the ack time of a watermark-covered event. Only a mark
+// that covers seq (from_cursor < seq <= cursor) names its time; a selective mark
+// wins over the watermark mark around it. No covering mark (older, evicted, or a
+// store without the marks table) means the time is unknown, never a later
+// mark's time.
+func coveringMarkInfo(ctx context.Context, q rowQuerier, agent string, seq int64) (AckInfo, error) {
+	present, err := tableExists(ctx, q, "agent_inbox_cursor_marks")
+	if err != nil {
+		return AckInfo{}, err
+	}
+	if !present {
+		return AckInfo{Kind: AckWatermark}, nil
+	}
+	var kind, at string
+	err = q.QueryRowContext(ctx, `SELECT kind, advanced_at FROM agent_inbox_cursor_marks
 		WHERE agent_id=? AND from_cursor<? AND cursor>=?
 		ORDER BY (kind=?) DESC, cursor ASC LIMIT 1`, agent, seq, seq, AckSelective).Scan(&kind, &at)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -201,6 +258,9 @@ func (s *Store) InboxAckInfo(ctx context.Context, agent string, seq int64) (AckI
 	return ackInfoAt(kind, at), nil
 }
 
+// ackInfoAt builds the info of an ack of the given kind stamped at. With no
+// recorded time the kind stays and the time is unknown: neither a made-up time
+// nor a made-up kind (MTIX-112.3).
 func ackInfoAt(kind, at string) AckInfo {
 	t, err := time.Parse(time.RFC3339Nano, at)
 	if err != nil {
@@ -211,6 +271,13 @@ func ackInfoAt(kind, at string) AckInfo {
 
 // InboxLastRead returns when agent last read its inbox, or nil if never.
 func (s *Store) InboxLastRead(ctx context.Context, agent string) (*time.Time, error) {
+	present, terr := tableExists(ctx, s.readDB, "agent_inbox_reads")
+	if terr != nil {
+		return nil, terr
+	}
+	if !present {
+		return nil, nil //nolint:nilnil // a store without the table was never read through this feature
+	}
 	var at string
 	// Last read comes from the throttled stamp written by list, wait and ack.
 	err := s.readDB.QueryRowContext(ctx, `SELECT last_read_at FROM agent_inbox_reads WHERE agent_id=?`, agent).Scan(&at)

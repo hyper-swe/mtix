@@ -196,9 +196,9 @@ func collectDeliveries(ctx context.Context, q inboxQuerier, carry *InboxCarry) e
 // ImportInboxCarry writes a carry into this store in one transaction, mapping
 // each event id to this store's own seq. An ack whose event this store does not
 // hold is counted, not invented. A delivery whose event is missing refuses the
-// whole import (ErrCarryEventMissing): the message would be lost. at stamps an
-// ack that carried no time.
-func (s *Store) ImportInboxCarry(ctx context.Context, carry *InboxCarry, at time.Time) (InboxCarryResult, error) {
+// whole import (ErrCarryEventMissing): the message would be lost. An ack that
+// carried no time stays time-unknown (MTIX-112.3).
+func (s *Store) ImportInboxCarry(ctx context.Context, carry *InboxCarry) (InboxCarryResult, error) {
 	var res InboxCarryResult
 	if carry == nil {
 		return res, nil
@@ -206,7 +206,7 @@ func (s *Store) ImportInboxCarry(ctx context.Context, carry *InboxCarry, at time
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
 		res = InboxCarryResult{}
 		for _, a := range carry.Acks {
-			if err := importCarriedAck(ctx, tx, a, at, &res); err != nil {
+			if err := importCarriedAck(ctx, tx, a, &res); err != nil {
 				return err
 			}
 		}
@@ -236,7 +236,7 @@ func eventSeq(ctx context.Context, tx *sql.Tx, eventID string) (seq int64, ok bo
 	return seq, true, nil
 }
 
-func importCarriedAck(ctx context.Context, tx *sql.Tx, a CarriedAck, at time.Time, res *InboxCarryResult) error {
+func importCarriedAck(ctx context.Context, tx *sql.Tx, a CarriedAck, res *InboxCarryResult) error {
 	seq, ok, err := eventSeq(ctx, tx, a.EventID)
 	if err != nil {
 		return err
@@ -245,13 +245,16 @@ func importCarriedAck(ctx context.Context, tx *sql.Tx, a CarriedAck, at time.Tim
 		res.UnmatchedAcks++
 		return nil
 	}
-	when := a.AckedAt
-	if when.IsZero() {
-		when = at
+	// A watermark ack carries no time: record it with an empty acked_at, which
+	// InboxAckInfo reads as a watermark ack of unknown time. The import time is
+	// never stamped in its place (MTIX-112.3).
+	when := ""
+	if !a.AckedAt.IsZero() {
+		when = a.AckedAt.UTC().Format(time.RFC3339Nano)
 	}
 	// Record the per-event ack under this store's seq; an existing row wins.
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agent_inbox_ack(agent_id,event_seq,acked_at) VALUES(?,?,?)`,
-		a.AgentID, seq, when.UTC().Format(time.RFC3339Nano)); err != nil {
+		a.AgentID, seq, when); err != nil {
 		return fmt.Errorf("write carried ack: %w", err)
 	}
 	res.Acks++

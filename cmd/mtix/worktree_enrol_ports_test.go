@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,10 +73,10 @@ func TestWorktreePorts_SnapshotBackupImport_OnARealStore(t *testing.T) {
 
 	require.NoError(t, ports.ImportCarry(ctx, root, &sqlite.InboxCarry{
 		Acks: []sqlite.CarriedAck{{AgentID: "a", EventID: "not-here"}},
-	}, time.Now()))
+	}))
 	err = ports.ImportCarry(ctx, root, &sqlite.InboxCarry{
 		Deliveries: []sqlite.CarriedDelivery{{AgentID: "a", EventID: "not-here", HookName: "h"}},
-	}, time.Now())
+	})
 	require.ErrorIs(t, err, sqlite.ErrCarryEventMissing)
 }
 
@@ -99,7 +98,7 @@ func TestWorktreePorts_OpenFailure_Reported(t *testing.T) {
 	_, err := ports.Snapshot(context.Background(), worktreeDataDir(root))
 	require.Error(t, err)
 	require.Error(t, ports.Backup(context.Background(), root, filepath.Join(t.TempDir(), "x.db")))
-	require.Error(t, ports.ImportCarry(context.Background(), root, nil, time.Now()))
+	require.Error(t, ports.ImportCarry(context.Background(), root, nil))
 }
 
 // TestWorktreePorts_NeverDiscardLocal: the production port set cannot discard

@@ -32,6 +32,8 @@ func newBoardCmd() *cobra.Command {
 		Long: `Show nodes grouped into one column per status (open, in_progress, blocked,
 deferred, done, cancelled, invalidated) with a count per column. Read-only.
 --limit caps the items shown per column; the count is always the full total.
+Known limit: each column is a separate query, not one snapshot, so a node changed
+while the board is built can show in two columns or in none; rerun if exact numbers matter.
 With --json the output is {"columns":[{"name","count","items":[{"id","title","priority","assignee"}]}]}.`,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runBoardCmd(o)

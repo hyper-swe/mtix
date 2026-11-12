@@ -1113,6 +1113,11 @@ each column header is always the full total, and an empty column is still shown
 with `(0)`. On a console that is not UTF-8 (`LC_ALL`, `LC_CTYPE` or `LANG`
 without UTF-8) the markers are plain ASCII.
 
+Known limit: each column is read as a separate query, not from one snapshot. If
+another agent changes a node while the board is built, that node can appear in two
+columns or in none, and the counts may not add up. Run the board again if exact
+numbers matter.
+
 The `--json` shape is stable:
 
 ```json

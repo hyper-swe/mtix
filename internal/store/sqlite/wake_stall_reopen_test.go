@@ -209,15 +209,52 @@ func TestStalledWakeCandidates_ListsOnlyUnackedSentRowsOfThisHost(t *testing.T) 
 	_, err = s.WriteDB().ExecContext(context.Background(),
 		`INSERT INTO agent_inbox_cursor(agent_id,cursor) VALUES(?,?)`, "TEST-agent", 0)
 	require.NoError(t, err)
-	keys, err := s.StalledWakeCandidates(context.Background(), "TEST-host", "1000", 10)
+	keys, err := s.StalledWakeCandidates(context.Background(), sqlite.StalledWakeQuery{HostID: "TEST-host", UID: "1000", Limit: 10})
 	require.NoError(t, err)
 	require.Equal(t, []model.WakeKey{stallKey(1), stallKey(3)}, keys, "event 2 is acknowledged")
-	keys, err = s.StalledWakeCandidates(context.Background(), "", "", 1)
+	keys, err = s.StalledWakeCandidates(context.Background(), sqlite.StalledWakeQuery{Limit: 1})
 	require.NoError(t, err)
 	require.Equal(t, []model.WakeKey{stallKey(1)}, keys, "an empty scope does not narrow, and the limit bounds")
-	keys, err = s.StalledWakeCandidates(context.Background(), "OTHER-host", "", 10)
+	keys, err = s.StalledWakeCandidates(context.Background(), sqlite.StalledWakeQuery{HostID: "OTHER-host", Limit: 10})
 	require.NoError(t, err)
 	require.Empty(t, keys)
-	_, err = s.StalledWakeCandidates(context.Background(), "", "", 0)
+	_, err = s.StalledWakeCandidates(context.Background(), sqlite.StalledWakeQuery{})
 	require.ErrorIs(t, err, model.ErrInvalidInput)
+}
+
+func TestStalledWakeCandidates_CursorAboveRows_ExcludesThem(t *testing.T) {
+	now := wakeTime()
+	s := openWakeStore(t, t.TempDir()+"/cur.db", now)
+	for seq := int64(1); seq <= 3; seq++ {
+		sentRow(t, s, stallKey(seq))
+	}
+	_, err := s.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO agent_inbox_cursor(agent_id,cursor) VALUES(?,?)`, "TEST-agent", 2)
+	require.NoError(t, err)
+	keys, err := s.StalledWakeCandidates(context.Background(), sqlite.StalledWakeQuery{HostID: "TEST-host", UID: "1000", Limit: 10})
+	require.NoError(t, err)
+	require.Equal(t, []model.WakeKey{stallKey(3)}, keys, "events the agent's cursor already covers were read")
+}
+
+func TestStalledWakeCandidates_HarnessFilterAndKeysetPaging(t *testing.T) {
+	now := wakeTime()
+	s := openWakeStore(t, t.TempDir()+"/page.db", now)
+	for seq := int64(1); seq <= 3; seq++ {
+		sentRow(t, s, stallKey(seq))
+	}
+	q := sqlite.StalledWakeQuery{HostID: "TEST-host", UID: "1000", Limit: 10, Harness: "hook-harness"}
+	keys, err := s.StalledWakeCandidates(context.Background(), q)
+	require.NoError(t, err)
+	require.Empty(t, keys, "no registration has the harness: nothing is a candidate")
+	_, err = s.WriteDB().ExecContext(context.Background(), `INSERT INTO agent_registrations
+		(agent_id,harness,uid,host_id,origin,epoch,high_water,pending_hold,registered_at,last_seen,registrar_version,attach_protocol)
+		VALUES ('TEST-agent','hook-harness','1000','TEST-host','manual',1,0,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','test',1)`)
+	require.NoError(t, err)
+	keys, err = s.StalledWakeCandidates(context.Background(), q)
+	require.NoError(t, err)
+	require.Len(t, keys, 3)
+	q.Limit, q.AfterSeq, q.AfterAgent = 1, 1, "TEST-agent"
+	keys, err = s.StalledWakeCandidates(context.Background(), q)
+	require.NoError(t, err)
+	require.Equal(t, []model.WakeKey{stallKey(2)}, keys, "the keyset cursor resumes after the last row examined")
 }

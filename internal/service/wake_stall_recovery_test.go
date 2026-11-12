@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/procinfo"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/testutil"
@@ -52,25 +53,12 @@ func markedStallDispatcherOn(t *testing.T, st *sqlite.Store, backing service.Wak
 	_, err := st.WriteDB().ExecContext(t.Context(), `INSERT INTO agent_registrations
 		(agent_id,harness,uid,host_id,origin,epoch,high_water,pending_hold,registered_at,last_seen,registrar_version,attach_protocol)
 		VALUES (?,?,?,?,?,?,?,0,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z','test',1)`,
-		bothRoutesRecipient.AgentID, "claude", bothRoutesRecipient.UID, bothRoutesRecipient.HostID, "manual", 1, int64(pushStallEvents))
+		bothRoutesRecipient.AgentID, procinfo.HarnessClaude, bothRoutesRecipient.UID, bothRoutesRecipient.HostID, "manual", 1, int64(pushStallEvents))
 	require.NoError(t, err)
 	d, err := service.NewWakeDispatcher(service.WakeDispatcherOptions{
 		Store: backing, Alerts: alerts, Adapters: []service.WakeAdapter{tallySocket{tally}},
 		Settings: state, BudgetState: state, Clock: time.Now, Held: func(string) {},
 		HostID: bothRoutesRecipient.HostID, UID: bothRoutesRecipient.UID,
-		Stall: &service.WakeStallDeps{
-			Window:     func(string) (time.Duration, error) { return stallWindow, nil },
-			WaiterLive: func(context.Context, model.WakeKey) (bool, error) { return false, nil },
-			HookRoute: func(ctx context.Context, key model.WakeKey) (bool, error) {
-				regs, err := st.ListRegistrations(ctx, key.HostID, key.UID)
-				for _, r := range regs {
-					if r.AgentID == key.AgentID {
-						return r.Harness == "claude", err
-					}
-				}
-				return false, err
-			},
-		},
 	})
 	require.NoError(t, err)
 	return d

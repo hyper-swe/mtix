@@ -62,6 +62,12 @@ func (s *Store) stalledProposal(ctx context.Context, tx *sql.Tx, key model.WakeK
 	if outcome != model.WakeSent && outcome != model.WakeDelivered {
 		return p, nil
 	}
+	if acked, aerr := eventAcknowledged(ctx, tx, key); aerr != nil {
+		return p, aerr
+	} else if acked {
+		// Read between the candidate scan and this write: settle it confirmed, charge nothing.
+		return p, s.confirmAckedTx(ctx, tx, key, token)
+	}
 	at, err := time.Parse(time.RFC3339Nano, firstNonEmpty(outcomeAt, claimedAt))
 	if err != nil {
 		return p, fmt.Errorf("parse stalled wake time: %w", err)
@@ -95,24 +101,42 @@ func (s *Store) closeStalledTx(ctx context.Context, tx *sql.Tx, key model.WakeKe
 	return checkWakeWrite(result, err, "close stalled wake at retry cap")
 }
 
-// StalledWakeCandidates lists, oldest event first and at most limit, the sent (or legacy
-// delivered) wake rows of this host and operating-system user whose event is still
-// unacknowledged: the events a stalled turn may have left unconfirmed (MTIX-112.40.12). It
-// does not judge the window; ReopenStalledWake does that against the store clock. An empty
-// hostID or uid does not narrow the read. It is read-only and needs no timer.
-func (s *Store) StalledWakeCandidates(ctx context.Context, hostID, uid string, limit int) ([]model.WakeKey, error) {
-	if limit <= 0 {
+// StalledWakeQuery selects stalled-turn candidates (MTIX-112.40.12). Limit bounds the page.
+// An empty HostID or UID does not narrow the read. A non-empty Harness keeps only agents
+// registered on that host and user with that harness (the hook route). AfterSeq and
+// AfterAgent are a keyset cursor: only rows after (AfterSeq, AfterAgent) are returned, so
+// a pass can page past rows the dispatcher gates refuse instead of re-reading them.
+type StalledWakeQuery struct {
+	HostID, UID, Harness string
+	Limit                int
+	AfterSeq             int64
+	AfterAgent           string
+}
+
+// StalledWakeCandidates lists, oldest event first (event_seq, then agent) and at most
+// q.Limit, the sent (or legacy delivered) wake rows of this host and operating-system user
+// whose event is still unacknowledged and whose agent is on the requested harness: the
+// events a stalled turn may have left unconfirmed (MTIX-112.40.12). It does not judge the
+// window; ReopenStalledWake does that against the store clock. It is read-only, needs no
+// timer, and rows of agents that cannot be recovered never occupy the window.
+func (s *Store) StalledWakeCandidates(ctx context.Context, q StalledWakeQuery) ([]model.WakeKey, error) {
+	if q.Limit <= 0 {
 		return nil, fmt.Errorf("stalled candidate limit must be positive: %w", model.ErrInvalidInput)
 	}
-	// Sent and delivered rows (the hook waiter records delivered); the caller keeps only the
-	// hook-route registrations. The event must not be covered by the agent's cursor and must
-	// have no selective ack.
-	rows, err := s.readDB.QueryContext(ctx, `SELECT agent_id,host_id,uid,event_seq,epoch FROM wake_ledger w
-		WHERE outcome IN (?,?) AND (?='' OR host_id=?) AND (?='' OR uid=?)
-		  AND event_seq > COALESCE((SELECT cursor FROM agent_inbox_cursor WHERE agent_id=w.agent_id),0)
+	// Sent and delivered rows (the hook waiter records delivered), restricted to registrations
+	// of the hook harness when one is asked for. The event must not be covered by the agent's
+	// cursor and must have no selective ack. The keyset cursor resumes after the last row a
+	// pass examined.
+	rows, err := s.readDB.QueryContext(ctx, `SELECT w.agent_id,w.host_id,w.uid,w.event_seq,w.epoch FROM wake_ledger w
+		WHERE w.outcome IN (?,?) AND (?='' OR w.host_id=?) AND (?='' OR w.uid=?)
+		  AND (?='' OR EXISTS (SELECT 1 FROM agent_registrations r
+		        WHERE r.agent_id=w.agent_id AND r.host_id=w.host_id AND r.uid=w.uid AND r.harness=?))
+		  AND (w.event_seq > ? OR (w.event_seq = ? AND w.agent_id > ?))
+		  AND w.event_seq > COALESCE((SELECT cursor FROM agent_inbox_cursor WHERE agent_id=w.agent_id),0)
 		  AND NOT EXISTS (SELECT 1 FROM agent_inbox_ack WHERE agent_id=w.agent_id AND event_seq=w.event_seq)
-		ORDER BY event_seq ASC LIMIT ?`,
-		model.WakeSent, model.WakeDelivered, hostID, hostID, uid, uid, limit)
+		ORDER BY w.event_seq ASC, w.agent_id ASC LIMIT ?`,
+		model.WakeSent, model.WakeDelivered, q.HostID, q.HostID, q.UID, q.UID, q.Harness, q.Harness,
+		q.AfterSeq, q.AfterSeq, q.AfterAgent, q.Limit)
 	if err != nil {
 		return nil, fmt.Errorf("list stalled wake candidates: %w", err)
 	}
@@ -160,4 +184,29 @@ func (s *Store) WakeWaiterLive(ctx context.Context, key WakeLeaseKey) (bool, err
 		return false, fmt.Errorf("parse wake waiter lease expiry: %w", err)
 	}
 	return at.After(s.clock().UTC()), nil
+}
+
+// eventAcknowledged reports whether the agent's cursor covers the event or a selective ack
+// exists, read inside the reopen transaction so a race with a read is judged on committed
+// state (MTIX-112.40.12).
+func eventAcknowledged(ctx context.Context, tx *sql.Tx, key model.WakeKey) (bool, error) {
+	var acked int
+	// One row when the agent already read the event: its cursor is at or past it, or a selective ack exists.
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM agent_inbox_cursor WHERE agent_id=? AND cursor>=?)
+		OR EXISTS (SELECT 1 FROM agent_inbox_ack WHERE agent_id=? AND event_seq=?)`,
+		key.AgentID, key.EventSeq, key.AgentID, key.EventSeq).Scan(&acked)
+	if err != nil {
+		return false, fmt.Errorf("read event acknowledgement: %w", err)
+	}
+	return acked == 1, nil
+}
+
+// confirmAckedTx settles a sent row whose event was read as confirmed, under the fence read
+// by the caller, so it is neither reopened nor charged to the budget.
+func (s *Store) confirmAckedTx(ctx context.Context, tx *sql.Tx, key model.WakeKey, token string) error {
+	result, err := tx.ExecContext(ctx, `UPDATE wake_ledger SET outcome=?,outcome_at=?
+		WHERE agent_id=? AND host_id=? AND uid=? AND event_seq=? AND epoch=? AND attempt_token=? AND outcome IN (?,?)`,
+		model.WakeConfirmed, s.clock().UTC().Format(time.RFC3339Nano),
+		key.AgentID, key.HostID, key.UID, key.EventSeq, key.Epoch, token, model.WakeSent, model.WakeDelivered)
+	return checkWakeWrite(result, err, "confirm acknowledged stalled wake")
 }

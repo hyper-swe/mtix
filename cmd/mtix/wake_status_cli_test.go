@@ -21,6 +21,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
+	"github.com/hyper-swe/mtix/internal/procinfo"
 	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/testutil"
@@ -43,7 +44,7 @@ func seedWakeRegistration(t *testing.T, agent string) {
 	host, uid := seededWakeHost(t)
 	_, err := app.store.RegisterSessionAtomic(t.Context(), sqlite.RegistrationKey{AgentID: agent, HostID: host, UID: uid},
 		func(_ *sqlite.Registration, _ int64) (*sqlite.Registration, error) {
-			return &sqlite.Registration{AgentID: agent, HostID: host, UID: uid, Harness: "claude", Origin: "test",
+			return &sqlite.Registration{AgentID: agent, HostID: host, UID: uid, Harness: procinfo.HarnessClaude, Origin: "test",
 				RegisteredAt: "2026-10-29T00:00:00Z", LastSeen: "2026-10-29T00:00:00Z", RegistrarVersion: "test", AttachProtocol: 1}, nil
 		})
 	require.NoError(t, err)

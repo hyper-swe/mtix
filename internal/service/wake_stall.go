@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/procinfo"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -84,7 +85,13 @@ func defaultStallDeps(opts WakeDispatcherOptions) *WakeStallDeps {
 	}
 }
 
-// hookRegistration reports whether the key's agent has a claude-harness registration on its
+// IsHookRouteHarness reports whether a registration harness wakes through the hook route,
+// the only route that arms a waiter and so the only one that can stall. It is the one place
+// the stalled report and the recovery decide this; the value is the harness name real
+// registrations store (MTIX-112.40.12).
+func IsHookRouteHarness(harness string) bool { return harness == procinfo.HarnessClaude }
+
+// hookRegistration reports whether the key's agent has a hook-route registration on its
 // host and user: the hook route. A store that cannot list registrations has none.
 func hookRegistration(ctx context.Context, store WakeStore, key model.WakeKey) (bool, error) {
 	lister, ok := store.(interface {
@@ -99,7 +106,7 @@ func hookRegistration(ctx context.Context, store WakeStore, key model.WakeKey) (
 	}
 	for _, r := range regs {
 		if r.AgentID == key.AgentID {
-			return r.Harness == "claude", nil
+			return IsHookRouteHarness(r.Harness), nil
 		}
 	}
 	return false, nil
@@ -124,34 +131,63 @@ func confirmWindow(settings WakeSettingsReader, agent string) (time.Duration, er
 // stalledPassLimit bounds how many stalled candidates one pass examines.
 const stalledPassLimit = 16
 
+// stalledPassPages bounds how many candidate pages one pass reads.
+const stalledPassPages = 8
+
 // WakeStalledLister reads the sent, still unacknowledged wake rows a stalled turn may have
 // left unconfirmed (MTIX-112.40.12).
 type WakeStalledLister interface {
-	StalledWakeCandidates(ctx context.Context, hostID, uid string, limit int) ([]model.WakeKey, error)
+	StalledWakeCandidates(ctx context.Context, q sqlite.StalledWakeQuery) ([]model.WakeKey, error)
+}
+
+// pushRoutePresent reports whether any adapter other than the hook waiter and inbox-only
+// route is registered: only such a route can redeliver a stalled event. Without one the
+// pass reads nothing, so an idle host pays no scan (scale-to-zero friendly).
+func (d *WakeDispatcher) pushRoutePresent() bool {
+	for _, a := range d.adapters {
+		if r := a.Route(); r != RouteHookWaiter && r != RouteInboxOnly {
+			return true
+		}
+	}
+	return false
 }
 
 // recoverStalled redelivers, at most once per event, the events whose push went unconfirmed
 // because the session's turn never ended (MTIX-112.40.12). It does not depend on the keys the
 // scanner passes: those sit above each registration's mark, and a sent event is below it.
-// It selects the candidates itself from the wake ledger, bounded per pass, so recovery is
-// driven by the activity that runs the pass and by no timer. With the hook route alone
-// nothing is written, so a later Stop waiter still claims the event. A failure on one event
-// does not stop the others.
+// It selects the candidates itself from the wake ledger, bounded per pass in pages of
+// stalledPassLimit that advance past refused rows, so recovery is driven by the activity
+// that runs the pass and by no timer. Known limit: one pass examines at most
+// stalledPassPages*stalledPassLimit (128) candidates, so more than 128 hook-route rows that the
+// per-agent gates refuse (wake.live off, budget, hop guard, live waiter) can delay a real
+// stall until those rows settle or leave the set. With the hook route alone nothing is read or written,
+// so a later Stop waiter still claims the event. A failure on one event does not stop the others.
 func (d *WakeDispatcher) recoverStalled(ctx context.Context) error {
 	lister, ok := d.store.(WakeStalledLister)
-	if d.stall == nil || d.claimer == nil || !ok {
+	if d.stall == nil || d.claimer == nil || !ok || !d.pushRoutePresent() {
 		return nil
 	}
-	keys, err := lister.StalledWakeCandidates(ctx, d.reeval.host, d.reeval.uid, stalledPassLimit)
-	if err != nil {
-		return fmt.Errorf("select stalled wake candidates: %w", err)
+	q := sqlite.StalledWakeQuery{HostID: d.reeval.host, UID: d.reeval.uid, Limit: stalledPassLimit}
+	if d.stall.HookRoute != nil {
+		q.Harness = procinfo.HarnessClaude // only hook-route registrations can stall
 	}
 	var failures error
-	for _, key := range keys {
-		if err := ctx.Err(); err != nil {
-			return errors.Join(failures, fmt.Errorf("continue stalled recovery: %w", err))
+	for page := 0; page < stalledPassPages; page++ {
+		keys, err := lister.StalledWakeCandidates(ctx, q)
+		if err != nil {
+			return errors.Join(failures, fmt.Errorf("select stalled wake candidates: %w", err))
 		}
-		failures = errors.Join(failures, d.recoverStalledOne(ctx, key))
+		for _, key := range keys {
+			if err := ctx.Err(); err != nil {
+				return errors.Join(failures, fmt.Errorf("continue stalled recovery: %w", err))
+			}
+			failures = errors.Join(failures, d.recoverStalledOne(ctx, key))
+		}
+		if len(keys) < stalledPassLimit {
+			break
+		}
+		last := keys[len(keys)-1]
+		q.AfterSeq, q.AfterAgent = last.EventSeq, last.AgentID
 	}
 	return failures
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/procinfo"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -33,7 +34,7 @@ func TestPendingWakeEvents_SessionTouchInContext_DoesNotRefreshLastSeen(t *testi
 	const seeded = "2026-10-29T00:00:00Z"
 	_, err := app.store.RegisterSessionAtomic(t.Context(), sqlite.RegistrationKey{AgentID: "worker", HostID: host, UID: uid},
 		func(_ *sqlite.Registration, _ int64) (*sqlite.Registration, error) {
-			return &sqlite.Registration{AgentID: "worker", HostID: host, UID: uid, Harness: "claude", SessionHandle: "sess-1", Origin: "test",
+			return &sqlite.Registration{AgentID: "worker", HostID: host, UID: uid, Harness: procinfo.HarnessClaude, SessionHandle: "sess-1", Origin: "test",
 				RegisteredAt: seeded, LastSeen: seeded, RegistrarVersion: "test", AttachProtocol: 1}, nil
 		})
 	require.NoError(t, err)
@@ -57,4 +58,17 @@ func TestHookRouteRegistration_ReflectsHarness(t *testing.T) {
 	hook, err = hookRouteRegistration(t.Context(), "nobody")
 	require.NoError(t, err)
 	require.False(t, hook)
+}
+
+// A registration made through the real register path (a Claude Code session found by the
+// ancestor walk) stores the production harness name and must be recognised as hook route
+// (MTIX-112.40.12): the gate cannot compare against a literal no real registration carries.
+func TestHookRouteRegistration_RegisteredThroughRealPath_IsRecognised(t *testing.T) {
+	wakeStatusApp(t)
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", "/tmp/lane-hook")
+	fakeSessionProcess(t, "claude")
+	captureStdout(t, func() { require.NoError(t, runAgentRegister("lane", sessionOptions{})) })
+	hook, err := hookRouteRegistration(t.Context(), "lane")
+	require.NoError(t, err)
+	require.True(t, hook, "a registration created by agent register is on the hook route")
 }

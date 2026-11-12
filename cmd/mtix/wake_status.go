@@ -112,7 +112,7 @@ func hookRouteRegistration(ctx context.Context, agent string) (bool, error) {
 	}
 	for _, r := range regs {
 		if r.AgentID == agent {
-			return r.Harness == "claude", nil
+			return service.IsHookRouteHarness(r.Harness), nil
 		}
 	}
 	return false, nil

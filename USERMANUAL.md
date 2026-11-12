@@ -1102,6 +1102,14 @@ in a node's title, description or prompt. A query that matches nothing returns
 no rows; it never falls back to listing everything. At most 16 words of at most
 256 bytes each are accepted, and a blank word is an error.
 
+Both `mtix list` and `mtix search` take `--labels a,b`: a node matches when it
+carries ANY listed label. Matching is exact and case-sensitive (`desk:now` does
+not match `desk` or `Desk:Now`), colons are ordinary characters, blank entries
+are ignored and an all-blank value means no label filter. An all-of label
+filter is not offered. The MCP tools `mtix_list` and `mtix_search` take the same
+comma-separated `labels` argument and REST `GET /api/v1/search` takes
+`?labels=a,b` (repeat the parameter or use commas).
+
 With no words, `mtix search` lists by its filters alone. It accepts the same
 multi-value filter flags as `mtix list` (see below), and they combine with the
 words. There is no `--query` flag: the words are positional.
@@ -1134,6 +1142,9 @@ mtix list --type issue
 
 # Limit results
 mtix list --limit 20
+
+# Any-of label match (exact, case-sensitive)
+mtix list --labels desk:now,desk:backlog
 ```
 
 #### Multi-value filters

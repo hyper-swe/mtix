@@ -9,7 +9,7 @@ Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whit
 
 ## Creating work
 
-`mtix create --type` accepts bug, feature, task, chore, refactor, test or doc (omitted = unset), independently of depth-derived hierarchy; `--assign <agent>` claims atomically as `in_progress`, overrides parent auto-claim and preserves the creator as author. MCP/REST/gRPC use `issue_type` and `assignee`. `mtix update --type` changes work classification (empty clears, omitted preserves). `mtix list --type` filters hierarchy; `mtix list --issue-type` filters work classification. See the planning skill for the full routine.
+`mtix create --type` accepts bug, feature, task, chore, refactor, test or doc (omitted = unset), independently of depth-derived hierarchy; `--assign <agent>` claims atomically as `in_progress`, overrides parent auto-claim and preserves the creator as author. MCP/REST/gRPC use `issue_type` and `assignee`. `mtix update --type` changes work classification (empty clears, omitted preserves). `mtix list --type` filters hierarchy; `mtix list --issue-type` filters work classification. `mtix list --labels desk:now,desk:backlog` (and `mtix search <words> --labels ...`, MCP `labels` on `mtix_list`/`mtix_search`, REST `?labels=`) matches nodes carrying ANY listed label: exact and case-sensitive, comma-separated, colons allowed; blank entries are ignored and an all-blank value means no label filter. An all-of label filter is not offered. See the planning skill for the full routine.
 
 Terminal output (`show`, `list`, `ready`, `search`, `tree`, `progress`, `context`, `create`, `decompose --dry-run`) prints titles and assignees on one line: control characters, escapes, bidirectional overrides and isolates, zero-width and other invisible format characters are removed, line breaks become spaces, and the directional marks (U+200E, U+200F, U+061C) are kept. Use `--json` for the exact stored text, for example when quoting a title. The plain `mtix inbox` listing and error lines are stripped the same way, but an inbox body and an error keep their line breaks (the body is indented). The `mtix context` Assembled Prompt block folds titles, annotation authors and dependency ids onto one line and indents every line of prompts and annotation text.
 
@@ -143,6 +143,9 @@ mtix list --under PROJ-1,PROJ-2 --status done --fields id,title,prompt --json
 
 # Critical/high priority open work assigned to two agents
 mtix list --priority 1,2 --status open --assignee agent-a,agent-b --format briefing
+
+# Nodes carrying ANY of these labels (exact, case-sensitive match)
+mtix list --labels desk:now,desk:backlog --status open --json
 ```
 
 Multiple values within one flag combine with OR; multiple flags combine with AND. All values are parameterized — no injection risk.

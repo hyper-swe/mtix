@@ -22,6 +22,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `attach` — Harness glue entry points (internal; called through the attach shim)
 - `backup <path>` — Create a backup of the mtix database
 - `blocked [id]` — List nodes blocked by dependencies, or show the blockers of one node
+- `board` — Show a read-only board of nodes grouped by status column
 - `cancel <id>` — Cancel a node with mandatory reason
 - `claim <id>` — Claim a node for an agent
 - `comment <id> <text>` — Add a comment annotation to a node
@@ -367,6 +368,31 @@ edges, not a node list. The project scope flags apply only to the list form.
 |------|-------|-------------|---------|
 | `--all-projects` |  | Span all projects | false |
 | `--project` |  | Scope to a single project prefix (default: primary) |  |
+---
+
+## board
+
+**Usage:** `board`
+
+Show a read-only board of nodes grouped by status column
+
+Show nodes grouped into one column per status (open, in_progress, blocked,
+deferred, done, cancelled, invalidated) with a count per column. Read-only.
+--limit caps the items shown per column; the count is always the full total.
+Known limit: each column is a separate query, not one snapshot, so a node changed
+while the board is built can show in two columns or in none; rerun if exact numbers matter.
+With --json the output is {"columns":[{"name","count","items":[{"id","title","priority","assignee"}]}]}.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--all-projects` |  | Span all projects | false |
+| `--assignee` |  | Filter by assignee (comma-separated for multiple) |  |
+| `--labels` |  | Filter by label, any-of (comma-separated; exact, case-sensitive, e.g. desk:now,desk:backlog) |  |
+| `--limit` |  | Maximum items shown per column (at least 1; counts are unaffected) | 20 |
+| `--project` |  | Scope to a single project prefix (default: primary) |  |
+| `--under` |  | Only nodes under these parents (comma-separated) |  |
 ---
 
 ## cancel

@@ -1,0 +1,65 @@
+{
+  "columns": [
+    {
+      "name": "open",
+      "count": 3,
+      "items": [
+        {
+          "id": "TEST-1",
+          "title": "Now alpha",
+          "priority": 3,
+          "assignee": ""
+        },
+        {
+          "id": "TEST-2",
+          "title": "Backlog beta",
+          "priority": 3,
+          "assignee": ""
+        },
+        {
+          "id": "TEST-3",
+          "title": "Plain gamma",
+          "priority": 3,
+          "assignee": ""
+        }
+      ]
+    },
+    {
+      "name": "in_progress",
+      "count": 0,
+      "items": []
+    },
+    {
+      "name": "blocked",
+      "count": 0,
+      "items": []
+    },
+    {
+      "name": "deferred",
+      "count": 0,
+      "items": []
+    },
+    {
+      "name": "done",
+      "count": 0,
+      "items": []
+    },
+    {
+      "name": "cancelled",
+      "count": 1,
+      "items": [
+        {
+          "id": "TEST-4",
+          "title": "Dropped delta",
+          "priority": 3,
+          "assignee": ""
+        }
+      ]
+    },
+    {
+      "name": "invalidated",
+      "count": 0,
+      "items": []
+    }
+  ]
+}

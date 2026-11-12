@@ -53,6 +53,13 @@ func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop in
 		return wakeNotAttempted, fmt.Errorf("wake attempt fence is missing or mismatched: %w", model.ErrConflict)
 	}
 	attempt.Hop = hop
+	if d.claimer != nil {
+		var resolveErr error
+		if attempt, won, resolveErr = d.claimer.Resolve(ctx, attempt); resolveErr != nil || !won {
+			// Already delivered by an earlier claimant (confirmed), or the settle failed.
+			return wakeAttempted, resolveErr
+		}
+	}
 	result, sendErr := d.deliverWake(ctx, attempt)
 	// Once a send ran, caller cancellation must not turn its failure into a retry.
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

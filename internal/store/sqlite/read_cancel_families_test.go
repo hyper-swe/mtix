@@ -6,6 +6,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"log/slog"
 	"testing"
@@ -27,8 +28,11 @@ const readCancelIterations = 1500
 // store use (Query, QueryRow, ReadDB), the prepared-statement routes and the
 // ack-info read. The window is a few microseconds wide, so a sweep that is
 // merely long is flaky; with the shield removed these routes first fail
-// between iteration 0 and about 5900 across runs (one 12000 sweep missed a route), so 20000 fails every run
-// (red-on-base-2.txt).
+// between iteration 0 and about 5900 across runs (one 12000 sweep missed a route), so 20000 failed every recorded run
+// (red-on-base-2.txt, red-on-base-3.txt: 8 of 8 for Store.QueryRow). The window
+// cannot be hit deterministically from outside the driver, so this is
+// statistical, not a guarantee; the fake-driver tests in
+// read_shield_forwarding_test.go are the deterministic proof.
 const readCancelRouteIterations = 20000
 
 // readCancelSlowIterations bounds the families whose single read is slow (the
@@ -117,6 +121,30 @@ func cancelReadFamilies(st *Store) map[string]func(context.Context) {
 			defer func() { _ = conn.Close() }()
 			prepared(c, conn)
 		},
+		"Conn.Raw.Prepare": func(c context.Context) {
+			conn, err := st.readDB.Conn(context.WithoutCancel(c))
+			if err != nil {
+				return
+			}
+			defer func() { _ = conn.Close() }()
+			_ = conn.Raw(func(dc any) error {
+				stmt, err := dc.(driver.Conn).Prepare(`SELECT id, title FROM nodes ORDER BY id`)
+				if err != nil {
+					return err //nolint:wrapcheck // test helper
+				}
+				defer func() { _ = stmt.Close() }()
+				rows, err := stmt.(driver.StmtQueryContext).QueryContext(c, nil)
+				if err != nil {
+					return err //nolint:wrapcheck // test helper
+				}
+				defer func() { _ = rows.Close() }()
+				dest := make([]driver.Value, 2)
+				for err := rows.Next(dest); err == nil; err = rows.Next(dest) {
+					_ = dest
+				}
+				return nil
+			})
+		},
 		"Tx.PrepareContext": func(c context.Context) {
 			tx, err := st.readDB.BeginTx(c, &sql.TxOptions{ReadOnly: true})
 			if err != nil {
@@ -203,7 +231,7 @@ func TestReadFamilies_CancelledMidQuery_LeaveNoStaleSnapshot(t *testing.T) {
 func sweepsRoute(name string) bool {
 	switch name {
 	case "Store.Query", "Store.QueryRow", "ReadDB.QueryContext", "InboxAckInfo",
-		"Conn.PrepareContext", "ReadDB.Conn.PrepareContext", "Tx.PrepareContext":
+		"Conn.PrepareContext", "ReadDB.Conn.PrepareContext", "Tx.PrepareContext", "Conn.Raw.Prepare":
 		return true
 	}
 	return false

@@ -13,8 +13,14 @@ import (
 // methods, so no code in the store can query the pool except through it. The
 // pool's connections come from shieldConnector (openShieldedSQLite), which
 // keeps a read cancelled mid-query from leaving a stale WAL snapshot on a
-// pooled connection (see read_shield.go). A source-scan test
-// (read_pool_guard_test.go) fails if a new read bypasses this type.
+// pooled connection (see read_shield.go). The runtime guarantee is the connection-level
+// shield: every connection and every statement prepared on one is shielded,
+// however it is reached. A source-scan test (read_pool_guard_test.go) is a
+// syntax-level backstop only; it flags the raw handle outside this file, a
+// pool built elsewhere, a second raw *sql.DB on Store, and prepare, statement
+// or Raw selectors on values derived from the pool. It cannot see closures,
+// embedding, struct-field holders, unsafe, reflect, helpers inside this file,
+// or other packages.
 type readPool struct {
 	rawDB *sql.DB // read only inside this file; the guard test fails on any other use
 }

@@ -30,6 +30,11 @@ const readPoolGuardMinFiles = 100
 // *sql.DB, and a prepare, statement or raw-connection call on anything derived
 // from the pool (a Conn, a transaction, an alias, a ReadPool parameter). It
 // errors when given too few files to mean anything.
+//
+// It is a syntax-level check, not a proof. It cannot see closures that hide
+// the pool, embedding, struct fields that hold it, unsafe, reflect, helpers
+// inside read_pool.go, or other packages; the connection-level shield
+// (read_shield.go) is the runtime guarantee.
 func readPoolBypasses(files map[string]string) ([]string, error) {
 	if len(files) < readPoolGuardMinFiles {
 		return nil, os.ErrInvalid
@@ -144,7 +149,7 @@ func readPoolBypassIn(fset *token.FileSet, name string, n ast.Node, tainted map[
 	home := filepath.Base(name) == "read_pool.go"
 	pos := func(p token.Pos) string { return name + ":" + strconv.Itoa(fset.Position(p).Line) }
 	switch x := n.(type) {
-	case *ast.SelectorExpr, *ast.CallExpr:
+	case *ast.SelectorExpr:
 		return accessBypassIn(pos, x, home, tainted)
 	case *ast.CompositeLit:
 		if id, ok := x.Type.(*ast.Ident); ok && id.Name == "readPool" && !home {
@@ -158,22 +163,18 @@ func readPoolBypassIn(fset *token.FileSet, name string, n ast.Node, tainted map[
 	return nil
 }
 
-// accessBypassIn judges a selector or call: any .rawDB outside read_pool.go
-// unwraps a pool whatever the variable, and a prepare, statement or raw call on
-// a value derived from the pool is a way around the shield.
-func accessBypassIn(pos func(token.Pos) string, n ast.Node, home bool, tainted map[string]bool) []string {
-	if home {
+// accessBypassIn judges a selector, which covers a call's callee and a method
+// value alike: any .rawDB outside read_pool.go unwraps a pool whatever the
+// variable, and a prepare, statement or raw selector on a value derived from
+// the pool is a way around the shield.
+func accessBypassIn(pos func(token.Pos) string, x *ast.SelectorExpr, home bool, tainted map[string]bool) []string {
+	switch {
+	case home:
 		return nil
-	}
-	switch x := n.(type) {
-	case *ast.SelectorExpr:
-		if x.Sel.Name == "rawDB" {
-			return []string{pos(x.Pos()) + ": rawDB unwraps the reader pool"}
-		}
-	case *ast.CallExpr:
-		if sel, ok := x.Fun.(*ast.SelectorExpr); ok && readPoolPrepareCalls[sel.Sel.Name] && poolRoot(sel.X, tainted) {
-			return []string{pos(x.Pos()) + ": " + sel.Sel.Name + " on a value derived from the reader pool"}
-		}
+	case x.Sel.Name == "rawDB":
+		return []string{pos(x.Pos()) + ": rawDB unwraps the reader pool"}
+	case readPoolPrepareCalls[x.Sel.Name] && poolRoot(x.X, tainted):
+		return []string{pos(x.Pos()) + ": " + x.Sel.Name + " on a value derived from the reader pool"}
 	}
 	return nil
 }
@@ -258,6 +259,8 @@ func TestReadPoolBypasses_BypassingSources_AreReported(t *testing.T) {
 		{"tx prepare", "package sqlite\nfunc f(s *Store) { tx, _ := s.readDB.BeginTx(nil, nil); tx.PrepareContext(nil, \"\") }\n", "PrepareContext on a value derived"},
 		{"tx stmt", "package sqlite\nfunc f(s *Store) { tx, _ := s.readDB.BeginTx(nil, nil); tx.StmtContext(nil, nil) }\n", "StmtContext on a value derived"},
 		{"param prepare", "package sqlite\nfunc f(p *ReadPool) { c, _ := p.Conn(nil); c.PrepareContext(nil, \"\") }\n", "PrepareContext on a value derived"},
+		{"raw method value", "package sqlite\nfunc f(s *Store) { c, _ := s.readDB.Conn(nil); g := c.Raw; _ = g }\n", "Raw on a value derived"},
+		{"prepare method value", "package sqlite\nfunc f(s *Store) { tx, _ := s.readDB.BeginTx(nil, nil); g := tx.PrepareContext; _ = g }\n", "PrepareContext on a value derived"},
 		{"direct prepare", "package sqlite\nfunc f(s *Store) { s.readDB.PrepareContext(nil, \"\") }\n", "PrepareContext on a value derived"},
 		{"build", "package sqlite\nvar p = readPool{}\n", "readPool built outside read_pool.go"},
 		{"field type", "package sqlite\ntype Store struct{ readDB *sql.DB }\n", "not *readPool"},

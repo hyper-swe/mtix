@@ -31,7 +31,10 @@ import (
 // aggregate) finishes before the cancel takes effect, because interrupting it
 // is exactly what leaves the stale snapshot. A read stuck on a lock is still
 // bounded by busy_timeout. Prepared statements (shieldStmt) get the same
-// treatment as direct queries.
+// treatment as direct queries. Every route to a statement
+// is wrapped, including Prepare on the driver connection that sql.Conn.Raw
+// exposes, so this connection-level shield, not the source scan, is the
+// guarantee.
 
 // shieldConnector opens driver connections wrapped in shieldConn.
 type shieldConnector struct {
@@ -94,18 +97,25 @@ func (c *shieldConn) ExecContext(ctx context.Context, query string, args []drive
 	return e.ExecContext(ctx, query, args) //nolint:wrapcheck // forwarded unchanged for database/sql
 }
 
+// Prepare prepares on the driver and shields the statement. The embedded
+// driver.Conn would otherwise promote its own Prepare, which sql.Conn.Raw hands
+// to callers as an unshielded statement.
+func (c *shieldConn) Prepare(query string) (driver.Stmt, error) {
+	st, err := c.Conn.Prepare(query)
+	if err != nil {
+		return nil, err //nolint:wrapcheck // forwarded unchanged for database/sql
+	}
+	return &shieldStmt{Stmt: st}, nil
+}
+
 // PrepareContext prepares on the driver and shields the statement, so a read
 // through a prepared statement is protected like a direct query.
 func (c *shieldConn) PrepareContext(ctx context.Context, query string) (driver.Stmt, error) {
-	var (
-		st  driver.Stmt
-		err error
-	)
-	if p, ok := c.Conn.(driver.ConnPrepareContext); ok {
-		st, err = p.PrepareContext(ctx, query)
-	} else {
-		st, err = c.Prepare(query)
+	p, ok := c.Conn.(driver.ConnPrepareContext)
+	if !ok {
+		return c.Prepare(query)
 	}
+	st, err := p.PrepareContext(ctx, query)
 	if err != nil {
 		return nil, err //nolint:wrapcheck // forwarded unchanged for database/sql
 	}

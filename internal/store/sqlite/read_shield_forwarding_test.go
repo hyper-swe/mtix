@@ -9,6 +9,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"io"
+	"log/slog"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -245,4 +246,42 @@ func TestOpenShieldedFrom_DriverProbe_IsClosed(t *testing.T) {
 	require.NotNil(t, probe)
 	require.Error(t, probe.PingContext(t.Context()), "the probe handle is closed")
 	require.NoError(t, pool.PingContext(t.Context()), "the shielded pool itself is open")
+}
+
+// TestShieldConn_PrepareViaDriverConn_IsShielded proves a statement prepared
+// through the driver connection itself, which is what sql.Conn.Raw hands out,
+// is shielded too: its query never sees the caller's cancel (MTIX-250).
+func TestShieldConn_PrepareViaDriverConn_IsShielded(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	inner := &fakeConn{stmt: &fakeStmt{rows: &fakeRows{}}}
+	inner.stmt.cancel = cancel
+	var dc driver.Conn = &shieldConn{Conn: inner}
+	st, err := dc.Prepare("q")
+	require.NoError(t, err)
+	require.IsType(t, &shieldStmt{}, st, "Prepare on the driver connection returns a shielded statement")
+	rows, err := st.(driver.StmtQueryContext).QueryContext(ctx, nil)
+	require.NoError(t, err)
+	require.NoError(t, inner.stmt.queryErr, "the driver statement never saw the cancel")
+	require.ErrorIs(t, rows.Next(make([]driver.Value, 1)), context.Canceled)
+}
+
+// TestReadPool_RawConnPrepare_ReturnsShieldedStatement proves both prepare
+// entry points of the driver connection that sql.Conn.Raw exposes return a
+// shielded statement (MTIX-250).
+func TestReadPool_RawConnPrepare_ReturnsShieldedStatement(t *testing.T) {
+	st, err := New(t.TempDir(), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	conn, err := st.readDB.Conn(t.Context())
+	require.NoError(t, err)
+	defer func() { _ = conn.Close() }()
+	require.NoError(t, conn.Raw(func(dc any) error {
+		ds, err := dc.(driver.ConnPrepareContext).PrepareContext(t.Context(), "SELECT 1")
+		require.NoError(t, err)
+		require.IsType(t, &shieldStmt{}, ds)
+		p, err := dc.(driver.Conn).Prepare("SELECT 1")
+		require.NoError(t, err)
+		require.IsType(t, &shieldStmt{}, p)
+		return nil
+	}))
 }

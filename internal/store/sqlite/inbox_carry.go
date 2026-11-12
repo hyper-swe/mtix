@@ -196,10 +196,9 @@ func collectDeliveries(ctx context.Context, q inboxQuerier, carry *InboxCarry) e
 // ImportInboxCarry writes a carry into this store in one transaction, mapping
 // each event id to this store's own seq. An ack whose event this store does not
 // hold is counted, not invented. A delivery whose event is missing refuses the
-// whole import (ErrCarryEventMissing): the message would be lost. at is kept for
-// callers and no longer stamps anything: an ack that carried no time stays
-// time-unknown (MTIX-112.3).
-func (s *Store) ImportInboxCarry(ctx context.Context, carry *InboxCarry, _ time.Time) (InboxCarryResult, error) {
+// whole import (ErrCarryEventMissing): the message would be lost. An ack that
+// carried no time stays time-unknown (MTIX-112.3).
+func (s *Store) ImportInboxCarry(ctx context.Context, carry *InboxCarry) (InboxCarryResult, error) {
 	var res InboxCarryResult
 	if carry == nil {
 		return res, nil

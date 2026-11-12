@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
@@ -84,8 +83,8 @@ func newWorktreeEnrolPortsWith(logger *slog.Logger, progress io.Writer, dial hub
 		},
 		Backup: func(ctx context.Context, root, dest string) error { return backupWorktree(ctx, logger, root, dest) },
 		Clone:  func(ctx context.Context, root string) error { return cloneWorktree(ctx, logger, progress, root, dial) },
-		ImportCarry: func(ctx context.Context, root string, c *sqlite.InboxCarry, at time.Time) error {
-			return importWorktreeCarry(ctx, logger, root, c, at)
+		ImportCarry: func(ctx context.Context, root string, c *sqlite.InboxCarry) error {
+			return importWorktreeCarry(ctx, logger, root, c)
 		},
 		Enroll:   enroll,
 		Enrolled: enrolled,
@@ -147,9 +146,9 @@ func backupWorktree(ctx context.Context, logger *slog.Logger, root, dest string)
 	})
 }
 
-func importWorktreeCarry(ctx context.Context, logger *slog.Logger, root string, c *sqlite.InboxCarry, at time.Time) error {
+func importWorktreeCarry(ctx context.Context, logger *slog.Logger, root string, c *sqlite.InboxCarry) error {
 	return withWorktreeStore(logger, root, func(st *sqlite.Store) error {
-		_, err := st.ImportInboxCarry(ctx, c, at)
+		_, err := st.ImportInboxCarry(ctx, c)
 		return err
 	})
 }

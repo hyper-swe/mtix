@@ -5,6 +5,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"log/slog"
 	"path/filepath"
 	"testing"
@@ -51,21 +52,44 @@ func TestDeliveryReaders_ReadOnlyOpenWithoutTables_ReturnUnknownNotError(t *test
 	require.Zero(t, count, "reads cannot create the missing tables")
 }
 
+// writeAfterFirstRead runs a write on the writer connection right after the
+// first query of the snapshot it wraps, standing in for a concurrent ack.
+type writeAfterFirstRead struct {
+	rowQuerier
+	after func()
+	fired bool
+}
+
+func (w *writeAfterFirstRead) QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row {
+	row := w.rowQuerier.QueryRowContext(ctx, q, args...)
+	if !w.fired {
+		w.fired = true
+		w.after()
+	}
+	return row
+}
+
 // MTIX-112.3: InboxAckInfo's reads share one snapshot, so a write between its
-// queries cannot mix two states.
+// queries cannot mix two states. Reading the cursor outside the snapshot (for
+// example on the pool) would see the concurrent ack.
 func TestInboxAckInfo_ConcurrentAckBetweenReads_SeesOneSnapshot(t *testing.T) {
 	s, err := New(filepath.Join(t.TempDir(), "snap.db"), slog.Default())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
-	s.ackInfoAfterFirstRead = func(ctx context.Context) {
-		// A cumulative ack lands after the ack-row read and before the cursor read.
-		_, werr := s.WriteDB().ExecContext(ctx, `INSERT INTO agent_inbox_cursor(agent_id,cursor) VALUES('a',5)`)
-		require.NoError(t, werr)
+	var w *writeAfterFirstRead
+	wrap := func(q rowQuerier) rowQuerier {
+		w = &writeAfterFirstRead{rowQuerier: q, after: func() {
+			// A cumulative ack lands after the ack-row read and before the cursor read.
+			_, werr := s.WriteDB().ExecContext(t.Context(), `INSERT INTO agent_inbox_cursor(agent_id,cursor) VALUES('a',5)`)
+			require.NoError(t, werr)
+		}}
+		return w
 	}
-	info, err := s.InboxAckInfo(t.Context(), "a", 3)
+	info, err := ackInfoSnapshot(t.Context(), s.readDB, "a", 3, wrap)
 	require.NoError(t, err)
+	require.NotNil(t, w)
+	require.True(t, w.fired, "the interleaved write ran between the reads")
 	require.Equal(t, AckNone, info.Kind, "the snapshot predates the concurrent ack")
-	s.ackInfoAfterFirstRead = nil
 	info, err = s.InboxAckInfo(t.Context(), "a", 3)
 	require.NoError(t, err)
 	require.Equal(t, AckWatermark, info.Kind, "a later read sees it")

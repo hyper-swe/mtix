@@ -39,7 +39,7 @@ func (s *WorktreeEnrolment) seed(ctx context.Context, root string, accept string
 	if err := p.Clone(ctx, root); err != nil {
 		return fmt.Errorf("clone fresh store from the hub: %w", err)
 	}
-	if err := p.ImportCarry(ctx, root, snap.Carry, s.o.Clock().UTC()); err != nil {
+	if err := p.ImportCarry(ctx, root, snap.Carry); err != nil {
 		return fmt.Errorf("carry inbox state: %w", err)
 	}
 	// The fresh store has no sync.sha256: without one, the first command would

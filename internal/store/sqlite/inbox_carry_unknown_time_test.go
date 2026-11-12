@@ -6,7 +6,6 @@ package sqlite_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -21,7 +20,7 @@ func TestImportInboxCarry_WatermarkAck_StaysTimeUnknownWithItsKind(t *testing.T)
 	oldS, newS, ids := carryFixture(t)
 	carry, err := oldS.ExportInboxCarry(ctx)
 	require.NoError(t, err)
-	_, err = newS.ImportInboxCarry(ctx, carry, time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC))
+	_, err = newS.ImportInboxCarry(ctx, carry)
 	require.NoError(t, err)
 	hist, err := newS.InboxHistory(ctx, "opus")
 	require.NoError(t, err)

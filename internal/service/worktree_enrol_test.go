@@ -138,7 +138,7 @@ func (w *enrolWorld) ports() service.WorktreePorts {
 			require.NoError(w.t, os.WriteFile(filepath.Join(root, ".mtix", "data", "mtix.db"), []byte("CLONED"), 0o600))
 			return err
 		},
-		ImportCarry: func(_ context.Context, _ string, c *sqlite.InboxCarry, _ time.Time) error {
+		ImportCarry: func(_ context.Context, _ string, c *sqlite.InboxCarry) error {
 			w.t.Helper()
 			assert.Same(w.t, w.carry, c, "the snapshot's carry is imported unchanged")
 			return w.step("carry")

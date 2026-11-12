@@ -25,13 +25,26 @@ func TestInboxAckInfo_AckRowWithoutTime_IsWatermarkTimeUnknown(t *testing.T) {
 	require.Equal(t, AckInfo{Kind: AckWatermark}, info)
 }
 
-// A selective ack with no time that a later watermark folds into a mark keeps
-// the unknown time and the watermark kind.
-func TestInboxAckInfo_FoldedAckWithoutTime_StaysTimeUnknown(t *testing.T) {
+// A selective mark with no time keeps its TRUE kind: selective, time unknown.
+func TestInboxAckInfo_FoldedSelectiveMarkWithoutTime_StaysSelectiveTimeUnknown(t *testing.T) {
 	s, err := New(filepath.Join(t.TempDir(), "f.db"), slog.Default())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = s.Close() })
 	_, err = s.WriteDB().ExecContext(t.Context(), `INSERT INTO agent_inbox_cursor_marks(agent_id,cursor,from_cursor,kind,advanced_at) VALUES('a',2,1,'selective','')`)
+	require.NoError(t, err)
+	_, err = s.WriteDB().ExecContext(t.Context(), `INSERT INTO agent_inbox_cursor(agent_id,cursor) VALUES('a',2)`)
+	require.NoError(t, err)
+	info, err := s.InboxAckInfo(t.Context(), "a", 2)
+	require.NoError(t, err)
+	require.Equal(t, AckInfo{Kind: AckSelective}, info, "kind stays, time unknown")
+}
+
+// A watermark mark with no time stays a watermark of unknown time.
+func TestInboxAckInfo_WatermarkMarkWithoutTime_StaysWatermarkTimeUnknown(t *testing.T) {
+	s, err := New(filepath.Join(t.TempDir(), "w.db"), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+	_, err = s.WriteDB().ExecContext(t.Context(), `INSERT INTO agent_inbox_cursor_marks(agent_id,cursor,from_cursor,kind,advanced_at) VALUES('a',2,1,'watermark','')`)
 	require.NoError(t, err)
 	_, err = s.WriteDB().ExecContext(t.Context(), `INSERT INTO agent_inbox_cursor(agent_id,cursor) VALUES('a',2)`)
 	require.NoError(t, err)

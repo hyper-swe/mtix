@@ -21,6 +21,18 @@ import (
 func (s *Store) ClaimWakeBudget(ctx context.Context, key model.WakeKey, lease time.Duration,
 	admit func(model.WakeBudgetProposal) (model.WakeBudgetDecision, error),
 ) (model.WakeBudgetResult, error) {
+	return s.claimWithProposal(ctx, key, lease, admit, func(tx *sql.Tx) (model.WakeBudgetProposal, error) {
+		return s.wakeBudgetProposal(ctx, tx, key, lease)
+	})
+}
+
+// claimWithProposal runs the one admission transaction for a claim: it validates the input,
+// builds the proposal inside the write transaction with propose, asks admit, and applies the
+// decision. ClaimWakeBudget and ReopenStalledWake differ only in the proposal they build.
+func (s *Store) claimWithProposal(ctx context.Context, key model.WakeKey, lease time.Duration,
+	admit func(model.WakeBudgetProposal) (model.WakeBudgetDecision, error),
+	propose func(*sql.Tx) (model.WakeBudgetProposal, error),
+) (model.WakeBudgetResult, error) {
 	if err := validateWakeClaimInput(key, lease); err != nil {
 		return model.WakeBudgetResult{}, fmt.Errorf("validate accounted wake claim: %w", err)
 	}
@@ -34,7 +46,7 @@ func (s *Store) ClaimWakeBudget(ctx context.Context, key model.WakeKey, lease ti
 			result.Replaced = !matches && err == nil
 			return err
 		}
-		proposal, err := s.wakeBudgetProposal(ctx, tx, key, lease)
+		proposal, err := propose(tx)
 		if err != nil {
 			return fmt.Errorf("read local wake accounting proposal: %w", err)
 		}
@@ -54,7 +66,8 @@ func (s *Store) ClaimWakeBudget(ctx context.Context, key model.WakeKey, lease ti
 	return result, nil
 }
 
-func (s *Store) wakeBudgetProposal(ctx context.Context, tx *sql.Tx, key model.WakeKey, lease time.Duration) (model.WakeBudgetProposal, error) {
+// baseWakeProposal reads the counter snapshot and board identity every proposal starts from.
+func (s *Store) baseWakeProposal(ctx context.Context, tx *sql.Tx, key model.WakeKey) (model.WakeBudgetProposal, error) {
 	var p model.WakeBudgetProposal
 	var err error
 	if p.Snapshot, err = s.readWakeBudgetSnapshot(ctx, tx, key.Recipient()); err != nil {
@@ -67,6 +80,14 @@ func (s *Store) wakeBudgetProposal(ctx context.Context, tx *sql.Tx, key model.Wa
 			return p, fmt.Errorf("generate local wake board identity: %w", identityErr)
 		}
 		p.BoardCandidate = id.String()
+	}
+	return p, nil
+}
+
+func (s *Store) wakeBudgetProposal(ctx context.Context, tx *sql.Tx, key model.WakeKey, lease time.Duration) (model.WakeBudgetProposal, error) {
+	p, err := s.baseWakeProposal(ctx, tx, key)
+	if err != nil {
+		return p, err
 	}
 	previous, outcome, found, err := readWakeAttempt(ctx, tx, key)
 	if err != nil {

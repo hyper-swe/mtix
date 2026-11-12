@@ -439,8 +439,8 @@ reports protected accounting after a restore. Held wakes re-arm from the registr
 remains separate; settings do not install a route.
 
 Wake status: `mtix comment --to <agent>` and `mtix inbox status --agent <agent> --json` show whether the addressee can be woken
-(`queued`, `nudged`, `unconfirmed`, `confirmed`, `held`, `undeliverable`, `off`, `no-live-session`, `no-dispatcher`, `unknown`) with a runnable
-fix; the message is always in the inbox. `wake.confirm_window` (default 30 seconds) sets when a nudge reads as `unconfirmed`. The doctor
+(`queued`, `nudged`, `unconfirmed`, `stalled`, `confirmed`, `held`, `undeliverable`, `off`, `no-live-session`, `no-dispatcher`, `unknown`) with a runnable
+fix; the message is always in the inbox. `wake.confirm_window` (default 30 seconds) sets when a nudge reads as `unconfirmed`, and the same bound T, measured from the event with no timer, sets when an unread message with no armed hook waiter reads as `stalled` (the session's turn has not ended; the message stays in the inbox and a stall is noticed at the next dispatcher pass, `mtix inbox status` or `mtix doctor` run; `wake.listener.stalled` gives the fix). The doctor
 `wake.listener.*` rows give exact fixes. The ledger-backed states are seeded-only until a delivery route is built; approving a held wake does not yet send
 a fresh nudge (MTIX-112.40.10). See the multi-agent skill.
 

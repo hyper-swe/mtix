@@ -70,3 +70,22 @@ func TestNoticeImported_ManyAdded_ListsFiveAndCountsTheRest(t *testing.T) {
 	assert.Contains(t, notices.String(), "(P-1, P-2, P-3, P-4, P-5)")
 	assert.NotContains(t, notices.String(), "more")
 }
+
+// TestNoticeImported_SixAdded_ListsFiveAndCountsOne pins the bound at six.
+func TestNoticeImported_SixAdded_ListsFiveAndCountsOne(t *testing.T) {
+	svc, _, notices := noticeFixture(t, true)
+	noticeFor(svc, &sqlite.ReplaceDiff{Added: []string{"P-1", "P-2", "P-3", "P-4", "P-5", "P-6"}})
+	assert.Contains(t, notices.String(), "(P-1, P-2, P-3, P-4, P-5 and 1 more)")
+	assert.NotContains(t, notices.String(), "P-6,")
+	assert.NotContains(t, notices.String(), "P-5, P-6")
+}
+
+// TestNoticeImported_RemovalOnlyOnSyncedStore_NoLocalOnlyLine: an import that
+// adds nothing never names an empty list of local-only tasks.
+func TestNoticeImported_RemovalOnlyOnSyncedStore_NoLocalOnlyLine(t *testing.T) {
+	svc, _, notices := noticeFixture(t, true)
+	noticeFor(svc, &sqlite.ReplaceDiff{Removed: []string{"PROJ-3"}})
+	assert.NotContains(t, notices.String(), "local only")
+	assert.NotContains(t, notices.String(), "wrote no sync event")
+	assert.NotContains(t, notices.String(), "()")
+}

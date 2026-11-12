@@ -53,6 +53,7 @@ func TestAppendImportRefusalCheck_Pending_FailsWithKindFileAndFix(t *testing.T) 
 	require.False(t, c.Pass)
 	require.Contains(t, c.Detail, "lossy")
 	require.Contains(t, c.Detail, ".mtix/tasks.json")
+	require.Contains(t, c.Detail, "the file would delete local data", "the refusal reason is shown")
 	require.Contains(t, c.Fix, "mtix sync --fix")
 
 	raw, err := json.Marshal(c)
@@ -125,6 +126,8 @@ func TestAppendImportRefusalCheck_HostileReason_IsEscaped(t *testing.T) {
 
 	r := appendImportRefusalCheck(DoctorReport{OverallPass: true}, app.syncSvc, app.mtixDir)
 	require.NotContains(t, r.Checks[0].Detail, "\x1b")
+	require.Contains(t, r.Checks[0].Detail, "PROJ-1", "the reason text is still printed as plain text")
+	require.Contains(t, r.Checks[0].Detail, "gone")
 }
 
 // TestAppendImportRefusalCheck_CorruptRecord_FailsWithReadErrorAndFix: a
@@ -174,4 +177,17 @@ func TestRefuseSyncedReplace_EmptySyncedStore_Runs(t *testing.T) {
 	_, err := app.store.MarkHubConnected(t.Context(), "config")
 	require.NoError(t, err)
 	require.NoError(t, refuseSyncedReplace(t.Context()))
+}
+
+// TestAppendImportRefusalCheck_NoBoardFile_PassesWithoutError: a fresh project
+// with no tasks.json has nothing pending, so the check passes.
+func TestAppendImportRefusalCheck_NoBoardFile_PassesWithoutError(t *testing.T) {
+	initTestApp(t)
+	err := os.Remove(filepath.Join(app.mtixDir, "tasks.json"))
+	require.True(t, err == nil || os.IsNotExist(err), "no board file")
+	r := appendImportRefusalCheck(DoctorReport{OverallPass: true}, app.syncSvc, app.mtixDir)
+	require.True(t, r.OverallPass)
+	require.Len(t, r.Checks, 1)
+	require.True(t, r.Checks[0].Pass)
+	require.Empty(t, r.Checks[0].Fix)
 }

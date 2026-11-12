@@ -182,3 +182,14 @@ func TestPendingImportRefusal_RestoredInbox_FixKeepsTheMail(t *testing.T) {
 	assert.Contains(t, st.Fix, sqlite.RestoredInboxRecovery)
 	assert.NotContains(t, st.Fix, "--mode replace")
 }
+
+// TestPendingImportRefusal_NoBoardFile_ZeroStatusNoError: a project with no
+// tasks.json has nothing pending, and that is not an error.
+func TestPendingImportRefusal_NoBoardFile_ZeroStatusNoError(t *testing.T) {
+	f := newGuardFixture(t)
+	require.NoError(t, os.Remove(filepath.Join(f.mtixDir, "tasks.json")))
+	st, err := f.svc.PendingImportRefusal(f.mtixDir)
+	require.NoError(t, err)
+	assert.False(t, st.Pending)
+	assert.Equal(t, service.ImportRefusalStatus{}, st)
+}

@@ -77,6 +77,10 @@ func (s *Store) wakeBudgetProposal(ctx context.Context, tx *sql.Tx, key model.Wa
 		p.InFlight = outcome == model.WakeClaimed
 		return p, nil
 	}
+	reclaim, err := s.admitReclaim(ctx, tx, key, found)
+	if err != nil || (found && !reclaim) {
+		return p, err
+	}
 	id, err := uuid.NewRandom()
 	if err != nil {
 		return p, fmt.Errorf("generate accounted wake fence: %w", err)
@@ -89,7 +93,7 @@ func (s *Store) wakeBudgetProposal(ctx context.Context, tx *sql.Tx, key model.Wa
 		return p, fmt.Errorf("read wake sender: %w", err)
 	}
 	p.Claimable = true
-	p.Attempt = model.WakeAttempt{Key: key, Token: id.String(), ClaimedAt: now}
+	p.Attempt = model.WakeAttempt{Key: key, Token: id.String(), ClaimedAt: now, Reclaimed: found}
 	return p, nil
 }
 

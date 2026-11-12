@@ -19,6 +19,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/attach"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 const piSession = "01a13d60-79cf-7000-8000-aaaaaaaaaaaa"
@@ -30,6 +31,16 @@ type piWaitStore struct {
 	claimErr  error
 	loseClaim bool
 	claims    int
+	// staleList, when set, is what InboxList returns: an inbox read taken before the event
+	// was acknowledged.
+	staleList []sqlite.InboxEvent
+}
+
+func (s *piWaitStore) InboxList(ctx context.Context, agent string) ([]sqlite.InboxEvent, error) {
+	if s.staleList != nil {
+		return s.staleList, nil
+	}
+	return s.PiWaitStore.InboxList(ctx, agent)
 }
 
 func (s *piWaitStore) ClaimWake(ctx context.Context, k model.WakeKey, l time.Duration) (model.WakeAttempt, bool, error) {
@@ -286,4 +297,27 @@ func TestAttachWaitPi_Claim_StampsNoLastReadAndRegistersNoWaiter(t *testing.T) {
 	require.NoError(t, p.store.ReadDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM agent_inbox_waiters WHERE agent_id=?`, p.key.AgentID).Scan(&waiters))
 	require.Zero(t, reads, "agent_inbox_reads")
 	require.Zero(t, waiters, "agent_inbox_waiters")
+}
+
+// The pi wait child claims through the one WakeClaimer (MTIX-112.40.13): a claim an earlier
+// child left unfinished, for an event the session has since acknowledged, is settled as
+// confirmed and never wakes the session again.
+func TestAttachWaitPi_ReclaimOfAcknowledgedEvent_SettlesWithoutWakeLine(t *testing.T) {
+	p := newPiFixtureLease(t, 20*time.Millisecond)
+	seq := p.addEvent("sender")
+	stale, err := p.store.InboxList(t.Context(), p.key.AgentID)
+	require.NoError(t, err)
+	_, won, err := p.store.ClaimWake(t.Context(), model.NewWakeKey(p.key.Recipient(), seq, p.key.Epoch, stale[0].EventID), 20*time.Millisecond)
+	require.NoError(t, err)
+	require.True(t, won, "an earlier pi child claimed, then died before it recorded a result")
+	require.NoError(t, p.store.InboxAck(t.Context(), p.key.AgentID, seq))
+	p.pws.staleList = stale
+	later := time.Date(2026, 10, 15, 12, 5, 0, 0, time.UTC) // the fixture clock is fixed: move it past the lease
+	p.store.SetClock(func() time.Time { return later })
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	out, runErr := p.run(ctx, piSession)
+	require.Error(t, runErr, "nothing is left to deliver, so the wait ends only with its context")
+	require.Empty(t, out, "the event was already read: no second wake line")
+	require.Equal(t, string(model.WakeConfirmed), p.outcome(seq))
 }

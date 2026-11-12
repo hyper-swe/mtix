@@ -27,7 +27,20 @@ type WakeAttempt struct {
 	ClaimedAt time.Time
 	// Hop is the maximum covered-event hop carried into this wake process.
 	Hop int64
+	// Reclaimed is true when this claim took over an expired unfinished claim of the same
+	// event: the earlier claimant may have pushed before it crashed (MTIX-112.40.13).
+	Reclaimed bool
 }
+
+// Ledger reasons written by the exactly-once claim rule (MTIX-112.40.13). The reason column
+// carries the retry count, so the ledger schema is unchanged.
+const (
+	// WakeReasonReclaimedAfterCrash marks a claim that took over an expired unfinished claim.
+	// It is the one permitted redelivery of an event: at most one per event.
+	WakeReasonReclaimedAfterCrash = "reclaimed-after-crash"
+	// WakeReasonReclaimCap closes an event whose reclaimed claim also expired unfinished.
+	WakeReasonReclaimCap = "reclaim-cap"
+)
 
 // WakeOutcome is claimed until a send completes; both send outcomes are terminal.
 type WakeOutcome string
@@ -43,6 +56,10 @@ type WakeLedgerStats struct {
 	Rows     int64
 	Claimed  int64
 	Rejected int64
+	// Reclaimed counts rows a claim took over after an earlier claimant crashed, and Capped
+	// counts rows closed by the retry cap (MTIX-112.40.13).
+	Reclaimed int64
+	Capped    int64
 }
 
 // WakeRegistrationMark is a registration's own edge-trigger state (ADR-007 §5.4, I10).

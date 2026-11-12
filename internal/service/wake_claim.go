@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
@@ -36,6 +37,7 @@ type WakeClaimer struct {
 	ledger   WakeClaimLedger
 	lease    time.Duration
 	evidence WakeEvidence
+	logger   *slog.Logger
 }
 
 // NewWakeClaimer builds the claim function over a wake ledger. evidence may be nil.
@@ -43,7 +45,16 @@ func NewWakeClaimer(ledger WakeClaimLedger, lease time.Duration, evidence WakeEv
 	if ledger == nil || lease <= 0 {
 		return nil, fmt.Errorf("wake claimer needs a ledger and a positive lease: %w", model.ErrInvalidInput)
 	}
-	return &WakeClaimer{ledger: ledger, lease: lease, evidence: evidence}, nil
+	return &WakeClaimer{ledger: ledger, lease: lease, evidence: evidence, logger: slog.Default()}, nil
+}
+
+// WithLogger sets the logger that reports a failed delivery-evidence read (MTIX-112.40.13.3).
+// A nil logger keeps the current one. It returns the claimer for chaining.
+func (c *WakeClaimer) WithLogger(logger *slog.Logger) *WakeClaimer {
+	if logger != nil {
+		c.logger = logger
+	}
+	return c
 }
 
 // Claim claims the event once. The bool is true only when the caller must deliver it.
@@ -63,8 +74,15 @@ func (c *WakeClaimer) Resolve(ctx context.Context, attempt model.WakeAttempt) (m
 		return attempt, true, nil
 	}
 	seen, err := c.evidence(ctx, attempt.Key)
-	if err != nil || !seen {
-		// Unknown evidence counts as none: the event is delivered again, never lost.
+	if err != nil {
+		// Unknown evidence counts as none: the event is delivered again, never lost. The
+		// read error is reported so a broken evidence source is visible (MTIX-112.40.13.3).
+		c.logger.WarnContext(ctx, "wake delivery evidence read failed; redelivering",
+			"agent_id", attempt.Key.AgentID, "host_id", attempt.Key.HostID, "uid", attempt.Key.UID,
+			"event_seq", attempt.Key.EventSeq, "epoch", attempt.Key.Epoch, "error", err)
+		return attempt, true, nil
+	}
+	if !seen {
 		return attempt, true, nil
 	}
 	result := model.WakeResult{Outcome: model.WakeSent, Reason: model.WakeReasonReclaimedAfterCrash}

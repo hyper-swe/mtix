@@ -107,6 +107,7 @@ func TestRecordWakeResult_ReclaimedClaim_KeepsMarkerAcrossRouteResults(t *testin
 		"route and reason": {Outcome: model.WakeSent, Route: "socket-push", Reason: "frame-written"},
 		"route only":       {Outcome: model.WakeSent, Route: "socket-push"},
 		"bare outcome":     {Outcome: model.WakeSent},
+		"delivered":        {Outcome: model.WakeDelivered, Route: "claude-hook", Reason: "hook-recorded"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			s, err := sqlite.New(t.TempDir(), nil)
@@ -128,7 +129,7 @@ func TestRecordWakeResult_ReclaimedClaim_KeepsMarkerAcrossRouteResults(t *testin
 			require.NoError(t, err)
 			require.EqualValues(t, 1, stats.Reclaimed, "the reclaim stays counted after the redelivery is recorded")
 			outcome, reason := reclaimRow(t, s)
-			require.Equal(t, string(model.WakeSent), outcome)
+			require.Equal(t, string(result.Outcome), outcome)
 			require.Equal(t, model.WakeReasonReclaimedAfterCrash, reason)
 		})
 	}

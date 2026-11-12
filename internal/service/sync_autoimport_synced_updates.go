@@ -89,8 +89,8 @@ func (s *SyncService) refuseSyncedUpdates(ctx context.Context, mtixDir, fileHash
 // conflict. mtix sync --fix rewrites the file from the store, so it is the
 // step that ends the refusal, after a pull when the hub's board is wanted.
 const syncedUpdatesWays = "mtix sync --fix: keep the local store and rewrite .mtix/tasks.json from it; the file's changes " +
-	"are dropped. To take the hub's board as well, run mtix sync pull first and then mtix sync --fix: a pull alone does not " +
-	"end this refusal. Re-make the file's edits with mtix commands, which are journaled"
+	"are dropped, after the refused file is kept at " + refusedBoardCopyHint + ". To take the hub's board as well, " +
+	"run mtix sync pull first and then mtix sync --fix: a pull alone does not end this refusal. Re-make the file's edits from that copy with mtix commands, which are journaled"
 
 // syncedUpdatesMessage renders the refusal the user sees, run from the
 // project root.
@@ -101,9 +101,10 @@ func syncedUpdatesMessage(projectRoot, changes string) string {
 		"Nothing was imported. Until you choose, mtix refuses again on every command, and writing commands save to " +
 		"the local store but leave .mtix/tasks.json as it is.\n" +
 		"Run from the project root (" + projectRoot + "):\n" +
-		"  mtix sync --fix    keep the local store and rewrite .mtix/tasks.json from it; every change in the file is dropped\n" +
+		"  mtix sync --fix    keep the local store and rewrite .mtix/tasks.json from it; every change in the file is dropped,\n" +
+		"                     after the refused file is kept at " + refusedBoardCopyHint + "\n" +
 		"  mtix sync pull     to take the hub's board as well, run this first and then mtix sync --fix: " +
 		"a pull alone does not end this refusal\n" +
-		"Then re-make the file's edits with mtix commands, which are journaled.\n" +
+		"Then re-make the file's edits from that copy with mtix commands, which are journaled.\n" +
 		"mtix sync shows this refusal.\n"
 }

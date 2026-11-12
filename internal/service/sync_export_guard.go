@@ -163,8 +163,13 @@ func (s *SyncService) exportBlockedByPendingImport(mtixDir string) bool {
 // ForceExport rewrites .mtix/tasks.json from the local store, even while
 // an auto-import of it is pending or it changed on disk, without importing
 // it, and marks a pending refusal resolved (mtix sync --fix, MTIX-95.31.2).
-// The changes the file on disk carried are dropped.
+// The changes the file on disk carried are dropped, except that a tasks.json
+// that differs from the last export is first kept in data/refused-boards
+// (MTIX-112.17.16.16).
 func (s *SyncService) ForceExport(ctx context.Context, mtixDir string) error {
+	if _, err := s.keepRefusedBoard(mtixDir); err != nil {
+		return err
+	}
 	if err := s.resolveRefusal(mtixDir, ""); err != nil {
 		return err
 	}

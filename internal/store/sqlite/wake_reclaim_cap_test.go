@@ -147,3 +147,40 @@ func TestRecordWakeResult_FirstClaim_KeepsResultReason(t *testing.T) {
 	_, reason := reclaimRow(t, s)
 	require.Equal(t, "frame-written", reason)
 }
+
+// A reclaimed event whose redelivery then fails records the failure's real reason: the
+// marker counts a redelivery that happened, not one that errored (MTIX-112.40.13).
+func TestRecordWakeResult_ReclaimedClaim_FailedResultRecordsRealReason(t *testing.T) {
+	for name, tc := range map[string]struct {
+		result model.WakeResult
+		want   string
+	}{
+		"undeliverable with send-error": {model.WakeResult{Outcome: model.WakeUndeliverable, Reason: "send-error"}, "send-error"},
+		"undeliverable with reason":     {model.WakeResult{Outcome: model.WakeUndeliverable, Reason: "socket-closed"}, "socket-closed"},
+		"error outcome":                 {model.WakeResult{Outcome: model.WakeError, Reason: "send-error"}, "send-error"},
+		"held":                          {model.WakeResult{Outcome: model.WakeHeld, Reason: "hop-depth"}, "hop-depth"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, err := sqlite.New(t.TempDir(), nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, s.Close()) })
+			now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+			s.SetClock(func() time.Time { return now })
+			key := model.WakeKey{AgentID: "a", HostID: "h", UID: "u", EventSeq: 5, Epoch: 1}
+			_, won, err := s.ClaimWake(t.Context(), key, time.Minute)
+			require.NoError(t, err)
+			require.True(t, won)
+			now = now.Add(2 * time.Minute)
+			second, won, err := s.ClaimWake(t.Context(), key, time.Minute)
+			require.NoError(t, err)
+			require.True(t, won)
+			require.True(t, second.Reclaimed)
+			require.NoError(t, s.RecordWakeResult(t.Context(), second, tc.result))
+			_, reason := reclaimRow(t, s)
+			require.Equal(t, tc.want, reason, "a failed redelivery keeps its own reason")
+			stats, err := s.WakeLedgerStats(t.Context())
+			require.NoError(t, err)
+			require.Zero(t, stats.Reclaimed, "no redelivery happened, so no duplicate is counted")
+		})
+	}
+}

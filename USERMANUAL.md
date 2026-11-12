@@ -1661,8 +1661,8 @@ hook command; it is not meant to be typed by hand, except to re-run a failed hoo
   expiry closes the event as `reclaim-cap` with no further wake. A crash between the push and its recorded result can
   therefore wake a session twice, never zero times. `mtix doctor` row `wake.ledger` warns with the counts
   (`--json`: `data.reclaimed`, `data.capped`); read a capped message with `mtix inbox`. Before taking a claim over,
-  the claimant checks whether the recipient already acknowledged the event; an acknowledged event is settled as
-  `confirmed` and not woken again. The warning counts retained wake rows and this build has no command that prunes
+  the claimant checks whether the recipient acknowledged the event with `mtix inbox ack` (selective or cumulative); an
+  acknowledged event is settled as `confirmed` and not woken again, while merely reading it means one redelivery. The warning counts retained wake rows and this build has no command that prunes
   them, so it does not clear by itself: judge it by whether the counts grow between `mtix doctor` runs.
 - If the wake is won but a later step fails (a further claim, or recording the delivered outcome), the envelope is still
   delivered and the failure is recorded for doctor, so a claimed event is never silently lost.

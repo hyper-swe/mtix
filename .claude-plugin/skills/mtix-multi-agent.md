@@ -586,6 +586,14 @@ When multiple agents work simultaneously:
 - Declare cross-task dependencies via `mtix_dep_add` to prevent conflicts
 - After completing work that others depend on, verify the dependent tasks are unblocked
 
+## Effectively-once wakes
+
+Every route that wakes a session (the hook waiter, the dispatcher and the pi wait child) builds the same ledger key for an event with one shared constructor and claims it in one ledger transaction before it delivers. A route that loses the claim skips the event. A sent event is never claimed again, so a retry never wakes it twice.
+
+A claim that stays unfinished past its lease (the claimant crashed before it recorded a result) can be taken over once. The take-over is marked `reclaimed-after-crash` in the ledger reason. Before delivering again, the claimant checks whether the recipient already acknowledged the event with `mtix inbox ack` (selective or cumulative): an acknowledged event is settled as confirmed and nothing is sent again. Merely reading the event with `mtix inbox` is not an acknowledgement: a read but unacknowledged event means one redelivery. The pi wait child uses the same check. A second expiry closes the event as `undeliverable` with reason `reclaim-cap` and sends nothing: the retry cap is one. The guarantee is therefore effectively once: a crash between the push and the recorded result can wake a session twice, never zero times.
+
+Verify with `mtix doctor --json`: the `wake.ledger` row is `warn` when any event was reclaimed or capped, with `data.reclaimed` and `data.capped`. A reclaimed event whose redelivery then fails (error, undeliverable, held or off) records its real reason and is not counted in `data.reclaimed`. A `reclaim-cap` message was not woken again and may already be acknowledged: check it with `mtix inbox` and act on it only if it is still pending; if reclaims keep appearing, stop the listener or dispatcher that keeps dying. The warning is a count over the retained wake rows and this build has no command that prunes them, so it does not clear by itself: judge it by whether the counts grow between `mtix doctor` runs, and record a stable count as a known past crash. This build adds no setting for this rule.
+
 ## pi sessions (experimental)
 
 pi sessions are woken by a different path from Claude Code: the pi extension runs a

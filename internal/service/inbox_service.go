@@ -44,6 +44,13 @@ type InboxReadStore interface {
 	InboxWait(context.Context, string, time.Duration) ([]sqlite.InboxEvent, error)
 }
 
+// InboxWaiterRegistrar is the optional store capability that records a live wait,
+// so an agent shows as parked for the whole of a policy-applying wait
+// (MTIX-112.3). The sqlite store provides it.
+type InboxWaiterRegistrar interface {
+	RegisterInboxWaiter(ctx context.Context, agent string) func()
+}
+
 // WithLogger sets the logger for re-evaluation failures (MTIX-130.14).
 func (s *InboxService) WithLogger(l *slog.Logger) *InboxService {
 	s.logger = l

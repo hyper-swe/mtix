@@ -75,5 +75,26 @@ func (s *Store) WakeLedgerStats(ctx context.Context) (model.WakeLedgerStats, err
 	if err != nil {
 		return stats, fmt.Errorf("read retained wake ledger counts: %w", err)
 	}
+	return s.addWakeReclaimCounts(ctx, stats)
+}
+
+// addWakeReclaimCounts adds the reclaim and retry-cap counts (MTIX-112.40.13). They come
+// from the reason column, which a store written by an older release may lack: then both
+// counts stay zero and nothing is written or altered by the read.
+func (s *Store) addWakeReclaimCounts(ctx context.Context, stats model.WakeLedgerStats) (model.WakeLedgerStats, error) {
+	var hasReason int
+	if err := s.readDB.QueryRowContext(ctx,
+		"SELECT count(*) FROM pragma_table_info(?) WHERE name=?", "wake_ledger", "reason").Scan(&hasReason); err != nil {
+		return stats, fmt.Errorf("inspect wake reason column: %w", err)
+	}
+	if hasReason == 0 {
+		return stats, nil
+	}
+	// Rows taken over after a crash, and rows closed by the retry cap.
+	err := s.readDB.QueryRowContext(ctx, `SELECT coalesce(sum(reason=?),0),coalesce(sum(reason=?),0) FROM wake_ledger`,
+		model.WakeReasonReclaimedAfterCrash, model.WakeReasonReclaimCap).Scan(&stats.Reclaimed, &stats.Capped)
+	if err != nil {
+		return stats, fmt.Errorf("read wake reclaim counts: %w", err)
+	}
 	return stats, nil
 }

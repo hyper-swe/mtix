@@ -5,6 +5,7 @@
 package service_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -47,4 +48,38 @@ func TestWakeLedgerDoctor_RetainedRows_FixNeverWrites(t *testing.T) {
 			require.Equal(t, model.WakeLedgerStats{Rows: 1, Claimed: 1}, stats)
 		})
 	}
+}
+
+func TestWakeLedgerDoctor_ReclaimedAndCappedWakes_WarnWithFixAndJSONFields(t *testing.T) {
+	s, now, _ := wakeServiceStore(t)
+	key := wakeServiceKey()
+	_, won, err := s.ClaimWake(t.Context(), key, time.Minute)
+	require.NoError(t, err)
+	require.True(t, won)
+	check := service.WakeLedgerDoctorCheck(s)
+	require.Equal(t, service.DoctorInfo, check.Run(t.Context()).Status, "a clean ledger is informational")
+
+	*now = now.Add(2 * time.Minute)
+	_, won, err = s.ClaimWake(t.Context(), key, time.Minute) // the crashed claim is reclaimed once
+	require.NoError(t, err)
+	require.True(t, won)
+	got := check.Run(t.Context())
+	require.Equal(t, service.DoctorWarn, got.Status)
+	require.Contains(t, got.Detail, "1 wake(s) were reclaimed-after-crash")
+	require.NotEmpty(t, got.Fix)
+	require.Contains(t, got.Fix, "does not clear by itself", "the fix says how the warning ends: it is a retained count with no prune command")
+	require.Contains(t, got.Fix, "stop growing")
+	encoded, err := json.Marshal(got.Data)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"reclaimed":1,"capped":0}`, string(encoded), "the --json data keys are a stable contract")
+
+	*now = now.Add(2 * time.Minute)
+	_, won, err = s.ClaimWake(t.Context(), key, time.Minute) // the second expiry is capped
+	require.NoError(t, err)
+	require.False(t, won)
+	got = check.Run(t.Context())
+	require.Equal(t, service.DoctorWarn, got.Status)
+	require.Contains(t, got.Detail, "0 wake(s) were reclaimed-after-crash")
+	require.Contains(t, got.Detail, "1 closed at reclaim-cap")
+	require.Contains(t, got.Fix, "mtix inbox")
 }

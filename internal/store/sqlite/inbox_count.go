@@ -42,8 +42,13 @@ func (s *Store) InboxCount(ctx context.Context, agent string) (int64, int64, err
 	if agent == "" {
 		return 0, 0, fmt.Errorf("inbox count: agent ID is required: %w", model.ErrInvalidInput)
 	}
+	rctx, release, err := detachedRead(ctx)
+	if err != nil {
+		return 0, 0, fmt.Errorf("count inbox for %q: %w", agent, err)
+	}
+	defer release()
 	var pending, total int64
-	if err := s.readDB.QueryRowContext(ctx, inboxCountSQL, agent, agent, agent, agent).Scan(&pending, &total); err != nil {
+	if err := s.readDB.QueryRowContext(rctx, inboxCountSQL, agent, agent, agent, agent).Scan(&pending, &total); err != nil {
 		return 0, 0, fmt.Errorf("count inbox for %q: %w", agent, err)
 	}
 	return pending, total, nil

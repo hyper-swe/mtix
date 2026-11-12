@@ -40,7 +40,6 @@ type Store struct {
 	rollbackWriter  RollbackWriterFunc // nil in production; a test seam for the post-commit-failure rollback (MTIX-198)
 	readDB          *sql.DB
 	logger          *slog.Logger
-	localOnlyLimit  int         // tasks the local-only import record keeps; 0 is the default (MTIX-112.17.16.16)
 	vcReported      atomic.Bool // this Store has seen the vector-clock prune notice issued (MTIX-95.16)
 	clock           func() time.Time
 	history         sync.Map       // *sql.Tx -> *historyTracker for the open recording transactions

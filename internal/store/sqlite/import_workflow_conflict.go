@@ -105,12 +105,6 @@ func (e *WorkflowConflictError) Unwrap() []error {
 type workflowPolicy struct {
 	resolution WorkflowResolution
 	now        time.Time
-	// journal records what a merge changes for journaling; nil when the
-	// store does not sync (MTIX-112.17.16.16).
-	journal *mergeJournal
-	// keepUIDs is true for a store that syncs, whether or not the merge
-	// journals (a relay snapshot merge does not): it keeps every task's uid.
-	keepUIDs bool
 }
 
 // withWorkflowResolution makes the import settle workflow conflicts with r
@@ -159,7 +153,7 @@ func planWorkflow(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 	carries := carriesNodeColumns(data.SchemaVersion)
 	var all []WorkflowConflict
 	for i := range data.Nodes {
-		c, err := workflowConflictOf(ctx, tx, &data.Nodes[i], carries, policy.journal != nil)
+		c, err := workflowConflictOf(ctx, tx, &data.Nodes[i], carries)
 		if err != nil {
 			return nil, err
 		}
@@ -172,9 +166,8 @@ func planWorkflow(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 
 // workflowConflictOf returns the conflict of one file node against the
 // store's node under its id, or nil when there is none: the node is new, is
-// a different task (mergeImportNode refuses that), or the values agree. A
-// deleted task on a store that syncs has no conflict: it takes nothing from the file.
-func workflowConflictOf(ctx context.Context, tx *sql.Tx, n *exportNode, carries, keepDeleted bool) (*WorkflowConflict, error) {
+// a different task (mergeImportNode refuses that), or the values agree.
+func workflowConflictOf(ctx context.Context, tx *sql.Tx, n *exportNode, carries bool) (*WorkflowConflict, error) {
 	local, err := scanExportNode(tx.QueryRowContext(ctx, exportNodeSelectSQL+" WHERE id = ?", n.ID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -184,9 +177,6 @@ func workflowConflictOf(ctx context.Context, tx *sql.Tx, n *exportNode, carries,
 	}
 	if refuseDifferentTask(&local, n) != nil {
 		return nil, nil
-	}
-	if keepDeleted && local.DeletedAt != "" {
-		return nil, nil // a task that stays deleted takes none of the file's changes: no choice to make
 	}
 	diffs := workflowDiffs(&local, n)
 	if len(diffs) == 0 {

@@ -55,14 +55,6 @@ type ImportReconcileOptions struct {
 	// wake time differ between the store and the file; without it a merge
 	// that finds one is refused, writing nothing (MTIX-95.31.13).
 	Workflow WorkflowResolution
-	// AssumeSynced makes a merge treat the store as one that syncs, for
-	// transient hub evidence such as an exported hub DSN, so the merge
-	// journals what it changes (MTIX-112.17.16.16, AsSyncedStore).
-	AssumeSynced bool
-	// NoJournal makes a merge journal nothing, for a file that is a copy of
-	// the board the sync already carries, such as a relay bootstrap snapshot:
-	// journaling it would send the board again under new event ids.
-	NoJournal bool
 }
 
 // ImportConflictKind classifies an import-boundary uid collision (audit F-3).
@@ -328,27 +320,7 @@ func markApplied(report *ImportReconcileReport, result *ImportResult) {
 	report.WorkflowConflicts = result.WorkflowResolved
 	report.Idempotent -= countIdempotent(result.WorkflowResolved)
 	report.Applied = true
-	report.UIDAdoptions = withoutKeptUIDs(report.UIDAdoptions, result.keptUID)
 	result.UIDAdoptions = report.UIDAdoptions
-}
-
-// withoutKeptUIDs drops from the planned adoptions the tasks whose local uid
-// the merge kept: nothing was adopted for them (MTIX-112.17.16.16).
-func withoutKeptUIDs(planned []ImportUIDAdoption, kept []string) []ImportUIDAdoption {
-	if len(kept) == 0 {
-		return planned
-	}
-	skip := make(map[string]bool, len(kept))
-	for _, id := range kept {
-		skip[id] = true
-	}
-	var out []ImportUIDAdoption
-	for _, a := range planned {
-		if !skip[a.ID] {
-			out = append(out, a)
-		}
-	}
-	return out
 }
 
 // finishFailedImport returns what ImportReconcile returns when Import failed.

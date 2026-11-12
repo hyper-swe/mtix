@@ -203,31 +203,37 @@ func autoBlockNode(ctx context.Context, tx *sql.Tx, h historyToucher, nodeID str
 	return nil
 }
 
-// unblockTarget is the one rule that decides whether a blocked node is
-// released (FR-3.8), shared by the local and sync-apply paths and by the
-// import merge, which stands in for the peer that applies its transition: a
-// live node that is blocked and whose blocks dependencies are all resolved
-// returns to its previous status (open when none was kept). ok is false when
-// the node stays as it is.
-func unblockTarget(ctx context.Context, tx *sql.Tx, nodeID string) (restoreTo model.Status, ok bool, err error) {
+// autoUnblockNode checks if a blocked node has no more unresolved blockers
+// and auto-restores it to previous_status per FR-3.8.
+func autoUnblockNode(ctx context.Context, tx *sql.Tx, h historyToucher, nodeID string, clocks ...func() time.Time) error {
+	if err := h.touchHistory(ctx, tx, nodeID); err != nil {
+		return err
+	}
 	var currentStatus, previousStatus sql.NullString
-	err = tx.QueryRowContext(ctx,
+	err := tx.QueryRowContext(ctx,
 		`SELECT status, previous_status FROM nodes
 		 WHERE id = ? AND deleted_at IS NULL`,
 		nodeID,
 	).Scan(&currentStatus, &previousStatus)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Dependent is missing or soft-deleted (see autoBlockNode). No live
-		// row to restore: a no-op rather than failing the caller.
-		return "", false, nil
+		// row to restore — no-op rather than failing the caller. This also
+		// hardens the local unblockDependents walk against a soft-deleted
+		// dependent left behind in the dependencies table.
+		return nil
 	}
 	if err != nil {
-		return "", false, fmt.Errorf("read status for auto-unblock: %w", err)
+		return fmt.Errorf("read status for auto-unblock: %w", err)
 	}
+
 	// Only auto-unblock if currently blocked.
 	if model.Status(currentStatus.String) != model.StatusBlocked {
-		return "", false, nil
+		return nil
 	}
+
+	// FR-3.8a: Invalidated takes precedence — don't auto-unblock.
+	// (If the node somehow got to blocked after invalidation, respect it.)
+
 	// Check if there are remaining unresolved blockers.
 	var blockerCount int
 	err = tx.QueryRowContext(ctx,
@@ -240,32 +246,24 @@ func unblockTarget(ctx context.Context, tx *sql.Tx, nodeID string) (restoreTo mo
 		string(model.StatusDone), string(model.StatusCancelled), string(model.StatusInvalidated),
 	).Scan(&blockerCount)
 	if err != nil {
-		return "", false, fmt.Errorf("count remaining blockers for %s: %w", nodeID, err)
+		return fmt.Errorf("count remaining blockers for %s: %w", nodeID, err)
 	}
-	if blockerCount > 0 {
-		return "", false, nil // Still has unresolved blockers.
-	}
-	if previousStatus.Valid && previousStatus.String != "" {
-		return model.Status(previousStatus.String), true, nil
-	}
-	return model.StatusOpen, true, nil
-}
 
-// autoUnblockNode checks if a blocked node has no more unresolved blockers
-// and auto-restores it to previous_status per FR-3.8.
-func autoUnblockNode(ctx context.Context, tx *sql.Tx, h historyToucher, nodeID string, clocks ...func() time.Time) error {
-	if err := h.touchHistory(ctx, tx, nodeID); err != nil {
-		return err
+	if blockerCount > 0 {
+		return nil // Still has unresolved blockers.
 	}
-	restoreTo, ok, err := unblockTarget(ctx, tx, nodeID)
-	if err != nil || !ok {
-		return err
-	}
-	return restoreUnblockedNode(ctx, tx, nodeID, restoreTo, clocks...)
+
+	return restoreUnblockedNode(ctx, tx, nodeID, previousStatus, clocks...)
 }
 
 // restoreUnblockedNode preserves the existing checked unblock event path.
-func restoreUnblockedNode(ctx context.Context, tx *sql.Tx, nodeID string, restoreTo model.Status, clocks ...func() time.Time) error {
+func restoreUnblockedNode(ctx context.Context, tx *sql.Tx, nodeID string, previousStatus sql.NullString, clocks ...func() time.Time) error {
+	// Restore to previous_status.
+	restoreTo := model.StatusOpen
+	if previousStatus.Valid && previousStatus.String != "" {
+		restoreTo = model.Status(previousStatus.String)
+	}
+
 	now := clockOrDefault(clocks...)().UTC().Format(time.RFC3339)
 	_, err := tx.ExecContext(ctx,
 		`UPDATE nodes SET status = ?, previous_status = NULL, updated_at = ?

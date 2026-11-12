@@ -834,6 +834,14 @@ hook journal's `Synced` flag keeps its semantics: it is still derived
 from `applied_events`, and an own event returned by a pull is recorded
 there, as it was before this rule.
 
+## Merge import and the sync log
+
+A merge import (`mtix import --mode merge`) writes no sync events, so on a store that syncs it is refused
+before any write (`sqlite.ErrMergeOnSyncedStore`, the same evidence as the replace guard below); a later hub
+edit would otherwise overwrite the merged values by last-writer-wins. The automatic import is a replace; on a
+store that syncs it is refused when the file changes a task the store holds (refusal kind `merge_synced`) and
+imports a file that only adds tasks. Journaling merges is future work.
+
 ## Replace import and the sync log
 
 A replace import (`mtix import --mode replace`, and the automatic import
@@ -999,9 +1007,8 @@ registry checks and hub registration get a fresh 30-second budget.
 
 ## Queue management
 
-- `sync.max_queue_size` caps the pending queue per CLI; set it with
-  `mtix config set sync.max_queue_size <number>` (the command copies it into
-  `meta`, and a hand edit of the meta key is overwritten). Default `0` (unlimited). On overflow, `enforceQueueLimit` returns
+- `sync.max_queue_size` in `meta` caps the pending queue per CLI.
+  Default `0` (unlimited). On overflow, `enforceQueueLimit` returns
   `model.ErrSyncQueueFull` from the emit path; the new event is
   rejected, NOT silently dropped.
 - `pushBatchSize` defaults to 100 events per batch in

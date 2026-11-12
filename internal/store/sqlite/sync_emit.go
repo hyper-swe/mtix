@@ -68,11 +68,8 @@ type emitParams struct {
 // wire cap is still written, and reported to the context's PayloadWarnings
 // collector, if any (afterEmit, warnOversizedPayload, MTIX-95.12).
 func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
-	// An import that checked the cap for all its events skips the per-event scan (checkQueueRoom).
-	if checked, _ := ctx.Value(queueCheckedKey{}).(bool); !checked {
-		if err := enforceQueueLimit(ctx, tx); err != nil {
-			return err
-		}
+	if err := enforceQueueLimit(ctx, tx); err != nil {
+		return err
 	}
 
 	authorID := sanitizeAuthorID(resolveEmitAuthor(ctx, tx, p.Author))
@@ -396,8 +393,7 @@ func enforceQueueLimit(ctx context.Context, tx *sql.Tx) error {
 	if pending >= cap64 {
 		return fmt.Errorf(
 			"%w: %d events pending (cap=%d). "+
-				"Run: mtix sync push to send them, or raise the cap with mtix config set sync.max_queue_size <higher> "+
-				"(0 is unlimited)",
+				"Run: mtix sync push --force, or set sync.max_queue_size to 0",
 			model.ErrSyncQueueFull, pending, cap64,
 		)
 	}

@@ -66,9 +66,8 @@ var (
 
 	// ErrSyncQueueFull indicates the local sync_events queue has reached
 	// its configured cap (sync.max_queue_size meta key) per FR-18 / MTIX-15.2.4.
-	// Callers MUST surface a one-line guide such as: "mtix sync push to send
-	// the pending events, or mtix config set sync.max_queue_size <higher>
-	// (0 is unlimited)".
+	// Callers MUST surface a one-line guide such as: "mtix sync push --force,
+	// or set sync.max_queue_size to 0".
 	ErrSyncQueueFull = errors.New("sync queue full")
 
 	// ErrSyncDivergentHistory indicates the local first_event_hash for a

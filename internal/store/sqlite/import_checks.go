@@ -41,16 +41,6 @@ type importConfig struct {
 	// asSynced makes the replace guards treat the store as synced although it
 	// holds no mark or cursor yet (AsSyncedStore, MTIX-107.31.8).
 	asSynced bool
-	// noJournal makes a merge journal nothing (WithoutJournal).
-	noJournal bool
-}
-
-// WithoutJournal makes a merge journal nothing although the store syncs: the
-// file is a copy of the board the sync already carries (a relay bootstrap
-// snapshot), and journaling it would send the board again under new event
-// ids (MTIX-112.17.16.16).
-func WithoutJournal() ImportOption {
-	return func(c *importConfig) { c.noJournal = true }
 }
 
 // AsSyncedStore makes a replace import treat the store as one that syncs
@@ -158,7 +148,7 @@ func (s *Store) refuseEmptyImport(ctx context.Context, data *ExportData, force b
 // writing a node normalizes its node_type, and the real import must still
 // verify the file's checksum.
 func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode ImportMode,
-	moves localWrites, cfg *importConfig) (int64, string, error) {
+	moves localWrites, workflow WorkflowResolution) (int64, string, error) {
 	dry := *data
 	dry.Nodes = append([]exportNode(nil), data.Nodes...)
 	var changes int64
@@ -180,10 +170,7 @@ func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode I
 		if mode == ImportModeReplace {
 			_, applyErr = replaceAllData(ctx, tx, &dry, false)
 		} else {
-			// The dry run journals as the write will, so a merge the queue cap
-			// would refuse is refused here, before the pre-import backup rotates
-			// the older recovery points (MTIX-112.17.16.16).
-			_, applyErr = s.mergeAndJournal(ctx, tx, &dry, cfg)
+			_, applyErr = mergeAllData(ctx, tx, &dry, workflowPolicy{workflow, s.clock()})
 		}
 		if applyErr != nil {
 			return applyErr

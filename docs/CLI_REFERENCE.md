@@ -1124,7 +1124,7 @@ Import nodes from JSON export
 | `--confirm` |  | Confirm renumbering in a non-empty live store (ADR-003 §6): incoming provisional nodes, and local tasks whose id the file gives to a different task; without it such an import is reported but not applied | false |
 | `--force` |  | Allow importing zero nodes into a non-empty database | false |
 | `--force-rename` |  | On an incoming uid that collides with a different local node, re-stamp the import node with a fresh local uid instead of rejecting (ADR-003 §6) | false |
-| `--mode` |  | Import mode: merge, or replace (DELETES every existing ticket first; typed confirmation required) | merge |
+| `--mode` |  | Import mode: merge (refused on a project that syncs with a hub), or replace (DELETES every existing ticket first; typed confirmation required) | merge |
 | `--ours` |  | Merge only: comma-separated task ids whose differing status, assignee, agent state, wake time and deletion state keep your values | [] |
 | `--prefer` |  | Merge only: for every task whose status, assignee, agent state, wake time or deletion state differs from the file's, take the file's values (theirs) or keep yours (ours); without a choice such a merge is reported and writes nothing |  |
 | `--recompute-checksum` |  | Recovery only (MTIX-26.5): replace the file's checksum with one computed over its current content, accepting hand-reconstructed exports | false |
@@ -1828,14 +1828,8 @@ populated hub to replicate the history locally.
 Safety properties:
   * Single-tx atomicity: all events OR none. SQLite WAL rolls back
     on any failure mid-walk (including SIGKILL).
-  * Partial backfill: when the log holds other events but some live
-    tasks have no create_node in it (for example an import merge into a
-    store whose tasks predate any sync), backfill sends just those
-    tasks and the links that touch them, and nothing the log holds
-    already. A store that ingests a relay is refused.
-  * Refusal-by-default if sync_events is non-empty.
-    Note --force does NOT regenerate: it appends a second history
-    alongside the first.
+  * Refusal-by-default if sync_events is non-empty. Note --force does
+    NOT regenerate: it appends a second history alongside the first.
     There is no supported regenerate path yet (MTIX-89). Do NOT reach
     for 'mtix sync reconcile --discard-local' — that deletes every
     ticket in this store.

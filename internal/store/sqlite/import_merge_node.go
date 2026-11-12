@@ -27,11 +27,18 @@ func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 	var touched []*exportNode // nodes the merge created or updated, rolled up once all are written (FR-5.7)
 	for i := range data.Nodes {
 		res := settled[data.Nodes[i].ID]
-		action, mergeErr := mergeImportNode(ctx, tx, &data.Nodes[i], fileCarriesAllColumns, mergeControl{res, policy.journal, policy.keepUIDs})
+		action, mergeErr := mergeImportNode(ctx, tx, &data.Nodes[i], fileCarriesAllColumns, res)
 		if mergeErr != nil {
 			return result, mergeErr
 		}
-		result.countAction(action)
+		switch action {
+		case importActionCreated:
+			result.NodesCreated++
+		case importActionUpdated, importActionRolledUp:
+			result.NodesUpdated++
+		case importActionSkipped:
+			result.NodesSkipped++
+		}
 		if action != importActionSkipped {
 			touched = append(touched, &data.Nodes[i])
 		}
@@ -44,13 +51,6 @@ func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 	}
 
 	for _, d := range data.Dependencies {
-		apply, depErr := policy.journal.settleDep(ctx, tx, &d)
-		if depErr != nil {
-			return result, depErr
-		}
-		if !apply {
-			continue
-		}
 		if err := insertExportDep(ctx, tx, &d); err != nil {
 			return result, fmt.Errorf("insert dep %s->%s: %w", d.FromID, d.ToID, err)
 		}
@@ -61,18 +61,6 @@ func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 	}
 	// MTIX-95.31.19.9: task history unions by entry id, never dropping a local entry.
 	return withHistoryUnion(ctx, tx, data, result, policy.now)
-}
-
-// countAction adds one merged node to the created, updated or skipped count.
-func (r *ImportResult) countAction(action importAction) {
-	switch action {
-	case importActionCreated:
-		r.NodesCreated++
-	case importActionUpdated, importActionRolledUp:
-		r.NodesUpdated++
-	case importActionSkipped:
-		r.NodesSkipped++
-	}
 }
 
 // withHistoryUnion unions the file's task history into the store and returns
@@ -117,8 +105,7 @@ func markRollUp(action importAction, local, merged *exportNode) importAction {
 // 2.0.0 carries none of the 2.0.0 columns, so for those the local values
 // stand (keepLocalNodeColumns).
 func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarriesAllColumns bool,
-	ctl mergeControl) (importAction, error) {
-	res := ctl.res
+	res *WorkflowConflict) (importAction, error) {
 	var existingHash sql.NullString
 	err := tx.QueryRowContext(ctx,
 		"SELECT content_hash FROM nodes WHERE id = ?", n.ID,
@@ -128,7 +115,6 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 		if insertErr := insertExportNode(ctx, tx, n); insertErr != nil {
 			return 0, fmt.Errorf("insert node %s: %w", n.ID, insertErr)
 		}
-		ctl.journal.noteCreated(n)
 		return importActionCreated, nil
 	}
 	if err != nil {
@@ -142,16 +128,14 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	if differentErr := refuseDifferentTask(&local, n); differentErr != nil {
 		return 0, differentErr
 	}
-	if ctl.journal != nil && local.DeletedAt != "" {
-		// No op restores a deleted task: a restored row would split from every
-		// peer, so on a store that syncs it stays deleted and the file's
-		// changes to it are not applied (round 4).
-		ctl.journal.noteSkippedDeleted(n)
-		return importActionSkipped, nil
+	merged := *n // merge into a copy: the caller's export must still verify
+	if !fileCarriesAllColumns {
+		keepLocalNodeColumns(&merged, &local)
 	}
-	merged, prepErr := prepareMerged(n, &local, fileCarriesAllColumns, ctl)
-	if prepErr != nil {
-		return 0, prepErr
+	if !copyIsCurrent(&local, n, fileCarriesAllColumns) { // MTIX-95.31.4
+		if keepErr := keepLocalBlankedFields(&merged, &local); keepErr != nil {
+			return 0, fmt.Errorf("merge node %s: %w", n.ID, keepErr)
+		}
 	}
 	streamsChanged, choiceErr := mergeChoiceAndStreams(&merged, &local, n, fileCarriesAllColumns, res)
 	if choiceErr != nil {
@@ -161,7 +145,6 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	if existingHash.Valid && existingHash.String == n.ContentHash {
 		write := unchangedWrite{streams: streamsChanged, workflow: res != nil && res.Choice == WorkflowTheirs}
 		action, err := mergeUnchangedContent(ctx, tx, &merged, local.UID, write)
-		ctl.journal.noteChanged(&local) // MTIX-112.17.16.16: the events come from the stored row
 		return markRollUp(action, &local, &merged), err
 	}
 
@@ -171,27 +154,7 @@ func mergeImportNode(ctx context.Context, tx *sql.Tx, n *exportNode, fileCarries
 	if carryErr := carryIfAdopted(ctx, tx, &merged, &local); carryErr != nil {
 		return 0, carryErr
 	}
-	ctl.journal.noteChanged(&local) // MTIX-112.17.16.16: the events come from the stored row
 	return markRollUp(importActionUpdated, &local, &merged), nil
-}
-
-// prepareMerged returns the copy of the file's node the merge writes: on a
-// store that syncs the held uid is kept (MTIX-112.17.16.16), local columns an older file lacks
-// stand (keepLocalNodeColumns), and a local value a stale copy leaves empty is
-// kept (keepLocalBlankedFields, MTIX-95.31.4). The caller's export is not
-// changed, because it must still verify.
-func prepareMerged(n, local *exportNode, fileCarriesAll bool, ctl mergeControl) (exportNode, error) {
-	merged := *n
-	keepHubKnownUID(&merged, local, ctl)
-	if !fileCarriesAll {
-		keepLocalNodeColumns(&merged, local)
-	}
-	if !copyIsCurrent(local, n, fileCarriesAll) { // MTIX-95.31.4
-		if err := keepLocalBlankedFields(&merged, local); err != nil {
-			return merged, fmt.Errorf("merge node %s: %w", n.ID, err)
-		}
-	}
-	return merged, nil
 }
 
 // mergeChoiceAndStreams applies the caller's choice for a node's differing

@@ -22,11 +22,18 @@ var ErrReplaceOnSyncedStore = errors.New("replace import refused on a store that
 // and sync log are dropped together and pulled again (MTIX-107.31).
 const SyncLogRecovery = "mtix sync push, check that mtix sync status shows pending 0, then mtix sync reconcile --discard-local --yes, then mtix sync pull"
 
+// ErrMergeOnSyncedStore marks a merge import refused because the store syncs
+// with a hub: a merge writes no sync journal, so a later hub edit would
+// silently overwrite the merged values.
+var ErrMergeOnSyncedStore = errors.New("merge import refused on a store that syncs with a hub")
+
+// MergeOnSyncedWays says what to do instead of a merge import on a store that
+// syncs: take the hub's board, then load the file elsewhere.
+const MergeOnSyncedWays = "To take the hub's changes, run mtix sync pull. To load the file, import it into a copy " +
+	"of the project that does not sync, then make the edits again with mtix commands, which are journaled"
+
 // maxNamedNodes caps how many node ids a refusal or a doctor check names.
 const maxNamedNodes = 10
-
-// MaxNamedNodes is maxNamedNodes for callers that name tasks in a notice.
-const MaxNamedNodes = maxNamedNodes
 
 // rowQuerier is a *sql.DB or a *sql.Tx.
 type rowQuerier interface {

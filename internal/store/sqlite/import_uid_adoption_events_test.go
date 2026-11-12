@@ -103,6 +103,7 @@ func TestImportReconcile_MergeAdoptingUID_CarriesUIDOntoUnpushedEvents(t *testin
 					require.NoError(t, err)
 				}
 				queueEvent(t, local, "pending-1", "REC-1", mine, op, "pending")
+				queueEvent(t, local, "pushed-1", "REC-1", mine, op, "pushed")
 				queueEvent(t, local, "other-1", "REC-2", other, op, "pending")
 				queueEvent(t, local, "nouid-1", "REC-1", "", op, "pending")
 				holdEvent(t, local, "pending-1", mine)
@@ -113,6 +114,7 @@ func TestImportReconcile_MergeAdoptingUID_CarriesUIDOntoUnpushedEvents(t *testin
 				assert.Equal(t, theirs, eventUID(t, local, "pending-1"), "the pending event follows the task")
 				assert.Equal(t, theirs, heldUID(t, local, "pending-1"), "the held copy follows the task")
 				assert.Equal(t, theirs, eventUID(t, local, "nouid-1"), "a pending event without a uid names the task")
+				assert.Equal(t, mine, eventUID(t, local, "pushed-1"), "a pushed event is history")
 				assert.Equal(t, other, eventUID(t, local, "other-1"), "another task's event is untouched")
 			})
 		}
@@ -185,7 +187,7 @@ func TestImportReconcile_MergeAdoptingUID_AdoptedUIDTakenAsEventID_CreationKeeps
 	local, teammate := newTestStore(t), newTestStore(t)
 	mine := createSameIDTask(t, local, "REC-1", "", 1, backfilledUID(t), "Shared task")
 	theirs := createSameIDTask(t, teammate, "REC-1", "", 1, backfilledUID(t), "Shared task")
-	queueEvent(t, local, theirs, "REC-9", theirs, model.OpCreateNode, "pending")
+	queueEvent(t, local, theirs, "REC-9", theirs, model.OpCreateNode, "pushed")
 
 	mergeFile(t, local, exportOf(t, teammate))
 	assert.Equal(t, theirs, eventUID(t, local, mine))

@@ -403,10 +403,7 @@ func TestEmitEvent_QueueLimit_RejectsAtCap(t *testing.T) {
 	require.True(t, errors.Is(err, model.ErrSyncQueueFull),
 		"caller must be able to errors.Is(ErrSyncQueueFull)")
 	require.Contains(t, err.Error(), "5 events pending (cap=5)")
-	// MTIX-112.17.16.16: push --force only bypasses the push lock; the fixes are the push and the config key.
-	require.Contains(t, err.Error(), "mtix sync push to send them")
-	require.Contains(t, err.Error(), "mtix config set sync.max_queue_size")
-	require.NotContains(t, err.Error(), "push --force")
+	require.Contains(t, err.Error(), "mtix sync push --force")
 }
 
 func TestEmitEvent_QueueLimit_FreedAfterPush(t *testing.T) {

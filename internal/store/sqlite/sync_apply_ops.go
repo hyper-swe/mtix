@@ -96,7 +96,7 @@ func (a syncApplier) applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.S
 	// the pull quarantines it, visibly, instead of dropping it. It must NOT hard-error
 	// (that would wedge the apply pipeline for the whole batch); the
 	// surfacing/renumber is layered on top by 30.7.
-	row := appliedCreateRow{payload: p, uid: uid, labels: labelsJSON, at: now, store: a.store}
+	row := appliedCreateRow{payload: p, uid: uid, labels: labelsJSON, at: now}
 	if err := insertAppliedCreate(ctx, tx, e, row); err != nil {
 		return err
 	}
@@ -346,11 +346,6 @@ func (a syncApplier) applyComment(ctx context.Context, tx *sql.Tx, e *model.Sync
 	// The event's own time (eventTime, MTIX-95.26), not the apply time, so two
 	// replicas applying the same events in any order write byte-identical rows.
 	at := eventTime(e.WallClockTS, a.clock().UTC())
-	for _, held := range annotations {
-		if held.ID == e.EventID {
-			return nil // the node holds this comment already (an import merge carried it, MTIX-112.17.16.16)
-		}
-	}
 	annotations = append(annotations, model.Annotation{
 		ID: e.EventID, Author: p.AuthorID, Text: p.Body, CreatedAt: at,
 	})

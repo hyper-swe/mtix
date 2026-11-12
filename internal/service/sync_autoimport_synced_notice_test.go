@@ -35,6 +35,10 @@ func assertNoReplaceOffer(t *testing.T, text, where string) {
 	t.Helper()
 	assert.Contains(t, text, sqlite.SyncLogRecovery, where)
 	assert.NotContains(t, text, "--mode replace", where)
+	// MTIX-112.17.16.16: a merge import is refused there too; the routes that work are offered.
+	assert.NotContains(t, text, "--mode merge", where)
+	assert.Contains(t, text, "mtix sync pull", where)
+	assert.Contains(t, text, "merge it into a copy of the project that does not sync", where)
 }
 
 // A refusal of a changed tasks.json when both sides changed and a replace
@@ -94,6 +98,8 @@ func TestAutoImport_SyncedStoreLosslessConflict_LogsRebuildNotReplace(t *testing
 	assert.Contains(t, warn, "rebuild this store from the hub")
 	assert.Contains(t, warn, sqlite.SyncLogRecovery)
 	assert.NotContains(t, warn, "--mode replace")
+	assert.NotContains(t, warn, "--mode merge", "a merge import is refused on a project that syncs")
+	assert.Contains(t, warn, "merge it into a copy of the project that does not sync")
 
 	report, err := f.svc.Compare(ctx, f.mtixDir)
 	require.NoError(t, err)

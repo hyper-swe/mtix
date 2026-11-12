@@ -29,9 +29,7 @@ func appendHeldPushCheck(ctx context.Context, r DoctorReport, st *sqlite.Store) 
 		return appendCheck(r, heldPushCheckName, false, "local store not initialized")
 	}
 	ok, detail := checkHeldPushEvents(ctx, st)
-	r = appendCheck(r, heldPushCheckName, ok, detail)
-	r = appendLocalOnlyImportCheck(ctx, r, st) // MTIX-112.17.16.16: the other local changes the hub lacks
-	return appendQueueCapCheck(ctx, r, st)     // MTIX-112.17.16.16: the cap a journaled write meets
+	return appendCheck(r, heldPushCheckName, ok, detail)
 }
 
 // checkHeldPushEvents passes when push holds no event. It fails while any

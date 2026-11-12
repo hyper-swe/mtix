@@ -86,39 +86,6 @@ type ImportResult struct {
 	// Warnings are human-readable notices about the import that do not fail
 	// it, such as history entries that conflicted or were skipped.
 	Warnings []string `json:"warnings,omitempty"`
-	// Journaled counts the sync events a merge into a store that syncs wrote
-	// for its changes; JournalLocalOnly names the tasks whose change no event
-	// carries, so they stay local (MTIX-112.17.16.16).
-	Journaled        int               `json:"journaled,omitempty"`
-	JournalLocalOnly []LocalOnlyChange `json:"journal_local_only,omitempty"`
-	// NeedsBackfill is set when UnsentTasks is not empty: the author's push,
-	// or mtix sync backfill on a hub board, sends them.
-	NeedsBackfill bool `json:"needs_backfill,omitempty"`
-	// UnsentTasks names the tasks the merge wrote that the sync log cannot
-	// carry: every new task, a held task whose creation the log lacks, and
-	// the tasks at the end of a link it cannot send. The merge journals no
-	// event for any of them (MTIX-112.17.16.16, rule G).
-	UnsentTasks []string `json:"unsent_tasks,omitempty"`
-	// SkippedDeleted names the tasks deleted here that the file holds live:
-	// on a store that syncs they stay deleted and the file's changes to them
-	// are not applied, because no op restores a deleted task.
-	SkippedDeleted []string `json:"skipped_deleted,omitempty"`
-	// SkippedDeps names, as the mtix dep add command that makes it, each
-	// dependency of the file that a merge on a store that syncs did not apply
-	// because one of its ends is a task the sync log holds (principle H,
-	// round 6).
-	SkippedDeps []string `json:"skipped_deps,omitempty"`
-	// keptUID lists the tasks whose uid the merge did not adopt although the
-	// plan listed an adoption: the hub knows them by the local uid.
-	keptUID []string
-}
-
-// LocalOnlyChange is a task an import changed in columns no sync event
-// carries, with the names of those columns: they stay on this replica until
-// an edit of the same value journals them (MTIX-112.17.16.16).
-type LocalOnlyChange struct {
-	ID     string   `json:"id"`
-	Fields []string `json:"fields"`
 }
 
 // ValidateExport runs the checks every import makes before it writes
@@ -203,10 +170,7 @@ func (s *Store) Import(
 				applyErr = insertExportHistory(ctx, tx, data, &result, s.clock())
 			}
 		} else {
-			result, applyErr = s.mergeAndJournal(ctx, tx, data, &cfg)
-			if applyErr == nil {
-				applyErr = nameLocalRenumbers(ctx, tx, &cfg, &result)
-			}
+			result, applyErr = mergeAllData(ctx, tx, data, workflowPolicy{cfg.workflow, s.clock()})
 		}
 		if applyErr != nil {
 			return applyErr

@@ -53,12 +53,6 @@ func (s *Store) prepareWrite(ctx context.Context, data *ExportData, opts ImportR
 		}
 	}
 	writeOpts := []ImportOption{renumberLocalFirst(moves), withWorkflowResolution(opts.Workflow)}
-	if opts.AssumeSynced {
-		writeOpts = append(writeOpts, AsSyncedStore())
-	}
-	if opts.NoJournal {
-		writeOpts = append(writeOpts, WithoutJournal())
-	}
 	if opts.BeforeWrite == nil {
 		return writeOpts, nil
 	}
@@ -68,8 +62,7 @@ func (s *Store) prepareWrite(ctx context.Context, data *ExportData, opts ImportR
 	if err := s.refuseEmptyImport(ctx, data, opts.Force); err != nil {
 		return nil, err
 	}
-	changes, checksum, err := s.countImportChanges(ctx, data, opts.Mode, moves,
-		&importConfig{workflow: opts.Workflow, asSynced: opts.AssumeSynced, noJournal: opts.NoJournal})
+	changes, checksum, err := s.countImportChanges(ctx, data, opts.Mode, moves, opts.Workflow)
 	if err != nil {
 		return nil, err
 	}

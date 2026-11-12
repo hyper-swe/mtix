@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -205,7 +204,7 @@ func newImportCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&f.mode, "mode", "merge",
-		"Import mode: merge, or replace (DELETES every existing ticket first; typed confirmation required)")
+		"Import mode: merge (refused on a project that syncs with a hub), or replace (DELETES every existing ticket first; typed confirmation required)")
 	cmd.Flags().BoolVar(&f.force, "force", false, "Allow importing zero nodes into a non-empty database")
 	cmd.Flags().BoolVar(&f.recomputeChecksum, "recompute-checksum", false,
 		"Recovery only (MTIX-26.5): replace the file's checksum with one computed over its current content, accepting hand-reconstructed exports")
@@ -295,34 +294,9 @@ func reportImportResult(result *sqlite.ImportResult, writerVersion string) {
 	fmt.Printf("Import complete: %d created, %d updated, %d skipped, %d deps\n",
 		result.NodesCreated, result.NodesUpdated,
 		result.NodesSkipped, result.DepsImported)
-	if result.Journaled > 0 { // MTIX-112.17.16.16: the changes wait in the sync journal
-		fmt.Printf("Journaled %d sync events for the changes; %s\n", result.Journaled, journaledSendWords())
-	}
-	printMergeNotices(result)
 	if n := result.HistoryAdded + result.HistorySkipped + result.HistoryConflicts + result.HistorySkippedLegacyKey; n > 0 {
 		fmt.Printf("History: %d added, %d already present, %d conflicts, %d skipped (legacy key)\n",
 			result.HistoryAdded, result.HistorySkipped, result.HistoryConflicts, result.HistorySkippedLegacyKey)
-	}
-}
-
-// printMergeNotices prints what a merge into a project that syncs did not send
-// or apply: the unsent tasks, the tasks that stay deleted, the dependencies it
-// left to mtix dep add (MTIX-112.17.16.16), and the columns that stay local.
-func printMergeNotices(result *sqlite.ImportResult) {
-	if len(result.UnsentTasks) > 0 {
-		fmt.Println(unsentLine(result.UnsentTasks, storeIngestsRelay()))
-	}
-	if len(result.SkippedDeleted) > 0 {
-		fmt.Printf("%d task(s) (%s) deleted here stay deleted: the file's changes were not applied. "+
-			"No op restores a deleted task; to bring one back, create a new task with mtix create.\n",
-			len(result.SkippedDeleted), strings.Join(result.SkippedDeleted, ", "))
-	}
-	if len(result.SkippedDeps) > 0 { // principle H: a link on a task the hub holds is the person's to add
-		fmt.Printf("%d dependency(ies) on tasks the sync log holds were not applied; run each to add it: %s\n",
-			len(result.SkippedDeps), strings.Join(result.SkippedDeps, "; "))
-	}
-	if len(result.JournalLocalOnly) > 0 {
-		fmt.Println(localOnlyLine(result.JournalLocalOnly))
 	}
 }
 
@@ -339,12 +313,6 @@ func importOptions(ctx context.Context, mode sqlite.ImportMode, f importFlags) s
 		Workflow:    workflowResolution(f),
 	}
 	opts.HoldPush = holdPushForAdoption
-	if mode == sqlite.ImportModeMerge {
-		// MTIX-112.17.16.16: hub evidence the store does not record yet (an
-		// exported DSN) makes the merge journal, as refuseSyncedReplace refuses
-		// a replace. On a read error hubGuardCounts answers true, the safe side.
-		opts.AssumeSynced, _ = hubGuardCounts(ctx)
-	}
 	if mode == sqlite.ImportModeMerge && app.syncSvc != nil && app.mtixDir != "" {
 		opts.BeforeWrite = func() error {
 			backup, err := app.syncSvc.BackupBeforeImport(ctx, app.mtixDir)
@@ -463,47 +431,4 @@ func guardImportReplace(ctx context.Context, exportData *sqlite.ExportData) erro
 	}
 	_, err = guardDestructive(ctx, os.Stderr, op)
 	return err
-}
-
-// journaledSendWords says how the journaled events leave this machine, by the
-// transport the board syncs through: a hub takes a push, a relay publishes.
-func journaledSendWords() string {
-	hub, relay := hubConfigured(app.mtixDir), relayDir() != ""
-	switch {
-	case hub && relay:
-		return "mtix sync push sends them to the hub, and the relay publishes them to its peers"
-	case relay:
-		return "this board syncs through a relay, so they stay pending until the relay publishes them to its peers (there is no hub to push to)"
-	default:
-		return "mtix sync push sends them to the hub"
-	}
-}
-
-// storeIngestsRelay reports whether this board exchanges events through a
-// relay: a relay directory is configured, or the store already ingested a
-// segment. It is the one condition under which mtix sync backfill refuses and
-// the import prints no backfill route (MTIX-112.17.16.16, round 6).
-func storeIngestsRelay() bool {
-	if dir, err := app.configSvc.Get("sync.relay.dir"); err == nil && dir != "" {
-		return true
-	}
-	relay, err := app.store.IngestsRelay(context.Background())
-	return err == nil && relay
-}
-
-// unsentLine says what the merge did with tasks the sync log cannot carry
-// (MTIX-112.17.16.16, rule G): they are written here and sent nothing, and a
-// task someone else created arrives when its author pushes it. mtix sync
-// backfill is the author's route on a hub board; a relay board has none, so
-// none is printed there.
-func unsentLine(ids []string, relay bool) string {
-	head := fmt.Sprintf("%d task(s) (%s) are written here and stay unsent: the merge journals no new task, "+
-		"no edit to one and no link to one. ", len(ids), strings.Join(ids, ", "))
-	if relay {
-		return head + "A task someone else created reaches the other peers when its author publishes it. " +
-			"This board syncs through a relay, so there is no backfill route here: a task created on this machine " +
-			"before the relay stays on this machine."
-	}
-	return head + "A task someone else created arrives when its author pushes it. If you are the author " +
-		"and never pushed it, mtix sync backfill sends it."
 }

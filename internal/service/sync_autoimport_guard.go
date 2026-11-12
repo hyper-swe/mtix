@@ -221,11 +221,12 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 	reason := "both the local store and tasks.json changed since the last sync (FR-15.2h)"
 	if !diff.Lossy() {
 		keepFile := "keep the file with mtix import .mtix/tasks.json --mode replace (" + replaceNeedsTypedCount + ")"
+		mergeWay := "merge them with mtix import .mtix/tasks.json --mode merge (" + mergeKeeps + "), "
 		if synced {
-			keepFile = syncedReplaceWays
+			keepFile, mergeWay = syncedReplaceWays, syncedMergeWays+", "
 		}
 		s.logger.Warn("conflict detected: both tasks.json and local database changed since last sync",
-			"resolution", "merge them with mtix import .mtix/tasks.json --mode merge ("+mergeKeeps+"), "+keepFile+
+			"resolution", mergeWay+keepFile+
 				", or keep the local store with mtix sync --fix; "+unchangedRecovery)
 		s.recordRefusalOf(mtixDir, &AutoImportRefusal{FileHash: fileHash, Kind: refusalConflict, Reason: reason, Synced: synced})
 		return nil
@@ -266,20 +267,24 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss, synced 
 	b.WriteString("Nothing was imported. Until you choose, mtix refuses again on every command, and writing " +
 		"commands save to the local store but leave .mtix/tasks.json as it is.\n")
 	fmt.Fprintf(&b, "Choose one, run from the project root (%s):\n", projectRoot)
-	b.WriteString("  mtix import .mtix/tasks.json --mode merge    backs up the database, " + keeps +
-		" and adds the file's changes: a field value listed above stays, with the task's local status when " +
-		"the value is part of it; beyond those, " + mergeKeeps + "\n")
-	if holdsDifferentTask(losses) {
-		b.WriteString("                                               a local task listed as a different task " +
-			"under its id is renumbered to the next number free in both the store and the file (it keeps its " +
-			"uid; the file's task keeps the id): the import lists the renumbering and applies it only when you " +
-			"rerun it with --confirm\n")
-	}
-	if len(upgradeMatched) > 0 {
-		b.WriteString(sameTaskAtUpgradeNote(upgradeMatched))
-	}
-	if ids := differentTitleNoUID(losses); len(ids) > 0 { // MTIX-95.31.9
-		b.WriteString(differentTitleNoUIDNote(ids))
+	if synced {
+		b.WriteString(syncedMergeNote) // a merge import is refused on a project that syncs (MTIX-112.17.16.16)
+	} else {
+		b.WriteString("  mtix import .mtix/tasks.json --mode merge    backs up the database, " + keeps +
+			" and adds the file's changes: a field value listed above stays, with the task's local status when " +
+			"the value is part of it; beyond those, " + mergeKeeps + "\n")
+		if holdsDifferentTask(losses) {
+			b.WriteString("                                               a local task listed as a different task " +
+				"under its id is renumbered to the next number free in both the store and the file (it keeps its " +
+				"uid; the file's task keeps the id): the import lists the renumbering and applies it only when you " +
+				"rerun it with --confirm\n")
+		}
+		if len(upgradeMatched) > 0 {
+			b.WriteString(sameTaskAtUpgradeNote(upgradeMatched))
+		}
+		if ids := differentTitleNoUID(losses); len(ids) > 0 { // MTIX-95.31.9
+			b.WriteString(differentTitleNoUIDNote(ids))
+		}
 	}
 	b.WriteString("  mtix sync --fix                              keep the local store and rewrite " +
 		".mtix/tasks.json from it; every change in the file is dropped\n")
@@ -292,6 +297,18 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss, synced 
 	b.WriteString("mtix sync shows this refusal.\n")
 	return b.String()
 }
+
+// syncedMergeWays stands in a refusal's list of ways out for the merge import
+// on a store that syncs with a hub (MTIX-112.17.16.16).
+const syncedMergeWays = "take the hub's board with mtix sync pull, because a merge import is refused on a project that " +
+	"syncs (it writes no sync journal, so a later hub edit would silently overwrite the merged values); to load the " +
+	"file anyway, merge it into a copy of the project that does not sync"
+
+// syncedMergeNote stands in the refusal for the merge option on a store that
+// syncs with a hub.
+const syncedMergeNote = "  mtix sync pull                               take the hub's board. A merge import of the file is " +
+	"refused on a project that syncs with a hub: it writes no sync journal, so a later hub edit would silently " +
+	"overwrite the merged values. To load the file anyway, merge it into a copy of the project that does not sync\n"
 
 // syncedReplaceNote stands in the refusal for the replace option on a store
 // that syncs with a hub: a replace import is refused there (MTIX-107.31), so
@@ -347,9 +364,8 @@ func sameTaskAtUpgrade(losses []sqlite.NodeLoss) []string {
 // a new task first.
 func sameTaskAtUpgradeNote(ids []string) string {
 	return "                                               a task treated as the same task (uid assigned at " +
-		"upgrade), here " + strings.Join(ids, ", ") + ", keeps its id and takes the file's title and " +
-		"content; on a project that has not synced it also takes the file's uid and the import lists each uid it adopts, " +
-		"and on a project that syncs it keeps your uid and names it local only; if the two titles name different tasks (tasks " +
+		"upgrade), here " + strings.Join(ids, ", ") + ", keeps its id and takes the file's uid, title and " +
+		"content, and the import lists each uid it adopts; if the two titles name different tasks (tasks " +
 		"created in the same second whose create event at least one clone's event log lacks, for example " +
 		"created before 0.2), yours would survive only in the backup the merge takes: copy it to a new task first (mtix " +
 		"show <id>, then mtix create with its title and description; writes stay local while this refusal is " +
@@ -467,7 +483,7 @@ func plural(n int, one, many string) string {
 // noticeImported prints the one line that says an auto-import applied a
 // changed .mtix/tasks.json, what it changed and where the database before
 // it is (FR-15.2k, MTIX-95.31.2).
-func (s *SyncService) noticeImported(mtixDir string, diff *sqlite.ReplaceDiff, backupPath string, localOnly []sqlite.LocalOnlyImport) {
+func (s *SyncService) noticeImported(mtixDir string, diff *sqlite.ReplaceDiff, backupPath string) {
 	shown := backupPath
 	if rel, err := filepath.Rel(filepath.Dir(mtixDir), backupPath); err == nil {
 		shown = rel
@@ -476,35 +492,4 @@ func (s *SyncService) noticeImported(mtixDir string, diff *sqlite.ReplaceDiff, b
 		"mtix: imported the changed .mtix/tasks.json: nodes %d added, %d updated, %d removed; "+
 			"dependencies %d added, %d removed (local database backed up to %s)\n",
 		len(diff.Added), len(diff.Updated), len(diff.Removed), len(diff.DepsAdded), len(diff.DepsRemoved), shown)
-	s.noticeLocalOnly(localOnly)
-}
-
-// noticeLocalOnly says which tasks the hub already knows that the import
-// changed without journaling: their new values are local only, and a later
-// pull of a hub edit may replace them (MTIX-112.17.16.16). The ids are
-// bounded (maxNamedNodes); mtix doctor lists the same tasks.
-func (s *SyncService) noticeLocalOnly(changes []sqlite.LocalOnlyImport) {
-	if len(changes) == 0 {
-		return
-	}
-	shown := changes
-	if len(shown) > sqlite.MaxNamedNodes {
-		shown = shown[:sqlite.MaxNamedNodes]
-	}
-	more := ""
-	if rest := len(changes) - len(shown); rest > 0 {
-		more = fmt.Sprintf(" and %d more", rest)
-	}
-	named := make([]string, 0, len(shown))
-	unsent := false
-	for _, c := range shown {
-		named = append(named, c.ID+": "+strings.Join(c.Fields, ", "))
-		unsent = unsent || len(sqlite.SettleableFields(c.Fields)) < len(c.Fields)
-	}
-	fmt.Fprintf(s.notices, "mtix: %s the hub already knows changed only locally (%s%s): these values were not sent to the hub "+
-		"and may be replaced on the next pull; run mtix doctor for the list\n",
-		plural(len(changes), "task", "tasks"), strings.Join(named, "; "), more)
-	if unsent {
-		fmt.Fprint(s.notices, "mtix: weight, estimates, references, metadata, wake time and agent state have no command that sends them to the hub, so those values stay on this machine\n")
-	}
 }

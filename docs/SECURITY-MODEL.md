@@ -272,7 +272,7 @@ The hub-unreachable detector (`internal/sync/workflow`) surfaces this risk: when
 
 `sync.max_queue_size` in `meta` caps the pending queue size. When the cap is reached, `enforceQueueLimit` returns `model.ErrSyncQueueFull` from the emit path. **The new event is refused — not silently dropped.** Surfaced to the caller of `mtix create` / `mtix update` / etc. as a structured error mentioning the cap and the remediation (`mtix sync push --force` or raise the cap).
 
-Default cap is `0` (unlimited). Set explicitly with `mtix config set sync.max_queue_size <number>` (the value is copied into the store's meta on the next command; editing the meta key by hand is overwritten) for environments where unbounded local growth is unacceptable.
+Default cap is `0` (unlimited). Set explicitly via the `sync.max_queue_size` meta key for environments where unbounded local growth is unacceptable.
 
 ---
 

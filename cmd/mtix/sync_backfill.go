@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -38,14 +37,8 @@ populated hub to replicate the history locally.
 Safety properties:
   * Single-tx atomicity: all events OR none. SQLite WAL rolls back
     on any failure mid-walk (including SIGKILL).
-  * Partial backfill: when the log holds other events but some live
-    tasks have no create_node in it (for example an import merge into a
-    store whose tasks predate any sync), backfill sends just those
-    tasks and the links that touch them, and nothing the log holds
-    already. A store that ingests a relay is refused.
-  * Refusal-by-default if sync_events is non-empty.
-    Note --force does NOT regenerate: it appends a second history
-    alongside the first.
+  * Refusal-by-default if sync_events is non-empty. Note --force does
+    NOT regenerate: it appends a second history alongside the first.
     There is no supported regenerate path yet (MTIX-89). Do NOT reach
     for 'mtix sync reconcile --discard-local' — that deletes every
     ticket in this store.
@@ -81,11 +74,6 @@ func runSyncBackfill(ctx context.Context, stdout, stderr io.Writer, dryRun, forc
 	}
 	if app.store == nil {
 		return fmt.Errorf("mtix sync backfill: local store not initialized")
-	}
-
-	if !dryRun && storeIngestsRelay() { // the same condition as the import line that prints no backfill route
-		return errors.New("mtix sync backfill: this board exchanges events through a relay, so a backfill would " +
-			"duplicate what the relay carries; there is no backfill route on a relay board")
 	}
 
 	// Acquire the pushlock to prevent concurrent push from racing the
@@ -181,9 +169,5 @@ func printBackfillResult(stdout io.Writer, result sqlite.BackfillResult, dryRun 
 		result.AnnotateEvents,
 		result.LinkDepEvents,
 	)
-	if err == nil && len(result.NotSent) > 0 {
-		_, err = fmt.Fprintf(stdout, "not sent: %d task(s) (%s) sit under a deleted parent that was never created in this sync log; "+
-			"a peer has nothing to attach them to\n", len(result.NotSent), strings.Join(result.NotSent, ", "))
-	}
 	return err
 }

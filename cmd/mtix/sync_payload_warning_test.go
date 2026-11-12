@@ -20,6 +20,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/mcp"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
 )
 
@@ -267,13 +268,11 @@ func decomposeLineOverCap() string {
 	return `{"title":"t","prompt":"` + strings.Repeat("p", validator.MaxPayloadBytes-wrap-8) + `"}` + "\n"
 }
 
-// TestRunImport_OversizedPrompt_UnderHubEvidenceJournalsNoCreateAndWarnsNothing
-// pins that `mtix import` into a store with hub evidence writes the task it
-// creates but journals no create for it (MTIX-112.17.16.16 ruling 1: the task
-// reaches the hub when its author pushes it), so there is no over-cap event
-// to hold and no wire-cap warning at import time (MTIX-95.12 round 2, review
-// r1 R19). The automatic import of .mtix/tasks.json journals nothing either.
-func TestRunImport_OversizedPrompt_UnderHubEvidenceJournalsNoCreateAndWarnsNothing(t *testing.T) {
+// TestRunImport_OversizedPrompt_MergeIsRefusedOnAHubProject pins that `mtix
+// import --mode merge` of a task with an over-cap prompt into a project with
+// a hub is refused before any write (an import writes no sync events, so on a
+// project that syncs it would not reach the hub), and warns of nothing.
+func TestRunImport_OversizedPrompt_MergeIsRefusedOnAHubProject(t *testing.T) {
 	ctx := context.Background()
 	setHub(t, true)
 	initTestApp(t)
@@ -293,13 +292,9 @@ func TestRunImport_OversizedPrompt_UnderHubEvidenceJournalsNoCreateAndWarnsNothi
 	initTestApp(t)
 	path := filepath.Join(t.TempDir(), "board.json")
 	require.NoError(t, os.WriteFile(path, board, 0o644))
-	require.NoError(t, runImport(path, importFlags{mode: "merge", recomputeChecksum: true}))
-	node, err := app.store.GetNode(ctx, "TEST-1")
-	require.NoError(t, err)
-	require.Len(t, node.Prompt, len(overWireCap()), "the import wrote the task")
-	// MTIX-112.17.16.16 ruling 1: even under hub evidence (setHub) a merge journals no create.
-	require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM sync_events WHERE op_type = 'create_node' AND node_id = 'TEST-1'`),
-		"an import under hub evidence journals no create for the task it wrote")
+	require.ErrorIs(t, runImport(path, importFlags{mode: "merge", recomputeChecksum: true}), sqlite.ErrMergeOnSyncedStore)
+	require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM nodes`), "a refused import wrote no task")
+	require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM sync_events`), "an import writes no sync event")
 	require.NotNil(t, app.payloadWarnings, "a hub is configured")
 	require.Empty(t, app.payloadWarnings.Drain(), "so there is nothing to warn about")
 }

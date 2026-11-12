@@ -29,7 +29,6 @@ func TestPushLoop_HeldCreationWhoseUIDNoNodeHas_RealHub_TeammateTaskIntact(t *te
 		name    string
 		loseUID func(t *testing.T)
 	}{
-		{"uid kept by a merge", func(t *testing.T) { mergeFileUIDKept(t, "TEST-1") }},
 		{"creation queued without a uid", func(t *testing.T) { queueWithoutUID(t, "TEST-1") }},
 	}
 	for _, tt := range tests {
@@ -109,7 +108,7 @@ func TestPushLoop_UIDAdoptedAfterCreationQueued_RealHub_TeammateTaskIntact(t *te
 
 	app = appA
 	t.Setenv(sqlite.AuthorIDEnv, "agent-a")
-	adopted := mergeFileUIDKept(t, "TEST-1")
+	adopted := adoptFileUID(t, "TEST-1")
 	require.NoError(t, runUpdate("TEST-1", "A retitled its task", "", "", "", 0, "", ""))
 	require.NoError(t, runCreate("A's child", "TEST-1", "", 3, "", "", "", "", ""))
 	_, err = pushLoop(ctx, &stderr, pool, app.store)

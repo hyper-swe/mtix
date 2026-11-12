@@ -34,9 +34,7 @@ const upgradeMatchedLine = `  PROJ-2: treated as the same task (uid assigned at 
 // upgradeMatchedNote is the start of what the refusal's merge option says
 // about such a task, PROJ-2.
 const upgradeMatchedNote = "a task treated as the same task (uid assigned at upgrade), here PROJ-2, " +
-	"keeps its id and takes the file's title and content; on a project that has not synced it also takes the " +
-	"file's uid and the import lists each uid it adopts, and on a project that syncs it keeps your uid and " +
-	"names it local only"
+	"keeps its id and takes the file's uid, title and content"
 
 // upgradeMatchedWayOut is how the refusal says to keep the local task when
 // the two are different tasks.

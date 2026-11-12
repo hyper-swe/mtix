@@ -94,9 +94,7 @@ func TestPushLoop_HeldCreationWhoseUIDNoNodeHas_TaskAndSubtreeHeld(t *testing.T)
 		loseUID    func(t *testing.T)
 		deleteTask bool // mtix delete TEST-1 --cascade after the other changes
 	}{
-		{"uid adopted by a merge, creation held before", true, adopt, false},
 		{"uid adopted by a merge, creation held in the same push", false, adopt, false},
-		{"uid adopted by a merge, task deleted, creation held before", true, adopt, true},
 		{"uid adopted by a merge, task deleted, creation held in the same push", false, adopt, true},
 		{"creation queued without a uid, held before", true, queue, false},
 		{"creation queued without a uid, held in the same push", false, queue, false},

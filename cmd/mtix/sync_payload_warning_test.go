@@ -20,6 +20,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/mcp"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
 )
 
@@ -267,12 +268,11 @@ func decomposeLineOverCap() string {
 	return `{"title":"t","prompt":"` + strings.Repeat("p", validator.MaxPayloadBytes-wrap-8) + `"}` + "\n"
 }
 
-// TestRunImport_OversizedPrompt_NoSyncEventNoWarning pins why `mtix import`
-// (and the automatic import of .mtix/tasks.json, which uses the same store
-// import) carries no wire-cap warning: an import writes tasks without sync
-// events, so nothing it writes is pushed, held or warned about, whatever
-// its field sizes (MTIX-95.12 round 2, review r1 R19).
-func TestRunImport_OversizedPrompt_NoSyncEventNoWarning(t *testing.T) {
+// TestRunImport_OversizedPrompt_MergeIsRefusedOnAHubProject pins that `mtix
+// import --mode merge` of a task with an over-cap prompt into a project with
+// a hub is refused before any write (an import writes no sync events, so on a
+// project that syncs it would not reach the hub), and warns of nothing.
+func TestRunImport_OversizedPrompt_MergeIsRefusedOnAHubProject(t *testing.T) {
 	ctx := context.Background()
 	setHub(t, true)
 	initTestApp(t)
@@ -292,10 +292,8 @@ func TestRunImport_OversizedPrompt_NoSyncEventNoWarning(t *testing.T) {
 	initTestApp(t)
 	path := filepath.Join(t.TempDir(), "board.json")
 	require.NoError(t, os.WriteFile(path, board, 0o644))
-	require.NoError(t, runImport(path, importFlags{mode: "merge", recomputeChecksum: true}))
-	node, err := app.store.GetNode(ctx, "TEST-1")
-	require.NoError(t, err)
-	require.Len(t, node.Prompt, len(overWireCap()), "the import wrote the task")
+	require.ErrorIs(t, runImport(path, importFlags{mode: "merge", recomputeChecksum: true}), sqlite.ErrMergeOnSyncedStore)
+	require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM nodes`), "a refused import wrote no task")
 	require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM sync_events`), "an import writes no sync event")
 	require.NotNil(t, app.payloadWarnings, "a hub is configured")
 	require.Empty(t, app.payloadWarnings.Drain(), "so there is nothing to warn about")

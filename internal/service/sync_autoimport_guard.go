@@ -201,7 +201,7 @@ func (s *SyncService) refuse(mtixDir, fileHash string, c *importCheck, diff *sql
 	}
 	loss := lossList(diff.Losses, "; ")
 	reason := "a replace import would delete local data the file lacks: " + loss + note
-	fmt.Fprint(s.notices, refusalMessage(filepath.Dir(mtixDir), lossyCause, diff.Losses, c.recoveryGuide)+noteLine(note))
+	fmt.Fprint(s.notices, refusalMessage(filepath.Dir(mtixDir), lossyCause, diff.Losses, c.recoveryGuide, c.synced)+noteLine(note))
 	s.recordRefusalOf(mtixDir, &AutoImportRefusal{FileHash: fileHash, Kind: refusalLossy, Reason: reason, Loss: loss, Synced: c.synced})
 	s.logger.Info("sync_import_refused", "event", "sync_import_refused",
 		"file_hash", fileHash, "nodes_losing_data", len(diff.Losses))
@@ -229,21 +229,25 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 	reason := "both the local store and tasks.json changed since the last sync (FR-15.2h)"
 	if !diff.Lossy() {
 		keepFile := "keep the file with mtix import .mtix/tasks.json --mode replace (" + replaceNeedsTypedCount + ")"
+		mergeWay := "merge them with mtix import .mtix/tasks.json --mode merge (" + mergeKeeps + "), "
 		if c.recoveryGuide != "" {
 			keepFile = syncedReplaceWays
 			if c.recoveryGuide != sqlite.SyncLogRecovery {
 				keepFile = c.recoveryGuide
 			}
 		}
+		if c.synced {
+			mergeWay = syncedMergeWays + ", " // a merge import is refused on a project that syncs (MTIX-112.17.16.16)
+		}
 		s.logger.Warn("conflict detected: both tasks.json and local database changed since last sync",
-			"resolution", "merge them with mtix import .mtix/tasks.json --mode merge ("+mergeKeeps+"), "+keepFile+
+			"resolution", mergeWay+keepFile+
 				", or keep the local store with mtix sync --fix; "+unchangedRecovery)
 		s.recordRefusalOf(mtixDir, &AutoImportRefusal{FileHash: fileHash, Kind: refusalConflict, Reason: reason, Synced: c.synced})
 		return nil
 	}
 	loss := lossList(diff.Losses, "; ")
 	reason += ", and a replace import would also delete local data the file lacks: " + loss + note
-	fmt.Fprint(s.notices, refusalMessage(filepath.Dir(mtixDir), conflictCause, diff.Losses, c.recoveryGuide)+noteLine(note))
+	fmt.Fprint(s.notices, refusalMessage(filepath.Dir(mtixDir), conflictCause, diff.Losses, c.recoveryGuide, c.synced)+noteLine(note))
 	s.recordRefusalOf(mtixDir, &AutoImportRefusal{FileHash: fileHash, Kind: refusalConflict, Reason: reason, Loss: loss, Synced: c.synced})
 	s.logger.Info("sync_import_refused", "event", "sync_import_refused", "kind", refusalConflict,
 		"file_hash", fileHash, "nodes_losing_data", len(diff.Losses))
@@ -265,7 +269,7 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 // and either has no uid to compare, the merge option says the merge takes
 // them for different tasks and renumbers the local one with --confirm, and
 // what to do when they are one task retitled (MTIX-95.31.9).
-func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss, recoveryGuide string) string {
+func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss, recoveryGuide string, synced bool) string {
 	upgradeMatched := sameTaskAtUpgrade(losses) // MTIX-95.31.6
 	keeps := "keeps every value the refusal lists"
 	if len(upgradeMatched) > 0 {
@@ -277,20 +281,24 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss, recover
 	b.WriteString("Nothing was imported. Until you choose, mtix refuses again on every command, and writing " +
 		"commands save to the local store but leave .mtix/tasks.json as it is.\n")
 	fmt.Fprintf(&b, "Choose one, run from the project root (%s):\n", projectRoot)
-	b.WriteString("  mtix import .mtix/tasks.json --mode merge    backs up the database, " + keeps +
-		" and adds the file's changes: a field value listed above stays, with the task's local status when " +
-		"the value is part of it; beyond those, " + mergeKeeps + "\n")
-	if holdsDifferentTask(losses) {
-		b.WriteString("                                               a local task listed as a different task " +
-			"under its id is renumbered to the next number free in both the store and the file (it keeps its " +
-			"uid; the file's task keeps the id): the import lists the renumbering and applies it only when you " +
-			"rerun it with --confirm\n")
-	}
-	if len(upgradeMatched) > 0 {
-		b.WriteString(sameTaskAtUpgradeNote(upgradeMatched))
-	}
-	if ids := differentTitleNoUID(losses); len(ids) > 0 { // MTIX-95.31.9
-		b.WriteString(differentTitleNoUIDNote(ids))
+	if synced {
+		b.WriteString(syncedMergeNote) // a merge import is refused on a project that syncs (MTIX-112.17.16.16)
+	} else {
+		b.WriteString("  mtix import .mtix/tasks.json --mode merge    backs up the database, " + keeps +
+			" and adds the file's changes: a field value listed above stays, with the task's local status when " +
+			"the value is part of it; beyond those, " + mergeKeeps + "\n")
+		if holdsDifferentTask(losses) {
+			b.WriteString("                                               a local task listed as a different task " +
+				"under its id is renumbered to the next number free in both the store and the file (it keeps its " +
+				"uid; the file's task keeps the id): the import lists the renumbering and applies it only when you " +
+				"rerun it with --confirm\n")
+		}
+		if len(upgradeMatched) > 0 {
+			b.WriteString(sameTaskAtUpgradeNote(upgradeMatched))
+		}
+		if ids := differentTitleNoUID(losses); len(ids) > 0 { // MTIX-95.31.9
+			b.WriteString(differentTitleNoUIDNote(ids))
+		}
 	}
 	b.WriteString("  mtix sync --fix                              keep the local store and rewrite " +
 		".mtix/tasks.json from it; every change in the file is dropped\n")
@@ -306,18 +314,6 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss, recover
 	b.WriteString("mtix sync shows this refusal.\n")
 	return b.String()
 }
-
-// syncedReplaceNote stands in the refusal for the replace option on a store
-// that syncs with a hub: a replace import is refused there (MTIX-107.31), so
-// it is not offered, and the way to take the hub's board is named instead.
-const syncedReplaceNote = "  A replace import of the file is refused on a project that syncs with a hub: the sync log keeps the " +
-	"events of the tasks it would delete. To rebuild this store from the hub instead, run " +
-	sqlite.SyncLogRecovery + "\n"
-
-// syncedReplaceWays stands in a refusal's list of ways out for the replace
-// import on a store that syncs with a hub (MTIX-107.31).
-const syncedReplaceWays = "rebuild this store from the hub, because a replace import is refused on a project that syncs: " +
-	sqlite.SyncLogRecovery
 
 // storeSyncs reports whether the local store syncs with a hub or relay
 // (MTIX-107.31): the condition under which a replace import is refused. It
@@ -480,7 +476,7 @@ func plural(n int, one, many string) string {
 // noticeImported prints the one line that says an auto-import applied a
 // changed .mtix/tasks.json, what it changed and where the database before
 // it is (FR-15.2k, MTIX-95.31.2).
-func (s *SyncService) noticeImported(mtixDir string, diff *sqlite.ReplaceDiff, backupPath string) {
+func (s *SyncService) noticeImported(ctx context.Context, mtixDir string, diff *sqlite.ReplaceDiff, backupPath string, assumeSynced bool) {
 	shown := backupPath
 	if rel, err := filepath.Rel(filepath.Dir(mtixDir), backupPath); err == nil {
 		shown = rel
@@ -489,4 +485,10 @@ func (s *SyncService) noticeImported(mtixDir string, diff *sqlite.ReplaceDiff, b
 		"mtix: imported the changed .mtix/tasks.json: nodes %d added, %d updated, %d removed; "+
 			"dependencies %d added, %d removed (local database backed up to %s)\n",
 		len(diff.Added), len(diff.Updated), len(diff.Removed), len(diff.DepsAdded), len(diff.DepsRemoved), shown)
+	// MTIX-112.17.16.16: an import writes no sync event, so tasks it only added
+	// on a store that syncs stay local only unless their author pushed them.
+	if listed, onlyAdded := s.localOnlyAdded(ctx, diff, assumeSynced); onlyAdded {
+		fmt.Fprintf(s.notices, "mtix: the tasks this import added (%s) wrote no sync event and stay local only "+
+			"unless their author pushed them to the hub\n", listed)
+	}
 }

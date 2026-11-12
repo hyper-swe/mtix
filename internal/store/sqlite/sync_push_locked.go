@@ -16,11 +16,11 @@ type pushQuerier interface {
 	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
 }
 
-// readPool adapts the store's read pool to pushQuerier.
-type readPool struct{ s *Store }
+// pushReadAdapter adapts the store's read pool to pushQuerier.
+type pushReadAdapter struct{ s *Store }
 
 // QueryContext runs query on the read pool.
-func (r readPool) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+func (r pushReadAdapter) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	return r.s.Query(ctx, query, args...)
 }
 

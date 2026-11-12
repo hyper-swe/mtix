@@ -110,7 +110,7 @@ func snapshotErrorCleanup(t *testing.T, stage string) {
 	wrapped := sql.OpenDB(connector)
 	wrapped.SetMaxOpenConns(1)
 	original := store.readDB
-	store.readDB = wrapped
+	store.readDB = newReadPool(wrapped)
 	t.Cleanup(func() { store.readDB = original; require.NoError(t, wrapped.Close()) })
 	if stage == "scan" {
 		_, err := store.WriteDB().Exec(`UPDATE nodes SET annotations='{unreadable'`)

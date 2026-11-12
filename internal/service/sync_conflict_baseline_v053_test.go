@@ -13,7 +13,6 @@ package service_test
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -129,7 +128,7 @@ func v053BaselineHash(t *testing.T, st *sqlite.Store) string {
 
 // v053Export is Store.Export of mtix 0.5.3 with project and mtix version
 // empty, as computeDBHash called it.
-func v053Export(t *testing.T, db *sql.DB) *v053ExportData {
+func v053Export(t *testing.T, db baselineQuerier) *v053ExportData {
 	t.Helper()
 	nodes := v053Nodes(t, db)
 	deps := v053Deps(t, db)
@@ -156,7 +155,7 @@ func v053Export(t *testing.T, db *sql.DB) *v053ExportData {
 
 // v053Nodes reads the nodes as mtix 0.5.3 exported them, node_type
 // normalized to the depth's type.
-func v053Nodes(t *testing.T, db *sql.DB) []v053ExportNode {
+func v053Nodes(t *testing.T, db baselineQuerier) []v053ExportNode {
 	t.Helper()
 	rows, err := db.QueryContext(context.Background(), v053NodeSelectSQL)
 	require.NoError(t, err)
@@ -180,7 +179,7 @@ func v053Nodes(t *testing.T, db *sql.DB) []v053ExportNode {
 }
 
 // v053Deps reads the dependencies as mtix 0.5.3 exported them.
-func v053Deps(t *testing.T, db *sql.DB) []v053ExportDep {
+func v053Deps(t *testing.T, db baselineQuerier) []v053ExportDep {
 	t.Helper()
 	// Every dependency, in the export's order.
 	rows, err := db.QueryContext(context.Background(),
@@ -198,7 +197,7 @@ func v053Deps(t *testing.T, db *sql.DB) []v053ExportDep {
 }
 
 // v053Agents reads the agents as mtix 0.5.3 exported them.
-func v053Agents(t *testing.T, db *sql.DB) []v053ExportAgent {
+func v053Agents(t *testing.T, db baselineQuerier) []v053ExportAgent {
 	t.Helper()
 	// Every agent, in the export's order.
 	rows, err := db.QueryContext(context.Background(),
@@ -218,7 +217,7 @@ func v053Agents(t *testing.T, db *sql.DB) []v053ExportAgent {
 }
 
 // v053Sessions reads the sessions as mtix 0.5.3 exported them.
-func v053Sessions(t *testing.T, db *sql.DB) []v053ExportSession {
+func v053Sessions(t *testing.T, db baselineQuerier) []v053ExportSession {
 	t.Helper()
 	// Every session, in the export's order.
 	rows, err := db.QueryContext(context.Background(),

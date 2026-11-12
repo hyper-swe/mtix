@@ -19,6 +19,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/testutil"
 )
 
@@ -256,7 +257,7 @@ func TestAdapterDelivery_LiveWakeOffThenOn_EventStillEligible(t *testing.T) {
 	key := wakeServiceKey()
 	db := st.(interface {
 		WriteDB() *sql.DB
-		ReadDB() *sql.DB
+		ReadDB() *sqlite.ReadPool
 	})
 	_, err := db.WriteDB().ExecContext(t.Context(), `INSERT INTO agent_registrations
 		(agent_id,harness,uid,host_id,origin,epoch,high_water,pending_hold,registered_at,last_seen,registrar_version,attach_protocol)
@@ -317,7 +318,7 @@ func TestAdapterDelivery_LegacySend_WritesUnchangedLegacyRow(t *testing.T) {
 	d, st := adapterDispatcher(t, service.WakeDispatcherOptions{Send: send})
 	require.NoError(t, d.Pass(t.Context(), []model.WakeKey{wakeServiceKey()}))
 	var outcome, route, reason, at string
-	require.NoError(t, st.(interface{ ReadDB() *sql.DB }).ReadDB().QueryRow(
+	require.NoError(t, st.(interface{ ReadDB() *sqlite.ReadPool }).ReadDB().QueryRow(
 		"SELECT outcome,route,reason,outcome_at FROM wake_ledger WHERE event_seq=?", 7).Scan(&outcome, &route, &reason, &at))
 	require.Equal(t, "delivered", outcome)
 	require.Empty(t, route+reason+at)

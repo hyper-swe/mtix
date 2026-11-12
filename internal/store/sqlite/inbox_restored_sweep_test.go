@@ -14,7 +14,7 @@ func TestSalvageInbox_CancelledContext_ReturnsCancellation(t *testing.T) {
 	s := exchangeSnapshotStore(t)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	result, err := salvageInboxRows(ctx, s.readDB, &RecoverResult{})
+	result, err := salvageInboxRows(ctx, s.readDB.rawDB, &RecoverResult{})
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, result.Events)
 }

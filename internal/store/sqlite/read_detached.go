@@ -6,15 +6,10 @@ package sqlite
 import (
 	"context"
 	"fmt"
-	"time"
 )
 
-// readQueryBound caps one detached read; far above any inbox read, it only
-// stops a read stuck on a lock from running unbounded.
-const readQueryBound = 30 * time.Second
-
-// detachedRead returns a context for one short reader-pool query that the
-// caller's cancellation cannot reach once the query has started (MTIX-112.3).
+// detachedRead returns a context for one reader-pool query that the caller's
+// cancellation cannot reach once the query has started (MTIX-112.3, MTIX-250).
 //
 // Driver behavior: in modernc.org/sqlite v1.35.0, stmt.query (sqlite.go, the
 // deferred cleanup) returns ctx.Err() and discards the already-stepped rows
@@ -23,19 +18,20 @@ const readQueryBound = 30 * time.Second
 // keeps an open WAL read snapshot and later reads on it miss newer commits (a
 // cancelled wait still showed as parked).
 //
-// So the read runs uncancelled: the query completes and its rows are closed
-// normally. It is bounded by readQueryBound (30s) so a read stuck on a lock
-// cannot run forever. An already-cancelled context is refused up front, before
-// any statement is prepared. release must be called when the read and its rows
-// are finished.
+// So the first step always runs to completion: the query finishes and its rows
+// are closed normally, and a cancel takes effect between rows (shieldRows). No
+// time bound is set, because a bound would interrupt a long first step
+// (integrity_check on a large board) with the same driver path; a read stuck on
+// a lock is bounded by PRAGMA busy_timeout. An already-cancelled context is
+// refused up front, before any statement is prepared. release must be called
+// when the query call returns; it is a no-op kept so callers need not change.
 //
-// Scope: only the inbox wait-path reads use this (InboxCount, InboxParked,
-// inboxList). The other cancellable reader-pool reads share the driver
-// behavior and are tracked by MTIX-250; do not widen this change to them.
+// Scope: every reader-pool query runs through this, because the pool's shielded
+// connections call it (read_shield.go, MTIX-250); it covers all reader-pool
+// reads, not only the inbox reads of MTIX-112.3.
 func detachedRead(ctx context.Context) (context.Context, func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, func() {}, fmt.Errorf("read cancelled before start: %w", err)
 	}
-	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), readQueryBound)
-	return dctx, cancel, nil
+	return context.WithoutCancel(ctx), func() {}, nil
 }

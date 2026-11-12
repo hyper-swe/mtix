@@ -47,6 +47,16 @@ func sqliteImportAllowed(filePath, local string) bool {
 	return sqliteErrorFiles[p] || (local == "_" && p == driverRegistrationFile)
 }
 
+// shieldDriverFiles lists, by exact repository path, the files that may name
+// the driver value: the reader pool wraps it in a connector that shields every
+// query from a cancelled context (MTIX-250). dsn.go takes the driver from the
+// pool it opened through the helper; read_shield.go holds it as a driver.Driver.
+// Open, OpenDB and every other reach stay forbidden in them.
+var shieldDriverFiles = map[string]bool{
+	"internal/store/sqlite/dsn.go":         true,
+	"internal/store/sqlite/read_shield.go": true,
+}
+
 // backupFile and backupFunc are the one place VACUUM INTO text may appear.
 const (
 	backupFile = "internal/store/sqlite/backup.go"
@@ -119,6 +129,10 @@ func nodeReaches(where string, root ast.Node, fn string, driverNames map[string]
 	ast.Inspect(root, func(n ast.Node) bool {
 		switch v := n.(type) {
 		case *ast.SelectorExpr:
+			shield := v.Sel.Name == "Driver" && shieldDriverFiles[filepath.ToSlash(where)]
+			if shield {
+				return true
+			}
 			if id, ok := v.X.(*ast.Ident); ok && driverNames[id.Name] && isDriverReach(v.Sel.Name) {
 				out = append(out, where+": driver reached without the helper ("+id.Name+"."+v.Sel.Name+")")
 			} else if isAnyReceiverReach(v.Sel.Name) {

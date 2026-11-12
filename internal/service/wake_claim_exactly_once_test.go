@@ -168,7 +168,7 @@ func TestWakeClaim_BothRoutesArmed_EveryEventWakesExactlyOnce(t *testing.T) {
 
 func TestWakeClaim_RetryThroughClaim_NeverWakesASentEvent(t *testing.T) {
 	st, now, _ := wakeServiceStore(t)
-	claimer, err := service.NewWakeClaimer(st, time.Minute, nil)
+	claimer, err := service.NewWakeClaimer(st, time.Minute, nil, nil)
 	require.NoError(t, err)
 	attempt, won, err := claimer.Claim(t.Context(), bothRoutesKey(1))
 	require.NoError(t, err)
@@ -184,7 +184,7 @@ func TestWakeClaim_RetryThroughClaim_NeverWakesASentEvent(t *testing.T) {
 
 func TestWakeClaim_RetryCapIsOne_ThenReportedNotRetried(t *testing.T) {
 	st, now, _ := wakeServiceStore(t)
-	claimer, err := service.NewWakeClaimer(st, time.Minute, nil)
+	claimer, err := service.NewWakeClaimer(st, time.Minute, nil, nil)
 	require.NoError(t, err)
 	_, won, err := claimer.Claim(t.Context(), bothRoutesKey(1))
 	require.NoError(t, err)
@@ -213,7 +213,7 @@ func TestWakeClaim_CrashAfterPush_EvidenceSettlesWithoutAnotherWake(t *testing.T
 		require.Equal(t, bothRoutesKey(1), key)
 		return true, nil
 	}
-	claimer, err := service.NewWakeClaimer(st, time.Minute, evidence)
+	claimer, err := service.NewWakeClaimer(st, time.Minute, evidence, nil)
 	require.NoError(t, err)
 	_, won, err := claimer.Claim(t.Context(), bothRoutesKey(1))
 	require.NoError(t, err)
@@ -238,7 +238,7 @@ func TestWakeClaim_CrashWithoutEvidence_RedeliversOnceNeverZero(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			st, now, _ := wakeServiceStore(t)
-			claimer, err := service.NewWakeClaimer(st, time.Minute, evidence)
+			claimer, err := service.NewWakeClaimer(st, time.Minute, evidence, nil)
 			require.NoError(t, err)
 			_, won, err := claimer.Claim(t.Context(), bothRoutesKey(1))
 			require.NoError(t, err)

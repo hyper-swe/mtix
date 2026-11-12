@@ -68,7 +68,7 @@ func listJSON(t *testing.T, project string, allProjects bool) []string {
 	t.Cleanup(func() { app.jsonOutput = false })
 
 	out := captureStdout(t, func() {
-		require.NoError(t, runList("", "", "", "", "", "", "", "", 0, false, 50, project, allProjects))
+		require.NoError(t, runList(listOptions{limit: 50, project: project, allProjects: allProjects}))
 	})
 	return extractNodeIDs(t, out)
 }
@@ -137,7 +137,7 @@ func TestRunList_AllProjects_ReturnsAll(t *testing.T) {
 // TestRunList_ProjectAndAllProjects_Conflict verifies mutual exclusivity.
 func TestRunList_ProjectAndAllProjects_Conflict(t *testing.T) {
 	initTestApp(t)
-	err := runList("", "", "", "", "", "", "", "", 0, false, 50, "OTHER", true)
+	err := runList(listOptions{limit: 50, project: "OTHER", allProjects: true})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, model.ErrInvalidInput)
 }
@@ -150,7 +150,7 @@ func TestRunSearch_DefaultScope_PrimaryOnly(t *testing.T) {
 	t.Cleanup(func() { app.jsonOutput = false })
 
 	out := captureStdout(t, func() {
-		require.NoError(t, runSearch(nil, "", "", "", "", "", "", "", 50, "", false))
+		require.NoError(t, runSearch(searchOptions{limit: 50}))
 	})
 	ids := extractNodeIDs(t, out)
 	require.Len(t, ids, 2)
@@ -165,7 +165,7 @@ func TestRunSearch_ProjectFlag_OtherOnly(t *testing.T) {
 	t.Cleanup(func() { app.jsonOutput = false })
 
 	out := captureStdout(t, func() {
-		require.NoError(t, runSearch(nil, "", "", "", "", "", "", "", 50, "OTHER", false))
+		require.NoError(t, runSearch(searchOptions{limit: 50, project: "OTHER"}))
 	})
 	ids := extractNodeIDs(t, out)
 	require.Len(t, ids, 1)
@@ -180,7 +180,7 @@ func TestRunSearch_AllProjects_ReturnsAll(t *testing.T) {
 	t.Cleanup(func() { app.jsonOutput = false })
 
 	out := captureStdout(t, func() {
-		require.NoError(t, runSearch(nil, "", "", "", "", "", "", "", 50, "", true))
+		require.NoError(t, runSearch(searchOptions{limit: 50, allProjects: true}))
 	})
 	ids := extractNodeIDs(t, out)
 	require.Len(t, ids, 3)

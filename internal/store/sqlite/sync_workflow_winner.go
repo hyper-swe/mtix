@@ -21,6 +21,11 @@ import (
 // re-derive workflow state from the log, so ingest and repair cannot
 // disagree.
 //
+// New transition events additionally carry the author's stored closed_at.
+// That explicit value (including NULL) overrides table derivation; the
+// closed_at-on-the-originator residual below still applies to legacy-shaped
+// workflow writes, including other operations that omit this field.
+//
 // # Workflow events
 //
 // claim, unclaim, transition_status and defer. Together they write one
@@ -103,9 +108,13 @@ import (
 //     as in apply before MTIX-95.10; and a restore from invalidated keeps the
 //     originator's closed_at while replicas clear it.
 //   - closed_at range. When the winner's wall_clock_ts is outside years
-//     1..9999, closed_at is the apply time on that replica (eventTime,
-//     sync_event_time.go; MTIX-95.26), so it differs from the others'.
-//   - updated_at stays the apply time, and ingest writes no activity entry.
+//     1..9999, closed_at falls back to the apply clock on that replica
+//     (eventTime, sync_event_time.go; MTIX-95.26), so it differs from the
+//     others'. updated_at takes the same fallback through eventTime, then
+//     the MAX rule below.
+//   - updated_at is MAX(updated_at, the event's time) (ADR-006 I1;
+//     MTIX-112.17.16.13), the same on every replica whatever the arrival
+//     order; ingest writes no activity entry.
 //   - Local writes that emit no event (auto-block on a new dependency, the
 //     descendants of a cascade cancel) are invisible to the winner check, so
 //     status can still differ there. Example: replica A claims a node while
@@ -172,7 +181,7 @@ type workflowRule struct {
 // matched in order, so the specific blocked rows precede the generic ones.
 // "-" means not written; "wall" is the event's time (eventTime) as RFC3339 in
 // whole seconds; "from" and "until" come from the payload; every row also
-// writes updated_at (the apply time).
+// writes updated_at as MAX(updated_at, the event's time).
 //
 //	op                 from → to              status       assignee  agent_state  previous_status  closed_at  progress  defer_until
 //	claim              (any)                  in_progress  agent_id  working      -                NULL       -         NULL
@@ -256,50 +265,72 @@ type workflowKey struct {
 	eventID string
 }
 
+// heldWorkflow is the highest-keyed well-formed workflow event held for a node:
+// its winner-order key, op, payload and wall clock.
+type heldWorkflow struct {
+	key     workflowKey
+	op      model.OpType
+	payload []byte
+	wallMS  int64
+}
+
+// workflowQuerier is the part of *sql.Tx and *sql.DB the held-event walk needs.
+type workflowQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
 // latestHeldWorkflowKey returns the key of the highest-keyed well-formed
 // workflow event held in sync_events for the node e addresses, excluding e
 // itself (which the caller has just mirrored). The node is matched by uid when
 // e carries one, else by node_id (MTIX-95.10). found is false when no
-// well-formed workflow event is held.
-//
-// It walks the held workflow events in winner order, highest key first, and
-// skips every event the workflow payload rule rejects (decodeWorkflowPayload,
+// well-formed workflow event is held. It is topHeldWorkflow reduced to the key.
+func latestHeldWorkflowKey(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (key workflowKey, found bool, err error) {
+	held, found, err := topHeldWorkflow(ctx, tx, e)
+	return held.key, found, err
+}
+
+// topHeldWorkflow is the one definition of a node's winning workflow event: it
+// walks the held workflow events in winner order, highest key first, and skips
+// every event the workflow payload rule rejects (decodeWorkflowPayload,
 // MTIX-95.27): a malformed event changes no column when it applies, so it must
 // not count as the held winner either, or an older valid event would be
 // applied or rejected depending on whether it arrived before the malformed one.
-func latestHeldWorkflowKey(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (key workflowKey, found bool, err error) {
+// The apply path (workflowEventWins) and the enrolment comparison
+// (LegacyClosedStamps) both use it, so they cannot disagree about which event
+// set a node's workflow columns, closed_at among them (MTIX-112.17.16.19.1).
+func topHeldWorkflow(ctx context.Context, q workflowQuerier, e *model.SyncEvent) (held heldWorkflow, found bool, err error) {
 	query, scope := heldWorkflowQuery(e)
-	rows, err := tx.QueryContext(ctx, query, scope,
+	rows, err := q.QueryContext(ctx, query, scope,
 		string(model.OpClaim), string(model.OpUnclaim),
 		string(model.OpTransitionStatus), string(model.OpDefer),
 		e.EventID,
 	)
 	if err != nil {
-		return workflowKey{}, false, fmt.Errorf("latest held workflow event: %w", err)
+		return heldWorkflow{}, false, fmt.Errorf("latest held workflow event: %w", err)
 	}
 	defer func() {
 		if closeErr := rows.Close(); closeErr != nil && err == nil {
-			key, found, err = workflowKey{}, false, fmt.Errorf("latest held workflow event: close: %w", closeErr)
+			held, found, err = heldWorkflow{}, false, fmt.Errorf("latest held workflow event: close: %w", closeErr)
 		}
 	}()
 	for rows.Next() {
 		var (
-			k       workflowKey
-			op      string
-			payload []byte
+			h  heldWorkflow
+			op string
 		)
-		if scanErr := rows.Scan(&k.lamport, &k.eventID, &op, &payload); scanErr != nil {
-			return workflowKey{}, false, fmt.Errorf("latest held workflow event: %w", scanErr)
+		if scanErr := rows.Scan(&h.key.lamport, &h.key.eventID, &op, &h.payload, &h.wallMS); scanErr != nil {
+			return heldWorkflow{}, false, fmt.Errorf("latest held workflow event: %w", scanErr)
 		}
-		if _, malformed := decodeWorkflowPayload(model.OpType(op), payload); malformed != nil {
+		h.op = model.OpType(op)
+		if _, malformed := decodeWorkflowPayload(h.op, h.payload); malformed != nil {
 			continue // never the held winner (MTIX-95.27)
 		}
-		return k, true, nil
+		return h, true, nil
 	}
 	if iterErr := rows.Err(); iterErr != nil {
-		return workflowKey{}, false, fmt.Errorf("latest held workflow event: %w", iterErr)
+		return heldWorkflow{}, false, fmt.Errorf("latest held workflow event: %w", iterErr)
 	}
-	return workflowKey{}, false, nil
+	return heldWorkflow{}, false, nil
 }
 
 // heldWorkflowQuery returns the query latestHeldWorkflowKey walks and the
@@ -310,14 +341,14 @@ func heldWorkflowQuery(e *model.SyncEvent) (query, scope string) {
 	// event; the payload feeds the workflow payload rule. Served by
 	// idx_sync_events_node; the uid variant below by idx_sync_events_uid.
 	if e.UID == "" {
-		return `SELECT lamport_clock, event_id, op_type, payload FROM sync_events
+		return `SELECT lamport_clock, event_id, op_type, payload, wall_clock_ts FROM sync_events
 		         WHERE node_id = ? AND op_type IN (?, ?, ?, ?) AND event_id <> ?
 		         ORDER BY lamport_clock DESC, event_id DESC`, e.NodeID
 	}
 	// Same walk scoped by the node's durable uid (ADR-003 §3), so a renumbered
 	// node keeps one workflow history. "uid <> ''" lets the partial
 	// idx_sync_events_uid serve it (MTIX-95.47); e.UID is not empty here.
-	return `SELECT lamport_clock, event_id, op_type, payload FROM sync_events
+	return `SELECT lamport_clock, event_id, op_type, payload, wall_clock_ts FROM sync_events
 	         WHERE uid = ? AND uid <> '' AND op_type IN (?, ?, ?, ?) AND event_id <> ?
 	         ORDER BY lamport_clock DESC, event_id DESC`, e.UID
 }
@@ -356,12 +387,13 @@ func lookupWorkflowRule(op model.OpType, from, to model.Status) (workflowRule, b
 // the table.
 type workflowInput struct {
 	op          model.OpType
-	from, to    model.Status // transition_status payload
-	agentID     string       // claim payload
-	deferUntil  *time.Time   // defer payload; nil means none
-	eventAt     time.Time    // the event's time: eventTime of its wall_clock_ts (MTIX-95.26)
-	updatedAt   string       // the caller's updated_at value (apply time)
-	localWinner bool         // status repair only: this replica emitted the event (MTIX-95.6)
+	from, to    model.Status    // transition_status payload
+	agentID     string          // claim payload
+	deferUntil  *time.Time      // defer payload; nil means none
+	eventAt     time.Time       // the event's time: eventTime of its wall_clock_ts (MTIX-95.26)
+	updatedAt   string          // the caller's updated_at value: the event's time on apply, the repair time on status repair
+	closedAt    *workflowColumn // carried completion state; nil for legacy events
+	localWinner bool            // status repair only: this replica emitted the event (MTIX-95.6)
 }
 
 // workflowColumn is one resolved column write: write says whether the column
@@ -409,13 +441,17 @@ func resolveWorkflowWrite(in workflowInput) (w workflowWrite, known bool) {
 	if in.localWinner && rule.to == model.StatusDeferred {
 		deferUntil = workflowColumn{} // keep this replica's own wake time
 	}
+	closedAt := resolveColumn(rule.closedAt, in.eventAt.UTC().Format(time.RFC3339))
+	if in.closedAt != nil {
+		closedAt = *in.closedAt
+	}
 	return workflowWrite{
 		status:         rule.to,
 		updatedAt:      in.updatedAt,
 		assignee:       resolveColumn(rule.assignee, in.agentID),
 		agentState:     resolveColumn(rule.agentState, string(model.AgentStateWorking)),
 		previousStatus: resolveColumn(rule.previousStatus, string(in.from)),
-		closedAt:       resolveColumn(rule.closedAt, in.eventAt.UTC().Format(time.RFC3339)),
+		closedAt:       closedAt,
 		progress:       resolveColumn(rule.progress, 1.0),
 		deferUntil:     deferUntil,
 	}, true

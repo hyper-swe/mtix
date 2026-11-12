@@ -33,7 +33,7 @@ func TestRecover_UnreadableJSONColumn_SalvagesNodeWithNote(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, s.Close())
 
-	res, err := Recover(context.Background(), dbPath, "", "test-version", slog.Default())
+	res, err := Recover(context.Background(), dbPath, "", "test-version", RecoverOptions{Logger: slog.Default()})
 	require.NoError(t, err)
 
 	assert.Contains(t, res.RecoveredIDs, "TEST-1")

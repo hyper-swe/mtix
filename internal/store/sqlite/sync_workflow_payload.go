@@ -23,7 +23,7 @@ import (
 //	transition_status  the payload cannot be decoded, or its to-status is missing, null or empty
 //	claim              the payload cannot be decoded
 //	defer              the payload cannot be decoded, including an until that is not an RFC 3339 timestamp
-//	unclaim            never: it carries no parameters, and its payload is not read
+//	unclaim            an optional closed_at is invalid; legacy payloads remain ignored
 //
 // A to-status this build does not know is not malformed: it is the unknown
 // to-status residual in sync_workflow_winner.go.
@@ -44,9 +44,10 @@ import (
 // workflowPayload is what the workflow payload rule reads from one event's
 // payload. Only the fields of the event's op are set.
 type workflowPayload struct {
-	from, to   model.Status // transition_status
-	agentID    string       // claim
-	deferUntil *time.Time   // defer; nil when the defer has no until
+	from, to   model.Status    // transition_status
+	agentID    string          // claim
+	deferUntil *time.Time      // defer; nil when the defer has no until
+	closedAt   *workflowColumn // nil for old events; otherwise the stored timestamp or NULL
 }
 
 // decodeWorkflowPayload applies the workflow payload rule to one workflow
@@ -63,22 +64,42 @@ func decodeWorkflowPayload(op model.OpType, payload []byte) (workflowPayload, er
 		if p.To == "" {
 			return workflowPayload{}, fmt.Errorf("%s payload has no to-status: %w", op, model.ErrInvalidInput)
 		}
-		return workflowPayload{from: p.From, to: p.To}, nil
+		closedAt, err := decodeClosedAtSnapshot(p.ClosedAt)
+		if err != nil {
+			return workflowPayload{}, malformedPayload(op, err)
+		}
+		return workflowPayload{from: p.From, to: p.To, closedAt: closedAt}, nil
 	case model.OpClaim:
 		var p model.ClaimPayload
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return workflowPayload{}, malformedPayload(op, err)
 		}
-		return workflowPayload{agentID: p.AgentID}, nil
+		closedAt, err := decodeClosedAtSnapshot(p.ClosedAt)
+		if err != nil {
+			return workflowPayload{}, malformedPayload(op, err)
+		}
+		return workflowPayload{agentID: p.AgentID, closedAt: closedAt}, nil
 	case model.OpDefer:
 		var p model.DeferPayload
 		if err := json.Unmarshal(payload, &p); err != nil {
 			return workflowPayload{}, malformedPayload(op, err)
 		}
-		return workflowPayload{deferUntil: p.Until}, nil
+		closedAt, err := decodeClosedAtSnapshot(p.ClosedAt)
+		if err != nil {
+			return workflowPayload{}, malformedPayload(op, err)
+		}
+		return workflowPayload{deferUntil: p.Until, closedAt: closedAt}, nil
 	case model.OpUnclaim:
-		// unclaim carries no parameters; its payload is not read.
-		return workflowPayload{}, nil
+		// Historical unclaim payloads were ignored, including malformed JSON.
+		var p model.UnclaimPayload
+		if json.Unmarshal(payload, &p) != nil {
+			return workflowPayload{}, nil
+		}
+		closedAt, err := decodeClosedAtSnapshot(p.ClosedAt)
+		if err != nil {
+			return workflowPayload{}, malformedPayload(op, err)
+		}
+		return workflowPayload{closedAt: closedAt}, nil
 	default:
 		return workflowPayload{}, fmt.Errorf("op_type %q is not a workflow op: %w", op, model.ErrInvalidInput)
 	}
@@ -105,7 +126,7 @@ func workflowInputForApply(e *model.SyncEvent, applyTime time.Time) (workflowInp
 		return workflowInput{}, false
 	}
 	return workflowInput{
-		op: e.OpType, from: p.from, to: p.to, agentID: p.agentID, deferUntil: p.deferUntil,
-		eventAt: eventTime(e.WallClockTS, applyTime), updatedAt: applyTime.Format(time.RFC3339),
+		op: e.OpType, from: p.from, to: p.to, agentID: p.agentID, deferUntil: p.deferUntil, closedAt: p.closedAt,
+		eventAt: eventTime(e.WallClockTS, applyTime), updatedAt: eventTime(e.WallClockTS, applyTime).Format(time.RFC3339),
 	}, true
 }

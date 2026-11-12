@@ -37,12 +37,21 @@ type WakeDispatcherOptions struct {
 	Store  WakeStore
 	Alerts WakeAlertWriter
 	Send   func(context.Context, model.WakeAttempt) error
+	// Evidence says whether a reclaimed claim's first push already landed (MTIX-112.40.13);
+	// nil derives the inbox acknowledgement evidence from the store when it can read the inbox
+	// (InboxAckEvidence); without such a store a reclaim delivers once more.
+	Evidence WakeEvidence
+	// Stall feeds stalled-turn recovery (MTIX-112.40.12); nil derives it from Settings and the
+	// store, and recovery is off when they cannot supply it.
+	Stall *WakeStallDeps
 	// Adapters are the delivery routes, selected per registration in route order.
 	// Send, when set, joins them as the legacy route. At least one of the two is required.
-	Adapters    []WakeAdapter
-	AlertAgent  string
-	Settings    WakeSettingsReader
-	Held        func(string)
+	Adapters   []WakeAdapter
+	AlertAgent string
+	Settings   WakeSettingsReader
+	Held       func(string)
+	// Logger receives the default Held line; nil uses the process default logger (MTIX-130.14).
+	Logger      *slog.Logger
 	BudgetState *oplocal.State
 	Clock       func() time.Time
 	// HostID and UID scope re-evaluation to this host's and operating-system user's
@@ -65,6 +74,8 @@ type WakeDispatcher struct {
 	budgets    *wakeBudgets
 	holds      WakeHoldStore
 	reeval     reevaluationScope
+	claimer    *WakeClaimer // resolves a reclaimed claim; nil when the store is not a full ledger
+	stall      *WakeStallDeps
 }
 
 // NewWakeDispatcher requires storage, delivery and durable alert capabilities.
@@ -79,7 +90,11 @@ func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
 		return nil, fmt.Errorf("validate wake diagnostic agent: %w", err)
 	}
 	if opts.Held == nil {
-		opts.Held = func(line string) { slog.Warn(line) }
+		logger := opts.Logger
+		if logger == nil {
+			logger = slog.Default()
+		}
+		opts.Held = func(line string) { logger.Warn(line) }
 	}
 	budgets, err := newWakeBudgets(opts)
 	if err != nil {
@@ -89,7 +104,17 @@ func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
 	if opts.Send != nil {
 		adapters = append(adapters, legacyAdapter{send: opts.Send})
 	}
-	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, adapters: orderAdapters(adapters), alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store), reeval: reevaluationScope{host: opts.HostID, uid: opts.UID, filter: opts.CandidateFilter}}, nil
+	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, adapters: orderAdapters(adapters), alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store), reeval: reevaluationScope{host: opts.HostID, uid: opts.UID, filter: opts.CandidateFilter}, claimer: dispatcherClaimer(opts), stall: defaultStallDeps(opts)}, nil
+}
+
+// dispatcherClaimer builds the single claim function over the store when it is a full ledger.
+func dispatcherClaimer(opts WakeDispatcherOptions) *WakeClaimer {
+	ledger, ok := opts.Store.(WakeClaimLedger)
+	if !ok {
+		return nil
+	}
+	c, _ := NewWakeClaimer(ledger, time.Minute, defaultWakeEvidence(opts.Evidence, opts.Store), opts.Logger) // the lease is a positive constant
+	return c
 }
 
 func holdStore(store WakeStore) WakeHoldStore {
@@ -132,7 +157,8 @@ func (d *WakeDispatcher) PassSkipping(ctx context.Context, keys []model.WakeKey,
 			return err
 		}
 	}
-	var failures error
+	// A stalled turn is noticed here, on activity, never by a timer (MTIX-112.40.12).
+	failures := d.recoverStalled(ctx)
 	st := &passState{blocked: map[string]bool{}, skip: skip}
 	for _, key := range orderedCandidates(keys) {
 		if err := ctx.Err(); err != nil {

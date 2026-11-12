@@ -4,6 +4,7 @@
 package service
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -26,6 +27,8 @@ const autoImportRefusalFile = "auto-import-refusal.json"
 // store that cannot be exported (MTIX-95.31.1) or a backup that could not
 // be written (FR-15.2f).
 type AutoImportRefusal struct {
+	// RestoredInbox is current local evidence, recomputed when reading a refusal.
+	RestoredInbox bool `json:"-"`
 	// RefusedAt is when the refusal happened (RFC 3339, UTC).
 	RefusedAt string `json:"refused_at"`
 	// FileHash is the SHA-256 of the tasks.json that was refused.
@@ -164,7 +167,14 @@ func (s *SyncService) readRefusal(mtixDir string) *AutoImportRefusal {
 		err = json.Unmarshal(raw, &refusal)
 	}
 	if err != nil {
-		return &AutoImportRefusal{Reason: fmt.Sprintf("the refusal record %s cannot be read: %v", path, err)}
+		return s.protectRestoredInboxRefusal(&AutoImportRefusal{Reason: fmt.Sprintf("the refusal record %s cannot be read: %v", path, err)})
 	}
-	return &refusal
+	return s.protectRestoredInboxRefusal(&refusal)
+}
+
+// A cached refusal must use current mail evidence, including legacy refusal files.
+func (s *SyncService) protectRestoredInboxRefusal(r *AutoImportRefusal) *AutoImportRefusal {
+	present, err := s.store.HasRestoredInbox(context.Background())
+	r.RestoredInbox = present || err != nil
+	return r
 }

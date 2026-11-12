@@ -89,7 +89,7 @@ func TestLaunchProgram_LinkLimit_NamesTheLimitNotAnEmptyTarget(t *testing.T) {
 	in := &hookInputs{logical: root, root: root, program: 0, script: -1}
 	_, err = launchProgram("wake", in, head)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "exceeds the link expansion limit")
+	require.Contains(t, err.Error(), "could not be judged")
 	require.NotContains(t, err.Error(), `resolves to ""`)
 }
 

@@ -72,6 +72,7 @@ func (s *Store) claimNodeTx(ctx context.Context, tx *sql.Tx, id, agentID string)
 		OpType:      model.OpClaim,
 		Author:      agentID,
 		Payload:     payload,
+		Clock:       s.clock,
 	})
 }
 

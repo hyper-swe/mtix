@@ -16,6 +16,8 @@ import (
 )
 
 type ciGoStep struct {
+	Name            string
+	Shell           string
 	Run             string
 	Uses            string
 	If              string
@@ -25,6 +27,8 @@ type ciGoStep struct {
 }
 
 type ciGoJob struct {
+	Env             map[string]string
+	Defaults        map[string]any
 	Name            string
 	Needs           []string
 	If              string
@@ -33,7 +37,7 @@ type ciGoJob struct {
 	Strategy        struct {
 		FailFast *bool `yaml:"fail-fast"`
 		Matrix   struct {
-			OS      []string
+			OS      ciOSAxis
 			Shard   []string
 			PG      []string
 			Pkg     []string
@@ -48,18 +52,39 @@ func readCIJobs(t *testing.T) map[string]ciGoJob {
 	t.Helper()
 	source, err := os.ReadFile("../.github/workflows/ci.yml")
 	require.NoError(t, err)
-	var workflow struct{ Jobs map[string]ciGoJob }
+	var workflow struct {
+		Jobs     map[string]ciGoJob
+		Env      map[string]string
+		Defaults map[string]any
+	}
 	require.NoError(t, yaml.Unmarshal(source, &workflow))
+	require.Empty(t, workflow.Env, "workflow env may alter race test selection")
+	require.Empty(t, workflow.Defaults, "workflow defaults may override fail-fast shells")
 	return workflow.Jobs
+}
+
+func requireRaceShardEnvironment(t *testing.T, job ciGoJob) {
+	t.Helper()
+	require.Empty(t, job.Env, "job env may alter test selection")
+	require.Empty(t, job.Defaults, "job defaults may override fail-fast shells")
+	for _, step := range job.Steps {
+		require.Empty(t, step.Shell, "retain the runner fail-fast shell")
+		if strings.Contains(step.Run, "go test") {
+			require.Equal(t, map[string]string{"SHARD": "${{ matrix.shard }}"}, step.Env)
+		} else {
+			require.Empty(t, step.Env)
+		}
+	}
 }
 
 func TestGoWorkflow_Shards_CoverBothOSesWithoutOptionalCases(t *testing.T) {
 	jobs := readCIJobs(t)
 	require.Contains(t, jobs, "test-go-shards")
 	job := jobs["test-go-shards"]
+	requireRaceShardEnvironment(t, job)
 	require.Equal(t, "test-go-shard (${{ matrix.os }}, ${{ matrix.shard }})", job.Name)
 	require.Equal(t, "${{ matrix.os }}", job.RunsOn)
-	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, job.Strategy.Matrix.OS)
+	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, job.Strategy.Matrix.OS.For("push"))
 	// MTIX-112.17.22.1: cmd/mtix moved to its own test-go-cmd matrix.
 	require.Equal(t, []string{"other"}, job.Strategy.Matrix.Shard)
 	require.Empty(t, job.Strategy.Matrix.Include)
@@ -92,49 +117,56 @@ func TestGoWorkflow_Shards_CoverBothOSesWithoutOptionalCases(t *testing.T) {
 func TestGoWorkflow_Aggregate_RejectsEveryNonSuccessResult(t *testing.T) {
 	job := readCIJobs(t)["test-go"]
 	require.Equal(t, "test-go", job.Name)
-	require.Equal(t, []string{"test-go-shards", "test-go-sqlite", "test-go-cmd"}, job.Needs)
+	require.Equal(t, []string{"test-go-shards", "test-go-sqlite", "test-go-cmd", "test-go-service"}, job.Needs)
 	require.Equal(t, "${{ always() }}", job.If)
 	require.Nil(t, job.ContinueOnError)
-	require.Len(t, job.Steps, 1)
-	step := job.Steps[0]
-	require.Equal(t, "${{ needs.test-go-cmd.result }}", step.Env["CMD_RESULT"])
+	// MTIX-112.17.42: the aggregate step is still the one that judges the
+	// four needs; the pull_request-only health step is pinned in
+	// ci_pr_macos_capacity_test.go.
+	var step ciGoStep
+	for _, candidate := range job.Steps {
+		if candidate.Name == "Require every Go shard to succeed" {
+			step = candidate
+		}
+	}
+	require.Equal(t, "Require every Go shard to succeed", step.Name)
+	require.Equal(t, "${{ needs.test-go-service.result }}", step.Env["SERVICE_RESULT"])
 	require.Empty(t, step.If)
 	require.Nil(t, step.ContinueOnError)
-	require.Equal(t, "${{ needs.test-go-shards.result }}", step.Env["SHARD_RESULT"])
-	require.Equal(t, "${{ needs.test-go-sqlite.result }}", step.Env["SQLITE_RESULT"])
+	for env, need := range map[string]string{"SHARD_RESULT": "test-go-shards", "SQLITE_RESULT": "test-go-sqlite", "CMD_RESULT": "test-go-cmd", "SERVICE_RESULT": "test-go-service"} {
+		require.Equal(t, "${{ needs."+need+".result }}", step.Env[env])
+	}
 	results := []string{"success", "failure", "cancelled", "skipped", "", "unknown"}
-	for _, shard := range results {
-		for _, sqlite := range results {
-			for _, cmdResult := range results {
-				t.Run("shards="+shard+"/sqlite="+sqlite+"/cmd="+cmdResult, func(t *testing.T) {
-					cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", step.Run)
-					cmd.Env = append(os.Environ(), "SHARD_RESULT="+shard, "SQLITE_RESULT="+sqlite, "CMD_RESULT="+cmdResult)
-					out, err := cmd.CombinedOutput()
-					if shard == "success" && sqlite == "success" && cmdResult == "success" {
-						require.NoError(t, err, string(out))
-					} else {
-						require.Error(t, err, string(out))
-					}
-				})
-			}
+	keys := []string{"SHARD_RESULT", "SQLITE_RESULT", "CMD_RESULT", "SERVICE_RESULT"}
+	// Every Cartesian combination is checked; no subtests add overhead to 1296 shells.
+	for combination := range 1296 {
+		encoded := combination
+		env := os.Environ()
+		values := make([]string, len(keys))
+		for i, key := range keys {
+			values[i] = results[encoded%len(results)]
+			encoded /= len(results)
+			env = append(env, key+"="+values[i])
+		}
+		cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", step.Run)
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		if combination == 0 {
+			require.NoError(t, err, "results=%v output=%s", values, out)
+		} else {
+			require.Error(t, err, "results=%v output=%s", values, out)
 		}
 	}
 }
 
-func TestGoWorkflow_CheckCount_MatchesTwentyNineChecks(t *testing.T) {
-	count := 0
-	for _, job := range readCIJobs(t) {
-		combinations := 1
-		m := job.Strategy.Matrix
-		for _, axis := range [][]string{m.OS, m.Shard, m.PG, m.Pkg} {
-			if len(axis) > 0 {
-				combinations *= len(axis)
-			}
-		}
-		count += combinations
-	}
+func TestGoWorkflow_CheckCount_MatchesThirtyThreeChecks(t *testing.T) {
 	// MTIX-112.17.22.1: 25 - 2 (cli shard) + 6 (test-go-cmd) = 29.
-	require.Equal(t, 29, count)
+	// MTIX-112.51: plus two service shards on each OS = 33.
+	// MTIX-112.17.42: that is the push and schedule count; pull_request runs
+	// omit the eight macOS SQLite, cmd/mtix and service legs (see
+	// ci_pr_macos_capacity_test.go).
+	require.Equal(t, 33, countCIChecks(t, "push"))
+	require.Equal(t, 33, countCIChecks(t, "schedule"))
 }
 
 // MTIX-112.17.24: cmd/mtix runs as three shards per PostgreSQL version.
@@ -176,9 +208,10 @@ func TestGoWorkflow_CmdShards_RunThreeHashShardsOnBothOSesWithUnchangedFlags(t *
 	jobs := readCIJobs(t)
 	job, ok := jobs["test-go-cmd"]
 	require.True(t, ok)
+	requireRaceShardEnvironment(t, job)
 	require.Equal(t, "test-go-cmd (${{ matrix.os }}, shard ${{ matrix.shard }})", job.Name)
 	require.Equal(t, "${{ matrix.os }}", job.RunsOn)
-	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, job.Strategy.Matrix.OS)
+	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, job.Strategy.Matrix.OS.For("push"))
 	require.Equal(t, []string{"1", "2", "3"}, job.Strategy.Matrix.Shard)
 	require.Empty(t, job.Strategy.Matrix.Include)
 	require.Empty(t, job.Strategy.Matrix.Exclude)

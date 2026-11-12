@@ -39,6 +39,8 @@ func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop in
 		return wakeNotAttempted, fmt.Errorf("claim wake candidate: %w", err)
 	}
 	switch state {
+	case claimReplaced:
+		return wakeNotAttempted, nil
 	case claimBudgetHeld:
 		return wakeBudgetHeld, nil
 	case claimInFlight:
@@ -51,6 +53,19 @@ func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop in
 		return wakeNotAttempted, fmt.Errorf("wake attempt fence is missing or mismatched: %w", model.ErrConflict)
 	}
 	attempt.Hop = hop
+	if d.claimer != nil {
+		var resolveErr error
+		if attempt, won, resolveErr = d.claimer.Resolve(ctx, attempt); resolveErr != nil || !won {
+			// Already delivered by an earlier claimant (confirmed), or the settle failed.
+			return wakeAttempted, resolveErr
+		}
+	}
+	return d.deliverClaimed(ctx, attempt)
+}
+
+// deliverClaimed sends a won, resolved claim and records the terminal result. It is the one
+// delivery tail of a first wake and of a stalled-turn redelivery (MTIX-112.40.12).
+func (d *WakeDispatcher) deliverClaimed(ctx context.Context, attempt model.WakeAttempt) (wakeOutcome, error) {
 	result, sendErr := d.deliverWake(ctx, attempt)
 	// Once a send ran, caller cancellation must not turn its failure into a retry.
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

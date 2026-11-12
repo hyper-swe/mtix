@@ -13,7 +13,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
-// inboxReadPollInterval is how often a policy-applying wait re-reads the inbox.
+// inboxReadPollInterval is how often a policy-applying wait probes the inbox.
 const inboxReadPollInterval = 250 * time.Millisecond
 
 func emptyInboxResult() InboxResult {
@@ -36,14 +36,17 @@ func (s *InboxService) InboxReadWait(ctx context.Context, agent string, timeout 
 		waitCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	ticker := time.NewTicker(inboxReadPollInterval)
-	defer ticker.Stop()
 	if s.policy.Eligibility == nil {
 		return s.waitUnpolicied(ctx, agent, timeout) // no policy: the store's own wait
 	}
+	defer s.registerParked(ctx, agent)() // parked for the whole policy wait, removed on every exit (MTIX-112.3)
+	ticker := time.NewTicker(inboxReadPollInterval)
+	defer ticker.Stop()
+	win := s.openWaitWindow(timeout)
 	readCtx := ctx // the first read follows the caller, later ones the wait budget
 	last := emptyInboxResult()
 	for {
+		probe := s.probeInbox(readCtx, agent)
 		res, err := s.InboxRead(readCtx, agent, opt)
 		if err != nil {
 			return s.waitReadFailed(ctx, waitCtx, last, err)
@@ -52,15 +55,23 @@ func (s *InboxService) InboxReadWait(ctx context.Context, agent string, timeout 
 		if len(res.Events) > 0 || len(res.HeldEvents) > 0 {
 			return res, nil
 		}
-		select {
-		case <-waitCtx.Done():
-			if ctx.Err() != nil {
-				return InboxResult{}, fmt.Errorf("inbox wait interrupted: %w", ctx.Err())
+		if done, werr := s.parkUntilChange(ctx, waitCtx, ticker.C, agent, probe, win); done {
+			if werr != nil {
+				return InboxResult{}, werr
 			}
 			return res, nil // the wait's own timeout: nothing eligible, held count kept
-		case <-ticker.C:
 		}
 	}
+}
+
+// registerParked records the agent's wait when the reader can (the sqlite
+// store); the no-policy path leaves it to the store's own InboxWait, which
+// records its own row. The returned func removes exactly this wait's row.
+func (s *InboxService) registerParked(ctx context.Context, agent string) func() {
+	if r, ok := s.reader.(InboxWaiterRegistrar); ok {
+		return r.RegisterInboxWaiter(ctx, agent)
+	}
+	return func() {}
 }
 
 // waitReadFailed maps a failed read: caller cancellation is an error, the wait's

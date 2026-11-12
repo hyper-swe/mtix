@@ -118,7 +118,7 @@ func TestInboxPull_AndPriming_HubBoardUnconfirmedID_SameHeldCount(t *testing.T) 
 	primingErr := captureStderr(t, func() {
 		var waitErr error
 		events, waitErr = claudeHookWait(context.Background(), policyAgent, 300*time.Millisecond,
-			func(int64) bool { return false }, func(string, io.Writer) func() { return func() {} })
+			func(sqlite.InboxEvent) bool { return false }, func(string, io.Writer) func() { return func() {} })
 		require.NoError(t, waitErr)
 	})
 	assert.Empty(t, events, "priming returns no held event")

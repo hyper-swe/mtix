@@ -51,6 +51,20 @@ func (s *Store) HasSyncedWithHub(ctx context.Context) (bool, error) {
 }
 
 func syncedWithHub(ctx context.Context, q rowQuerier) (bool, error) {
+	query, predicateErr := restoredInboxQuery(ctx, q, `SELECT EXISTS (SELECT 1 FROM board_flags WHERE key = ?)
+		OR EXISTS (SELECT 1 FROM applied_events)
+		OR EXISTS (SELECT 1 FROM sync_events WHERE sync_status <> 'pending'
+          AND NOT (0))
+		OR EXISTS (SELECT 1 FROM relay_push_cursor WHERE cursor > 0 OR next_rs > 1 OR pub_epoch > 1)
+		OR EXISTS (SELECT 1 FROM relay_ingest_cursor)`, `SELECT EXISTS (SELECT 1 FROM board_flags WHERE key = ?)
+		OR EXISTS (SELECT 1 FROM applied_events)
+		OR EXISTS (SELECT 1 FROM sync_events WHERE sync_status <> 'pending'
+          AND NOT (EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=sync_events.event_id)))
+		OR EXISTS (SELECT 1 FROM relay_push_cursor WHERE cursor > 0 OR next_rs > 1 OR pub_epoch > 1)
+		OR EXISTS (SELECT 1 FROM relay_ingest_cursor)`)
+	if predicateErr != nil {
+		return false, predicateErr
+	}
 	var synced bool
 	// The sticky mark, any pulled event, or any own event past pending
 	// (pushed or conflicted).
@@ -61,11 +75,7 @@ func syncedWithHub(ctx context.Context, q rowQuerier) (bool, error) {
 	// reset-peer (ResetRelayPublisher) rewind the cursor to a floor, and the
 	// sequence and the epoch only ever advance on a publish and a reset. An
 	// ingestor has a cursor row for a peer.
-	err := q.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM board_flags WHERE key = ?)
-		OR EXISTS (SELECT 1 FROM applied_events)
-		OR EXISTS (SELECT 1 FROM sync_events WHERE sync_status <> 'pending')
-		OR EXISTS (SELECT 1 FROM relay_push_cursor WHERE cursor > 0 OR next_rs > 1 OR pub_epoch > 1)
-		OR EXISTS (SELECT 1 FROM relay_ingest_cursor)`, hubMarkKey).Scan(&synced)
+	err := q.QueryRowContext(ctx, query, hubMarkKey).Scan(&synced)
 	if err != nil {
 		return false, fmt.Errorf("read whether the store syncs with a hub: %w", err)
 	}
@@ -92,15 +102,34 @@ const loggedNodeMatch = `((COALESCE(n.uid, '') <> '' AND (se.uid = n.uid
 // loggedNodes returns the local nodes the sync log holds an event for,
 // read through q.
 func loggedNodes(ctx context.Context, q rowQuerier) (nodes []loggedNode, err error) {
+	query, predicateErr := restoredInboxQuery(ctx, q, `SELECT n.id, COALESCE(n.uid, ''), n.title,
+		EXISTS (SELECT 1 FROM sync_events se WHERE ((n.uid IS NOT NULL AND n.uid <> '' AND (se.uid = n.uid
+		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
+	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))
+			AND se.op_type = 'create_node' AND se.sync_status <> 'pending')
+		FROM nodes n
+		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE ((n.uid IS NOT NULL AND n.uid <> '' AND (se.uid = n.uid
+		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
+	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))
+          AND NOT (0))
+		ORDER BY n.id`, `SELECT n.id, COALESCE(n.uid, ''), n.title,
+		EXISTS (SELECT 1 FROM sync_events se WHERE ((n.uid IS NOT NULL AND n.uid <> '' AND (se.uid = n.uid
+		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
+	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))
+			AND se.op_type = 'create_node' AND se.sync_status <> 'pending')
+		FROM nodes n
+		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE ((n.uid IS NOT NULL AND n.uid <> '' AND (se.uid = n.uid
+		OR (se.op_type = 'create_node' AND se.event_id = n.uid)))
+	 OR ((se.uid IS NULL OR se.uid = '') AND se.node_id = n.id))
+          AND NOT (EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=se.event_id)))
+		ORDER BY n.id`)
+	if predicateErr != nil {
+		return nil, predicateErr
+	}
 	// Each node with an event of the log, and whether its creation is past
 	// pending. Matched by uid first, as the comparison of an
 	// automatic import is (DiffReplace, MTIX-95.31.4).
-	rows, err := q.QueryContext(ctx, `SELECT n.id, COALESCE(n.uid, ''), n.title,
-		EXISTS (SELECT 1 FROM sync_events se WHERE `+loggedNodeMatch+`
-			AND se.op_type = 'create_node' AND se.sync_status <> 'pending')
-		FROM nodes n
-		WHERE EXISTS (SELECT 1 FROM sync_events se WHERE `+loggedNodeMatch+`)
-		ORDER BY n.id`)
+	rows, err := q.QueryContext(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -173,10 +202,14 @@ func refuseDroppingLoggedNodes(ctx context.Context, tx *sql.Tx, data *ExportData
 	if len(dropped) == 0 {
 		return nil
 	}
+	guide, err := inboxSafeRecoveryGuide(ctx, tx, SyncLogRecovery)
+	if err != nil {
+		return err
+	}
 	return fmt.Errorf("%w: the file does not hold %s as the same task (a task is matched by its uid), and "+
 		"their events stay in the local sync log, so a pull cannot restore them; nothing was imported. "+
 		"To rebuild the board from the hub, run %s: %w",
-		ErrReplaceOnSyncedStore, nameNodes(dropped), SyncLogRecovery, model.ErrInvalidInput)
+		ErrReplaceOnSyncedStore, nameNodes(dropped), guide, model.ErrInvalidInput)
 }
 
 // droppedLoggedNodes returns the local nodes the sync log holds an event for
@@ -221,11 +254,18 @@ func discardUnsharedEvents(ctx context.Context, tx *sql.Tx, data *ExportData, as
 	if err != nil {
 		return err
 	}
+	retained, err := retainedInboxIDs(data.InboxJournal)
+	if err != nil {
+		return err
+	}
 	for _, l := range dropped {
+		if err := retainDroppedInboxEvents(ctx, tx, l.id, retained); err != nil {
+			return err
+		}
 		// The pending events of the dropped task, and of the links to it:
 		// first the held copies, then the events themselves.
 		for _, stmt := range []string{deleteHeldCopiesOfDropped, deleteEventsOfDropped} {
-			if _, err := tx.ExecContext(ctx, stmt, l.id); err != nil {
+			if _, err := tx.ExecContext(ctx, stmt, l.id, retained); err != nil {
 				return fmt.Errorf("discard the unshared events of %s: %w", l.id, err)
 			}
 		}
@@ -242,7 +282,8 @@ func discardUnsharedEvents(ctx context.Context, tx *sql.Tx, data *ExportData, as
 // ?1 (matched by uid first, loggedNodeMatch) and of the pending link events
 // that name it as their target.
 const droppedEventIDs = `SELECT se.event_id FROM sync_events se
-	WHERE se.sync_status = 'pending' AND (
+	WHERE se.sync_status = 'pending'
+      AND se.event_id NOT IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?2)) AND (
 	  EXISTS (SELECT 1 FROM nodes n WHERE n.id = ?1 AND ` + loggedNodeMatch + `)
 	  OR (se.op_type IN ('link_dep', 'unlink_dep') AND json_valid(se.payload)
 	      AND json_extract(se.payload, '$.depends_on_node_id') = ?1))`

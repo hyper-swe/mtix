@@ -79,7 +79,7 @@ func (s *WakeScanner) Scan(ctx context.Context) error {
 		return nil
 	}
 	// No session identity on this context: reading the inbox must not refresh a dead row's last_seen.
-	ctx = sqlite.WithSessionTouch(ctx, sqlite.SessionTouch{})
+	ctx = sqlite.WithoutReadStamp(sqlite.WithSessionTouch(ctx, sqlite.SessionTouch{}))
 	failures := s.opts.ExpireStale(ctx)
 	regs, err := s.opts.Store.ListRegistrations(ctx, s.opts.HostID, s.opts.UID)
 	if err != nil {
@@ -98,7 +98,7 @@ func (s *WakeScanner) Scan(ctx context.Context) error {
 // then liveness, then a live route). It is the dispatcher's CandidateFilter, so a held
 // wake re-evaluated after a grant change meets the same gates as a scan (ADR-007 2.7).
 func (s *WakeScanner) Gate(ctx context.Context, key model.WakeKey) (bool, error) {
-	ctx = sqlite.WithSessionTouch(ctx, sqlite.SessionTouch{})
+	ctx = sqlite.WithoutReadStamp(sqlite.WithSessionTouch(ctx, sqlite.SessionTouch{}))
 	ok, _, err := s.opts.Wakeable(ctx, key.AgentID)
 	if err != nil || !ok {
 		return false, err

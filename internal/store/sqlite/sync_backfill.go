@@ -56,13 +56,7 @@ var ErrBackfillNodesInvariant = errors.New("nodes table invariant violation")
 // CountSyncEvents returns the number of rows in sync_events. Used by
 // the backfill CLI's refusal check.
 func (s *Store) CountSyncEvents(ctx context.Context) (int, error) {
-	var n int
-	if err := s.readDB.QueryRowContext(ctx,
-		`SELECT count(*) FROM sync_events`,
-	).Scan(&n); err != nil {
-		return 0, fmt.Errorf("count sync_events: %w", err)
-	}
-	return n, nil
+	return CountReplicationEvents(ctx, s.readDB, "")
 }
 
 // BackfillDryRun walks the canonical tables and returns the counts
@@ -171,7 +165,7 @@ func collectBackfillNodes(ctx context.Context, tx *sql.Tx) ([]backfillNodeRow, e
 		SELECT id, parent_id, depth, seq, project, title, description,
 		       prompt, acceptance, node_type, issue_type, priority,
 		       labels, status, assignee, creator, created_at, updated_at,
-		       weight, annotations
+		       weight, annotations, closed_at
 		FROM nodes
 		WHERE deleted_at IS NULL
 		ORDER BY created_at ASC, id ASC`)
@@ -302,7 +296,7 @@ func scanBackfillNode(rows *sql.Rows) (backfillNodeRow, error) {
 	var (
 		parentID, description, prompt, acceptance sql.NullString
 		issueType, labels                         sql.NullString
-		assignee, creator, annotations            sql.NullString
+		assignee, creator, annotations, closedAt  sql.NullString
 		createdAt, updatedAt                      string
 		weight                                    sql.NullFloat64
 	)
@@ -310,7 +304,7 @@ func scanBackfillNode(rows *sql.Rows) (backfillNodeRow, error) {
 		&n.ID, &parentID, &n.Depth, &n.Seq, &n.Project, &n.Title,
 		&description, &prompt, &acceptance, &n.NodeType, &issueType,
 		&n.Priority, &labels, &n.Status, &assignee, &creator,
-		&createdAt, &updatedAt, &weight, &annotations,
+		&createdAt, &updatedAt, &weight, &annotations, &closedAt,
 	); scanErr != nil {
 		return backfillNodeRow{}, fmt.Errorf("scan node: %w", scanErr)
 	}
@@ -340,6 +334,13 @@ func scanBackfillNode(rows *sql.Rows) (backfillNodeRow, error) {
 	n.CreatedAt = ts
 	uts, _ := parseFlexibleTime(updatedAt)
 	n.UpdatedAt = uts
+	if closedAt.Valid {
+		at, err := parseFlexibleTime(closedAt.String)
+		if err != nil {
+			return backfillNodeRow{}, fmt.Errorf("parse closed_at for %s: %w", n.ID, err)
+		}
+		n.ClosedAt = &at
+	}
 
 	annStr := "[]"
 	if annotations.Valid {
@@ -365,222 +366,6 @@ func parseFlexibleTime(s string) (time.Time, error) {
 	return time.Parse(time.RFC3339, s)
 }
 
-// emitBackfillForNode emits all events for one node: create + per-field
-// update + optional transition + annotations. Accumulates counts into
-// result.
-func emitBackfillForNode(ctx context.Context, tx *sql.Tx, nr backfillNodeRow, result *BackfillResult) error {
-	n := nr.node
-	wallTS := n.CreatedAt.UnixMilli()
-
-	createPayload, payloadErr := buildCreateNodePayload(n)
-	if payloadErr != nil {
-		return fmt.Errorf("build create_node payload for %s: %w", n.ID, payloadErr)
-	}
-	if emitErr := emitEvent(ctx, tx, emitParams{
-		NodeID:      n.ID,
-		ProjectCode: n.Project,
-		OpType:      model.OpCreateNode,
-		Author:      n.Creator,
-		Payload:     createPayload,
-		WallClockTS: wallTS,
-	}); emitErr != nil {
-		return fmt.Errorf("emit create_node for %s: %w", n.ID, emitErr)
-	}
-	result.CreateEvents++
-
-	updateTS := n.UpdatedAt.UnixMilli()
-	if fieldErr := emitBackfillFields(ctx, tx, n, updateTS, result); fieldErr != nil {
-		return fieldErr
-	}
-
-	if string(n.Status) != "" && n.Status != model.StatusOpen {
-		if transErr := emitBackfillTransition(ctx, tx, n, updateTS); transErr != nil {
-			return transErr
-		}
-		result.TransitionEvents++
-	}
-
-	annCount, annErr := emitBackfillAnnotations(ctx, tx, n.ID, n.Project,
-		n.Creator, nr.annotations, wallTS)
-	if annErr != nil {
-		return fmt.Errorf("emit annotations for %s: %w", n.ID, annErr)
-	}
-	result.AnnotateEvents += annCount
-	return nil
-}
-
-// emitBackfillFields emits one update_field per non-default content
-// field. Increments result.UpdateFieldEvents per emitted event.
-func emitBackfillFields(ctx context.Context, tx *sql.Tx, n *model.Node, updateTS int64, result *BackfillResult) error {
-	type fieldEntry struct {
-		name, value string
-	}
-	for _, f := range []fieldEntry{
-		{"description", n.Description},
-		{"prompt", n.Prompt},
-		{"acceptance", n.Acceptance},
-		{"assignee", n.Assignee},
-	} {
-		if f.value == "" {
-			continue
-		}
-		if err := emitBackfillUpdateField(ctx, tx, n.ID, n.Project, f.name, f.value, updateTS); err != nil {
-			return err
-		}
-		result.UpdateFieldEvents++
-	}
-	return nil
-}
-
-// emitBackfillTransition emits one transition_status event for a node
-// whose status is not the default 'open'.
-func emitBackfillTransition(ctx context.Context, tx *sql.Tx, n *model.Node, updateTS int64) error {
-	payload, payloadErr := model.EncodePayload(&model.TransitionStatusPayload{
-		From: model.StatusOpen,
-		To:   n.Status,
-	})
-	if payloadErr != nil {
-		return fmt.Errorf("build transition payload for %s: %w", n.ID, payloadErr)
-	}
-	if emitErr := emitEvent(ctx, tx, emitParams{
-		NodeID:      n.ID,
-		ProjectCode: n.Project,
-		OpType:      model.OpTransitionStatus,
-		Author:      n.Creator,
-		Payload:     payload,
-		WallClockTS: updateTS,
-	}); emitErr != nil {
-		return fmt.Errorf("emit transition for %s: %w", n.ID, emitErr)
-	}
-	return nil
-}
-
-// emitBackfillDependencies walks the dependencies table and emits one
-// link_dep event per row. Returns the emitted count.
-func emitBackfillDependencies(ctx context.Context, tx *sql.Tx) (int, error) {
-	rows, err := tx.QueryContext(ctx, `
-		SELECT from_id, to_id, dep_type, created_at, created_by
-		FROM dependencies
-		ORDER BY created_at ASC, from_id ASC, to_id ASC`)
-	if err != nil {
-		return 0, fmt.Errorf("walk dependencies: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	count := 0
-	for rows.Next() {
-		var fromID, toID, depType, createdAt string
-		var createdBy sql.NullString
-		if scanErr := rows.Scan(&fromID, &toID, &depType, &createdAt, &createdBy); scanErr != nil {
-			return count, fmt.Errorf("scan dep: %w", scanErr)
-		}
-		ts, _ := parseFlexibleTime(createdAt)
-		author := ""
-		if createdBy.Valid {
-			author = createdBy.String
-		}
-		payload, payloadErr := model.EncodePayload(&model.LinkDepPayload{
-			DependsOnNodeID: toID,
-			DepType:         depType,
-		})
-		if payloadErr != nil {
-			return count, fmt.Errorf("build link_dep payload: %w", payloadErr)
-		}
-		if emitErr := emitEvent(ctx, tx, emitParams{
-			NodeID:      fromID,
-			OpType:      model.OpLinkDep,
-			Author:      author,
-			Payload:     payload,
-			WallClockTS: ts.UnixMilli(),
-		}); emitErr != nil {
-			return count, fmt.Errorf("emit link_dep %s->%s: %w", fromID, toID, emitErr)
-		}
-		count++
-	}
-	if iterErr := rows.Err(); iterErr != nil {
-		return count, fmt.Errorf("walk dependencies: %w", iterErr)
-	}
-	return count, nil
-}
-
-// emitBackfillUpdateField is a thin helper to keep the main loop legible.
-func emitBackfillUpdateField(ctx context.Context, tx *sql.Tx, nodeID, project, field, value string, wallTS int64) error {
-	jsonVal, err := json.Marshal(value)
-	if err != nil {
-		return fmt.Errorf("marshal value for %s.%s: %w", nodeID, field, err)
-	}
-	payload, err := model.EncodePayload(&model.UpdateFieldPayload{
-		FieldName: field,
-		NewValue:  jsonVal,
-	})
-	if err != nil {
-		return fmt.Errorf("build update_field payload for %s.%s: %w", nodeID, field, err)
-	}
-	if err := emitEvent(ctx, tx, emitParams{
-		NodeID:      nodeID,
-		ProjectCode: project,
-		OpType:      model.OpUpdateField,
-		Payload:     payload,
-		WallClockTS: wallTS,
-	}); err != nil {
-		return fmt.Errorf("emit update_field %s.%s: %w", nodeID, field, err)
-	}
-	return nil
-}
-
-// emitBackfillAnnotations walks the JSON array stored in nodes.annotations
-// and emits one `annotate` event per entry. Each annotation's
-// wall_clock_ts is preserved from the source entry if present;
-// otherwise falls back to the node's created_at.
-func emitBackfillAnnotations(ctx context.Context, tx *sql.Tx, nodeID, project, creator, rawJSON string, fallbackTS int64) (int, error) {
-	if rawJSON == "" || rawJSON == "[]" || rawJSON == "null" {
-		return 0, nil
-	}
-	var entries []map[string]any
-	if err := json.Unmarshal([]byte(rawJSON), &entries); err != nil {
-		// Annotations malformed — log via error path; don't propagate
-		// corruption to the hub. Backfill of this node's annotations
-		// is skipped; the create_node + update_field events already
-		// emitted are kept.
-		return 0, fmt.Errorf("annotations malformed for %s: %w", nodeID, err)
-	}
-	count := 0
-	for _, e := range entries {
-		text, _ := e["text"].(string)
-		kind, _ := e["kind"].(string)
-		if text == "" {
-			continue
-		}
-		wallTS := fallbackTS
-		if createdStr, ok := e["created_at"].(string); ok {
-			if t, err := time.Parse(time.RFC3339Nano, createdStr); err == nil {
-				wallTS = t.UnixMilli()
-			}
-		}
-		_ = kind // annotations kind is reserved for future use; current
-		// CommentPayload does not surface it.
-		payload, err := model.EncodePayload(&model.CommentPayload{
-			AuthorID: creator,
-			Body:     text,
-		})
-		if err != nil {
-			return count, fmt.Errorf("build comment payload for %s: %w", nodeID, err)
-		}
-		if err := emitEvent(ctx, tx, emitParams{
-			NodeID:      nodeID,
-			ProjectCode: project,
-			OpType:      model.OpComment,
-			Author:      creator,
-			Payload:     payload,
-			WallClockTS: wallTS,
-		}); err != nil {
-			return count, fmt.Errorf("emit comment for %s: %w", nodeID, err)
-		}
-		count++
-	}
-	return count, nil
-}
-
 // countBackfillWork performs the same walk as runBackfillInTx but only
 // counts what would be emitted. Used by BackfillDryRun. Per-row work
 // is delegated to accountBackfillNodeRow for cognitive-complexity
@@ -589,7 +374,7 @@ func (s *Store) countBackfillWork(ctx context.Context, db queryable) (BackfillRe
 	var result BackfillResult
 
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, description, prompt, acceptance, assignee, status, annotations
+		SELECT id, description, prompt, acceptance, assignee, status, annotations, closed_at IS NOT NULL
 		FROM nodes
 		WHERE deleted_at IS NULL`)
 	if err != nil {
@@ -626,8 +411,9 @@ func accountBackfillNodeRow(rows *sql.Rows, result *BackfillResult) error {
 	var description, prompt, acceptance, assignee sql.NullString
 	var status string
 	var annotations sql.NullString
+	var hasClosedAt bool
 	if scanErr := rows.Scan(&id, &description, &prompt, &acceptance,
-		&assignee, &status, &annotations); scanErr != nil {
+		&assignee, &status, &annotations, &hasClosedAt); scanErr != nil {
 		return fmt.Errorf("scan: %w", scanErr)
 	}
 	result.NodeCount++
@@ -637,7 +423,7 @@ func accountBackfillNodeRow(rows *sql.Rows, result *BackfillResult) error {
 			result.UpdateFieldEvents++
 		}
 	}
-	if status != "" && status != string(model.StatusOpen) {
+	if backfillNeedsTransition(status, hasClosedAt) {
 		result.TransitionEvents++
 	}
 	if annotations.Valid && annotations.String != "" &&

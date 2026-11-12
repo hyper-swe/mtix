@@ -99,9 +99,10 @@ func detectLWWOutcome(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (lwwO
 // set_prompt the op_type alone is enough.
 //
 // The uid variants require a non-empty uid so the partial
-// idx_sync_events_uid can serve them, and write "+op_type" so the planner
-// does not pick idx_sync_events_op_type, which reads every event of that
-// op type on an unanalysed store (MTIX-95.47).
+// idx_sync_events_uid can serve them. Every variant writes "+op_type" so the
+// planner does not pick idx_sync_events_op_type, which reads every event of
+// that op type into a temp B-tree on an unanalysed store (MTIX-95.47); the
+// uid-less variants search idx_sync_events_node instead.
 func lwwPriorQuery(e *model.SyncEvent, fieldName string) (string, []any) {
 	if e.UID == "" {
 		args := []any{e.NodeID, string(e.OpType), e.EventID}
@@ -109,7 +110,7 @@ func lwwPriorQuery(e *model.SyncEvent, fieldName string) (string, []any) {
 			// The node's latest prior change of this field, by number.
 			return `SELECT event_id, lamport_clock, wall_clock_ts, author_machine_hash
 			         FROM sync_events
-			         WHERE node_id = ? AND op_type = ? AND event_id <> ?
+			         WHERE node_id = ? AND +op_type = ? AND event_id <> ?
 			           AND json_extract(payload, '$.field_name') = ?
 			         ORDER BY lamport_clock DESC, wall_clock_ts DESC, author_machine_hash ASC
 			         LIMIT 1`, append(args, fieldName)
@@ -117,7 +118,7 @@ func lwwPriorQuery(e *model.SyncEvent, fieldName string) (string, []any) {
 		// The node's latest prior event of this op, by number.
 		return `SELECT event_id, lamport_clock, wall_clock_ts, author_machine_hash
 		         FROM sync_events
-		         WHERE node_id = ? AND op_type = ? AND event_id <> ?
+		         WHERE node_id = ? AND +op_type = ? AND event_id <> ?
 		         ORDER BY lamport_clock DESC, wall_clock_ts DESC, author_machine_hash ASC
 		         LIMIT 1`, args
 	}
@@ -161,6 +162,9 @@ func incomingBeats(e *model.SyncEvent, priorLamp, priorTS int64, priorHash strin
 // reaches this call, because the own-event rule in acknowledgeHeldEvent
 // returns first (MTIX-95.2).
 func (a syncApplier) mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+	if upgraded, err := upgradeRestoredInboxEvent(ctx, tx, e); err != nil || upgraded {
+		return err
+	}
 	vcJSON, err := json.Marshal(e.VectorClock)
 	if err != nil {
 		return fmt.Errorf("mirror %s: marshal VC: %w", format.EventID(e.EventID), err)

@@ -54,9 +54,9 @@ func (a syncApplier) applyDelete(ctx context.Context, tx *sql.Tx, e *model.SyncE
 	}
 	now := a.clock().UTC().Format(time.RFC3339)
 	if _, err = tx.ExecContext(ctx,
-		`UPDATE nodes SET deleted_at = ?, deleted_by = ?, updated_at = ?
+		`UPDATE nodes SET deleted_at = ?, deleted_by = ?, updated_at = MAX(updated_at, ?)
 		 WHERE id = ? AND deleted_at IS NULL`,
-		now, e.AuthorID, now, id,
+		now, e.AuthorID, a.storedEventTime(e), id,
 	); err != nil {
 		return err
 	}
@@ -85,9 +85,9 @@ func (a syncApplier) applySetAcceptance(ctx context.Context, tx *sql.Tx, e *mode
 	if err != nil {
 		return err
 	}
-	now := a.clock().UTC().Format(time.RFC3339)
+	now := a.storedEventTime(e)
 	if _, err = tx.ExecContext(ctx,
-		`UPDATE nodes SET acceptance = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+		`UPDATE nodes SET acceptance = ?, updated_at = MAX(updated_at, ?) WHERE id = ? AND deleted_at IS NULL`,
 		p.AcceptanceText, now, id,
 	); err != nil {
 		return err
@@ -104,9 +104,9 @@ func (a syncApplier) applySetPrompt(ctx context.Context, tx *sql.Tx, e *model.Sy
 	if err != nil {
 		return err
 	}
-	now := a.clock().UTC().Format(time.RFC3339)
+	now := a.storedEventTime(e)
 	if _, err = tx.ExecContext(ctx,
-		`UPDATE nodes SET prompt = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+		`UPDATE nodes SET prompt = ?, updated_at = MAX(updated_at, ?) WHERE id = ? AND deleted_at IS NULL`,
 		p.PromptText, now, id,
 	); err != nil {
 		return err

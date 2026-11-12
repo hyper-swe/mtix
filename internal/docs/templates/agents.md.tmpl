@@ -18,7 +18,7 @@ freshness.
 
 ## Creating work
 
-`mtix create --type` accepts bug, feature, task, chore, refactor, test or doc (omitted = unset), independently of depth-derived hierarchy; `--assign <agent>` claims atomically as `in_progress`, overrides parent auto-claim and preserves the creator as author. MCP/REST/gRPC use `issue_type` and `assignee`. `mtix update --type` changes work classification (empty clears, omitted preserves). `mtix list --type` filters hierarchy; `mtix list --issue-type` filters work classification. See the planning skill for the full routine.
+`mtix create --type` accepts bug, feature, task, chore, refactor, test or doc (omitted = unset), independently of depth-derived hierarchy; `--assign <agent>` claims atomically as `in_progress`, overrides parent auto-claim and preserves the creator as author. MCP/REST/gRPC use `issue_type` and `assignee`. `mtix update --type` changes work classification (empty clears, omitted preserves). `mtix list --type` filters hierarchy; `mtix list --issue-type` filters work classification. `mtix list --labels desk:now,desk:backlog` (and `mtix search <words> --labels ...`, MCP `labels` on `mtix_list`/`mtix_search`, REST `?labels=`) matches nodes carrying ANY listed label: exact and case-sensitive, comma-separated, colons allowed; blank entries are ignored and an all-blank value means no label filter. An all-of label filter is not offered. See the planning skill for the full routine.
 
 Terminal output (`show`, `list`, `ready`, `search`, `tree`, `progress`, `context`, `create`, `decompose --dry-run`) prints titles and assignees on one line: control characters, escapes, bidirectional overrides and isolates, zero-width and other invisible format characters are removed, line breaks become spaces, and the directional marks (U+200E, U+200F, U+061C) are kept. Use `--json` for the exact stored text, for example when quoting a title. The plain `mtix inbox` listing and error lines are stripped the same way, but an inbox body and an error keep their line breaks (the body is indented). The `mtix context` Assembled Prompt block folds titles, annotation authors and dependency ids onto one line and indents every line of prompts and annotation text.
 
@@ -164,6 +164,9 @@ mtix list --under {{ .ProjectPrefix }}-1,{{ .ProjectPrefix }}-2 --status done --
 
 # Critical/high priority open work assigned to two agents
 mtix list --priority 1,2 --status open --assignee agent-a,agent-b --format briefing
+
+# Nodes carrying ANY of these labels (exact, case-sensitive match)
+mtix list --labels desk:now,desk:backlog --status open --json
 ```
 
 Multiple values within one flag combine with OR; multiple flags combine with AND. All values are parameterized — no injection risk.
@@ -394,7 +397,7 @@ See the multi-agent skill for the complete polling contract and startup limits.
 
 ## Inbox retention
 
-An event addressed to an agent stays in that agent's inbox until the agent acks it (the exceptions are listed here): no TTL, no expiry. The journal is per store and reaches another checkout only through sync; acks are not synced, so a new checkout (`mtix sync clone`) shows acked events again (handle work idempotently). `tasks.json`, `mtix export` and `mtix recover` do not carry the journal. `mtix import --mode replace` on a never-synced store and `mtix sync reconcile --discard-local` remove unread events: each asks for the ticket count, typed at a terminal, and prints the unread-event count first; discard-local deletes the journal, so run `mtix sync push` first and check pending 0. Audit with `mtix inbox --agent <agent-id> --history` (read-only, no hub contact). Full boundaries: the multi-agent skill and USERMANUAL.
+An event addressed to an agent stays in that agent's inbox until the agent acks it (the exceptions are listed here): no TTL, no expiry. The journal is per store; acks are not synced, so a new checkout (`mtix sync clone`) shows acked events again (handle work idempotently). Explicit `mtix export > private-export.json` carries addressed mail and acknowledgement coverage; treat it as private and never commit it. Automatic `tasks.json` and explicit exports redirected to `.mtix/tasks.json` stay journal-free. `mtix recover` salvages readable database mail; supply `--from-export private-export.json` to fill gaps from a private export, and read its loss report. `mtix import --mode replace` on a never-synced store and `mtix sync reconcile --discard-local` remove unread events: each asks for the ticket count, typed at a terminal, and prints the unread-event count first; discard-local deletes the journal, so run `mtix sync push` first and check pending 0. Audit with `mtix inbox --agent <agent-id> --history` (read-only, no hub contact). Full boundaries: the multi-agent skill and USERMANUAL.
 
 ## Reference Wake Routine
 
@@ -485,13 +488,15 @@ reports protected accounting after a restore. Held wakes re-arm from the registr
 remains separate; settings do not install a route.
 
 Wake status: `mtix comment --to <agent>` and `mtix inbox status --agent <agent> --json` show whether the addressee can be woken
-(`queued`, `nudged`, `unconfirmed`, `confirmed`, `held`, `undeliverable`, `off`, `no-live-session`, `no-dispatcher`, `unknown`) with a runnable
-fix; the message is always in the inbox. `wake.confirm_window` (default 30 seconds) sets when a nudge reads as `unconfirmed`. The doctor
+(`queued`, `nudged`, `unconfirmed`, `stalled`, `confirmed`, `held`, `undeliverable`, `off`, `no-live-session`, `no-dispatcher`, `unknown`) with a runnable
+fix; the message is always in the inbox. `wake.confirm_window` (default 30 seconds) sets when a nudge reads as `unconfirmed`, and the same bound T, measured from the event with no timer, sets when an unread message with no armed hook waiter reads as `stalled` (the session's turn has not ended; the message stays in the inbox and a stall is noticed at the next dispatcher pass, `mtix inbox status` or `mtix doctor` run; `wake.listener.stalled` gives the fix). The doctor
 `wake.listener.*` rows give exact fixes. The ledger-backed states are seeded-only until a delivery route is built; approving a held wake does not yet send
 a fresh nudge (MTIX-112.40.10). See the multi-agent skill.
 
 Need an answer: send with `mtix comment <id> "<text>" --to <agent> --await-reply=<duration>` (MCP `mtix_annotate` with `to` and `await_reply`). Default 1h, at most 8h. Your host then contacts the hub every 60 seconds until that agent replies or the time passes; when you are the recipient, answer and ack promptly. A reply window keeps a scale-to-zero hub awake (about 60 contacts an hour, up to 8 hours), so use plain `--to` when no answer is needed; limits and verification are in the sync skill and `mtix doctor` row `sync.hub-contact`.
 
+
+A wake is effectively once per event. Every delivery route claims the event in the wake ledger before it delivers, and a route that loses the claim skips it, so two routes never both wake a session. A crash between the push and its recorded result can wake a session twice, never zero times: a claim left unfinished past its lease is taken over once (`reclaimed-after-crash`), and a second expiry closes the event as `reclaim-cap` without another wake. `mtix doctor` row `wake.ledger` then warns with both counts (`--json`: `data.reclaimed`, `data.capped`); a capped message gets no further wake and may already be acknowledged, so check it with `mtix inbox`. A reclaimed event whose redelivery then fails (error, undeliverable, held or off) records its real reason and is not counted in `data.reclaimed`. Before a claim is taken over the claimant checks whether the recipient acknowledged the event with `mtix inbox ack` (selective or cumulative), and an acknowledged event is settled as confirmed without another wake; merely reading it counts as not delivered and means one redelivery. The warning counts retained rows, no command prunes them, so judge it by whether the counts grow.
 
 On an opened local board, `wake.ledger` reports retained rows and protocol refusal;
 `--fix` preserves wake state. See the multi-agent skill for lease and retry behavior.

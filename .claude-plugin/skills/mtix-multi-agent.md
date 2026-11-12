@@ -190,7 +190,52 @@ Doctor shows these rows only when they apply:
   counted as rejected in the row's detail, no command is built from it, and the
   row prints the generic command with placeholders. The glue path never imports
   `tasks.json` and never triggers hooks, whatever `sync.auto_sync` says.
-- `attach.failures`: recent `attach.protocol-skew` and `attach.verb-failure`
+  Before opening the matched board store, this drain checks the enrollment
+  guard. While the original store still matches, a running or interrupted
+  enrollment leaves its queue untouched and produces an enrollment reason on
+  stderr plus an `attach.enrol-blocked` alert in `mtix doctor` (`attach.failures`),
+  with the enrollment remedy; a missing harness adapter cannot overwrite it.
+  The hook still exits 0. After the store moves aside or its identity changes,
+  the predicate declines instead: glue prints `board not attached on this host`,
+  without an enrollment alert; run `mtix doctor` for recovery guidance.
+  Pi wait checks enrollment before opening and before its poll reads, claims
+  and result writes; each host dispatcher board open uses the same guard and
+  a refused board is skipped for that pass. These are checks, not held locks:
+  enrollment starting after a check can overlap an in-flight open or write.
+  Retry after enrollment finishes; if interrupted, follow `mtix doctor` first.
+  Never remove enrollment locks, markers or store data to force a drain;
+  remove an interrupted marker only when doctor explicitly instructs it.
+  If the marker is torn (cannot be decoded) or the enrollment lock cannot be
+  probed, `mtix doctor` still runs and prints a FAIL row with the exact command:
+  `board.enrol-interrupted` for a torn marker, `board.enrol-lock` for an
+  unprobeable lock. Run a printed command as printed, then rerun `mtix doctor`;
+  a row whose fix starts with STOP prints no command (see below).
+  The lock fix is `mtix doctor --fix`: it moves the lock aside, never removes
+  it, only when it is not a regular file (nothing can hold it) and refuses a lock
+  that a live enrollment holds. A regular lock that cannot be probed cannot be
+  proven unheld, so its row asks the project maintainer instead of printing a command; the prose
+  also names the lock directory, because its owner or a link there fails the probe too.
+  While the marker is torn or the lock cannot be probed, doctor prints its rows
+  without creating or opening a store, because a live enrollment may have moved
+  the store away. For a torn marker the row prints a command only when exactly one
+  aside store exists and the live data directory is missing or empty, the evidence
+  that the aside store is this enrollment's original. With a live store, or with
+  several aside stores, the row names them and asks the project maintainer to
+  choose, and prints no command, because an aside store left by an earlier
+  enrollment must not replace a live store. A possibly-live enrollment never gets
+  a command either: when the lock cannot be probed (it may belong to another
+  user's running enrollment), or the marker could not be read for a reason other
+  than its content (for example a permission error), the row starts with STOP,
+  names `board.enrol-lock` only when the lock cannot be probed (for an unreadable
+  marker it names the marker to make readable instead), and asks the enrollment's
+  owner or the project maintainer; it prints no mv or rm. When the lock path
+  itself cannot be inspected (a directory on it is not searchable, or is a file),
+  `board.enrol-lock` prints no `mtix doctor --fix` and names the directories to
+  repair, because the repair would fail the same inspection. Only a marker whose content cannot be
+  decoded, with a free lock, gets a command. After `mtix doctor --fix` repairs the
+  lock, the row shows pass in the same run.
+- `attach.failures`: recent `attach.protocol-skew`, `attach.verb-failure` and
+  `attach.enrol-blocked`
   operator alerts from the hidden attach verbs, with counts. These verbs are
   entry points for harness glue, not for agents. They always exit 0, even on
   arguments they cannot parse or a verb this build does not know, print one
@@ -245,6 +290,17 @@ zero has no limit, and already pending events return even if the initial
 database lookup outlasts a positive timeout. That lookup remains interruptible
 by caller cancellation (CLI SIGINT or SIGTERM). After an empty lookup, waiting
 for new events uses only the remaining timeout budget measured from entry.
+The timeout is wall-clock time, not run time: on every 250 ms poll tick the wait
+ends when either the monotonic elapsed time or the wall-clock elapsed time
+reaches the timeout, whichever comes first. The wall clock covers a sleeping
+machine (monotonic time pauses), and the monotonic time covers a wall clock
+stepped backwards, so a sleeping machine does not stretch it, and an empty wait
+exits 5 within about one tick of the deadline once the machine is awake. With a
+wake policy, a parked wait is cheap: each tick only counts the inbox, and the
+full read with the wake policy runs when the counts change and at least every 2
+seconds, so a change in hub state, permissions or budget window is noticed
+within about 2 seconds. Without a wake policy, each tick runs the plain inbox
+list query.
 Events mean exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM
 means exit 7.
 A negative timeout is refused. Keep foreground waits within the harness's tool
@@ -298,9 +354,14 @@ An event addressed to an agent (`mtix comment --to <agent-id>`, or a hook delive
 The guarantee covers the journal of one store (`.mtix/data/mtix.db`). Its exact boundaries:
 
 - **Per store.** The journal and the acknowledgements live in one store. An event reaches another checkout only through sync. Acknowledgements are not synced: a new checkout made with `mtix sync clone` lists every addressed event as unacknowledged, including events the first checkout already acknowledged. Delivery is at least once, so handle inbox work idempotently. Carrying acknowledgements to a new checkout is planned work (MTIX-112.17.16).
-- **Export, import and recover.** `tasks.json`, `mtix export` and `mtix recover` carry tickets and annotations, not the journal. Importing them into another store starts with an empty inbox there. `mtix export` prints how many unacknowledged events the store holds; `mtix recover` prints the count it can read from the damaged database, or says it could not count. A journal transport is a separate ticket (MTIX-112.2.1).
+- **Export, import and recover.** `mtix export > private-export.json` carries addressed comments and recipient acknowledgement coverage by default; stderr reports the event count. Treat this file as private and never commit it. Merge or replace import restores that mail by event identity (replace requires the typed ticket count at a terminal when the store holds tickets), without replaying hooks or queueing it for push; importing the same file twice adds no mail and never undoes local acknowledgements. Automatic `.mtix/tasks.json` stays journal-free, as does explicit export redirected to that path (including links to it). For a temporary file later moved to the mirror, or a pipe such as `tee`, explicitly use `--board-only`. A fresh store imported only from that mirror has no inbox journal. `mtix recover` salvages readable mail from the database; `mtix recover --from-export private-export.json` also fills journal gaps from an explicit export while retaining `.mtix/tasks.json` as the board source. Its report identifies detected missing or unreadable journal data and gives counts where known; keep the source database when recovery is incomplete. Inbox salvage checks each rowid seek against a full point read and combines it with readable sequential-scan rows, continuing after a bad column. Recovery skips zero-byte and one-byte databases before any SQLite open; it does not salvage the WAL alone. The WAL may hold the only copy of committed records. Store-opening commands refuse an empty, one-byte or missing database beside a nonempty WAL, even when open-time integrity checks are bypassed. Use `mtix recover`; SQLite treats such a file as empty and deletes its WAL when it opens it, which is why it is skipped. To restore into this project, move the database and its `-wal` and `-shm` together out of the project (or move the entire `data/` directory); a copy leaves the refused files in place, so restoring here stays refused, and a copy is enough only for restoring into a fresh project. Never move only the database. Mirror and supplied private-export fallback remains incomplete. A changed or unverifiable database size after salvage also makes completeness unproven and discards acknowledgment coverage. Before opening the database, recovery verifies the WAL header, frame salts, frame boundaries and rolling checksums. An unverifiable WAL tail, even a stale tail left by normal reuse, makes recovery partial: committed records (including tickets and mail) may be missing, the lost count is unknown, and already-read mail may return unread. Keep the database and its `-wal` file together. It also runs a read-only `PRAGMA integrity_check`, limited to five seconds and 20 reported problems. Damage, duplicate identities, conflicting copies, disagreement between reads, or an unfinished check makes the report incomplete, with loss unknown where it cannot be counted. Acknowledgement coverage is retained only when the integrity check finishes successfully and no part of inbox recovery is incomplete. Any detected damage, unavailable or unfinished check, or other incomplete result discards all recovered acknowledgement coverage, including coverage supplied by a private export. Every recovered event is then exported as unread; the report gives that count. A damaged store, or a store too large or slow for the five-second check, can therefore deliver already-read mail again: repeated wakes are preferable to hidden unread mail. An unfinished five-second check does not prove the store is damaged: acknowledgement coverage could not be proven. If the store opens, use `mtix export` to preserve readable acknowledgement coverage instead of salvage. A complete report means these checks found no damage. A `-wal` file that is absent, emptied, or shortened exactly on a frame boundary (including a header-only log) cannot be distinguished from a shorter healthy log; committed records may be missing even under a complete report. A bit flip in body text inside `sync_events.payload` or a value in `agent_inbox_cursor.cursor` can still leave a structurally valid store and pass the check; without a checksum for those fields, recovery cannot detect the changed text or a raised cursor that hides unread mail. On stores last written by 0.5.4 or earlier that lack `idx_sync_events_comment_addressee`, a change to the recipient `$.to` in `sync_events.payload` can also pass the check, redirect mail or apply another recipient’s cursor; recovery opens read-only and does not add the missing index. Keep independent private exports. It probes past damaged ranges, with at most 10,000 failed rowid probes. An unreadable upper bound or an exhausted probe budget produces an explicitly incomplete report naming the limit and rowid reached; lost records are reported as unknown or an upper bound in positions, never as an exact record count. Keep the source database and any private export. Recovery adds `.mtix/recovered-*.json` to the existing project `.gitignore` before writing; if it cannot protect the file, it writes no recovered export. Hook-created deliveries, dispatch state and host identities are not transported. With `history.export` off, a 0.5.4 reader can import the board but ignores the journal and drops it on rewrite, so use this version to move or recover mail. Cumulative acknowledgements become per-event coverage without an invented acknowledgement time; no source watermark can hide unrelated destination mail.
 - **`mtix import --mode replace`.** On a store that never synced, a replace removes the events of every ticket the file lacks. It asks for the ticket count, typed at a terminal, and lists the number of unacknowledged inbox events first; that number is the most the replace can remove. A store that has synced refuses a replace that would drop a task its sync log holds; a replace that keeps every task proceeds and removes no event. When a replace does remove events, the acknowledgement and delivery rows for event numbers above the newest surviving event are removed in the same step, and any agent cursor above that event is lowered to it (cursors are lowered, not removed; an agent whose cursor is already at or below it keeps it), so mail addressed afterwards shows as unread. The same transaction removes hook dispatch ledger rows above the surviving journal tail and lowers a hook scan cursor above it (to zero for an empty journal); surviving hook dispatch state is retained. A hook pass already in progress checks event identity before claiming, recording inbox deliveries and finalizing. Before advancing its scan, it also checks whether replace lowered the cursor it read; a pass that missed reused events stops there, and otherwise advances only through events whose identities still match. Recovery of a missing event only removes an existing expired claim; it cannot recreate one at a reused number. Hook crash recovery remains at least once. A merge import never removes events.
-- **`mtix sync reconcile --discard-local`.** It deletes the whole journal and the acknowledgements, with the local tasks and unpushed changes. Run `mtix sync push` first and check that `mtix sync status` shows pending 0. It asks for the ticket count, typed at a terminal, lists the unacknowledged inbox events first, and saves a snapshot of the database before the delete.
+- **Wakes after replace.** Fresh addressed events at reused event numbers remain eligible for live wake. The same replace transaction removes wake claims above the surviving journal tail and lowers scan, registration and lease marks above it to that tail (zero for an empty journal). Lower marks and surviving claims stay unchanged, along with registration epochs, pending holds, ownership of a running lease and budget usage already recorded. A scan snapshot cannot claim a different event under a reused number or move a wake mark for an event removed by replace. A wake attempt claimed before replace may finish; wake crash retries remain at least once. Discarding local sync history performs the same wake reconciliation against the empty journal. Returned-mail budget accounting has a separate limitation: reused event numbers can still be treated as already returned (MTIX-112.2.2.1.1).
+
+- **Automatic wakes on a first fill.** A clean first pull or relay ingest starts with an empty journal and completes its shared floor initialization. Existing automatic scanner and pi wake marks move to the populated journal tail alongside the hook-dispatch floor. A clone starting empty records its first-fill progress and initializes these floors in each committed batch, including clone-origin quarantine retries. An interrupted first clone can resume without waking on cloned history, for agents registered before the clone or after the interruption, while no other journal writes interrupt that clone stream. **Every addressed event up to the initialized tail is bootstrap history for automatic wakes, including mail no checkout has seen.** Hub mail sent while that first clone is interrupted is also treated as history when the clone resumes, even after a long pause; it gets no automatic wake. The mail remains unread in the inbox; initializing the floors spends no wake budget. Addressed mail appended after that floor remains eligible for an automatic wake. A local write or another journal change between clone batches ends this first-fill treatment: automatic wake progress then stays unchanged through the remaining batches, preserving pending fresh mail. Completion of any `mtix sync clone`, including a plain clone or `--resume`, advances the hook-dispatch floor toward the journal tail, clamped below outstanding hook claims. Every event covered by that floor gets no hook delivery, including local mail written before completion. The mail stays in the inbox: the floor does not acknowledge it. After clone or ordinary pull completes the first fill, a later clone resume preserves automatic wake progress and keeps newer hub mail eligible, even if the completion or a repeat resume pulls no events. The explicit session-hook waiter keeps its unread-backlog behavior and may wake on any unread mail, including this history.
+
+- **Recovery limits.** The first-pull and relay automatic floors do not cover an interrupted fill, a journaled local write before the pull, a scan during a multi-batch fill, or a floor-initialization warning. An ordinary non-empty pull does not rerun bootstrap floor initialization. A non-empty clone resume without its valid first-fill progress record also preserves existing automatic wake progress; this includes an older interrupted clone without that record and a clone interrupted by other journal writes. History can then wake again and spend wake budget; unacknowledged-wake backoff can hold later mail. Completing a clone or pull with an older binary or daemon, including v0.5.4, can leave a first-clone progress record active. A later resume with this build can then treat fresh hub mail as history and give it no automatic wake. Before resuming such a store, first complete `mtix sync pull` with this build to retire that record. These wake-floor limits do not drop inbox events: complete `mtix sync pull` to retrieve remaining hub mail, and use `mtix inbox --agent <id>` to read it. Handle and acknowledge inbox mail to clear unacknowledged-wake backoff. Discard/pull recovery is tracked in MTIX-112.2.2.1.2.
+- **`mtix sync reconcile --discard-local`.** On a store holding restored mail, do not use `mtix sync reconcile --discard-local`: it is refused, including its dry run; typed confirmation cannot bypass this guard. Pending 0 does not mean that mail reached the hub. Keep the original store. To obtain the hub board, run `mtix init PREFIX` in a new empty directory, configure the same hub credentials via `MTIX_SYNC_DSN`, then run `mtix sync clone`. In an operator terminal, read the restored mail in the original store with `mtix inbox --include-held --agent AGENT`; hub contact can hold mail for an unregistered recipient. On stores without restored mail, it deletes the whole journal and the acknowledgements, with the local tasks and unpushed changes. Run `mtix sync push` first and check that `mtix sync status` shows pending 0. It asks for the ticket count, typed at a terminal, lists the unacknowledged inbox events first, and saves a snapshot of the database before the delete.
 - **Backups.** A backup copy of the database keeps the journal and the acknowledgements together, with the same event numbers. Restoring an older copy brings back its older state: events acknowledged after the copy was made are unacknowledged again, and events addressed after it are not in it.
 - **Deleting the database** (or the `.mtix` directory) deletes the inbox.
 
@@ -423,6 +484,8 @@ Call `mcp__mtix__mtix_session_start` with agent ID and project. This creates a t
 During work, the agent:
 - Claims nodes via `mcp__mtix__mtix_claim`
 - Sends heartbeats via `mcp__mtix__mtix_agent_heartbeat` every 5 minutes
+
+Cross-machine wake: hub contact by the daemon follows `sync.hub_contact` (`activity` default, `interval:<duration>`, `manual`): `activity` contacts the hub only for 30 minutes after real activity so a database that pauses when idle can pause, `interval` keeps it awake around the clock, `manual` never contacts it. Real activity is a mutation command, an addressed comment, an MCP commit, `mtix agent heartbeat`, or glue session-start or prompt-submit; reads, `mtix inbox`, waits and any waiter arming a lease are not. `sync.listen` (shipped default: `live`) configures a listen hold: parking `mtix inbox --wait` on a board that syncs through a hub or relay arms a lease and starts one detached `mtix daemon --listen` for the board (it prints one line saying so, or why not), shared by every waiter, and it exits within seconds of the last waiter ending. While a waiter lives, `live` keeps the hub contacted every `sync.listen_interval` (10s) until `sync.listen_max_idle` (8h) after the last real activity, and `mtix config set sync.listen off` switches that off. `mtix doctor` rows `sync.hub-contact` and `sync.listen` show the state and print the fix command; row `wake.listener.no-hub-listener` fails when waiters are parked with no listener and prints `mtix daemon --listen`.
 - Executes tasks following the context chain
 - Marks nodes done or defers them
 
@@ -481,7 +544,7 @@ Heartbeats prove agent liveness. Without them, the system assumes the agent has 
 - **No double-claiming.** If you try to claim an already-claimed node, you get `ErrAlreadyClaimed`
 - **Check before claiming:** Use `mcp__mtix__mtix_show` to verify a node is unclaimed before attempting to claim it
 - **Force-reclaim:** Only available when the current agent is stale (heartbeat expired). Never force-reclaim an active agent's work
-- **Synced machines:** Agents on different machines can each claim the same node between syncs. After `mtix sync pull`, every machine shows the status set by the most recent claim or status change (highest Lamport clock, ties broken by event id), and older ones change nothing; the losing claim is not reported as a conflict. The status agrees for claims and status changes, which travel as events; two automatic changes do not, so status can still differ there (a node claimed on one machine while another adds a dependency that blocks it can end up blocked on one and in progress on the other, and descendants of a cascade cancel can differ the same way: they are not cancelled on other machines, yet a node the cascade unblocked shows unblocked there although its blocker is not cancelled; when other machines must see the descendants cancelled, cancel them one at a time, deepest first, without cascade). Beyond status nothing is guaranteed to agree: the assignee can still differ between machines when changes arrive out of order (if the agent whose claim lost marks the node done before pulling, both machines show done, each with its own agent as assignee). After every pull, check the node with `mcp__mtix__mtix_show`; if it is no longer in progress under your name, stop work on it and pick other work
+- **Synced machines:** Agents on different machines can each claim the same node between syncs. After `mtix sync pull`, every machine shows the status set by the most recent claim or status change (highest Lamport clock, ties broken by event id), and older ones change nothing; the losing claim is not reported as a conflict. The status agrees for claims and status changes, which travel as events; one automatic change does not, so status can still differ there (a node claimed on one machine while another adds a dependency that blocks it can end up blocked on one and in progress on the other). A cascade cancel and a cascade delete send one event for each descendant they change, so other machines show the same descendants cancelled or deleted; only a cascade made by an earlier mtix version sent none, and those descendants keep their previous status elsewhere. A cascade cancel fires the `status.changed` hook once for each descendant it cancels, on this machine and on every machine that pulls it, so a hook that wakes an agent on a status change can fire several times for one cascade. Beyond status nothing is guaranteed to agree: the assignee can still differ between machines when changes arrive out of order (if the agent whose claim lost marks the node done before pulling, both machines show done, each with its own agent as assignee). After every pull, check the node with `mcp__mtix__mtix_show`; if it is no longer in progress under your name, stop work on it and pick other work
 
 ## Handoff Protocol
 
@@ -522,6 +585,14 @@ When multiple agents work simultaneously:
 - Use `mcp__mtix__mtix_ready` to find unclaimed work
 - Declare cross-task dependencies via `mtix_dep_add` to prevent conflicts
 - After completing work that others depend on, verify the dependent tasks are unblocked
+
+## Effectively-once wakes
+
+Every route that wakes a session (the hook waiter, the dispatcher and the pi wait child) builds the same ledger key for an event with one shared constructor and claims it in one ledger transaction before it delivers. A route that loses the claim skips the event. A sent event is never claimed again, so a retry never wakes it twice.
+
+A claim that stays unfinished past its lease (the claimant crashed before it recorded a result) can be taken over once. The take-over is marked `reclaimed-after-crash` in the ledger reason. Before delivering again, the claimant checks whether the recipient already acknowledged the event with `mtix inbox ack` (selective or cumulative): an acknowledged event is settled as confirmed and nothing is sent again. Merely reading the event with `mtix inbox` is not an acknowledgement: a read but unacknowledged event means one redelivery. The pi wait child uses the same check. A second expiry closes the event as `undeliverable` with reason `reclaim-cap` and sends nothing: the retry cap is one. The guarantee is therefore effectively once: a crash between the push and the recorded result can wake a session twice, never zero times.
+
+Verify with `mtix doctor --json`: the `wake.ledger` row is `warn` when any event was reclaimed or capped, with `data.reclaimed` and `data.capped`. A reclaimed event whose redelivery then fails (error, undeliverable, held or off) records its real reason and is not counted in `data.reclaimed`. A `reclaim-cap` message was not woken again and may already be acknowledged: check it with `mtix inbox` and act on it only if it is still pending; if reclaims keep appearing, stop the listener or dispatcher that keeps dying. The warning is a count over the retained wake rows and this build has no command that prunes them, so it does not clear by itself: judge it by whether the counts grow between `mtix doctor` runs, and record a stable count as a known past crash. This build adds no setting for this rule.
 
 ## pi sessions (experimental)
 
@@ -667,6 +738,7 @@ Send with `mtix comment <id> "<text>" --to <agent> --await-reply=<duration>` (MC
 | `queued` | A session and a dispatcher exist and no nudge is recorded yet | `mtix inbox status --agent <agent>` |
 | `nudged` | A nudge was sent and the confirmation window is open | wait, then `mtix inbox status --agent <agent>` |
 | `unconfirmed` | A nudge was sent and `wake.confirm_window` passed unseen | `mtix inbox --agent <agent> --wait` |
+| `stalled` | An addressed message is unread for longer than `wake.confirm_window` and no hook waiter is armed: the session's turn has not ended | `mtix inbox --agent <agent> --wait` |
 | `confirmed` | The session was seen acting on the nudge | none |
 | `held` | The route needs approval: `mtix agent allow <agent>` | read the inbox: `mtix inbox --agent <agent>` |
 | `undeliverable` | No route could deliver; `reason` says why | `mtix inbox --agent <agent> --wait` |
@@ -677,13 +749,30 @@ Send with `mtix comment <id> "<text>" --to <agent> --await-reply=<duration>` (MC
 
 `unconfirmed` is derived at read time from `wake.confirm_window` (default 30 seconds; set it with
 `mtix config set wake.confirm_window 60`, whole seconds 1 to 86400; it is an ordinary setting and needs no terminal). It is never written as an inbox event and no timer runs.
+
+`stalled` (MTIX-112.40.12) is derived the same way and is also never written as an inbox event. The hook route arms its waiter
+only at session start and when a turn ends (Stop), so a turn that never ends leaves no waiter and later mail would otherwise
+wait unseen. The bound is T = `wake.confirm_window`, measured from the event (or from the recorded push when one was sent), and it
+needs no timer: a stall is noticed at the next dispatcher pass, `mtix inbox status` read or `mtix doctor` run, not at the instant T
+passes. Redelivery applies only when a push route is configured for the registration, and this build ships none that is reachable, so a stalled event is reported (`mtix inbox status`, `mtix doctor`) and stays in the inbox. When a push route is configured, the dispatcher selects stalled events from the wake ledger on each pass (bounded per pass), applies the same gates as a first wake (`wake.live`, budget and back-off, hop guard), and redelivers the event once through the same single claim path
+(never a second push, and an event the session already read is settled as confirmed); a second stall is closed
+`undeliverable` with reason `stall-unconfirmed` and not retried. With the hook route alone nothing is sent and no ledger row is
+written: the report is read-time only, the message stays in the inbox, and the waiter armed when the turn ends still wakes the
+session for it. The exact fix is `mtix inbox --agent <agent> --wait`, or end or interrupt the stuck turn.
 In this build the states `nudged`, `unconfirmed`, `confirmed`, `held` and `undeliverable` come from wake ledger
 rows, and nothing writes ledger rows until a delivery route is built, so they are seeded-only today. Approving a held
 wake does not yet send a fresh nudge (follow-up MTIX-112.40.10); read the inbox yourself.
 
 `mtix doctor --json` reports `wake.listener.routes`, `wake.listener.dispatcher` and `wake.listener.unconfirmed-rate`
-(warns above 20 percent unconfirmed over 24 hours), each with a runnable `fix`. The rows `wake.listener.hook-installed`,
+(warns above 20 percent unconfirmed over 24 hours), each with a runnable `fix`. The row `wake.listener.stalled` warns (with `data.agents`
+naming the agents) when an addressed message has waited longer than `wake.confirm_window` with no hook waiter armed, and prints the `fix`; it is INFO otherwise. The rows `wake.listener.hook-installed`,
 `wake.listener.waiter-armed`, `wake.listener.route-contract` and `wake.listener.bypass-hold` are present as INFO rows
 with `data.reachable` false and `data.blocked_by` naming the ticket whose adapter is not built yet (hook waiter
 MTIX-112.40.4 and install MTIX-112.40.5, session socket MTIX-112.40.3): they are not reachable in this build and are never silently skipped.
 
+For a temporary export later moved to `.mtix/tasks.json`, or a pipe such as
+`tee` writing that mirror, use `mtix export --board-only`. Default explicit
+exports are private. `recover --from-export` supplements only the inbox journal;
+the board still comes from database salvage and the current `tasks.json` mirror.
+Restoring mail alone never marks a solo board as hub-connected, publishes that
+mail through the relay, or changes the destination's existing hook deliveries.

@@ -182,7 +182,13 @@ func TestInboxWait_TimeoutZero_NoBusyLoop(t *testing.T) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	polls := make(chan time.Time)
+	var setupReads atomic.Int64
 	s.SetClock(func() time.Time {
+		// The wait's own setup reads the clock twice before its first query
+		// (last-read stamp, waiter row; MTIX-112.3): those are not polls.
+		if setupReads.Add(1) <= 2 {
+			return inboxWaitTime()
+		}
 		// Observe each actual query at its session touch. Cancellation also
 		// releases a sender if the test fails before receiving the next poll.
 		select {

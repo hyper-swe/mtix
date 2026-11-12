@@ -27,7 +27,7 @@ func writeWorkflowColumns(ctx context.Context, tx *sql.Tx, id string, w workflow
 	_, err := tx.ExecContext(ctx, `
 		UPDATE nodes SET
 		  status          = ?,
-		  updated_at      = ?,
+		  updated_at      = MAX(updated_at, ?),
 		  assignee        = CASE WHEN ? THEN ? ELSE assignee END,
 		  agent_state     = CASE WHEN ? THEN ? ELSE agent_state END,
 		  previous_status = CASE WHEN ? THEN ? ELSE previous_status END,
@@ -56,8 +56,9 @@ func writeWorkflowColumns(ctx context.Context, tx *sql.Tx, id string, w workflow
 // (sync_apply.go) call it after decoding their payload, and are reached only
 // for an event that won (dispatchWithLWW). They pass the event's
 // wall_clock_ts, so a terminal closed_at is the same on every replica
-// whatever order the node's workflow events arrived in, and their apply time
-// as updated_at.
+// whatever order the node's workflow events arrived in, and the event's time
+// (storedEventTime) as updated_at, which is written as MAX(updated_at, that
+// time) so it does not depend on arrival order either.
 func applyWorkflowWinner(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, in workflowInput) (string, error) {
 	id, err := resolveNodeRef(ctx, tx, e)
 	if err != nil {

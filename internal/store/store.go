@@ -33,6 +33,12 @@ type NodeFilter struct {
 	Priority  []int             `json:"priority,omitempty"`
 	Labels    []string          `json:"labels,omitempty"`
 
+	// LabelsAny restricts results to nodes carrying AT LEAST ONE of the listed
+	// labels (any-of; MTIX-255.4). Matching is exact and case-sensitive. It is
+	// independent of Labels, which keeps its all-of meaning. Empty means no
+	// filter.
+	LabelsAny []string `json:"labels_any,omitempty"`
+
 	// Text restricts results to nodes whose title, description or prompt
 	// contains EVERY word, case-insensitively and literally (MTIX-146). Each
 	// word is one entry; the store binds it as an escaped LIKE parameter, so

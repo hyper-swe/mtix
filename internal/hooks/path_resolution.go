@@ -32,6 +32,12 @@ func resolveDeepestStatus(path string, depth int) (string, bool) {
 // read that fails can be exercised. A link that cannot be read is not
 // resolved: the result is incomplete and callers refuse it.
 func resolveLinks(path string, depth int, readlink func(string) (string, error)) (string, bool) {
+	return resolveLinksObserved(path, depth, readlink, nil)
+}
+
+// resolveLinksObserved is resolveLinks that reports each link it meets, by the
+// link's own path, before following it (FR-19.2).
+func resolveLinksObserved(path string, depth int, readlink func(string) (string, error), observe func(link string)) (string, bool) {
 	if !filepath.IsAbs(path) {
 		return filepath.Clean(path), true
 	}
@@ -57,6 +63,9 @@ func resolveLinks(path string, depth int, readlink func(string) (string, error))
 		if info.Mode()&os.ModeSymlink == 0 {
 			cur = next
 			continue
+		}
+		if observe != nil {
+			observe(next)
 		}
 		links++
 		if links > maxLinkExpansions {

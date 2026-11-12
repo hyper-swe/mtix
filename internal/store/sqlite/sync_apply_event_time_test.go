@@ -36,7 +36,7 @@ import (
 //     batch applies;
 //   - a winning done, cancelled or invalidated: closed_at is the event's time
 //     in whole seconds when in range and the apply time when large, and
-//     updated_at is the apply time either way;
+//     updated_at is the same time as closed_at (ADR-006 I1);
 //   - an update_field with a large wall_clock_ts: ordered by wall_clock_ts as
 //     an integer (detectLWWOutcome);
 //   - one event of each of the 12 op types with a large wall_clock_ts: it
@@ -98,6 +98,16 @@ func requireAllNodesReadable(t *testing.T, s *sqlite.Store, raw *sql.DB) {
 	}
 }
 
+// ageNodes sets every node's updated_at before any test event's time, so the
+// first pulled event moves it forward: updated_at only ever moves forward
+// (ADR-006 I1; MTIX-112.17.16.13).
+func ageNodes(t *testing.T, raw *sql.DB) {
+	t.Helper()
+	// Test fixture: a node last touched long before the pulled events.
+	_, err := raw.Exec(`UPDATE nodes SET updated_at = '2000-01-01T00:00:00Z'`)
+	require.NoError(t, err)
+}
+
 // requireCommentAt checks that n carries exactly the annotation of comment
 // event c and that the annotation's created_at and the node's updated_at are
 // the stamped time: want exactly when non-nil, else a time in [before, after]
@@ -146,6 +156,7 @@ func TestApply_CommentEventTime_StoredWithinReadableRange(t *testing.T) {
 			s, raw := replicaWithNode(t)
 			mustCreateNode(t, s, "MTIX-2", "")
 			markEventsPushed(t, raw)
+			ageNodes(t, raw)
 			comment := pulledEvent(t, model.OpComment, "MTIX-1",
 				&model.CommentPayload{AuthorID: "peer-b", Body: "note"}, 2, tt.wall)
 			next := pulledEvent(t, model.OpUpdateField, "MTIX-2", titleUpdate(t, "after"), 3,
@@ -179,8 +190,9 @@ func TestApply_CommentEventTime_StoredWithinReadableRange(t *testing.T) {
 // TestApply_TerminalTransitionEventTime_ClosedAtWithinReadableRange: a
 // winning done, cancelled or invalidated stamps closed_at with the event's
 // time in whole seconds within years 1..9999, and with the apply time (the
-// same value as updated_at) outside it; updated_at is the apply time either
-// way. The node stays readable.
+// same value as updated_at) outside it; updated_at is the same time as
+// closed_at, the event's inside the range (ADR-006 I1). The node stays
+// readable.
 func TestApply_TerminalTransitionEventTime_ClosedAtWithinReadableRange(t *testing.T) {
 	t.Parallel()
 	walls := []eventTimeWall{{"in range", foreignWallClock().UnixMilli()}}
@@ -190,6 +202,7 @@ func TestApply_TerminalTransitionEventTime_ClosedAtWithinReadableRange(t *testin
 			t.Run(string(to)+", "+w.name, func(t *testing.T) {
 				ctx := context.Background()
 				s, raw := replicaWithNode(t)
+				ageNodes(t, raw)
 				ev := pulledEvent(t, model.OpTransitionStatus, "MTIX-1",
 					transition(model.StatusInProgress, to), 2, w.ms)
 
@@ -201,12 +214,15 @@ func TestApply_TerminalTransitionEventTime_ClosedAtWithinReadableRange(t *testin
 				require.NoError(t, err, "GetNode reads the node")
 				require.Equal(t, to, n.Status, "the event applies")
 				require.NotNil(t, n.ClosedAt)
-				require.False(t, n.UpdatedAt.Before(before), "updated_at %s stays the apply time", n.UpdatedAt)
-				require.False(t, n.UpdatedAt.After(after), "updated_at %s stays the apply time", n.UpdatedAt)
 				row := nodeRow(t, raw, "MTIX-1")
 				if w.ms == foreignWallClock().UnixMilli() {
+					// ADR-006 I1: a stored time derives from the event, so every
+					// replica that applies it holds the same updated_at.
 					require.Equal(t, foreignClosedAt, row["closed_at"], "the event's time in whole seconds")
+					require.Equal(t, foreignClosedAt, row["updated_at"], "updated_at is the event's time in whole seconds")
 				} else {
+					require.False(t, n.UpdatedAt.Before(before), "updated_at %s is the apply time", n.UpdatedAt)
+					require.False(t, n.UpdatedAt.After(after), "updated_at %s is the apply time", n.UpdatedAt)
 					require.Equal(t, row["updated_at"], row["closed_at"], "the apply time, as updated_at")
 					require.False(t, n.ClosedAt.Before(before), "closed_at %s is the apply time", n.ClosedAt)
 					require.False(t, n.ClosedAt.After(after), "closed_at %s is the apply time", n.ClosedAt)

@@ -53,7 +53,7 @@ type auditEvent struct {
 
 // DiscardLocal drops the local mutable state (nodes, dependencies, sync
 // events, conflicts, applied events, staged ids, quarantine), rewinds every
-// cursor that indexes into the journal (inbox, hook dispatch, relay
+// cursor that indexes into the journal (inbox, hook dispatch, wake, relay
 // publish), and resets the meta.sync.* sentinels.
 // The DB schema and meta keys remain — only the data is cleared. Use
 // when the user wants to take the hub's state as the new ground truth.
@@ -61,6 +61,9 @@ type auditEvent struct {
 // Atomicity: single tx wrapping every DELETE; rollback on error
 // leaves the local store unchanged.
 func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
+	if guardErr := refuseDiscardRestoredInbox(ctx, s.readDB); guardErr != nil {
+		return guardErr
+	}
 	startedAt := s.clock().UTC()
 	startEvent := auditEvent{
 		Type:      "RECONCILE_START",
@@ -75,6 +78,9 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 	}()
 
 	err = s.WithTx(ctx, func(tx *sql.Tx) error {
+		if guardErr := refuseDiscardRestoredInbox(ctx, tx); guardErr != nil {
+			return guardErr
+		}
 		for _, stmt := range []string{
 			`DELETE FROM sync_conflicts`,
 			`DELETE FROM applied_events`,
@@ -91,6 +97,7 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			// these dropped would strand the inbox the other way.
 			`DELETE FROM agent_inbox_cursor`,
 			`DELETE FROM agent_inbox_ack`,
+			`DELETE FROM agent_inbox_cursor_marks`, // keyed to the same reusable rowids (MTIX-112.3)
 			`DELETE FROM inbox_deliveries`,
 			// Same reset, the dispatcher's side of it (MTIX-76). The
 			// scan floor is worse than the inbox watermark: every floor
@@ -157,7 +164,8 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 				return fmt.Errorf("DiscardLocal: %s: %w", stmt, txErr)
 			}
 		}
-		return nil
+		// FR-20, MTIX-112.2.2.1: reset wake progress in the journal wipe transaction.
+		return trimWakeToJournal(ctx, tx)
 	})
 	if err != nil {
 		return err

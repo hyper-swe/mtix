@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // The kinds of AutoImportRefusal (MTIX-95.31.2).
@@ -46,6 +48,9 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 	mergeWay := "merge them with mtix import .mtix/tasks.json --mode merge (" + mergeKeeps + ")"
 	if refusal.Synced {
 		mergeWay = syncedMergeWays // a merge import is refused on a project that syncs (MTIX-112.17.16.16)
+	}
+	if refusal.RestoredInbox {
+		replace, keepFile = sqlite.RestoredInboxRecovery, sqlite.RestoredInboxRecovery
 	}
 	switch refusal.Kind {
 	case refusalNewerSchema:

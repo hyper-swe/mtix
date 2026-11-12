@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # MTIX-112.17.42: pull requests run one macOS job; the full macOS matrix runs
+  # on every push to main and nightly (default branch only).
+  schedule:
+    - cron: "17 3 * * *"
 
 permissions:
   contents: read
@@ -31,7 +35,7 @@ jobs:
         with:
           go-version-file: go.mod
       - run: go mod verify
-      # MTIX-112.17.29: SQLite runs in three test shards below.
+      # MTIX-112.17.29/MTIX-112.51: SQLite and service run in test shards below.
       # MTIX-112.17.22.1: cmd/mtix runs in test-go-cmd below. This job keeps
       # the remaining packages' explicit list. Every
       # OS validates the complete package partition before selection.
@@ -55,7 +59,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-latest]
+        # MTIX-112.17.42: pull_request runs generate only the Linux legs; push
+        # and schedule runs add macOS. An absent leg is absent from the matrix,
+        # so the aggregate below never has to tolerate a skipped job.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-22.04"]' || '["ubuntu-22.04","macos-latest"]') }}
         shard: ["1", "2", "3"]
     runs-on: ${{ matrix.os }}
     steps:
@@ -77,6 +84,38 @@ jobs:
           pattern=$(bash scripts/ci-go-shards.sh test-pattern internal/store/sqlite 3 "$SHARD")
           go test ./internal/store/sqlite/ -race -count=1 -timeout 20m -run "$pattern"
 
+  test-go-service:
+    # MTIX-112.51: cumulative service race work approached the 20m budget.
+    # Reuse the remote bar's two exact test-name shards on each OS.
+    name: test-go-service (${{ matrix.os }}, shard ${{ matrix.shard }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # MTIX-112.17.42: pull_request runs generate only the Linux legs; push
+        # and schedule runs add macOS. An absent leg is absent from the matrix,
+        # so the aggregate below never has to tolerate a skipped job.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-22.04"]' || '["ubuntu-22.04","macos-latest"]') }}
+        shard: ["1", "2"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - run: go mod verify
+      - name: Verify exact package coverage
+        run: bash scripts/ci-go-shards.sh check
+      - name: Verify exact service test coverage
+        run: bash scripts/ci-go-shards.sh test-check internal/service 2
+      - name: Run service shard race tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          pattern=$(bash scripts/ci-go-shards.sh test-pattern internal/service 2 "$SHARD")
+          go test ./internal/service/ -race -count=1 -timeout 20m -run "$pattern"
+
   test-go-cmd:
     # MTIX-112.17.22.1: the whole-package cmd/mtix race run took 19-21 minutes
     # of the 20m go test timeout on one job (PRs failed at ~20m51s). Its tests
@@ -91,7 +130,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-22.04, macos-latest]
+        # MTIX-112.17.42: pull_request runs generate only the Linux legs; push
+        # and schedule runs add macOS. An absent leg is absent from the matrix,
+        # so the aggregate below never has to tolerate a skipped job.
+        os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-22.04"]' || '["ubuntu-22.04","macos-latest"]') }}
         shard: ["1", "2", "3"]
     runs-on: ${{ matrix.os }}
     steps:
@@ -115,20 +157,47 @@ jobs:
 
   test-go:
     name: test-go
-    needs: [test-go-shards, test-go-sqlite, test-go-cmd]
+    needs: [test-go-shards, test-go-sqlite, test-go-cmd, test-go-service]
     if: ${{ always() }}
     runs-on: ubuntu-22.04
+    # MTIX-112.17.42: actions read is added to this job only, so the health
+    # step can list main's runs and jobs. Nothing else is widened.
+    permissions:
+      contents: read
+      actions: read
     steps:
+      # The gate script always comes from the BASE branch, never from the PR,
+      # so a PR cannot quietly edit its own gate. A PR that changes the script
+      # or this step is a gate change: reviewers treat it as one, and it merges
+      # through the main-macos-fix label. The ref is the base BRANCH tip, not
+      # the base SHA stored at the PR's last sync (that can predate the script,
+      # MTIX-112.17.42.5). No repository input, so it is always the base repo.
+      - name: Check out the base branch's health script
+        if: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'main-macos-fix') }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.base_ref }}
+          persist-credentials: false
       - name: Require every Go shard to succeed
         env:
           SHARD_RESULT: ${{ needs.test-go-shards.result }}
           SQLITE_RESULT: ${{ needs.test-go-sqlite.result }}
           CMD_RESULT: ${{ needs.test-go-cmd.result }}
+          SERVICE_RESULT: ${{ needs.test-go-service.result }}
         run: |
-          if [ "$SHARD_RESULT" != success ] || [ "$SQLITE_RESULT" != success ] || [ "$CMD_RESULT" != success ]; then
-            echo "Go race shards did not all succeed: packages=$SHARD_RESULT sqlite=$SQLITE_RESULT cmd=$CMD_RESULT" >&2
+          if [ "$SHARD_RESULT" != success ] || [ "$SQLITE_RESULT" != success ] || [ "$CMD_RESULT" != success ] || [ "$SERVICE_RESULT" != success ]; then
+            echo "Go race shards did not all succeed: packages=$SHARD_RESULT sqlite=$SQLITE_RESULT cmd=$CMD_RESULT service=$SERVICE_RESULT" >&2
             exit 1
           fi
+      - name: Note the main macOS override
+        if: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'main-macos-fix') }}
+        run: echo "::notice::label main-macos-fix is set; the main macOS state is not enforced for this PR"
+      - name: Require main macOS CI to be green
+        if: ${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'main-macos-fix') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/main-macos-health.sh
 
   test-web:
     runs-on: ubuntu-22.04

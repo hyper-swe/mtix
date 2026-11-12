@@ -73,6 +73,17 @@ zero has no limit, and already pending events return even if the initial
 database lookup outlasts a positive timeout. That lookup remains interruptible
 by caller cancellation (CLI SIGINT or SIGTERM). After an empty lookup, waiting
 for new events uses only the remaining timeout budget measured from entry.
+The timeout is wall-clock time, not run time: on every 250 ms poll tick the wait
+ends when either the monotonic elapsed time or the wall-clock elapsed time
+reaches the timeout, whichever comes first. The wall clock covers a sleeping
+machine (monotonic time pauses), and the monotonic time covers a wall clock
+stepped backwards, so a sleeping machine does not stretch it, and an empty wait
+exits 5 within about one tick of the deadline once the machine is awake. With a
+wake policy, a parked wait is cheap: each tick only counts the inbox, and the
+full read with the wake policy runs when the counts change and at least every 2
+seconds, so a change in hub state, permissions or budget window is noticed
+within about 2 seconds. Without a wake policy, each tick runs the plain inbox
+list query.
 Events mean exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM
 means exit 7.
 A negative timeout is refused. Keep foreground waits within the harness's tool
@@ -97,6 +108,8 @@ CLI, REST and MCP use the configured primary project when no project is supplied
 `mtix update TEST-1 --type refactor` changes work classification; `mtix update TEST-1 --type=` clears it. On updates, omission preserves the current classification; an empty string clears it to SQL NULL. CLI, MCP `mtix_update`, REST PATCH and gRPC updates validate the same seven values. Their JSON `issue_type` field may be omitted or null to preserve, or `""` to clear; the proto field uses presence and explicit `ISSUE_TYPE_UNSPECIFIED` to clear. Existing unclassified nodes remain unset; labels do not imply a type. Default node JSON omits an unset `issue_type`; explicit field projections and exports include it as an empty string.
 
 `mtix list --type story --issue-type bug` combines hierarchy and work classification. List `--type` filters `node_type` (epic, story, issue, micro); create/update `--type` sets `issue_type`. List `--issue-type bug,feature` matches either classification and rejects invalid values. Default list text, JSON and `--fields id,node_type,issue_type` expose both classifications. Export/import preserves classified and unset values.
+
+`mtix list --labels desk:now,desk:backlog` filters by label: a node matches when it carries ANY listed label (exact, case-sensitive, comma-separated, colons allowed; blank entries are ignored, an all-blank value means no label filter). `mtix search <words> --labels a,b`, the MCP tools `mtix_list` and `mtix_search` (`labels` argument) and REST `GET /api/v1/search?labels=a,b` behave the same and combine with the other filters by AND. An all-of label filter is not offered; run two queries and intersect only if you need it.
 
 Sync carries classification on `create_node` and on `update_field` with `field_name: "issue_type"` and a JSON string `new_value`; `""` clears it. Apply validates values before writes, deduplication, held-event acknowledgement and LWW comparison, rejecting unknown types and non-string values even when an event loses or is already held. The hub stores and forwards these field events under its envelope checks. Upgrade every replica before emitting classification updates. A 0.5.4 replica quarantines `issue_type` updates and continues pulling other events. These updates remain quarantined until the replica is upgraded. After upgrading, run `mtix sync pull` to retry them automatically; retry runs locally before contacting the hub. Updates that apply successfully leave the quarantine. Use `mtix sync quarantine list` to inspect any events still held.
 

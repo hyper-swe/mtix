@@ -70,10 +70,16 @@ ORDER BY e.rowid ASC`
 // session. Events acked by ack --through carry no time: that ack prunes the
 // per-event rows below the watermark.
 func (s *Store) InboxHistory(ctx context.Context, agentID string) ([]InboxHistoryEntry, error) {
+	return inboxHistory(ctx, s.readDB, agentID)
+}
+
+// inboxHistory is InboxHistory read through q, a *sql.DB or a *sql.Tx, so a
+// caller can read it inside its own snapshot (ExportInboxCarry, MTIX-112.49).
+func inboxHistory(ctx context.Context, q inboxQuerier, agentID string) ([]InboxHistoryEntry, error) {
 	if agentID == "" {
 		return nil, fmt.Errorf("inbox history: agent id required: %w", model.ErrInvalidInput)
 	}
-	rows, err := s.readDB.QueryContext(ctx, inboxHistorySQL, agentID, agentID, agentID, agentID)
+	rows, err := q.QueryContext(ctx, inboxHistorySQL, agentID, agentID, agentID, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("inbox history %q: %w", agentID, err)
 	}
@@ -155,8 +161,8 @@ func CountUnackedInboxFile(ctx context.Context, dbPath string) (int64, error) {
 	if err != nil {
 		return 0, fmt.Errorf("count unacknowledged inbox events: %w", err)
 	}
-	if info.Size() == 0 {
-		return 0, fmt.Errorf("count unacknowledged inbox events: %s is 0 bytes, not a database", dbPath)
+	if info.Size() <= 1 {
+		return 0, fmt.Errorf("count unacknowledged inbox events: %s has %d bytes (empty or one-byte database); SQLite read skipped", dbPath, info.Size())
 	}
 	n, err := countUnackedRO(ctx, dbPath, "mode=ro")
 	if err != nil {

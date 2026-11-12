@@ -73,6 +73,8 @@ func payloadMutationCases() []payloadFailureCase {
 	ctx := context.Background()
 	return []payloadFailureCase{
 		{"delete cascade", model.OpDelete, &model.DeletePayload{}, 1, payloadIndependentDelete, func(s *Store) error { return s.DeleteNode(ctx, "TEST-1.1", true, "test-agent") }},
+		{"delete cascade descendant", model.OpDelete, &model.DeletePayload{}, 2, payloadIndependentDelete, func(s *Store) error { return s.DeleteNode(ctx, "TEST-1.1", true, "test-agent") }},
+		{"cancel cascade descendant", model.OpTransitionStatus, &model.TransitionStatusPayload{From: model.StatusOpen, To: model.StatusCancelled, Reason: "cancelled"}, 2, payloadBlockingDependency, func(s *Store) error { return s.CancelNode(ctx, "TEST-1.1", "cancelled", "test-agent", true) }},
 		{"cancel cascade", model.OpTransitionStatus, &model.TransitionStatusPayload{From: model.StatusInProgress, To: model.StatusCancelled, Reason: "cancelled"}, 1, payloadBlockingDependency, func(s *Store) error { return s.CancelNode(ctx, "TEST-1.1", "cancelled", "test-agent", true) }},
 		{"transition", model.OpTransitionStatus, &model.TransitionStatusPayload{From: model.StatusInProgress, To: model.StatusDone, Reason: "finished"}, 1, payloadBlockingDependency, func(s *Store) error {
 			return s.TransitionStatus(ctx, "TEST-1.1", model.StatusDone, "finished", "test-agent")
@@ -148,7 +150,18 @@ func payloadSecondaryCases() []payloadFailureCase {
 }
 
 func allPayloadCases() []payloadFailureCase {
-	return append(append(payloadMutationCases(), payloadUpdateCases()...), payloadSecondaryCases()...)
+	cases := append(append(payloadMutationCases(), payloadUpdateCases()...), payloadSecondaryCases()...)
+	// Transition events now carry the exact stored closed_at. The fixture's
+	// injected clock fixes completion timestamps; other transitions carry NULL.
+	for _, tc := range cases {
+		if p, ok := tc.want.(*model.TransitionStatusPayload); ok {
+			p.ClosedAt = json.RawMessage(`null`)
+			if p.To == model.StatusDone || p.To == model.StatusCancelled {
+				p.ClosedAt = json.RawMessage(`"2026-01-02T03:04:05Z"`)
+			}
+		}
+	}
+	return cases
 }
 
 func TestPayloadEncoding_Failure_RollsBackEveryMutation(t *testing.T) {
@@ -247,7 +260,18 @@ func TestPayloadEncoding_DefaultEncoder_PreservesTypedPayloads(t *testing.T) {
 				tc.prepare(t, s)
 			}
 			before := payloadRows(t, s.readDB, `SELECT event_id FROM sync_events ORDER BY event_id`)
-			expected, err := model.EncodePayload(tc.want)
+			want := tc.want
+			switch p := tc.want.(type) {
+			case *model.ClaimPayload:
+				expectedValue := *p
+				expectedValue.ClosedAt = json.RawMessage(`null`)
+				want = &expectedValue
+			case *model.UnclaimPayload:
+				expectedValue := *p
+				expectedValue.ClosedAt = json.RawMessage(`null`)
+				want = &expectedValue
+			}
+			expected, err := model.EncodePayload(want)
 			require.NoError(t, err)
 			require.NoError(t, tc.run(s))
 			var count int
@@ -259,6 +283,15 @@ func TestPayloadEncoding_DefaultEncoder_PreservesTypedPayloads(t *testing.T) {
 			}
 			if tc.failAt > 1 {
 				expectedEvents = 3
+			}
+			// MTIX-112.17.16.12: a cascade also emits one event per descendant
+			// it removes or cancels (TEST-1.1.1 is live in the fixture).
+			cascadeEvents := map[string]int{
+				"delete cascade": 2, "delete cascade descendant": 2,
+				"cancel cascade": 3, "cancel cascade descendant": 3,
+			}
+			if n, ok := cascadeEvents[tc.name]; ok {
+				expectedEvents = n
 			}
 			assert.Equal(t, len(before)+expectedEvents, len(payloadRows(t, s.readDB, `SELECT event_id FROM sync_events ORDER BY event_id`)), "complete event sequence must be recorded")
 		})

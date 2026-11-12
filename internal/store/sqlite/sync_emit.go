@@ -52,6 +52,11 @@ type emitParams struct {
 	Author      string
 	Payload     json.RawMessage
 	WallClockTS int64
+	// Clock supplies WallClockTS when it is zero. Callers pass the store's
+	// injected clock (FR-18.9, ADR-006 I1); nil reads the process clock.
+	Clock func() time.Time
+	// Only a repair of a legacy winner preserves the historical payload.
+	LegacyWorkflowPayload bool
 	// EventID, when set, is used as the event id instead of generating a
 	// fresh one. create_node passes the id it pre-generated so the node's
 	// uid can equal its create-event id (ADR-003 §2 / MTIX-30.1). Empty
@@ -71,6 +76,10 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 	if err := enforceQueueLimit(ctx, tx); err != nil {
 		return err
 	}
+	p, err := prepareEmittedPayload(ctx, tx, p)
+	if err != nil {
+		return err
+	}
 
 	authorID := sanitizeAuthorID(resolveEmitAuthor(ctx, tx, p.Author))
 	projectPrefix := projectPrefixFromNodeID(p.NodeID)
@@ -85,7 +94,7 @@ func emitEvent(ctx context.Context, tx *sql.Tx, p emitParams) error {
 
 	wallTS := p.WallClockTS
 	if wallTS == 0 {
-		wallTS = time.Now().UTC().UnixMilli()
+		wallTS = clockOrDefault(p.Clock)().UTC().UnixMilli()
 	}
 
 	eventID := p.EventID

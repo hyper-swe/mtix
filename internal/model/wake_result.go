@@ -77,6 +77,10 @@ const (
 	WakeStateQueued WakeState = "queued"
 	// WakeStateUndeliverable means no route could deliver; the reason says why.
 	WakeStateUndeliverable WakeState = "undeliverable"
+	// WakeStateStalled means an addressed message is unacknowledged, older than
+	// wake.confirm_window, and no hook waiter is armed: the session's turn has not ended, so
+	// nothing will wake it. It is derived at read time, never written (MTIX-112.40.12).
+	WakeStateStalled WakeState = "stalled"
 	// WakeStateUnconfirmed means a nudge was sent and the confirmation window passed unseen.
 	WakeStateUnconfirmed WakeState = "unconfirmed"
 	// WakeStateUnknown means the state could not be determined; the reason carries the cause.
@@ -87,7 +91,7 @@ const (
 func WakeStates() []WakeState {
 	return []WakeState{
 		WakeStateConfirmed, WakeStateHeld, WakeStateNoDispatcher, WakeStateNoLiveSession, WakeStateNudged,
-		WakeStateOff, WakeStateQueued, WakeStateUndeliverable, WakeStateUnconfirmed, WakeStateUnknown,
+		WakeStateOff, WakeStateQueued, WakeStateStalled, WakeStateUndeliverable, WakeStateUnconfirmed, WakeStateUnknown,
 	}
 }
 

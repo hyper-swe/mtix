@@ -65,7 +65,7 @@ func NewHostBoard(o HostBoardOptions) (*HostBoard, error) {
 		o.Adapters = []WakeAdapter{inboxOnlyAdapter{}}
 	}
 	b := &HostBoard{opts: o}
-	guard, err := NewWakeDispatcher(WakeDispatcherOptions{Store: o.Store, Alerts: NewAlerts(o.State, o.Clock), Adapters: o.Adapters, BudgetState: o.State, Settings: o.State, Clock: o.Clock, HostID: o.Host.HostID, UID: o.Host.UID, CandidateFilter: func(ctx context.Context, k model.WakeKey) (bool, error) { return b.scanner.Gate(ctx, k) }})
+	guard, err := NewWakeDispatcher(WakeDispatcherOptions{Store: o.Store, Alerts: NewAlerts(o.State, o.Clock), Adapters: o.Adapters, BudgetState: o.State, Settings: o.State, Clock: o.Clock, Logger: o.Logger, HostID: o.Host.HostID, UID: o.Host.UID, CandidateFilter: func(ctx context.Context, k model.WakeKey) (bool, error) { return b.scanner.Gate(ctx, k) }})
 	if err != nil {
 		return nil, err
 	}

@@ -26,6 +26,10 @@ import (
 // when a row no longer describes the node's current delete.
 // Recalculates parent progress excluding the deleted subtree per FR-5.7.
 //
+// Sync (MTIX-112.17.16.12): it emits one delete event for the target and one
+// for each descendant a cascade removes, because the applier never cascades.
+// A descendant that was already deleted keeps its earlier event and gets none.
+//
 // Returns ErrNotFound if the node does not exist or is already deleted.
 func (s *Store) DeleteNode(ctx context.Context, id string, cascade bool, deletedBy string) error {
 	return s.deleteNode(ctx, id, deleteOptions{cascade: cascade, deletedBy: deletedBy, rootID: id})
@@ -71,23 +75,22 @@ func (s *Store) deleteNode(ctx context.Context, id string, opts deleteOptions) e
 		}
 
 		// Record this node in the requested recovery group (MTIX-107.20).
-		if err := recordCascadeRoot(ctx, tx, id, opts, now); err != nil {
-			return err
+		if rootErr := recordCascadeRoot(ctx, tx, id, opts, now); rootErr != nil {
+			return rootErr
 		}
 
 		// Cascade to descendants if requested.
+		var cascaded []string
 		if cascade {
-			if err := cascadeDelete(ctx, tx, id, deletedBy, now); err != nil {
+			cascaded, err = cascadeDelete(ctx, tx, id, deletedBy, now)
+			if err != nil {
 				return fmt.Errorf("cascade delete from %s: %w", id, err)
 			}
 		}
 
-		if err := s.emitPayload(ctx, tx, emitParams{
-			NodeID:      id,
-			ProjectCode: projectPrefixFromNodeID(id),
-			OpType:      model.OpDelete,
-			Author:      deletedBy,
-		}, &model.DeletePayload{}); err != nil {
+		// MTIX-112.17.16.12: the root's delete event, then one for each
+		// descendant the cascade removed.
+		if err := s.emitDeleteEvents(ctx, tx, append([]string{id}, cascaded...), deletedBy); err != nil {
 			return err
 		}
 
@@ -138,6 +141,24 @@ func recordCascadeRoot(ctx context.Context, tx *sql.Tx, id string, opts deleteOp
 	return nil
 }
 
+// emitDeleteEvents emits one sync delete event for each id, in order. A cascade
+// delete passes the root and every descendant it removed, because the applier
+// never cascades (SYNC-DESIGN section 8.3: each descendant carries its own
+// delete event) (MTIX-112.17.16.12).
+func (s *Store) emitDeleteEvents(ctx context.Context, tx *sql.Tx, ids []string, deletedBy string) error {
+	for _, id := range ids {
+		if err := s.emitPayload(ctx, tx, emitParams{
+			NodeID:      id,
+			ProjectCode: projectPrefixFromNodeID(id),
+			OpType:      model.OpDelete,
+			Author:      deletedBy,
+		}, &model.DeletePayload{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // cascadeDelete soft-deletes all descendants of a node per FR-3.3.
 // Selects the subtree with a LIKE pattern on the dot-notation IDs. The
 // parent ID is escaped (escapeLIKEPrefix) so a '_' in its project prefix
@@ -148,14 +169,23 @@ func recordCascadeRoot(ctx context.Context, tx *sql.Tx, id string, opts deleteOp
 // with the deleted_at and deleted_by it is about to write (MTIX-95.18). A
 // descendant that is already deleted was removed by an earlier delete; it
 // keeps that delete's row and is not restored when parentID is undeleted.
-func cascadeDelete(ctx context.Context, tx *sql.Tx, parentID, deletedBy, now string) error {
+//
+// It returns the ids it soft-deleted, ordered by id, so the caller can emit
+// one delete event for each (MTIX-112.17.16.12). A descendant that was
+// already deleted is not returned and gets no event.
+func cascadeDelete(ctx context.Context, tx *sql.Tx, parentID, deletedBy, now string) ([]string, error) {
 	descendants := escapeLIKEPrefix(parentID) + ".%"
+
+	ids, err := liveDescendantIDs(ctx, tx, parentID, descendants)
+	if err != nil {
+		return nil, err
+	}
 
 	// Record the stamped cascade root of every live descendant (escaped
 	// prefix, parameterized, ESCAPE '\'). Stale rows on live nodes are
 	// overwritten, root and stamp. The WHERE clause also keeps SQLite from
 	// reading ON CONFLICT as a join constraint of the SELECT.
-	if _, err := tx.ExecContext(ctx,
+	if _, err = tx.ExecContext(ctx,
 		`INSERT INTO cascade_deletes (node_id, root_id, deleted_at, deleted_by)
 		 SELECT id, ?, ?, ? FROM nodes
 		  WHERE id LIKE ? ESCAPE '\' AND deleted_at IS NULL
@@ -163,21 +193,52 @@ func cascadeDelete(ctx context.Context, tx *sql.Tx, parentID, deletedBy, now str
 		     deleted_at = excluded.deleted_at, deleted_by = excluded.deleted_by`,
 		parentID, now, deletedBy, descendants,
 	); err != nil {
-		return fmt.Errorf("record cascade of %s: %w", parentID, err)
+		return nil, fmt.Errorf("record cascade of %s: %w", parentID, err)
 	}
 
 	// Soft-delete all live descendants: every id that starts with the
 	// literal "<parentID>." (escaped prefix, parameterized, ESCAPE '\').
-	_, err := tx.ExecContext(ctx,
+	_, err = tx.ExecContext(ctx,
 		`UPDATE nodes SET deleted_at = ?, deleted_by = ?, updated_at = ?
 		 WHERE id LIKE ? ESCAPE '\' AND deleted_at IS NULL`,
 		now, deletedBy, now, descendants,
 	)
 	if err != nil {
-		return fmt.Errorf("cascade delete descendants of %s: %w", parentID, err)
+		return nil, fmt.Errorf("cascade delete descendants of %s: %w", parentID, err)
 	}
 
-	return nil
+	return ids, nil
+}
+
+// liveDescendantIDs returns, ordered by id, the live descendants of parentID
+// that a cascade delete is about to remove (MTIX-112.17.16.12). pattern is the
+// escaped "<parentID>.%" prefix.
+func liveDescendantIDs(ctx context.Context, tx *sql.Tx, parentID, pattern string) (ids []string, err error) {
+	// The live descendants (escaped prefix, parameterized, ESCAPE '\'), read
+	// before the update so each one gets its own sync delete event.
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id FROM nodes WHERE id LIKE ? ESCAPE '\' AND deleted_at IS NULL ORDER BY id`,
+		pattern,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list descendants of %s to delete: %w", parentID, err)
+	}
+	defer func() {
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close descendants of %s: %w", parentID, closeErr)
+		}
+	}()
+	for rows.Next() {
+		var id string
+		if scanErr := rows.Scan(&id); scanErr != nil {
+			return nil, fmt.Errorf("scan descendant of %s: %w", parentID, scanErr)
+		}
+		ids = append(ids, id)
+	}
+	if iterErr := rows.Err(); iterErr != nil {
+		return nil, fmt.Errorf("list descendants of %s to delete: %w", parentID, iterErr)
+	}
+	return ids, nil
 }
 
 // UndeleteNode restores a soft-deleted node and the descendants that the same

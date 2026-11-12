@@ -155,6 +155,20 @@ func TestStatusRepair_ImportedStateEqualToOlderEvent_FlaggedByNewerActivity(t *t
 	}
 }
 
+// dropCascadeEvent removes the cancel event a cascade emitted for id, which
+// models a store written before MTIX-112.17.16.12: those cascades emitted no
+// event for a descendant, and such stores are still in the field.
+func dropCascadeEvent(t *testing.T, raw *sql.DB, id string) {
+	t.Helper()
+	res, err := raw.Exec(`DELETE FROM sync_events WHERE node_id = ? AND op_type = ?
+		AND lamport_clock = (SELECT MAX(lamport_clock) FROM sync_events WHERE node_id = ? AND op_type = ?)`,
+		id, string(model.OpTransitionStatus), id, string(model.OpTransitionStatus))
+	require.NoError(t, err)
+	n, err := res.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, n, "the cascade's event for %s", id)
+}
+
 // TestStatusRepairDiffs_CancelledNodeWithNewerAncestorCancel_Flagged: a
 // cancelled node whose derived status is not terminal is flagged, never
 // applied without force, when any ancestor holds a cancel event newer than
@@ -180,12 +194,14 @@ func TestStatusRepairDiffs_CancelledNodeWithNewerAncestorCancel_Flagged(t *testi
 			_, err := raw.Exec(`UPDATE nodes SET deleted_at = ? WHERE id = 'MTIX-1'`, replayStamp())
 			require.NoError(t, err)
 		}, "MTIX-1.1", true},
-		{"a parent cascade, the parent reopened", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
+		{"a legacy parent cascade, the parent reopened", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
+			dropCascadeEvent(t, raw, "MTIX-1.1")
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
 		}, "MTIX-1.1", true},
-		{"a grandparent cascade over a done parent, reopened", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
+		{"a legacy grandparent cascade over a done parent, reopened", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
+			dropCascadeEvent(t, raw, "MTIX-1.1.1")
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
 		}, "MTIX-1.1.1", true},
 		{"a parent whose activity cannot be read", func(t *testing.T, _ *sqlite.Store, raw *sql.DB) {
@@ -286,11 +302,12 @@ func TestStatusRepairDiffs_WinnerRuleResiduals_NeverAppliedWithoutForce(t *testi
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "restore", "agent-a"))
 			require.NotEqual(t, nullColumn, nodeRow(t, raw, "MTIX-1")["closed_at"], "the restore keeps closed_at")
 		}, ""},
-		{"cancelled and reopened, then a parent cascade, parent reopened", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
+		{"cancelled and reopened, then a legacy parent cascade, parent reopened", func(t *testing.T, s *sqlite.Store, raw *sql.DB) {
 			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1.1", "dropped", "agent-a", false))
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1.1", model.StatusOpen, "reopen", "agent-a"))
 			require.NoError(t, s.CancelNode(ctx, "MTIX-1", "dropped", "agent-a", true))
+			dropCascadeEvent(t, raw, "MTIX-1.1")
 			require.NoError(t, s.TransitionStatus(ctx, "MTIX-1", model.StatusOpen, "reopen", "agent-a"))
 		}, "MTIX-1.1"},
 		{"auto-blocked after its claim, blocker unresolved", func(t *testing.T, s *sqlite.Store, _ *sql.DB) {
@@ -443,28 +460,35 @@ func TestStatusRepairDiffs_OlderAssigneeUpdate_DoesNotOwnTheColumn(t *testing.T)
 // event carries the winner's wall clock, so a replica that already holds the
 // winner stamps the same closed_at when it applies the repair event.
 func TestRepairNodeStatus_RepairEvent_OtherReplicaKeepsItsClosedAt(t *testing.T) {
-	ctx := context.Background()
-	a, rawA := replicaWithPendingNode(t)
-	require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-a"))
-	require.NoError(t, a.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
-	done := eventIDOf(t, rawA, "MTIX-1", model.OpTransitionStatus)
-	// The done was made on 2026-09-01, well before the repair.
-	_, err := rawA.Exec(`UPDATE sync_events SET wall_clock_ts = ? WHERE event_id = ?`,
-		foreignWallClock().UnixMilli(), done)
-	require.NoError(t, err)
-	b, rawB := mutationTestStore(t)
-	pullEvents(t, b, pushPendingOwnEvents(t, rawA))
-	require.Equal(t, foreignClosedAt, nodeRow(t, rawB, "MTIX-1")["closed_at"])
-	replayClaimAsBefore952(t, rawA, "MTIX-1", "agent-a")
-
-	_, applied, err := a.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
-	require.NoError(t, err)
-	require.True(t, applied)
-	pullEvents(t, b, pushPendingOwnEvents(t, rawA))
-
-	row := nodeRow(t, rawB, "MTIX-1")
-	require.Equal(t, "done", row["status"])
-	require.Equal(t, foreignClosedAt, row["closed_at"], "the other replica keeps the completion time")
+	for _, test := range []struct {
+		name   string
+		legacy bool
+	}{{"metadata", false}, {"legacy", true}} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := t.Context()
+			a, rawA := replicaWithPendingNode(t)
+			a.SetClock(foreignWallClock)
+			require.NoError(t, a.ClaimNode(ctx, "MTIX-1", "agent-a"))
+			require.NoError(t, a.TransitionStatus(ctx, "MTIX-1", model.StatusDone, "finished", "agent-a"))
+			done := eventIDOf(t, rawA, "MTIX-1", model.OpTransitionStatus)
+			if test.legacy {
+				_, err := rawA.Exec(`UPDATE sync_events SET wall_clock_ts = ?, payload = json_remove(payload, '$.closed_at') WHERE event_id = ?`, foreignWallClock().UnixMilli(), done)
+				require.NoError(t, err)
+			}
+			b, rawB := mutationTestStore(t)
+			pullEvents(t, b, pushPendingOwnEvents(t, rawA))
+			require.Equal(t, foreignClosedAt, nodeRow(t, rawB, "MTIX-1")["closed_at"])
+			replayClaimAsBefore952(t, rawA, "MTIX-1", "agent-a")
+			a.SetClock(func() time.Time { return foreignWallClock().Add(24 * time.Hour) })
+			_, applied, err := a.RepairNodeStatus(ctx, "MTIX-1", "repairer", false)
+			require.NoError(t, err)
+			require.True(t, applied)
+			pullEvents(t, b, pushPendingOwnEvents(t, rawA))
+			row := nodeRow(t, rawB, "MTIX-1")
+			require.Equal(t, "done", row["status"])
+			require.Equal(t, foreignClosedAt, row["closed_at"], "repair preserves carried completion time; legacy events still derive it")
+		})
+	}
 }
 
 // TestStatusRepairDiffs_StoredAssigneeOfNoOlderClaim_Flagged: the stored

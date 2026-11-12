@@ -59,7 +59,7 @@ func (a syncApplier) applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.S
 	if err := refusePendingNumber(ctx, tx, e.EventID, p.ParentID); err != nil {
 		return err
 	}
-	now := a.clock().UTC().Format(time.RFC3339)
+	now := a.storedEventTime(e)
 
 	labelsJSON := "[]"
 	if len(p.Labels) > 0 {
@@ -197,13 +197,13 @@ func (a syncApplier) applyUpdateField(ctx context.Context, tx *sql.Tx, e *model.
 	if err != nil {
 		return fmt.Errorf("apply update_field %s: decode value: %w", format.EventID(e.EventID), err)
 	}
-	now := a.clock().UTC().Format(time.RFC3339)
+	now := a.storedEventTime(e)
 	if p.FieldName == "issue_type" {
 		return applyIssueTypeField(ctx, tx, id, value, now)
 	}
 	// SQL is constructed from a whitelisted column name; the value is
 	// always a bound parameter.
-	stmt := "UPDATE nodes SET " + p.FieldName + " = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL"
+	stmt := "UPDATE nodes SET " + p.FieldName + " = ?, updated_at = MAX(updated_at, ?) WHERE id = ? AND deleted_at IS NULL"
 	if _, err = tx.ExecContext(ctx, stmt, value, now, id); err != nil {
 		return err
 	}
@@ -346,9 +346,14 @@ func (a syncApplier) applyComment(ctx context.Context, tx *sql.Tx, e *model.Sync
 	// The event's own time (eventTime, MTIX-95.26), not the apply time, so two
 	// replicas applying the same events in any order write byte-identical rows.
 	at := eventTime(e.WallClockTS, a.clock().UTC())
-	annotations = append(annotations, model.Annotation{
-		ID: e.EventID, Author: p.AuthorID, Text: p.Body, CreatedAt: at,
-	})
+	if p.Annotation != nil {
+		annotations, err = applyAnnotationSnapshot(ctx, tx, e, p, annotations)
+		if err != nil {
+			return err
+		}
+	} else {
+		annotations = appendLegacyAnnotation(annotations, e, p, at)
+	}
 	// Sort by (CreatedAt, ID) so the on-disk list order is independent
 	// of apply order. Two replicas converging on the same set of
 	// comments produce byte-identical annotations columns.
@@ -358,7 +363,7 @@ func (a syncApplier) applyComment(ctx context.Context, tx *sql.Tx, e *model.Sync
 		return fmt.Errorf("encode annotations: %w", err)
 	}
 	_, err = tx.ExecContext(ctx,
-		`UPDATE nodes SET annotations = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL`,
+		`UPDATE nodes SET annotations = ?, updated_at = MAX(updated_at, ?) WHERE id = ? AND deleted_at IS NULL`,
 		string(encoded), at.Format(time.RFC3339), id,
 	)
 	return err

@@ -128,22 +128,27 @@ func runBackup(path string) error {
 // newExportCmd creates the mtix export command per FR-6.3.
 func newExportCmd() *cobra.Command {
 	var format string
+	var boardOnly bool
 
 	cmd := &cobra.Command{
 		Use:   "export",
 		Args:  cobra.NoArgs,
-		Short: "Export nodes to JSON",
+		Short: "Export board and addressed inbox to private JSON",
+		Long:  "Export board and addressed inbox to private JSON. Never commit the default output. Use --board-only for a journal-free snapshot; board comments may still contain private text.",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runExport(format)
+			return runExportWithInbox(format, !boardOnly)
 		},
 	}
 
 	cmd.Flags().StringVar(&format, "format", "json", "Export format (json)")
+	cmd.Flags().BoolVar(&boardOnly, "board-only", false, "Omit the inbox journal, including for temporary mirror files and pipes")
 
 	return cmd
 }
 
-func runExport(format string) error {
+func runExport(format string) error { return runExportWithInbox(format, true) }
+
+func runExportWithInbox(format string, wantInbox bool) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -151,10 +156,11 @@ func runExport(format string) error {
 	_ = format // Only JSON supported currently.
 	ctx := context.Background()
 
-	// Use store.Export() to produce the FR-7.8 ExportData envelope with
-	// version, schema_version, checksum, and node_count — matching the
-	// format used by AutoExport for consistency.
-	exportData, err := app.store.Export(ctx, "", "")
+	includeInbox, err := exportIncludesInbox(os.Stdout, app.mtixDir)
+	if err != nil {
+		return err
+	}
+	exportData, err := service.NewAdminService(app.store).Export(ctx, includeInbox && wantInbox)
 	if err != nil {
 		return fmt.Errorf("export: %w", err)
 	}
@@ -163,11 +169,11 @@ func runExport(format string) error {
 	if err != nil {
 		return fmt.Errorf("marshal export: %w", err)
 	}
-	fmt.Println(string(data))
-	// The export is complete and written: a failed count only costs the note.
-	if noteErr := exportInboxNoteTo(ctx, os.Stderr); noteErr != nil {
-		fmt.Fprintf(os.Stderr, "warning: could not count unacknowledged inbox events (%v); the export does not carry the inbox\n", noteErr)
+	if _, err := fmt.Fprintln(os.Stdout, string(data)); err != nil {
+		return fmt.Errorf("write export: %w", err)
 	}
+	writeExplicitExportNotes(ctx, os.Stderr, exportData)
+
 	return nil
 }
 

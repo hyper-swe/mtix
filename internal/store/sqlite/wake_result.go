@@ -53,10 +53,15 @@ func (s *Store) RecordWakeResult(ctx context.Context, attempt model.WakeAttempt,
 
 func (s *Store) writeWakeResult(ctx context.Context, tx *sql.Tx, attempt model.WakeAttempt, r model.WakeResult) error {
 	k := attempt.Key
-	// Finalize only the still-claimed row that carries this attempt's fence.
-	result, err := tx.ExecContext(ctx, `UPDATE wake_ledger SET outcome=?,route=?,reason=?,outcome_at=?
+	// Finalize only the still-claimed row that carries this attempt's fence. A reclaimed row
+	// keeps its reclaimed-after-crash marker when the redelivery went out (sent family): the
+	// ledger and the doctor count that one permitted duplicate. A failed redelivery (error,
+	// undeliverable, held, off) records its real reason instead (MTIX-112.40.13).
+	delivered := r.Outcome == model.WakeSent || r.Outcome == model.WakeDelivered
+	result, err := tx.ExecContext(ctx, `UPDATE wake_ledger SET outcome=?,route=?,
+		reason=CASE WHEN ? AND reason=? THEN reason ELSE ? END,outcome_at=?
 		WHERE agent_id=? AND host_id=? AND uid=? AND event_seq=? AND epoch=? AND attempt_token=? AND outcome=?`,
-		r.Outcome, r.Route, r.Reason, s.clock().UTC().Format(time.RFC3339Nano),
+		r.Outcome, r.Route, delivered, model.WakeReasonReclaimedAfterCrash, r.Reason, s.clock().UTC().Format(time.RFC3339Nano),
 		k.AgentID, k.HostID, k.UID, k.EventSeq, k.Epoch, attempt.Token, model.WakeClaimed)
 	return checkWakeWrite(result, err, "finalize wake result")
 }

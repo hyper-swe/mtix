@@ -42,7 +42,7 @@ type reevaluationScope struct {
 // effective wake.live is off or whom the filter rejects (ADR-007 section 2.7).
 func (d *WakeDispatcher) Reevaluate(ctx context.Context, agent string) error {
 	// Re-evaluation never carries a session identity: reading inboxes must not refresh last_seen.
-	ctx = sqlite.WithSessionTouch(ctx, sqlite.SessionTouch{})
+	ctx = sqlite.WithoutReadStamp(sqlite.WithSessionTouch(ctx, sqlite.SessionTouch{}))
 	source, ok := d.store.(WakeHeldCandidates)
 	if !ok {
 		return fmt.Errorf("wake store cannot list held candidates: %w", model.ErrInvalidInput)
@@ -155,13 +155,17 @@ func (d *WakeDispatcher) admitRegistration(ctx context.Context, key model.WakeKe
 }
 
 // notifyReevaluator runs a re-evaluation after the caller's change has committed.
-// It never fails or undoes that change: an error is logged and nothing else.
-func notifyReevaluator(ctx context.Context, r WakeReevaluator, agent, trigger string) {
+// It never fails or undoes that change: an error is logged to logger (nil uses
+// the process default logger) and nothing else (MTIX-130.14).
+func notifyReevaluator(ctx context.Context, logger *slog.Logger, r WakeReevaluator, agent, trigger string) {
 	if r == nil {
 		return
 	}
 	if err := r.Reevaluate(ctx, agent); err != nil {
-		slog.Warn("wake re-evaluation failed", "trigger", trigger, "agent", agent, "error", err)
+		if logger == nil {
+			logger = slog.Default()
+		}
+		logger.Warn("wake re-evaluation failed", "trigger", trigger, "agent", agent, "error", err)
 	}
 }
 

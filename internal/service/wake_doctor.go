@@ -39,6 +39,19 @@ func WakeLedgerDoctorCheck(reader WakeLedgerReader) DoctorCheck {
 			return DoctorResult{Status: DoctorFail, Detail: fmt.Sprintf("Board dispatch protocol %d exceeds this binary's supported protocol %d or is invalid. %s", floor, model.AttachProtocol, detail),
 				Fix: fmt.Sprintf("Install a binary supporting dispatch protocol %d, restart the dispatcher, then run mtix doctor.", floor)}
 		}
+		if stats.Reclaimed > 0 || stats.Capped > 0 {
+			return wakeReclaimResult(stats, detail)
+		}
 		return DoctorResult{Status: DoctorInfo, Detail: detail}
 	}}
+}
+
+// wakeReclaimResult reports events a crashed claimant left unfinished (MTIX-112.40.13). The
+// first redelivery of such an event is the one permitted duplicate; a capped event was not
+// retried again and its message may already be acknowledged.
+func wakeReclaimResult(stats model.WakeLedgerStats, detail string) DoctorResult {
+	return DoctorResult{Status: DoctorWarn,
+		Detail: fmt.Sprintf("%d wake(s) were reclaimed-after-crash (a crash between push and record can wake a session twice) and %d closed at reclaim-cap. %s", stats.Reclaimed, stats.Capped, detail),
+		Data:   map[string]any{"reclaimed": stats.Reclaimed, "capped": stats.Capped},
+		Fix:    "Read the inbox with mtix inbox: a reclaim-cap message was not woken again and may already be acknowledged. If reclaims keep appearing, stop the listener or dispatcher that keeps dying, then run mtix doctor. This warning counts retained wake rows and this build has no command that prunes them, so it does not clear by itself: it is healthy when the counts stop growing between doctor runs."}
 }

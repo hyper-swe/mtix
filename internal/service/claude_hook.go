@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -55,18 +56,24 @@ type ClaudeHookClaims interface {
 // ClaudeHookDeps are the injected collaborators of ClaudeHook.
 type ClaudeHookDeps struct {
 	Key        WakeLeaseKey
-	Register   func(ctx context.Context) error                                                   // session-start only
-	Epoch      func(ctx context.Context) (int64, error)                                          // the registration epoch
-	Wakeable   func(ctx context.Context) (bool, string, error)                                   // the wake policy (A12)
-	Wait       func(ctx context.Context, skip func(seq int64) bool) ([]sqlite.InboxEvent, error) // inbox wait that ignores skipped events
-	Render     func(events []sqlite.InboxEvent) (string, error)                                  // the quoted envelope
+	Register   func(ctx context.Context) error                                                                 // session-start only
+	Epoch      func(ctx context.Context) (int64, error)                                                        // the registration epoch
+	Wakeable   func(ctx context.Context) (bool, string, error)                                                 // the wake policy (A12)
+	Wait       func(ctx context.Context, skip func(event sqlite.InboxEvent) bool) ([]sqlite.InboxEvent, error) // inbox wait that ignores skipped events
+	Render     func(events []sqlite.InboxEvent) (string, error)                                                // the quoted envelope
 	Leases     ClaudeHookLeases
 	Claims     ClaudeHookClaims
 	Log        *ClaudeHookLog
 	LeaseTTL   time.Duration
 	RenewEvery time.Duration // how often a long wait renews the lease; 0 = LeaseTTL/3
 	ClaimLease time.Duration
-	Now        func() time.Time // the clock; nil = time.Now
+	// Evidence says whether a reclaimed claim's first push already landed (MTIX-112.40.13);
+	// nil derives the inbox acknowledgement evidence from the store when it can read the inbox
+	// (InboxAckEvidence); without such a store a reclaim delivers once more.
+	Evidence WakeEvidence
+	Now      func() time.Time // the clock; nil = time.Now
+	// Logger receives the claimer warning for a failed evidence read; nil uses the process default.
+	Logger *slog.Logger
 
 	// NewTicker builds the renewer's ticker for an interval and returns its
 	// channel and stop func; nil = time.NewTicker. A test seam that lets the
@@ -84,14 +91,29 @@ type ClaudeHookResult struct {
 }
 
 // ClaudeHook runs the Claude session hooks as a service (FR-20, ADR-007 R2/R3).
-type ClaudeHook struct{ d ClaudeHookDeps }
+type ClaudeHook struct {
+	d       ClaudeHookDeps
+	claimer *WakeClaimer // the single claim function; nil when Claims is not a full ledger
+}
 
 // NewClaudeHook builds a ClaudeHook from its dependencies.
 func NewClaudeHook(d ClaudeHookDeps) *ClaudeHook {
 	if d.Now == nil {
 		d.Now = time.Now
 	}
-	return &ClaudeHook{d: d}
+	h := &ClaudeHook{d: d}
+	if ledger, ok := d.Claims.(WakeClaimLedger); ok {
+		h.claimer, _ = NewWakeClaimer(ledger, d.ClaimLease, defaultWakeEvidence(d.Evidence, d.Claims), d.Logger) // a non-positive lease keeps the direct claim
+	}
+	return h
+}
+
+// claim claims one event through the single claim function when the ledger supports it.
+func (h *ClaudeHook) claim(ctx context.Context, key model.WakeKey) (model.WakeAttempt, bool, error) {
+	if h.claimer != nil {
+		return h.claimer.Claim(ctx, key)
+	}
+	return h.d.Claims.ClaimWake(ctx, key, h.d.ClaimLease)
 }
 
 // Run handles one hook event. It never returns an error and never panics out: a
@@ -290,8 +312,8 @@ func (h *ClaudeHook) renewOnce(ctx context.Context, r *leaseRenewer, holder stri
 // wait, so a re-arm blocks until NEW mail arrives and one event wakes the
 // session once. res.soft is a failure that did not stop the wake.
 func (h *ClaudeHook) wakeOnce(ctx context.Context) (ClaudeHookResult, error) {
-	seen := map[int64]bool{}
-	skip := func(seq int64) bool { return seen[seq] }
+	seen := map[hookEventIdentity]bool{}
+	skip := func(e sqlite.InboxEvent) bool { return seen[hookEventIdentity{e.Seq, e.EventID}] }
 	for {
 		events, err := h.d.Wait(ctx, skip)
 		if err != nil {
@@ -320,10 +342,16 @@ func (h *ClaudeHook) wakeOnce(ctx context.Context) (ClaudeHookResult, error) {
 	}
 }
 
-func unseenEvents(events []sqlite.InboxEvent, seen map[int64]bool) []sqlite.InboxEvent {
+// hookEventIdentity keeps a lost claim from hiding replacement mail (FR-20, MTIX-112.2.2.1).
+type hookEventIdentity struct {
+	seq int64
+	id  string
+}
+
+func unseenEvents(events []sqlite.InboxEvent, seen map[hookEventIdentity]bool) []sqlite.InboxEvent {
 	var fresh []sqlite.InboxEvent
 	for _, e := range events {
-		if !seen[e.Seq] {
+		if !seen[hookEventIdentity{e.Seq, e.EventID}] {
 			fresh = append(fresh, e)
 		}
 	}
@@ -332,17 +360,17 @@ func unseenEvents(events []sqlite.InboxEvent, seen map[int64]bool) []sqlite.Inbo
 
 // claimEvents claims each event once; a lost claim is remembered in seen. On a
 // claim error it stops and returns the claims won so far, which the caller delivers.
-func (h *ClaudeHook) claimEvents(ctx context.Context, events []sqlite.InboxEvent, epoch int64, seen map[int64]bool) ([]sqlite.InboxEvent, []model.WakeAttempt, error) {
+func (h *ClaudeHook) claimEvents(ctx context.Context, events []sqlite.InboxEvent, epoch int64, seen map[hookEventIdentity]bool) ([]sqlite.InboxEvent, []model.WakeAttempt, error) {
 	var won []sqlite.InboxEvent
 	var attempts []model.WakeAttempt
 	for _, e := range events {
-		key := model.WakeKey{AgentID: h.d.Key.AgentID, HostID: h.d.Key.HostID, UID: h.d.Key.UID, EventSeq: e.Seq, Epoch: epoch}
-		attempt, claimed, cerr := h.d.Claims.ClaimWake(ctx, key, h.d.ClaimLease)
+		key := model.NewWakeKey(model.WakeRecipient{AgentID: h.d.Key.AgentID, HostID: h.d.Key.HostID, UID: h.d.Key.UID}, e.Seq, epoch, e.EventID)
+		attempt, claimed, cerr := h.claim(ctx, key)
 		if cerr != nil {
 			return won, attempts, fmt.Errorf("claim wake for event %d: %w", e.Seq, cerr)
 		}
 		if !claimed {
-			seen[e.Seq] = true
+			seen[hookEventIdentity{e.Seq, e.EventID}] = true
 			continue
 		}
 		won = append(won, e)

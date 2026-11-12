@@ -132,21 +132,27 @@ func (s *Store) JournalTail(ctx context.Context) (int64, error) {
 	return tail.Int64, nil
 }
 
-// InitHookScanFloorAtTail jumps the scan floor to the current journal tail —
-// the bootstrap call for a store whose journal was populated before any
-// dispatch state existed (fresh clone / first pull into an empty store), so
-// pulled history arrives pre-dispatched instead of as a hook backlog storm
-// (FR-20 §8). Monotonic like every floor advance; a no-op on a live store
-// whose floor already tracks the tail.
+// InitHookScanFloorAtTail seeds the hook and existing automatic wake progress
+// floors at the current journal tail for a fresh clone or first pull into an
+// empty journal (FR-20 §8, MTIX-112.2.2.1). Pulled history is not a fresh
+// automatic wake backlog. Each floor advances monotonically; callers use this
+// only for bootstrap, not ordinary pulls with pending live work.
 func (s *Store) InitHookScanFloorAtTail(ctx context.Context) error {
+	return s.initHookScanFloorAtTail(ctx, true)
+}
+
+// InitHookOnlyScanFloorAtTail advances only hook dispatch progress using the
+// current writer snapshot, clamped below active claims (FR-20 §8,
+// MTIX-112.2.2.1.3). Nonempty clone resumes must retain automatic wake progress.
+func (s *Store) InitHookOnlyScanFloorAtTail(ctx context.Context) error {
+	return s.initHookScanFloorAtTail(ctx, false)
+}
+
+// initHookScanFloorAtTail keeps tail observation and floor writes in the same
+// writer transaction so discard cannot leave a stale floor above the journal.
+func (s *Store) initHookScanFloorAtTail(ctx context.Context, seedWakes bool) error {
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		var tail int64
-		// Read the tail under the same writer transaction as the floor write,
-		// so replace cannot rewind the journal between the two (FR-20 §8).
-		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(rowid),0) FROM sync_events`).Scan(&tail); err != nil {
-			return err
-		}
-		return advanceHookScanFloorTx(ctx, tx, tail)
+		return initHookScanFloorAtTailTx(ctx, tx, seedWakes)
 	})
 	if err != nil {
 		return fmt.Errorf("initialize hook scan floor: %w", err)

@@ -210,15 +210,19 @@ func TestProjectPath_CaseVariantSpellingIsInsideTheProject(t *testing.T) {
 	require.False(t, outside)
 }
 
-func TestApproveProgram_CaseVariantPathToProjectFileIsRefused(t *testing.T) {
+func TestApproveProgram_CaseVariantPathToProjectFileIsPinned(t *testing.T) {
 	f, variant := caseVariantFixture(t)
 	yaml := "hooks:\n  - name: wake\n    match: {events: [comment.addressed]}\n    deliver: [exec]\n    exec: " + execValue("["+variant+", x]") + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(f.mtixDir, "hooks.yaml"), []byte(yaml), 0o600))
 	require.NoError(t, f.approvals.Approve("wake", true))
 	_, err := f.approvals.ApproveProgram(f.hook(t), true)
-	require.Error(t, err, "strict approval refuses a case-variant spelling of a project file")
-	_, err = f.approvals.PrepareExec(f.hook(t))
-	require.Error(t, err, "launch refuses it too, with strict mode off")
+	require.ErrorContains(t, err, "needs no program approval", "a project file is pinned like any script, so it has no program record")
+	plan, err := f.approvals.PrepareExec(f.hook(t))
+	require.NoError(t, err)
+	require.NotEqual(t, variant, plan.Argv[0], "the staged copy runs, not the written path")
+	staged, err := os.ReadFile(plan.Argv[0])
+	require.NoError(t, err)
+	require.Equal(t, "#!/bin/sh\n", string(staged))
 }
 
 func TestStrict_PinnedProgramIsRecordedInTheFiringAudit(t *testing.T) {
@@ -267,7 +271,7 @@ func corruptStrictRecord(t *testing.T, f prepareFixture) {
 	require.Equal(t, 1, hit)
 }
 
-func TestUnderRoot_DecidesByFileIdentityWithoutSkipping(t *testing.T) {
+func TestRootRelative_DecidesWithoutSkippingForEveryShape(t *testing.T) {
 	base, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)
 	root := filepath.Join(base, "project")
@@ -290,10 +294,14 @@ func TestUnderRoot_DecidesByFileIdentityWithoutSkipping(t *testing.T) {
 		"missing path beside the root": {filepath.Join(base, "projectX", "bin"), false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			require.Equal(t, tc.want, underRoot(root, tc.path))
+			_, inside, decided := rootRelative(root, tc.path)
+			require.True(t, decided)
+			require.Equal(t, tc.want, inside)
 		})
 	}
-	require.False(t, underRoot(filepath.Join(base, "absent-root"), root), "an unreadable root is never reported as containing anything")
+	_, inside, decided := rootRelative(filepath.Join(base, "absent-root"), root)
+	require.False(t, decided, "an unreadable root decides nothing")
+	require.False(t, inside)
 }
 
 // fakeEnv writes an executable named env outside every PATH directory that

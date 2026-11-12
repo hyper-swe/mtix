@@ -82,18 +82,7 @@ func resolveProjectScope(project string, allProjects bool) (string, error) {
 // newSearchCmd creates the mtix search command per FR-6.3 / FR-17.1.
 // All filter flags accept comma-separated multiple values.
 func newSearchCmd() *cobra.Command {
-	var (
-		status       string
-		assignee     string
-		nodeType     string
-		under        string
-		priority     string
-		fields       string
-		changedSince string
-		limit        int
-		project      string
-		allProjects  bool
-	)
+	var o searchOptions
 
 	cmd := &cobra.Command{
 		Use:   "search [words...]",
@@ -102,63 +91,80 @@ func newSearchCmd() *cobra.Command {
 ASCII letters only, and literal) in a node's title, description or prompt; filter flags narrow the
 result further. With no words, only the filters apply.`,
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runSearch(args, status, assignee, nodeType, under, priority, fields, changedSince, limit, project, allProjects)
+			o.words = args
+			return runSearch(o)
 		},
 	}
 
-	cmd.Flags().StringVar(&status, "status", "", "Filter by status (comma-separated for multiple)")
-	cmd.Flags().StringVar(&assignee, "assignee", "", "Filter by assignee (comma-separated for multiple)")
-	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by node type (comma-separated for multiple)")
-	cmd.Flags().StringVar(&under, "under", "", "Filter by parent subtree (comma-separated for multiple)")
-	cmd.Flags().StringVar(&priority, "priority", "", "Filter by priority (comma-separated, 1-5)")
-	cmd.Flags().StringVar(&fields, "fields", "", "Restrict JSON output to these fields (comma-separated)")
-	cmd.Flags().StringVar(&changedSince, "changed-since", "", "Only nodes updated after this RFC3339 time or relative duration (e.g. 1h, 30m)")
-	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
-	addProjectScopeFlags(cmd, &project, &allProjects)
+	cmd.Flags().StringVar(&o.status, "status", "", "Filter by status (comma-separated for multiple)")
+	cmd.Flags().StringVar(&o.assignee, "assignee", "", "Filter by assignee (comma-separated for multiple)")
+	cmd.Flags().StringVar(&o.nodeType, "type", "", "Filter by node type (comma-separated for multiple)")
+	cmd.Flags().StringVar(&o.under, "under", "", "Filter by parent subtree (comma-separated for multiple)")
+	cmd.Flags().StringVar(&o.priority, "priority", "", "Filter by priority (comma-separated, 1-5)")
+	cmd.Flags().StringVar(&o.labels, "labels", "", "Filter by label, any-of (comma-separated; exact, case-sensitive, e.g. desk:now,desk:backlog)")
+	cmd.Flags().StringVar(&o.fields, "fields", "", "Restrict JSON output to these fields (comma-separated)")
+	cmd.Flags().StringVar(&o.changedSince, "changed-since", "", "Only nodes updated after this RFC3339 time or relative duration (e.g. 1h, 30m)")
+	cmd.Flags().IntVar(&o.limit, "limit", 50, "Maximum results")
+	addProjectScopeFlags(cmd, &o.project, &o.allProjects)
 
 	return cmd
 }
 
-func runSearch(words []string, status, assignee, nodeType, under, priority, fields, changedSince string, limit int, project string, allProjects bool) error {
-	if app.nodeSvc == nil {
-		return fmt.Errorf("not in an mtix project")
-	}
+// searchOptions carries the mtix search words and flags (FR-17.1). Filter
+// values are comma-separated strings parsed via splitCSV; labels is the any-of
+// label filter (MTIX-255.4).
+type searchOptions struct {
+	words                                       []string
+	status, assignee, nodeType, under, priority string
+	labels, fields, changedSince, project       string
+	limit                                       int
+	allProjects                                 bool
+}
 
-	priorities, err := splitCSVInts(priority)
+// buildSearchFilter turns the search words and flags into a service filter.
+func buildSearchFilter(o searchOptions) (service.NodeFilter, error) {
+	priorities, err := splitCSVInts(o.priority)
 	if err != nil {
-		return fmt.Errorf("invalid --priority value: %w: %w", err, model.ErrInvalidInput)
+		return service.NodeFilter{}, fmt.Errorf("invalid --priority value: %w: %w", err, model.ErrInvalidInput)
 	}
-
-	since, err := parseChangedSince(changedSince)
+	since, err := parseChangedSince(o.changedSince)
 	if err != nil {
-		return err
+		return service.NodeFilter{}, err
 	}
-
-	scope, err := resolveProjectScope(project, allProjects)
+	scope, err := resolveProjectScope(o.project, o.allProjects)
 	if err != nil {
-		return err
+		return service.NodeFilter{}, err
 	}
-
 	filter := service.NodeFilter{
-		Text:         searchWords(words),
-		Assignee:     splitCSV(assignee),
-		NodeType:     splitCSV(nodeType),
-		Under:        splitCSV(under),
+		Text:         searchWords(o.words),
+		Assignee:     splitCSV(o.assignee),
+		NodeType:     splitCSV(o.nodeType),
+		Under:        splitCSV(o.under),
 		Priority:     priorities,
 		Project:      scope,
 		ChangedSince: since,
+		LabelsAny:    splitCSV(o.labels),
 	}
-	for _, s := range splitCSV(status) {
+	for _, s := range splitCSV(o.status) {
 		filter.Status = append(filter.Status, model.Status(s))
 	}
+	return filter, nil
+}
 
-	ctx := context.Background()
-	nodes, total, err := app.nodeSvc.ListNodes(ctx, filter, service.ListOptions{Limit: limit})
+// runSearch lists nodes matching the words and filters (FR-17.1, MTIX-146).
+func runSearch(o searchOptions) error {
+	if app.nodeSvc == nil {
+		return fmt.Errorf("not in an mtix project")
+	}
+	filter, err := buildSearchFilter(o)
 	if err != nil {
 		return err
 	}
-
-	return printNodeList(nodes, total, splitCSV(fields))
+	nodes, total, err := app.nodeSvc.ListNodes(context.Background(), filter, service.ListOptions{Limit: o.limit})
+	if err != nil {
+		return err
+	}
+	return printNodeList(nodes, total, splitCSV(o.fields))
 }
 
 // searchWords flattens positional arguments into query words, so both
@@ -344,7 +350,7 @@ func runStale(project string, allProjects bool) error {
 	} else {
 		out.WriteHuman("Stale agents:\n")
 		for _, a := range agents {
-			out.WriteHuman("  %s\n", a)
+			out.WriteHuman("  %s\n", format.SafeLine(a))
 		}
 	}
 	return nil

@@ -232,7 +232,7 @@ Call `mtix_discover` to inspect this build's registry. Tree views, backup, expor
 |------|-------------|
 | `mtix_create` | Create a new node |
 | `mtix_show` | Get full node details |
-| `mtix_list` | List nodes with filters (JSON output) |
+| `mtix_list` | List nodes with filters (JSON output); `labels` is a comma-separated any-of label filter |
 | `mtix_briefing` | List nodes in briefing format — labeled text blocks ready for LLM context. Accepts multi-value filters (`under`, `status`, `type`, `assignee`, `priority`), field restriction (`fields`), and truncation (`max_field_chars`). **Use this instead of writing post-processing stub code.** |
 | `mtix_update` | Update node fields |
 | `mtix_delete` | Soft-delete a node |
@@ -251,7 +251,7 @@ Call `mtix_discover` to inspect this build's registry. Tree views, backup, expor
 | `mtix_rerun` | Invalidate and reprocess |
 | `mtix_ready` | List nodes ready for pickup |
 | `mtix_blocked` | List blocked nodes |
-| `mtix_search` | Text search: `query` words must all appear in title, description or prompt (ASCII-case-insensitive); filters combine; unknown arguments are rejected |
+| `mtix_search` | Text search: `query` words must all appear in title, description or prompt (ASCII-case-insensitive); filters combine, including `labels` (comma-separated, any-of); unknown arguments are rejected |
 
 ### Context & Prompts
 | Tool | Description |

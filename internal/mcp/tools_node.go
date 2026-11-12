@@ -158,6 +158,7 @@ func registerListTool(reg *ToolRegistry, svc *service.NodeService, primaryProjec
 				"status":   {Type: "string", Description: "Filter by status"},
 				"under":    {Type: "string", Description: "Filter by parent subtree"},
 				"assignee": {Type: "string", Description: "Filter by assignee"},
+				"labels":   {Type: "string", Description: "Comma-separated labels; a node matches when it carries ANY of them (exact, case-sensitive, e.g. desk:now,desk:backlog)"},
 				"project":  {Type: "string", Description: "Scope to a project prefix; omit for the primary project, 'all' to span every project"},
 				"limit":    {Type: "number", Description: "Max results (default 50)"},
 				"offset":   {Type: "number", Description: "Pagination offset"},
@@ -172,6 +173,7 @@ func listToolHandler(svc *service.NodeService, primaryProject string) ToolHandle
 			Status   string `json:"status"`
 			Under    string `json:"under"`
 			Assignee string `json:"assignee"`
+			Labels   string `json:"labels"`
 			Project  string `json:"project"`
 			Limit    int    `json:"limit"`
 			Offset   int    `json:"offset"`
@@ -186,7 +188,10 @@ func listToolHandler(svc *service.NodeService, primaryProject string) ToolHandle
 			p.Limit = 50
 		}
 
-		filter := service.NodeFilter{Project: resolveScopeProject(p.Project, primaryProject)}
+		filter := service.NodeFilter{
+			Project:   resolveScopeProject(p.Project, primaryProject),
+			LabelsAny: splitCSVParam(p.Labels),
+		}
 		if p.Under != "" {
 			filter.Under = []string{p.Under}
 		}

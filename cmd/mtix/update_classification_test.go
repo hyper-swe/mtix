@@ -115,13 +115,13 @@ func TestListCLI_IssueType_DefaultAndProjectedOutput(t *testing.T) {
 		require.NoError(t, runCreate("Classified work", "", "refactor", 3, "", "", "", "", ""))
 		require.NoError(t, runCreate("Unclassified work", "", "", 3, "", "", "", "", ""))
 	})
-	text := captureStdout(t, func() { require.NoError(t, runList("", "", "", "", "", "", "", "", 0, false, 50, "", false)) })
+	text := captureStdout(t, func() { require.NoError(t, runList(listOptions{limit: 50})) })
 	assert.Contains(t, text, "Issue type")
 	assert.Contains(t, text, "refactor")
 	assert.Contains(t, text, "epic")
 	app.jsonOutput = true
 	for _, fields := range []string{"", "id,node_type,issue_type"} {
-		raw := captureStdout(t, func() { require.NoError(t, runList("", "", "", "", "", fields, "", "", 0, false, 50, "", false)) })
+		raw := captureStdout(t, func() { require.NoError(t, runList(listOptions{fields: fields, limit: 50})) })
 		var result struct{ Nodes []map[string]any }
 		require.NoError(t, json.Unmarshal([]byte(raw), &result))
 		require.Len(t, result.Nodes, 2)

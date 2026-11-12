@@ -29,8 +29,9 @@ var ErrMergeOnSyncedStore = errors.New("merge import refused on a store that syn
 
 // MergeOnSyncedWays says what to do instead of a merge import on a store that
 // syncs: take the hub's board, then load the file elsewhere.
-const MergeOnSyncedWays = "To take the hub's changes, run mtix sync pull. To load the file, import it into a copy " +
-	"of the project that does not sync, then make the edits again with mtix commands, which are journaled"
+const MergeOnSyncedWays = "To take the hub's changes, run mtix sync pull. To load the file, import it into a new project " +
+	"made with mtix init that has no hub configured (a copy of the project directory carries the sync mark and the hub " +
+	"config, so it still refuses), then make the edits again with mtix commands, which are journaled"
 
 // maxNamedNodes caps how many node ids a refusal or a doctor check names.
 const maxNamedNodes = 10

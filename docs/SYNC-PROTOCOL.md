@@ -839,8 +839,9 @@ there, as it was before this rule.
 A merge import (`mtix import --mode merge`) writes no sync events, so on a store that syncs it is refused
 before any write (`sqlite.ErrMergeOnSyncedStore`, the same evidence as the replace guard below); a later hub
 edit would otherwise overwrite the merged values by last-writer-wins. The automatic import is a replace; on a
-store that syncs it is refused when the file changes a task the store holds (refusal kind `merge_synced`) and
-imports a file that only adds tasks. Journaling merges is future work.
+store that syncs it is refused when the file changes a task the store holds or adds a dependency with an end the
+store holds (refusal kind `merge_synced`; `mtix sync --fix` ends it, and a pull alone does not) and imports a file
+that only adds tasks and links between them. Journaling merges is future work.
 
 ## Replace import and the sync log
 

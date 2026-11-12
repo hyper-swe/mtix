@@ -56,7 +56,7 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 			"mtix sync --fix, or " + keepFile + "; " + unchangedRecovery
 	case refusalMergeSynced:
 		return "It changes tasks this store holds, and an import writes no sync journal on a project that syncs: " +
-			"take the hub's board with mtix sync pull, or keep the local store with mtix sync --fix"
+			syncedUpdatesWays
 	case refusalInvalidFile:
 		return "It fails its checks (mtix sync shows why): if it was edited or merged by hand, repair and check it, " +
 			"then run mtix import .mtix/tasks.json --recompute-checksum; to keep the local board, run mtix sync --fix"
@@ -66,7 +66,8 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 		return "The backup before the import could not be written: free disk space; the next command retries"
 	case refusalNotImported:
 		return "Import it with mtix import .mtix/tasks.json --mode merge (" + mergeKeeps + "), " +
-			"or keep the local board with mtix sync --fix"
+			"or keep the local board with mtix sync --fix; on a project that syncs with a hub the merge is refused, " +
+			"so keep the local board with mtix sync --fix (after mtix sync pull to take the hub's board as well)"
 	}
 	if refusal.Synced {
 		return "Resolve it: " + mergeWay + ", keep the local store with mtix sync --fix, or " + replace

@@ -5,6 +5,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,6 +27,25 @@ func syncEventCount(t *testing.T) int {
 	return n
 }
 
+// storeBoard is the store's export as JSON with the export time cleared.
+func storeBoard(t *testing.T) string {
+	t.Helper()
+	data, err := app.store.Export(context.Background(), "", "")
+	require.NoError(t, err)
+	data.ExportedAt = ""
+	raw, err := json.Marshal(data)
+	require.NoError(t, err)
+	return string(raw)
+}
+
+// backupFiles lists every file in the project's backups directory.
+func backupFiles(t *testing.T) []string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(app.mtixDir, "data", "backups", "*"))
+	require.NoError(t, err)
+	return matches
+}
+
 func TestRunImport_MergeOnSyncedStore_RefusesAndWritesNothing(t *testing.T) {
 	tests := []struct {
 		name string
@@ -42,13 +63,19 @@ func TestRunImport_MergeOnSyncedStore_RefusesAndWritesNothing(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("MTIX_SYNC_DSN", "")
 			initTestApp(t)
-			seedTickets(t, 2)
+			seedTickets(t, 3)
 			path := writeExportOf(t)
-			seedTickets(t, 1) // a ticket the file lacks, so the store is not a plain copy
+			// The file now holds a task the store lacks (TEST-3) and a title the store
+			// does not have, so a merge that ran would write a task, a value and events.
+			_, err := app.store.WriteDB().ExecContext(context.Background(), `DELETE FROM nodes WHERE id = 'TEST-3'`)
+			require.NoError(t, err)
+			_, err = app.store.WriteDB().ExecContext(context.Background(),
+				`UPDATE nodes SET title = 'local title' WHERE id = 'TEST-1'`)
+			require.NoError(t, err)
 			tt.sync(t)
-			nodes, events := allNodeCount(t), syncEventCount(t)
+			nodes, events, board := allNodeCount(t), syncEventCount(t), storeBoard(t)
 
-			err := runImport(path, importFlags{mode: "merge"})
+			err = runImport(path, importFlags{mode: "merge"})
 			require.ErrorIs(t, err, sqlite.ErrMergeOnSyncedStore)
 			assert.Contains(t, err.Error(), "a merge import writes no sync journal")
 			assert.Contains(t, err.Error(), "silently overwrite the merged values")
@@ -56,7 +83,9 @@ func TestRunImport_MergeOnSyncedStore_RefusesAndWritesNothing(t *testing.T) {
 			assert.Contains(t, err.Error(), "mtix sync pull")
 			assert.Equal(t, nodes, allNodeCount(t), "a refused merge writes no task")
 			assert.Equal(t, events, syncEventCount(t), "a refused merge writes no event")
+			assert.Equal(t, board, storeBoard(t), "a refused merge changes no value in the store")
 			assert.Empty(t, preDestroySnapshots(t, "import-merge"), "the refusal comes before any backup")
+			assert.Empty(t, backupFiles(t), "no backup of any kind is written")
 		})
 	}
 }

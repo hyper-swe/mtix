@@ -46,6 +46,7 @@ func TestAutoImport_FileUpdatesATaskOnSyncedStore_IsRefusedOnceAndWritesNothing(
 	require.NoError(t, getErr)
 	assert.Equal(t, "Task PROJ-3", got.Title, "nothing was imported")
 	assert.Equal(t, snapshot, a.storeSnapshot(t), "the store is unchanged")
+	assert.Empty(t, a.preSyncBackups(t), "a refused import takes no pre-sync backup")
 	assert.Equal(t, string(board), string(a.read(t, "tasks.json")), "the pulled file is left as it is")
 	for _, want := range []string{"PROJ-3", "this store syncs with a hub", "writes no sync journal",
 		"silently overwrite", "Nothing was imported", "mtix sync pull"} {

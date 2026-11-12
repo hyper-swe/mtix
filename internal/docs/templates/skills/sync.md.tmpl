@@ -609,9 +609,9 @@ A WARN does not fail the run and blocks nothing. `hub-privileges`, `hub-triggers
 
 A merge import writes no sync journal, so on a store that syncs with a hub or relay a later hub edit to a merged value would silently overwrite it. `mtix import --mode merge` is therefore refused there, before anything is written (`import failed: this store syncs with a hub, and a merge import writes no sync journal ...`), and there is no flag that skips the refusal.
 
-1. Run `mtix sync pull` to take the hub's board.
-2. To load a file anyway, import it into a copy of the project that does not sync, then make the edits again with mtix commands, which are journaled.
-3. The automatic import of a changed `.mtix/tasks.json` follows the same rule: a file that changes a task this store holds is refused (`mtix: auto-import of .mtix/tasks.json refused: the file changes ...`; `mtix sync` shows kind `merge_synced`). Run `mtix sync pull`, or `mtix sync --fix` to keep the local store and rewrite the file from it. A file that only adds tasks still imports.
+1. For a refused merge import, run `mtix sync pull` to take the hub's board.
+2. To load a file anyway, import it into a new project that does not sync: make a new directory, run `mtix init` there (configure no hub), then `mtix import <file> --mode merge`. A copy of the project directory carries the sync mark and the hub config, so it still refuses. Then make the edits again in this project with mtix commands, which are journaled.
+3. The automatic import of a changed `.mtix/tasks.json` follows the same rule: a file that changes a task this store holds, or adds a dependency with an end this store holds, is refused (`mtix: auto-import of .mtix/tasks.json refused: the file changes ...`; `mtix sync` shows kind `merge_synced`). Run `mtix sync --fix` to keep the local store and rewrite the file from it: that is the step that ends the refusal. To take the hub's board as well, run `mtix sync pull` first and then `mtix sync --fix`; a pull alone leaves the file refused (it then reads as a conflict). A file that only adds tasks, and links between them, still imports.
 4. Verify with `mtix sync`: `Last auto-import refusal` no longer reads `pending`.
 
 ## Workflow conflict history

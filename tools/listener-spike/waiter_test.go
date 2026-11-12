@@ -19,6 +19,24 @@ import (
 
 const waiterArmCount = 8
 
+// waiterDeadlineEnv names an optional Go duration (for example "3m") that
+// replaces the default readiness deadline on a very slow runner.
+const waiterDeadlineEnv = "WAITER_READY_TIMEOUT"
+
+// waiterDeadline is how long a test waits for a started shell process to
+// reach a state it signals (a log line, a pid file, an exit). These waits
+// are readiness handshakes, not timing assertions, so the deadline only has
+// to bound a hung run; it is generous because go test -race -p 4 on a loaded
+// runner can take many seconds to start a shell (MTIX-251).
+func waiterDeadline() time.Duration {
+	if v := os.Getenv(waiterDeadlineEnv); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 2 * time.Minute
+}
+
 // waiterEnv is a scratch directory holding a lock path, a log and a
 // release file that a held waiter command waits for.
 type waiterEnv struct {
@@ -107,7 +125,7 @@ func armConcurrently(t *testing.T, e waiterEnv) []*exec.Cmd {
 	require.Eventually(t, func() bool {
 		ev := e.events(t)
 		return count(ev, "armed")+count(ev, "guard-skip") == waiterArmCount
-	}, 15*time.Second, 20*time.Millisecond, "every waiter must log a decision")
+	}, waiterDeadline(), 20*time.Millisecond, "every waiter must log a decision")
 	return cmds
 }
 
@@ -163,7 +181,7 @@ func TestWaiterGuard_SingleArmOnStaleLock_LogsTakeoverThenArmed(t *testing.T) {
 	e := newWaiterEnv(t)
 	require.NoError(t, os.Symlink("pid:not-a-number", e.lock))
 	cmd := e.arm(t, "w", 0)
-	require.Eventually(t, func() bool { return count(e.events(t), "armed") == 1 }, 10*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool { return count(e.events(t), "armed") == 1 }, waiterDeadline(), 20*time.Millisecond)
 	require.Equal(t, []string{"stale-takeover", "armed"}, e.events(t))
 	require.NoError(t, os.WriteFile(e.release, nil, 0o600))
 	require.NoError(t, cmd.Wait())
@@ -188,7 +206,7 @@ func TestWaiterGuard_LiveHolderLock_IsNeverStolen(t *testing.T) {
 func TestWaiterGuard_WrappedCommandExit_IsPropagatedAndLockReleased(t *testing.T) {
 	e := newWaiterEnv(t)
 	cmd := e.arm(t, "w", 2)
-	require.Eventually(t, func() bool { return count(e.events(t), "armed") == 1 }, 10*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool { return count(e.events(t), "armed") == 1 }, waiterDeadline(), 20*time.Millisecond)
 	require.NoError(t, os.WriteFile(e.release, nil, 0o600))
 	err := cmd.Wait()
 	var exitErr *exec.ExitError
@@ -227,7 +245,7 @@ func TestWaiterGuard_LiveHolderPlantedUnderSerialiser_IsNeverStolen(t *testing.T
 	require.Eventually(t, func() bool {
 		_, err := os.Stat(e.lock + ".t")
 		return err == nil
-	}, 10*time.Second, 10*time.Millisecond, "the arm must own the serialiser")
+	}, waiterDeadline(), 10*time.Millisecond, "the arm must own the serialiser")
 	live := exec.Command("sleep", "30")
 	require.NoError(t, live.Start())
 	t.Cleanup(func() { _ = live.Process.Kill(); _ = live.Wait() })

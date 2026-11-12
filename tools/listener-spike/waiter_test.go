@@ -29,12 +29,26 @@ const waiterDeadlineEnv = "WAITER_READY_TIMEOUT"
 // to bound a hung run; it is generous because go test -race -p 4 on a loaded
 // runner can take many seconds to start a shell (MTIX-251).
 func waiterDeadline() time.Duration {
-	if v := os.Getenv(waiterDeadlineEnv); v != "" {
-		if d, err := time.ParseDuration(v); err == nil && d > 0 {
-			return d
-		}
+	return parseWaiterDeadline(os.Getenv(waiterDeadlineEnv))
+}
+
+const (
+	defaultWaiterDeadline = 2 * time.Minute
+	maxWaiterDeadline     = 10 * time.Minute
+)
+
+// parseWaiterDeadline turns the override into a deadline: empty, invalid or
+// non-positive values give the default, and large values are clamped so
+// that multiples of the deadline cannot overflow a time.Duration.
+func parseWaiterDeadline(v string) time.Duration {
+	d, err := time.ParseDuration(v)
+	if v == "" || err != nil || d <= 0 {
+		return defaultWaiterDeadline
 	}
-	return 2 * time.Minute
+	if d > maxWaiterDeadline {
+		return maxWaiterDeadline
+	}
+	return d
 }
 
 // waiterEnv is a scratch directory holding a lock path, a log and a
@@ -277,4 +291,27 @@ func TestWaiterGuard_StuckSerialiser_LogsDistinctTakeoverBusy(t *testing.T) {
 	target, err := os.Readlink(e.lock)
 	require.NoError(t, err)
 	require.Equal(t, stale, target, "the stale lock is left as found")
+}
+
+func TestParseWaiterDeadline_Override_IsDefaultedOrClamped(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want time.Duration
+	}{
+		{"empty gives the default", "", defaultWaiterDeadline},
+		{"garbage gives the default", "soon", defaultWaiterDeadline},
+		{"negative gives the default", "-5s", defaultWaiterDeadline},
+		{"zero gives the default", "0s", defaultWaiterDeadline},
+		{"valid value is kept", "45s", 45 * time.Second},
+		{"the maximum is kept", "10m", maxWaiterDeadline},
+		{"huge value is clamped", "2562047h", maxWaiterDeadline},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseWaiterDeadline(tt.in)
+			require.Equal(t, tt.want, got)
+			require.Positive(t, 3*got, "three times the deadline must not overflow")
+		})
+	}
 }

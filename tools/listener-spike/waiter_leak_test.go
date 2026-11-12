@@ -6,6 +6,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -57,6 +58,12 @@ func TestWaiterHelper_DeliberateFailure(t *testing.T) {
 	require.Fail(t, "deliberate failure before the release file is written")
 }
 
+// leakExitWindow is how long the reported pids get to die once the helper has
+// exited. Cleanups kill them before the helper returns, so they die promptly;
+// the window must stay well under the ~60s a leaked loopScript lives on its
+// own, or a real leak would expire unnoticed and pass at the default deadline.
+const leakExitWindow = 10 * time.Second
+
 // armedLabel returns the label of the waiter that logged "armed", or "".
 func (e waiterEnv) armedLabel(t *testing.T) string {
 	t.Helper()
@@ -78,7 +85,15 @@ func TestWaiterGuard_FailingTest_LeavesNoProcessesBehind(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=^TestWaiterHelper_DeliberateFailure$", "-test.count=1",
 		"-test.timeout="+(3*waiterDeadline()).String())
 	cmd.Env = append(os.Environ(), leakReportEnv+"="+report)
-	out, err := cmd.CombinedOutput()
+	// A leaked child inherits the helper's output pipe, so reading until EOF
+	// (CombinedOutput) would block until the child's own ~60s self-exit and
+	// hide the leak. WaitDelay stops waiting for the pipe shortly after the
+	// helper itself exits.
+	var buf bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &buf, &buf
+	cmd.WaitDelay = 2 * time.Second
+	err := cmd.Run()
+	out := buf.Bytes()
 	require.Error(t, err, "the helper must fail on purpose:\n%s", out)
 	data, rerr := os.ReadFile(report) //nolint:gosec // G304: path under this test's TempDir
 	require.NoError(t, rerr, "the helper must have reported its pids:\n%s", out)
@@ -105,7 +120,7 @@ func TestWaiterGuard_FailingTest_LeavesNoProcessesBehind(t *testing.T) {
 			}
 		}
 		return true
-	}, waiterDeadline(), 20*time.Millisecond, "processes still alive after the failing test: %v", pids)
+	}, leakExitWindow, 20*time.Millisecond, "processes still alive after the failing test: %v", pids)
 }
 
 // TestWaiterGuard_SIGTERM_StopsTheWrappedCommandAndReleasesTheLock pins that

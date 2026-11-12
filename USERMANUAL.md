@@ -1089,6 +1089,39 @@ For a raw read-only query, the same facts are in `sync_events` (`op_type = 'comm
 
 ## Search and Queries
 
+### Board view
+
+`mtix board` prints a read-only board: one column per status (open, in_progress,
+blocked, deferred, done, cancelled, invalidated) with a count per column and the
+nodes in it. It never changes anything.
+
+```bash
+# The whole board
+mtix board
+
+# Work under one parent, tagged for the desk, at most 10 cards per column
+mtix board --under PROJ-1 --labels desk:now,desk:backlog --limit 10
+
+# Machine-readable
+mtix board --json
+```
+
+It takes `--under`, `--labels` (any-of, as for `mtix list`), `--assignee`,
+`--project` and `--all-projects`. `--under` includes the named node itself.
+`--limit` (default 20, at least 1) caps the cards shown per column; the count in
+each column header is always the full total, and an empty column is still shown
+with `(0)`. On a console that is not UTF-8 (`LC_ALL`, `LC_CTYPE` or `LANG`
+without UTF-8) the markers are plain ASCII.
+
+The `--json` shape is stable:
+
+```json
+{"columns":[{"name":"open","count":3,"items":[{"id":"PROJ-1","title":"...","priority":2,"assignee":""}]}]}
+```
+
+`items` is always an array, never null, and `assignee` is an empty string when
+the node is unassigned.
+
 ### Text Search
 
 ```bash

@@ -77,6 +77,7 @@ func registerRootCommands(rootCmd *cobra.Command) {
 		newInboxCmd(),
 		newDepCmd(),
 		newSearchCmd(),
+		newBoardCmd(),
 		newReadyCmd(),
 		newBlockedCmd(),
 		newStaleCmd(),

@@ -54,7 +54,7 @@ type WorktreePorts struct {
 	// worktree's own secrets. It refuses a target that already holds events.
 	Clone func(ctx context.Context, root string) error
 	// ImportCarry writes the carried inbox state into the cloned store.
-	ImportCarry func(ctx context.Context, root string, carry *sqlite.InboxCarry, at time.Time) error
+	ImportCarry func(ctx context.Context, root string, carry *sqlite.InboxCarry) error
 	// Enroll records the enrolment (HostEnrollment.Enroll).
 	Enroll func(ctx context.Context, r EnrollmentRequest) error
 	// LostLocal is required. After the real clone it reports the nodes this

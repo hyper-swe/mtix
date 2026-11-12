@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/attach"
@@ -31,6 +32,8 @@ type PiWaitOptions struct {
 	Host  func() (hostID, uid string, err error)
 	Lease time.Duration
 	Wait  func(ctx context.Context) error
+	// Logger receives the claimer warning for a failed evidence read; nil uses the process default.
+	Logger *slog.Logger
 }
 
 // PiWait is the attach adapter of the pi harness (MTIX-112.19.7, ADR-007 section 2.7).
@@ -85,12 +88,15 @@ func (p *PiWait) Run(ctx context.Context, req attach.VerbRequest) error {
 
 // tryClaim claims the lowest unacknowledged foreign event above the registration's mark
 // that no one has claimed. An event with a ledger row, terminal or leased, is skipped.
+// It is the scanner for its own registration, the same role as the host scanner, so
+// its reads are internal: they stamp no last read and register no waiter (MTIX-112.3).
 func (p *PiWait) tryClaim(ctx context.Context, st PiWaitStore, hostID, uid, session string) (model.WakeAttempt, bool, error) {
+	ctx = sqlite.WithoutReadStamp(ctx)
 	regs, err := st.ListRegistrations(ctx, hostID, uid)
 	if err != nil {
 		return model.WakeAttempt{}, false, fmt.Errorf("pi wait list registrations: %w", err)
 	}
-	claimer, err := NewWakeClaimer(st, p.opts.Lease, defaultWakeEvidence(nil, st))
+	claimer, err := NewWakeClaimer(st, p.opts.Lease, defaultWakeEvidence(nil, st), p.opts.Logger)
 	if err != nil {
 		return model.WakeAttempt{}, false, fmt.Errorf("pi wait claim function: %w", err)
 	}

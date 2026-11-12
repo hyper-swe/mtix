@@ -113,7 +113,7 @@ func dispatcherClaimer(opts WakeDispatcherOptions) *WakeClaimer {
 	if !ok {
 		return nil
 	}
-	c, _ := NewWakeClaimer(ledger, time.Minute, defaultWakeEvidence(opts.Evidence, opts.Store)) // the lease is a positive constant
+	c, _ := NewWakeClaimer(ledger, time.Minute, defaultWakeEvidence(opts.Evidence, opts.Store), opts.Logger) // the lease is a positive constant
 	return c
 }
 

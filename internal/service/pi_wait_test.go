@@ -280,6 +280,25 @@ func TestAttachWaitPi_StoreFailures_AreReturned(t *testing.T) {
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 
+// MTIX-112.3: the pi wait scans its own registration like the host scanner; its
+// polling is not the agent reading, so it stamps no last read and registers no waiter.
+func TestAttachWaitPi_Claim_StampsNoLastReadAndRegistersNoWaiter(t *testing.T) {
+	p := newPiFixture(t)
+	p.addEvent("sender")
+	// The fixture's own InboxList stamped a read while setting up; clear it so only the wait is measured.
+	_, err := p.store.WriteDB().ExecContext(t.Context(), `DELETE FROM agent_inbox_reads WHERE agent_id=?`, p.key.AgentID)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	_, err = p.run(ctx, piSession)
+	require.NoError(t, err)
+	var reads, waiters int
+	require.NoError(t, p.store.ReadDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM agent_inbox_reads WHERE agent_id=?`, p.key.AgentID).Scan(&reads))
+	require.NoError(t, p.store.ReadDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM agent_inbox_waiters WHERE agent_id=?`, p.key.AgentID).Scan(&waiters))
+	require.Zero(t, reads, "agent_inbox_reads")
+	require.Zero(t, waiters, "agent_inbox_waiters")
+}
+
 // The pi wait child claims through the one WakeClaimer (MTIX-112.40.13): a claim an earlier
 // child left unfinished, for an event the session has since acknowledged, is settled as
 // confirmed and never wakes the session again.

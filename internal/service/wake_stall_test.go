@@ -67,7 +67,7 @@ func allowAdmission(_ context.Context, _ model.WakeKey, reopen func(service.Wake
 
 func stallClaimer(t *testing.T, st *sqlite.Store) *service.WakeClaimer {
 	t.Helper()
-	c, err := service.NewWakeClaimer(st, time.Minute, service.InboxAckEvidence(st))
+	c, err := service.NewWakeClaimer(st, time.Minute, service.InboxAckEvidence(st), nil)
 	require.NoError(t, err)
 	return c
 }
@@ -122,7 +122,7 @@ func TestWakeClaimerReclaimStalled_AcknowledgedEvent_SettlesConfirmedWithoutRede
 }
 
 func TestWakeClaimerReclaimStalled_LedgerWithoutStallSupport_ReturnsInvalidInput(t *testing.T) {
-	c, err := service.NewWakeClaimer(bareLedger{}, time.Minute, nil)
+	c, err := service.NewWakeClaimer(bareLedger{}, time.Minute, nil, nil)
 	require.NoError(t, err)
 	_, _, err = c.ReclaimStalled(t.Context(), bothRoutesKey(1), stallWindow, allowAdmission)
 	require.ErrorIs(t, err, model.ErrInvalidInput)

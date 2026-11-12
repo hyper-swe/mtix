@@ -19,6 +19,38 @@ import (
 
 const waiterArmCount = 8
 
+// waiterDeadlineEnv names an optional Go duration (for example "3m") that
+// replaces the default readiness deadline on a very slow runner.
+const waiterDeadlineEnv = "WAITER_READY_TIMEOUT"
+
+// waiterDeadline is how long a test waits for a started shell process to
+// reach a state it signals (a log line, a pid file, an exit). These waits
+// are readiness handshakes, not timing assertions, so the deadline only has
+// to bound a hung run; it is generous because go test -race -p 4 on a loaded
+// runner can take many seconds to start a shell (MTIX-251).
+func waiterDeadline() time.Duration {
+	return parseWaiterDeadline(os.Getenv(waiterDeadlineEnv))
+}
+
+const (
+	defaultWaiterDeadline = 2 * time.Minute
+	maxWaiterDeadline     = 10 * time.Minute
+)
+
+// parseWaiterDeadline turns the override into a deadline: empty, invalid or
+// non-positive values give the default, and large values are clamped so
+// that multiples of the deadline cannot overflow a time.Duration.
+func parseWaiterDeadline(v string) time.Duration {
+	d, err := time.ParseDuration(v)
+	if v == "" || err != nil || d <= 0 {
+		return defaultWaiterDeadline
+	}
+	if d > maxWaiterDeadline {
+		return maxWaiterDeadline
+	}
+	return d
+}
+
 // waiterEnv is a scratch directory holding a lock path, a log and a
 // release file that a held waiter command waits for.
 type waiterEnv struct {
@@ -107,7 +139,7 @@ func armConcurrently(t *testing.T, e waiterEnv) []*exec.Cmd {
 	require.Eventually(t, func() bool {
 		ev := e.events(t)
 		return count(ev, "armed")+count(ev, "guard-skip") == waiterArmCount
-	}, 15*time.Second, 20*time.Millisecond, "every waiter must log a decision")
+	}, waiterDeadline(), 20*time.Millisecond, "every waiter must log a decision")
 	return cmds
 }
 
@@ -163,7 +195,7 @@ func TestWaiterGuard_SingleArmOnStaleLock_LogsTakeoverThenArmed(t *testing.T) {
 	e := newWaiterEnv(t)
 	require.NoError(t, os.Symlink("pid:not-a-number", e.lock))
 	cmd := e.arm(t, "w", 0)
-	require.Eventually(t, func() bool { return count(e.events(t), "armed") == 1 }, 10*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool { return count(e.events(t), "armed") == 1 }, waiterDeadline(), 20*time.Millisecond)
 	require.Equal(t, []string{"stale-takeover", "armed"}, e.events(t))
 	require.NoError(t, os.WriteFile(e.release, nil, 0o600))
 	require.NoError(t, cmd.Wait())
@@ -188,7 +220,7 @@ func TestWaiterGuard_LiveHolderLock_IsNeverStolen(t *testing.T) {
 func TestWaiterGuard_WrappedCommandExit_IsPropagatedAndLockReleased(t *testing.T) {
 	e := newWaiterEnv(t)
 	cmd := e.arm(t, "w", 2)
-	require.Eventually(t, func() bool { return count(e.events(t), "armed") == 1 }, 10*time.Second, 20*time.Millisecond)
+	require.Eventually(t, func() bool { return count(e.events(t), "armed") == 1 }, waiterDeadline(), 20*time.Millisecond)
 	require.NoError(t, os.WriteFile(e.release, nil, 0o600))
 	err := cmd.Wait()
 	var exitErr *exec.ExitError
@@ -227,7 +259,7 @@ func TestWaiterGuard_LiveHolderPlantedUnderSerialiser_IsNeverStolen(t *testing.T
 	require.Eventually(t, func() bool {
 		_, err := os.Stat(e.lock + ".t")
 		return err == nil
-	}, 10*time.Second, 10*time.Millisecond, "the arm must own the serialiser")
+	}, waiterDeadline(), 10*time.Millisecond, "the arm must own the serialiser")
 	live := exec.Command("sleep", "30")
 	require.NoError(t, live.Start())
 	t.Cleanup(func() { _ = live.Process.Kill(); _ = live.Wait() })
@@ -259,4 +291,27 @@ func TestWaiterGuard_StuckSerialiser_LogsDistinctTakeoverBusy(t *testing.T) {
 	target, err := os.Readlink(e.lock)
 	require.NoError(t, err)
 	require.Equal(t, stale, target, "the stale lock is left as found")
+}
+
+func TestParseWaiterDeadline_Override_IsDefaultedOrClamped(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want time.Duration
+	}{
+		{"empty gives the default", "", defaultWaiterDeadline},
+		{"garbage gives the default", "soon", defaultWaiterDeadline},
+		{"negative gives the default", "-5s", defaultWaiterDeadline},
+		{"zero gives the default", "0s", defaultWaiterDeadline},
+		{"valid value is kept", "45s", 45 * time.Second},
+		{"the maximum is kept", "10m", maxWaiterDeadline},
+		{"huge value is clamped", "2562047h", maxWaiterDeadline},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseWaiterDeadline(tt.in)
+			require.Equal(t, tt.want, got)
+			require.Positive(t, 3*got, "three times the deadline must not overflow")
+		})
+	}
 }

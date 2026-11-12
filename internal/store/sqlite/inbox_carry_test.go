@@ -8,7 +8,6 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,7 +76,7 @@ func TestInboxCarry_AckedByEventID_NeverBySeq(t *testing.T) {
 	assert.Equal(t, map[string]bool{ids[0]: true, ids[2]: true}, got,
 		"the watermark-covered and the individually acked events are carried; the unacked one is not")
 
-	res, err := newS.ImportInboxCarry(ctx, carry, time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC))
+	res, err := newS.ImportInboxCarry(ctx, carry)
 	require.NoError(t, err)
 	assert.Equal(t, 2, res.Acks)
 	assert.Zero(t, res.UnmatchedAcks)
@@ -94,7 +93,7 @@ func TestInboxCarry_ReusedSeqs_DoNotAckOtherEvents(t *testing.T) {
 	oldS, newS, ids := carryFixture(t)
 	carry, err := oldS.ExportInboxCarry(ctx)
 	require.NoError(t, err)
-	_, err = newS.ImportInboxCarry(ctx, carry, time.Now().UTC())
+	_, err = newS.ImportInboxCarry(ctx, carry)
 	require.NoError(t, err)
 
 	hist, err := newS.InboxHistory(ctx, "opus")
@@ -114,7 +113,7 @@ func TestInboxCarry_UnknownAckedEvent_CountedNotInvented(t *testing.T) {
 	emptyS, _ := retentionStore(t)
 	carry, err := oldS.ExportInboxCarry(ctx)
 	require.NoError(t, err)
-	res, err := emptyS.ImportInboxCarry(ctx, carry, time.Now().UTC())
+	res, err := emptyS.ImportInboxCarry(ctx, carry)
 	require.NoError(t, err)
 	assert.Equal(t, 2, res.UnmatchedAcks)
 	assert.Zero(t, res.Acks)
@@ -133,7 +132,7 @@ func TestInboxCarry_DeliveryWithoutEvent_RefusesAndWritesNothing(t *testing.T) {
 	require.Len(t, carry.Deliveries, 1)
 
 	emptyS, emptyRaw := retentionStore(t)
-	_, err = emptyS.ImportInboxCarry(ctx, carry, time.Now().UTC())
+	_, err = emptyS.ImportInboxCarry(ctx, carry)
 	require.ErrorIs(t, err, sqlite.ErrCarryEventMissing)
 	var n int
 	require.NoError(t, emptyRaw.QueryRow(`SELECT COUNT(*) FROM inbox_deliveries`).Scan(&n))
@@ -152,7 +151,7 @@ func TestInboxCarry_UnackedDelivery_StaysDeliverable(t *testing.T) {
 	copyJournalReversed(t, oldRaw, newRaw)
 	carry, err := oldS.ExportInboxCarry(ctx)
 	require.NoError(t, err)
-	res, err := newS.ImportInboxCarry(ctx, carry, time.Now().UTC())
+	res, err := newS.ImportInboxCarry(ctx, carry)
 	require.NoError(t, err)
 	assert.Equal(t, 1, res.Deliveries)
 	left, err := newS.InboxList(ctx, "hook-agent")
@@ -193,7 +192,7 @@ func TestInboxCarry_SingleAckAtReusedSeq_AcksOnlyThatEvent(t *testing.T) {
 
 	carry, err := oldS.ExportInboxCarry(ctx)
 	require.NoError(t, err)
-	_, err = newS.ImportInboxCarry(ctx, carry, time.Now().UTC())
+	_, err = newS.ImportInboxCarry(ctx, carry)
 	require.NoError(t, err)
 
 	left, err := newS.InboxList(ctx, "opus")
@@ -220,7 +219,7 @@ func TestInboxCarry_AckTime_RoundTripsAndBadTimeIsAnError(t *testing.T) {
 
 	carry, err := oldS.ExportInboxCarry(ctx)
 	require.NoError(t, err)
-	_, err = newS.ImportInboxCarry(ctx, carry, time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC))
+	_, err = newS.ImportInboxCarry(ctx, carry)
 	require.NoError(t, err)
 	var at string
 	require.NoError(t, newRaw.QueryRow(`SELECT acked_at FROM agent_inbox_ack`).Scan(&at))

@@ -40,21 +40,17 @@ type WakeClaimer struct {
 	logger   *slog.Logger
 }
 
-// NewWakeClaimer builds the claim function over a wake ledger. evidence may be nil.
-func NewWakeClaimer(ledger WakeClaimLedger, lease time.Duration, evidence WakeEvidence) (*WakeClaimer, error) {
+// NewWakeClaimer builds the claim function over a wake ledger. evidence may be nil. logger
+// receives the warning for a failed evidence read (MTIX-112.40.13.3); nil falls back to the
+// process default, the package's usual constructor fallback.
+func NewWakeClaimer(ledger WakeClaimLedger, lease time.Duration, evidence WakeEvidence, logger *slog.Logger) (*WakeClaimer, error) {
 	if ledger == nil || lease <= 0 {
 		return nil, fmt.Errorf("wake claimer needs a ledger and a positive lease: %w", model.ErrInvalidInput)
 	}
-	return &WakeClaimer{ledger: ledger, lease: lease, evidence: evidence, logger: slog.Default()}, nil
-}
-
-// WithLogger sets the logger that reports a failed delivery-evidence read (MTIX-112.40.13.3).
-// A nil logger keeps the current one. It returns the claimer for chaining.
-func (c *WakeClaimer) WithLogger(logger *slog.Logger) *WakeClaimer {
-	if logger != nil {
-		c.logger = logger
+	if logger == nil {
+		logger = slog.Default()
 	}
-	return c
+	return &WakeClaimer{ledger: ledger, lease: lease, evidence: evidence, logger: logger}, nil
 }
 
 // Claim claims the event once. The bool is true only when the caller must deliver it.

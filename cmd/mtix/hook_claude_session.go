@@ -99,7 +99,8 @@ func newClaudeSessionHook(agent string, wait time.Duration, now func() time.Time
 	}
 	budget := &claudeHookBudget{total: wait, now: now}
 	return service.NewClaudeHook(service.ClaudeHookDeps{
-		Key: key,
+		Key:    key,
+		Logger: app.logger,
 		Register: func(ctx context.Context) error {
 			_, rerr := registerCurrentSession(ctx, agent, sessionOptions{})
 			return rerr

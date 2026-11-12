@@ -33,9 +33,8 @@ func TestWakeClaimerResolve_EvidenceReadError_WarnsWithKeyAndStillDelivers(t *te
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	evidence := func(context.Context, model.WakeKey) (bool, error) { return false, errors.New("evidence store down") }
-	c, err := service.NewWakeClaimer(noopClaimLedger{}, time.Minute, evidence)
+	c, err := service.NewWakeClaimer(noopClaimLedger{}, time.Minute, evidence, logger)
 	require.NoError(t, err)
-	c = c.WithLogger(logger)
 	key := model.WakeKey{AgentID: "agent-x", HostID: "host-y", UID: "uid-z", EventSeq: 42, Epoch: 3}
 
 	attempt, deliver, err := c.Resolve(t.Context(), model.WakeAttempt{Key: key, Reclaimed: true})
@@ -54,9 +53,9 @@ func TestWakeClaimerResolve_EvidenceNone_DoesNotWarn(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 	evidence := func(context.Context, model.WakeKey) (bool, error) { return false, nil }
-	c, err := service.NewWakeClaimer(noopClaimLedger{}, time.Minute, evidence)
+	c, err := service.NewWakeClaimer(noopClaimLedger{}, time.Minute, evidence, logger)
 	require.NoError(t, err)
-	_, deliver, err := c.WithLogger(logger).Resolve(t.Context(), model.WakeAttempt{Reclaimed: true})
+	_, deliver, err := c.Resolve(t.Context(), model.WakeAttempt{Reclaimed: true})
 	require.NoError(t, err)
 	require.True(t, deliver)
 	require.Empty(t, buf.String())

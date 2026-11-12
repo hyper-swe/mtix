@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -71,6 +72,8 @@ type ClaudeHookDeps struct {
 	// (InboxAckEvidence); without such a store a reclaim delivers once more.
 	Evidence WakeEvidence
 	Now      func() time.Time // the clock; nil = time.Now
+	// Logger receives the claimer warning for a failed evidence read; nil uses the process default.
+	Logger *slog.Logger
 
 	// NewTicker builds the renewer's ticker for an interval and returns its
 	// channel and stop func; nil = time.NewTicker. A test seam that lets the
@@ -100,7 +103,7 @@ func NewClaudeHook(d ClaudeHookDeps) *ClaudeHook {
 	}
 	h := &ClaudeHook{d: d}
 	if ledger, ok := d.Claims.(WakeClaimLedger); ok {
-		h.claimer, _ = NewWakeClaimer(ledger, d.ClaimLease, defaultWakeEvidence(d.Evidence, d.Claims)) // a non-positive lease keeps the direct claim
+		h.claimer, _ = NewWakeClaimer(ledger, d.ClaimLease, defaultWakeEvidence(d.Evidence, d.Claims), d.Logger) // a non-positive lease keeps the direct claim
 	}
 	return h
 }

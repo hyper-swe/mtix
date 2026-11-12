@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/attach"
@@ -31,6 +32,8 @@ type PiWaitOptions struct {
 	Host  func() (hostID, uid string, err error)
 	Lease time.Duration
 	Wait  func(ctx context.Context) error
+	// Logger receives the claimer warning for a failed evidence read; nil uses the process default.
+	Logger *slog.Logger
 }
 
 // PiWait is the attach adapter of the pi harness (MTIX-112.19.7, ADR-007 section 2.7).
@@ -90,7 +93,7 @@ func (p *PiWait) tryClaim(ctx context.Context, st PiWaitStore, hostID, uid, sess
 	if err != nil {
 		return model.WakeAttempt{}, false, fmt.Errorf("pi wait list registrations: %w", err)
 	}
-	claimer, err := NewWakeClaimer(st, p.opts.Lease, defaultWakeEvidence(nil, st))
+	claimer, err := NewWakeClaimer(st, p.opts.Lease, defaultWakeEvidence(nil, st), p.opts.Logger)
 	if err != nil {
 		return model.WakeAttempt{}, false, fmt.Errorf("pi wait claim function: %w", err)
 	}

@@ -142,18 +142,19 @@ func (s *Store) keepFoldedSelectiveAcks(ctx context.Context, tx *sql.Tx, agent s
 		SELECT agent_id, event_seq, event_seq-1, CASE WHEN acked_at='' THEN ? ELSE ? END, acked_at FROM agent_inbox_ack
 		WHERE agent_id=? AND event_seq<=(SELECT cursor FROM agent_inbox_cursor WHERE agent_id=?)`,
 		AckWatermark, AckSelective, agent, agent); err != nil {
-		return fmt.Errorf("keep folded selective acks: %w", err)
+		return fmt.Errorf("keep folded acks: %w", err)
 	}
 	return nil
 }
 
 // evictCursorMarks keeps the newest MaxCursorMarks marks of agent. "Oldest" means
 // the lowest cursor (the earliest event), whatever the mark's kind or when it was
-// written, so a folded selective mark and a watermark mark compete on cursor alone
-// and the lower one goes first. Marks can share a cursor (a folded single-event
-// selective mark and a watermark ending at the same event): the one with the lower
-// from_cursor (the earlier-starting coverage) goes first, then by kind. An event covered only by an evicted mark reports
-// unknown.
+// written, so a folded single-event mark and a watermark mark compete on cursor
+// alone and the lower one goes first. Marks can share a cursor (a folded
+// single-event mark, selective or time-unknown watermark, and the wide watermark
+// mark ending at the same event): the one with the lower from_cursor (the
+// earlier-starting coverage) goes first, then by kind. An event covered only by
+// an evicted mark reports unknown.
 func (s *Store) evictCursorMarks(ctx context.Context, tx *sql.Tx, agent string) error {
 	// Rank by cursor, then range start, so the oldest coverage goes first.
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_inbox_cursor_marks WHERE agent_id=? AND rowid NOT IN (

@@ -16,8 +16,9 @@ CREATE TABLE IF NOT EXISTS agent_inbox_reads (
 );
 
 -- One row per cumulative ack that advanced the cursor (kind watermark, covering
--- from_cursor < seq <= cursor) and one per selective ack folded into a watermark
--- (kind selective, covering exactly seq = cursor). An event reports its ack time
+-- from_cursor < seq <= cursor) and one per ack folded into a watermark, covering
+-- exactly seq = cursor: kind selective for an ack that carried a time, kind
+-- watermark for an ack with no recorded time (carried or restored). An event reports its ack time
 -- only from a mark that covers it; otherwise the time is unknown. Bounded per agent.
 CREATE TABLE IF NOT EXISTS agent_inbox_cursor_marks (
     agent_id    TEXT    NOT NULL,

@@ -20,6 +20,11 @@ import (
 // waiters table (a released store opened read-only) reports not parked. It
 // writes nothing.
 func (s *Store) InboxParked(ctx context.Context, agent string) (Parked, error) {
+	ctx, release, err := detachedRead(ctx)
+	if err != nil {
+		return Parked{}, fmt.Errorf("read waiters: %w", err)
+	}
+	defer release()
 	present, err := tableExists(ctx, s.readDB, "agent_inbox_waiters")
 	if err != nil {
 		return Parked{}, err

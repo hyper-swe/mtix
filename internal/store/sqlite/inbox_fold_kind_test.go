@@ -6,9 +6,11 @@ package sqlite_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -93,4 +95,37 @@ func TestInboxAckThrough_FoldsRestoredUnknownTimeAck_KeepsWatermarkKind(t *testi
 	require.NotZero(t, destSeq[unknownID])
 	require.NotZero(t, destSeq[timedID])
 	requireFoldKinds(t, dest, "recipient", destSeq[unknownID], destSeq[timedID])
+}
+
+// MTIX-112.3: a folded single-event mark covers exactly its own event. The
+// event just below an individually acked one (the next journal row) is covered
+// by the watermark alone, so it reports a watermark ack and never the selective
+// ack's kind or time.
+func TestInboxAckThrough_FoldedSelectiveAck_CoversOnlyItsOwnEvent(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	// Create every node first so the three inbox events land on adjacent seqs.
+	for _, id := range []string{"PROJ-1", "PROJ-2", "PROJ-3"} {
+		require.NoError(t, s.CreateNode(ctx, makeRootNode(id, "PROJ", "Task", now)))
+	}
+	for _, id := range []string{"PROJ-1", "PROJ-2", "PROJ-3"} {
+		require.NoError(t, s.SetAnnotations(ctx, id, []model.Annotation{
+			{ID: "ann" + id, Author: "worker", Text: "ruling", CreatedAt: now, Addressee: "recipient"}}))
+	}
+	events, err := s.InboxList(ctx, "recipient")
+	require.NoError(t, err)
+	require.Len(t, events, 3)
+	first, second, third := events[0].Seq, events[1].Seq, events[2].Seq
+	require.Equal(t, third-1, second, "adjacent seqs: the fixture must put an event right below the acked one")
+	require.NoError(t, s.InboxAck(ctx, "recipient", third))
+	require.NoError(t, s.InboxAckThrough(ctx, "recipient", third))
+	info, err := s.InboxAckInfo(ctx, "recipient", third)
+	require.NoError(t, err)
+	require.Equal(t, sqlite.AckSelective, info.Kind, "the individually acked event keeps its kind")
+	for _, seq := range []int64{first, second} {
+		info, err = s.InboxAckInfo(ctx, "recipient", seq)
+		require.NoError(t, err)
+		require.Equal(t, sqlite.AckWatermark, info.Kind, "event %d is covered by the watermark mark only", seq)
+	}
 }

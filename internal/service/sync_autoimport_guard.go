@@ -221,11 +221,12 @@ func (s *SyncService) refuseConflict(mtixDir, fileHash string, diff *sqlite.Repl
 	reason := "both the local store and tasks.json changed since the last sync (FR-15.2h)"
 	if !diff.Lossy() {
 		keepFile := "keep the file with mtix import .mtix/tasks.json --mode replace (" + replaceNeedsTypedCount + ")"
+		mergeWay := "merge them with mtix import .mtix/tasks.json --mode merge (" + mergeKeeps + "), "
 		if synced {
-			keepFile = syncedReplaceWays
+			keepFile, mergeWay = syncedReplaceWays, syncedMergeWays+", "
 		}
 		s.logger.Warn("conflict detected: both tasks.json and local database changed since last sync",
-			"resolution", "merge them with mtix import .mtix/tasks.json --mode merge ("+mergeKeeps+"), "+keepFile+
+			"resolution", mergeWay+keepFile+
 				", or keep the local store with mtix sync --fix; "+unchangedRecovery)
 		s.recordRefusalOf(mtixDir, &AutoImportRefusal{FileHash: fileHash, Kind: refusalConflict, Reason: reason, Synced: synced})
 		return nil
@@ -266,20 +267,24 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss, synced 
 	b.WriteString("Nothing was imported. Until you choose, mtix refuses again on every command, and writing " +
 		"commands save to the local store but leave .mtix/tasks.json as it is.\n")
 	fmt.Fprintf(&b, "Choose one, run from the project root (%s):\n", projectRoot)
-	b.WriteString("  mtix import .mtix/tasks.json --mode merge    backs up the database, " + keeps +
-		" and adds the file's changes: a field value listed above stays, with the task's local status when " +
-		"the value is part of it; beyond those, " + mergeKeeps + "\n")
-	if holdsDifferentTask(losses) {
-		b.WriteString("                                               a local task listed as a different task " +
-			"under its id is renumbered to the next number free in both the store and the file (it keeps its " +
-			"uid; the file's task keeps the id): the import lists the renumbering and applies it only when you " +
-			"rerun it with --confirm\n")
-	}
-	if len(upgradeMatched) > 0 {
-		b.WriteString(sameTaskAtUpgradeNote(upgradeMatched))
-	}
-	if ids := differentTitleNoUID(losses); len(ids) > 0 { // MTIX-95.31.9
-		b.WriteString(differentTitleNoUIDNote(ids))
+	if synced {
+		b.WriteString(syncedMergeNote) // a merge import is refused on a project that syncs (MTIX-112.17.16.16)
+	} else {
+		b.WriteString("  mtix import .mtix/tasks.json --mode merge    backs up the database, " + keeps +
+			" and adds the file's changes: a field value listed above stays, with the task's local status when " +
+			"the value is part of it; beyond those, " + mergeKeeps + "\n")
+		if holdsDifferentTask(losses) {
+			b.WriteString("                                               a local task listed as a different task " +
+				"under its id is renumbered to the next number free in both the store and the file (it keeps its " +
+				"uid; the file's task keeps the id): the import lists the renumbering and applies it only when you " +
+				"rerun it with --confirm\n")
+		}
+		if len(upgradeMatched) > 0 {
+			b.WriteString(sameTaskAtUpgradeNote(upgradeMatched))
+		}
+		if ids := differentTitleNoUID(losses); len(ids) > 0 { // MTIX-95.31.9
+			b.WriteString(differentTitleNoUIDNote(ids))
+		}
 	}
 	b.WriteString("  mtix sync --fix                              keep the local store and rewrite " +
 		".mtix/tasks.json from it; every change in the file is dropped\n")
@@ -292,6 +297,25 @@ func refusalMessage(projectRoot, cause string, losses []sqlite.NodeLoss, synced 
 	b.WriteString("mtix sync shows this refusal.\n")
 	return b.String()
 }
+
+// syncedFreshProject names where a file can still be merged when the project
+// syncs with a hub (MTIX-112.17.16.16).
+const syncedFreshProject = "a new project made with mtix init that has no hub configured (a copy of the project directory " +
+	"carries the sync mark and the hub config, so it still refuses)"
+
+// syncedMergeWays stands in a refusal's list of ways out for the merge import
+// on a store that syncs with a hub (MTIX-112.17.16.16).
+const syncedMergeWays = "take the hub's board with mtix sync pull and then end this refusal with mtix sync --fix (a pull alone " +
+	"leaves it pending), because a merge import is refused on a project that " +
+	"syncs (it writes no sync journal, so a later hub edit would silently overwrite the merged values); to load the " +
+	"file anyway, merge it into " + syncedFreshProject
+
+// syncedMergeNote stands in the refusal for the merge option on a store that
+// syncs with a hub.
+const syncedMergeNote = "  mtix sync pull, then mtix sync --fix         take the hub's board, then end this refusal: a pull alone leaves " +
+	"it pending. A merge import of the file is " +
+	"refused on a project that syncs with a hub: it writes no sync journal, so a later hub edit would silently " +
+	"overwrite the merged values. To load the file anyway, merge it into " + syncedFreshProject + "\n"
 
 // syncedReplaceNote stands in the refusal for the replace option on a store
 // that syncs with a hub: a replace import is refused there (MTIX-107.31), so

@@ -43,14 +43,20 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 		// A replace import is refused on a store that syncs (MTIX-107.31).
 		replace, keepFile = syncedReplaceWays, syncedReplaceWays
 	}
+	mergeWay := "merge them with mtix import .mtix/tasks.json --mode merge (" + mergeKeeps + ")"
+	if refusal.Synced {
+		mergeWay = syncedMergeWays // a merge import is refused on a project that syncs (MTIX-112.17.16.16)
+	}
 	switch refusal.Kind {
 	case refusalNewerSchema:
 		return "It was written by a newer mtix: upgrade mtix, then run any mtix command. " +
 			"Rewriting it from the local store would downgrade it to this older format"
 	case refusalConflict:
-		return "Both it and the local store changed since the last sync: merge them with " +
-			"mtix import .mtix/tasks.json --mode merge (" + mergeKeeps + "), keep the local store with " +
+		return "Both it and the local store changed since the last sync: " + mergeWay + ", keep the local store with " +
 			"mtix sync --fix, or " + keepFile + "; " + unchangedRecovery
+	case refusalMergeSynced:
+		return "It changes tasks this store holds, and an import writes no sync journal on a project that syncs: " +
+			syncedUpdatesWays
 	case refusalInvalidFile:
 		return "It fails its checks (mtix sync shows why): if it was edited or merged by hand, repair and check it, " +
 			"then run mtix import .mtix/tasks.json --recompute-checksum; to keep the local board, run mtix sync --fix"
@@ -60,7 +66,11 @@ func resolutionFor(refusal *AutoImportRefusal) string {
 		return "The backup before the import could not be written: free disk space; the next command retries"
 	case refusalNotImported:
 		return "Import it with mtix import .mtix/tasks.json --mode merge (" + mergeKeeps + "), " +
-			"or keep the local board with mtix sync --fix"
+			"or keep the local board with mtix sync --fix; on a project that syncs with a hub the merge is refused, " +
+			"so keep the local board with mtix sync --fix (after mtix sync pull to take the hub's board as well)"
+	}
+	if refusal.Synced {
+		return "Resolve it: " + mergeWay + ", keep the local store with mtix sync --fix, or " + replace
 	}
 	return "Resolve it with mtix import .mtix/tasks.json --mode merge, mtix sync --fix or " + replace
 }
@@ -153,8 +163,13 @@ func (s *SyncService) exportBlockedByPendingImport(mtixDir string) bool {
 // ForceExport rewrites .mtix/tasks.json from the local store, even while
 // an auto-import of it is pending or it changed on disk, without importing
 // it, and marks a pending refusal resolved (mtix sync --fix, MTIX-95.31.2).
-// The changes the file on disk carried are dropped.
+// The changes the file on disk carried are dropped, except that a tasks.json
+// that differs from the last export is first kept in data/refused-boards
+// (MTIX-112.17.16.16).
 func (s *SyncService) ForceExport(ctx context.Context, mtixDir string) error {
+	if _, err := s.keepRefusedBoard(mtixDir); err != nil {
+		return err
+	}
 	if err := s.resolveRefusal(mtixDir, ""); err != nil {
 		return err
 	}

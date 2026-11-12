@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -72,11 +73,14 @@ func importModeFor(ctx context.Context, exportData *sqlite.ExportData, f importF
 // typed confirmation, so nobody is asked to confirm a delete that is
 // refused.
 func refuseSyncedReplace(ctx context.Context) error {
-	nodes, err := countRows(ctx, "nodes")
-	if err != nil || nodes == 0 {
+	if app.syncSvc == nil {
+		return errors.New("the sync service is not initialized")
+	}
+	holds, err := app.syncSvc.StoreHoldsTasks(ctx)
+	if err != nil || !holds {
 		return err
 	}
-	synced, err := app.store.HasSyncedWithHub(ctx)
+	synced, err := storeSyncs(ctx)
 	if err != nil {
 		return fmt.Errorf("import failed: %w", err)
 	}
@@ -87,7 +91,7 @@ func refuseSyncedReplace(ctx context.Context) error {
 	if !synced && !counts {
 		return nil
 	}
-	guide, err := app.store.InboxSafeRecoveryGuide(ctx, sqlite.SyncLogRecovery)
+	guide, err := app.syncSvc.InboxSafeRecoveryGuide(ctx, sqlite.SyncLogRecovery)
 	if err != nil {
 		return err
 	}
@@ -103,7 +107,7 @@ func refuseSyncedReplace(ctx context.Context) error {
 // journal, so a later hub edit to a merged value would silently overwrite it.
 // It runs before the workflow checks and any backup, so nothing is written.
 func refuseSyncedMerge(ctx context.Context) error {
-	synced, err := app.store.HasSyncedWithHub(ctx)
+	synced, err := storeSyncs(ctx)
 	if err != nil {
 		return fmt.Errorf("import failed: %w", err)
 	}
@@ -125,4 +129,14 @@ func workflowResolution(f importFlags) sqlite.WorkflowResolution {
 	return sqlite.WorkflowResolution{
 		Prefer: sqlite.WorkflowChoice(f.prefer), Theirs: trimIDs(f.theirs), Ours: trimIDs(f.ours),
 	}
+}
+
+// storeSyncs asks the sync service whether the open store syncs with a hub
+// or relay, so the import handlers hold no store query of their own
+// (MTIX-112.17.16.16). It fails closed when the service is missing.
+func storeSyncs(ctx context.Context) (bool, error) {
+	if app.syncSvc == nil {
+		return false, errors.New("the sync service is not initialized")
+	}
+	return app.syncSvc.StoreSyncs(ctx)
 }

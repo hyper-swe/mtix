@@ -52,7 +52,7 @@ func (s *SyncService) applyReceivedImport(ctx context.Context, ri *receivedImpor
 	if importErr != nil {
 		return fmt.Errorf("auto-import: %w", importErr)
 	}
-	s.noticeImported(ri.mtixDir, ri.diff, backupPath) // FR-15.2k: never silent
+	s.noticeImported(ctx, ri.mtixDir, ri.diff, backupPath, ri.assumeSynced) // FR-15.2k: never silent
 	s.noticeResolved(ri.resolution)
 	s.noticeHistoryImport(importRes)
 	s.noticeOlderWriter(ri.incoming.MtixVersion) // MTIX-95.31.19.9: once per imported file

@@ -131,13 +131,17 @@ func (s *Store) writeCursorMark(ctx context.Context, tx *sql.Tx, agent string, f
 
 // keepFoldedSelectiveAcks keeps the kind and time of selective acks the
 // watermark now covers, as single-event marks, before their ack rows are pruned.
+// An ack row with an empty time (carried or restored coverage whose source had
+// no time) folds as a watermark mark of unknown time, never as a selective one,
+// so the next through-ack does not invent a kind for it (MTIX-112.3).
 func (s *Store) keepFoldedSelectiveAcks(ctx context.Context, tx *sql.Tx, agent string) error {
-	// Each covered selective ack becomes a (seq-1, seq] mark with its own time;
-	// OR IGNORE keeps the first time if the same event was acked and folded before.
+	// Each covered ack becomes a (seq-1, seq] mark with its own time; a row with an
+	// empty time becomes a watermark mark. OR IGNORE keeps the first time if the
+	// same event was acked and folded before.
 	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO agent_inbox_cursor_marks(agent_id,cursor,from_cursor,kind,advanced_at)
-		SELECT agent_id, event_seq, event_seq-1, ?, acked_at FROM agent_inbox_ack
+		SELECT agent_id, event_seq, event_seq-1, CASE WHEN acked_at='' THEN ? ELSE ? END, acked_at FROM agent_inbox_ack
 		WHERE agent_id=? AND event_seq<=(SELECT cursor FROM agent_inbox_cursor WHERE agent_id=?)`,
-		AckSelective, agent, agent); err != nil {
+		AckWatermark, AckSelective, agent, agent); err != nil {
 		return fmt.Errorf("keep folded selective acks: %w", err)
 	}
 	return nil
@@ -234,7 +238,8 @@ func ackInfoIn(ctx context.Context, q rowQuerier, agent string, seq int64) (AckI
 
 // coveringMarkInfo names the ack time of a watermark-covered event. Only a mark
 // that covers seq (from_cursor < seq <= cursor) names its time; a selective mark
-// wins over the watermark mark around it. No covering mark (older, evicted, or a
+// wins over the watermark mark around it, and of two marks ending at the same
+// event the narrower (higher from_cursor) one wins. No covering mark (older, evicted, or a
 // store without the marks table) means the time is unknown, never a later
 // mark's time.
 func coveringMarkInfo(ctx context.Context, q rowQuerier, agent string, seq int64) (AckInfo, error) {
@@ -248,7 +253,7 @@ func coveringMarkInfo(ctx context.Context, q rowQuerier, agent string, seq int64
 	var kind, at string
 	err = q.QueryRowContext(ctx, `SELECT kind, advanced_at FROM agent_inbox_cursor_marks
 		WHERE agent_id=? AND from_cursor<? AND cursor>=?
-		ORDER BY (kind=?) DESC, cursor ASC LIMIT 1`, agent, seq, seq, AckSelective).Scan(&kind, &at)
+		ORDER BY (kind=?) DESC, cursor ASC, from_cursor DESC LIMIT 1`, agent, seq, seq, AckSelective).Scan(&kind, &at)
 	if errors.Is(err, sql.ErrNoRows) {
 		return AckInfo{Kind: AckWatermark}, nil
 	}

@@ -83,7 +83,10 @@ func (p *PiWait) Run(ctx context.Context, req attach.VerbRequest) error {
 
 // tryClaim claims the lowest unacknowledged foreign event above the registration's mark
 // that no one has claimed. An event with a ledger row, terminal or leased, is skipped.
+// It is the scanner for its own registration, the same role as the host scanner, so
+// its reads are internal: they stamp no last read and register no waiter (MTIX-112.3).
 func (p *PiWait) tryClaim(ctx context.Context, st PiWaitStore, hostID, uid, session string) (model.WakeAttempt, bool, error) {
+	ctx = sqlite.WithoutReadStamp(ctx)
 	regs, err := st.ListRegistrations(ctx, hostID, uid)
 	if err != nil {
 		return model.WakeAttempt{}, false, fmt.Errorf("pi wait list registrations: %w", err)

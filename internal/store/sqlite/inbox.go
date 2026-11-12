@@ -48,7 +48,12 @@ func (s *Store) inboxList(ctx context.Context, agentID string) ([]InboxEvent, er
 	// (1) comment events addressed to the agent (addressee in the payload), and
 	// (2) events a hook delivered to this agent's inbox (inbox_deliveries).
 	// UNION (not UNION ALL) dedupes the rare event that is both.
-	rows, err := queryInboxEligible(ctx, s.readDB, agentID)
+	rctx, release, err := detachedRead(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("inbox list %q: %w", agentID, err)
+	}
+	defer release()
+	rows, err := queryInboxEligible(rctx, s.readDB, agentID)
 	if err != nil {
 		return nil, fmt.Errorf("inbox list %q: %w", agentID, err)
 	}

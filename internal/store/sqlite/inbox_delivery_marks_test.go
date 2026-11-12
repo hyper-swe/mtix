@@ -261,11 +261,11 @@ func TestInboxWait_EmptyAgent_RejectedBeforeAnyDeliveryWrite(t *testing.T) {
 	s := newTestStore(t)
 	_, err := s.InboxWait(t.Context(), "", 20*time.Millisecond)
 	require.ErrorIs(t, err, model.ErrInvalidInput)
-	for _, tbl := range []string{"agent_inbox_reads", "agent_inbox_waiters"} {
-		var n int
-		require.NoError(t, s.WriteDB().QueryRow(`SELECT COUNT(*) FROM `+tbl).Scan(&n)) // test-only constant identifiers
-		require.Zero(t, n, tbl)
-	}
+	var reads, waiters int
+	require.NoError(t, s.WriteDB().QueryRow(`SELECT COUNT(*) FROM agent_inbox_reads`).Scan(&reads))
+	require.NoError(t, s.WriteDB().QueryRow(`SELECT COUNT(*) FROM agent_inbox_waiters`).Scan(&waiters))
+	require.Zero(t, reads, "agent_inbox_reads")
+	require.Zero(t, waiters, "agent_inbox_waiters")
 }
 
 // A wait stamps last read when it starts and when it ends, on every exit path.

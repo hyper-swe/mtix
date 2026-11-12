@@ -67,7 +67,7 @@ func freshnessFlag(cmd *cobra.Command, name string) string {
 func fixedCommandFreshness(path string) freshnessScope {
 	switch path {
 	case "dispatcher status", "agent list", "agent work", "blocked", "config get", "context",
-		"daemon status", "dep show", "hooks fire", "hooks list", "hooks log",
+		"board", "daemon status", "dep show", "hooks fire", "hooks list", "hooks log",
 		"hooks status", "inbox", "inbox status", "list", "orphans", "progress", "projects",
 		"ready", "search", "session summary", "show", "stale", "stats",
 		"sync collisions list", "sync conflicts list", "sync doctor",

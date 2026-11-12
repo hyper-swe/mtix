@@ -142,7 +142,7 @@ func TestDoctor_RoutingAndAutoImport_ExplicitlyLocalDiagnostic(t *testing.T) {
 	for _, cmd := range root.Commands() {
 		names = append(names, cmd.Name())
 	}
-	assert.Len(t, names, 56, strings.Join(names, ",")) // 55: 53 with the hidden attach group (MTIX-112.19.3), plus url (MTIX-230) the experimental dispatcher (MTIX-112.17.13) and the hook group (MTIX-112.40.4)
+	assert.Len(t, names, 57, strings.Join(names, ",")) // 56: board (MTIX-255.1); 55: 53 with the hidden attach group (MTIX-112.19.3), plus url (MTIX-230) the experimental dispatcher (MTIX-112.17.13) and the hook group (MTIX-112.40.4)
 	assert.Contains(t, names, "dispatcher")
 	assert.Contains(t, names, "url")
 }

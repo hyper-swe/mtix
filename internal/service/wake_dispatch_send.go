@@ -60,6 +60,12 @@ func (d *WakeDispatcher) sendWake(ctx context.Context, key model.WakeKey, hop in
 			return wakeAttempted, resolveErr
 		}
 	}
+	return d.deliverClaimed(ctx, attempt)
+}
+
+// deliverClaimed sends a won, resolved claim and records the terminal result. It is the one
+// delivery tail of a first wake and of a stalled-turn redelivery (MTIX-112.40.12).
+func (d *WakeDispatcher) deliverClaimed(ctx context.Context, attempt model.WakeAttempt) (wakeOutcome, error) {
 	result, sendErr := d.deliverWake(ctx, attempt)
 	// Once a send ran, caller cancellation must not turn its failure into a retry.
 	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

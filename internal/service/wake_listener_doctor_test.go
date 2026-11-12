@@ -60,7 +60,7 @@ func (f *doctorFixture) rowsByID(t *testing.T) map[string]service.DoctorResult {
 
 func TestWakeListenerDoctor_AllDocumentedIDs_AlwaysPresent(t *testing.T) {
 	want := []string{
-		"wake.listener.routes", "wake.listener.dispatcher", "wake.listener.unconfirmed-rate",
+		"wake.listener.routes", "wake.listener.dispatcher", "wake.listener.unconfirmed-rate", "wake.listener.stalled",
 		"wake.listener.hook-installed", "wake.listener.waiter-armed", "wake.listener.route-contract", "wake.listener.bypass-hold",
 	}
 	for _, f := range []*doctorFixture{{}, {agents: []string{"worker"}, dispatcher: true}, {agentsErr: errors.New("boom")}} {

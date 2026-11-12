@@ -1327,9 +1327,13 @@ mtix inbox lease release --agent developer --holder "$HOLDER"
 Show the wake delivery state for an agent and its recent wake outcomes
 
 Show the wake delivery state for an agent and its last wake outcomes with age
-(MTIX-112.40.6). States: queued, nudged, unconfirmed, confirmed, held, undeliverable,
-off, no-live-session, no-dispatcher, unknown. unconfirmed is derived at read time from
-wake.confirm_window (default 30 seconds) and is never written as an inbox event.
+(MTIX-112.40.6). States: queued, nudged, unconfirmed, stalled, confirmed, held,
+undeliverable, off, no-live-session, no-dispatcher, unknown. unconfirmed is derived at read
+time from wake.confirm_window (default 30 seconds) and is never written as an inbox event.
+stalled (MTIX-112.40.12) is derived the same way: an addressed message unread for longer
+than wake.confirm_window, measured from the event, with no hook waiter armed because the
+session's turn has not ended. No timer runs; it is noticed when this command, mtix doctor or
+a dispatcher pass runs.
 This reads local state only and never contacts a hub.
 
 ### Flags

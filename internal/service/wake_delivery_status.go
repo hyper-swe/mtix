@@ -33,8 +33,22 @@ type WakeStatusDeps struct {
 	// Dispatcher reports whether any dispatcher heartbeat exists for this host and user.
 	Dispatcher func(ctx context.Context) (bool, error)
 	// Rows lists the newest retained wake ledger rows for the agent.
-	Rows  func(ctx context.Context, agent string, limit int) ([]model.WakeStatusRow, error)
-	Clock func() time.Time
+	Rows func(ctx context.Context, agent string, limit int) ([]model.WakeStatusRow, error)
+	// Pending lists the agent's unacknowledged addressed events with their creation times, and
+	// WaiterLive reports whether a hook waiter is armed for the agent. Both are optional: when
+	// either is nil the stalled state is not derived (MTIX-112.40.12).
+	Pending    func(ctx context.Context, agent string) ([]PendingEvent, error)
+	WaiterLive func(ctx context.Context, agent string) (bool, error)
+	// HookRoute reports whether the agent's registration wakes through the hook route, the only
+	// route that arms a waiter. When nil every registered agent is taken to be on it.
+	HookRoute func(ctx context.Context, agent string) (bool, error)
+	Clock     func() time.Time
+}
+
+// PendingEvent is an addressed event its recipient has not acknowledged.
+type PendingEvent struct {
+	Seq int64
+	At  time.Time
 }
 
 // WakeStatusService derives delivery status without writing anything: unconfirmed is
@@ -63,6 +77,13 @@ func (s *WakeStatusService) Current(ctx context.Context, agent string) WakeStatu
 	}
 	if !registered {
 		return newWakeStatus(model.WakeStateNoLiveSession, agent)
+	}
+	first, found, err := s.firstStalled(ctx, agent)
+	if err != nil {
+		return unknownStatus(agent, "stalled: "+err.Error())
+	}
+	if found {
+		return first
 	}
 	dispatching, err := s.deps.Dispatcher(ctx)
 	if err != nil {
@@ -108,12 +129,21 @@ func (s *WakeStatusService) Recent(ctx context.Context, agent string, limit int)
 	if err != nil {
 		return nil, &WakeSourceError{Source: WakeSourceLedger, Err: err}
 	}
+	stalled, err := s.stalledEvents(ctx, agent)
+	if err != nil {
+		return nil, &WakeSourceError{Source: WakeSourceLedger, Err: err}
+	}
 	now := s.deps.Clock()
-	out := make([]WakeStatus, 0, len(rows))
+	out := make([]WakeStatus, 0, len(rows)+len(stalled))
 	for _, r := range rows {
+		if st, ok := stalled[r.EventSeq]; ok {
+			out = append(out, st)
+			delete(stalled, r.EventSeq)
+			continue
+		}
 		out = append(out, rowStatus(r, agent, now, window))
 	}
-	return out, nil
+	return mergeStalled(out, stalled, limit), nil
 }
 
 // rowStatus maps one ledger row. A time that cannot be read for a sent nudge is unknown,
@@ -160,7 +190,7 @@ func statusFix(state model.WakeState, agent string) string {
 		return "mtix config set wake.live on --agent " + agent
 	case model.WakeStateNoLiveSession:
 		return "mtix agent register " + agent
-	case model.WakeStateNoDispatcher, model.WakeStateUnconfirmed, model.WakeStateUndeliverable:
+	case model.WakeStateNoDispatcher, model.WakeStateUnconfirmed, model.WakeStateUndeliverable, model.WakeStateStalled:
 		return "mtix inbox --agent " + agent + " --wait"
 	case model.WakeStateHeld:
 		return "mtix agent allow " + agent

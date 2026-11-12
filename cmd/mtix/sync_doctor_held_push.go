@@ -29,7 +29,8 @@ func appendHeldPushCheck(ctx context.Context, r DoctorReport, st *sqlite.Store) 
 		return appendCheck(r, heldPushCheckName, false, "local store not initialized")
 	}
 	ok, detail := checkHeldPushEvents(ctx, st)
-	return appendCheck(r, heldPushCheckName, ok, detail)
+	r = appendCheck(r, heldPushCheckName, ok, detail)
+	return appendImportRefusalCheck(r, app.syncSvc, app.mtixDir) // also local changes the hub has not seen (MTIX-112.17.16.16)
 }
 
 // checkHeldPushEvents passes when push holds no event. It fails while any

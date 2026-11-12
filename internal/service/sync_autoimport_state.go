@@ -153,23 +153,36 @@ func (s *SyncService) refusalPending(mtixDir string, refusal *AutoImportRefusal,
 	return refusal.FileHash == current && string(stored) != current
 }
 
-// readRefusal returns the recorded refusal, nil when there is none, or one
-// whose reason says the record cannot be read.
-func (s *SyncService) readRefusal(mtixDir string) *AutoImportRefusal {
+// loadRefusal reads the recorded refusal: nil and no error when there is
+// none, and an error when the record exists but cannot be read or parsed.
+func (s *SyncService) loadRefusal(mtixDir string) (*AutoImportRefusal, string, error) {
 	path := filepath.Join(mtixDir, "data", autoImportRefusalFile)
 	// #nosec G703 -- caller selects the local project directory; the refusal filename is fixed and not received from the board or hub.
 	raw, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil
+		return nil, path, nil
 	}
 	var refusal AutoImportRefusal
 	if err == nil {
 		err = json.Unmarshal(raw, &refusal)
 	}
 	if err != nil {
+		return nil, path, err
+	}
+	return &refusal, path, nil
+}
+
+// readRefusal returns the recorded refusal, nil when there is none, or one
+// whose reason says the record cannot be read.
+func (s *SyncService) readRefusal(mtixDir string) *AutoImportRefusal {
+	refusal, path, err := s.loadRefusal(mtixDir)
+	if err != nil {
 		return s.protectRestoredInboxRefusal(&AutoImportRefusal{Reason: fmt.Sprintf("the refusal record %s cannot be read: %v", path, err)})
 	}
-	return s.protectRestoredInboxRefusal(&refusal)
+	if refusal == nil {
+		return nil
+	}
+	return s.protectRestoredInboxRefusal(refusal)
 }
 
 // A cached refusal must use current mail evidence, including legacy refusal files.

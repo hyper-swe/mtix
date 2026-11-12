@@ -273,6 +273,14 @@ run therefore uses three jobs that mirror the Linux ones (MTIX-112.17.42.6):
 - `bar-macos-cmd`: `cmd/mtix` in the shards of `scripts/cmd-mtix-shards.sh`, guarded by its
   `check`.
 
+A macOS dispatch therefore runs 9 macOS jobs (1 `bar-macos`, 5 `bar-macos-shard`, 3
+`bar-macos-cmd`; it was 1), plus `validate` on Ubuntu. Hosted macOS runner concurrency is
+limited and shared with the macOS legs of the main CI run, so jobs can queue. Queue time counts
+toward the wrapper's overall `RB_TIMEOUT_SECS` (default 5400 s) and each job has its own
+90-minute `timeout-minutes`; avoid dispatching a macOS bar while a main-branch macOS run is in
+flight. A green `--os macos-latest` run of the sharded bar is confirmed by dispatching it after
+review, not by the review loop.
+
 Every `go test` keeps `-race -count=1 -timeout 20m`, with no `-skip` or `-short`. The step
 names are the ones `scripts/remote-bar.sh` classifies. `scripts/remote_bar_macos_shards_test.go`
 parses the workflow and fails if the macOS shard set differs from the Linux one, a package or

@@ -10,8 +10,10 @@
 package scripts_test
 
 import (
+	"errors"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -33,13 +35,16 @@ const (
 )
 
 type rbStep struct {
-	Name string `yaml:"name"`
-	Run  string `yaml:"run"`
+	Name string            `yaml:"name"`
+	Uses string            `yaml:"uses"`
+	Run  string            `yaml:"run"`
+	With map[string]string `yaml:"with"`
 }
 
 type rbJob struct {
-	If       string `yaml:"if"`
-	RunsOn   string `yaml:"runs-on"`
+	If       string            `yaml:"if"`
+	RunsOn   string            `yaml:"runs-on"`
+	Env      map[string]string `yaml:"env"`
 	Strategy struct {
 		Matrix struct {
 			Include []map[string]string `yaml:"include"`
@@ -282,4 +287,103 @@ func TestRemoteBarMacOS_BarJob_NoTestRaceButLintAndGovulncheck(t *testing.T) {
 	require.NotContains(t, mac.allRun(), "make test-race")
 	require.Contains(t, stepRunByName(t, mac, "Run committed bar"), "make lint-go")
 	require.Contains(t, stepRunByName(t, mac, "Run govulncheck"), "govulncheck")
+}
+
+// runCommittedBar runs the real "Run committed bar" step of bar-macos under
+// bash -e from the repository root, with shims first on PATH: make does
+// nothing, go records every `go test` command line (other go commands reach the
+// real go, which bar-list needs), and bash fails any bar-list call whose
+// manifest name is in failList. It returns the step's output, its exit code and
+// the recorded go test command lines.
+func runCommittedBar(t *testing.T, failList string) (string, int, []string) {
+	t.Helper()
+	realGo, err := exec.LookPath("go")
+	require.NoError(t, err)
+	realBash, err := exec.LookPath("bash")
+	require.NoError(t, err)
+	mac, _, _ := requireJobsPresent(t, readRBJobs(t))
+	script := stepRunByName(t, mac, "Run committed bar")
+
+	dir := t.TempDir()
+	record := filepath.Join(dir, "gotest.log")
+	shims := map[string]string{
+		"make": "#!/bin/sh\nexit 0\n",
+		"go":   "#!/bin/sh\nif [ \"$1\" = test ]; then echo \"$*\" >>\"" + record + "\"; exit 0; fi\nexec " + realGo + " \"$@\"\n",
+		"bash": "#!/bin/sh\nif [ \"$2\" = bar-list ] && [ \"$3\" = \"" + failList + "\" ]; then echo 'shim: bar-list failed' >&2; exit 7; fi\nexec " + realBash + " \"$@\"\n",
+	}
+	for name, body := range shims {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o700)) //nolint:gosec // G306: test shim must be executable
+	}
+	cmd := exec.Command(realBash, "-e", "-c", script)
+	cmd.Dir = ".."
+	cmd.Env = append(os.Environ(), "PATH="+dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, runErr := cmd.CombinedOutput()
+	code := 0
+	var exitErr *exec.ExitError
+	if errors.As(runErr, &exitErr) {
+		code = exitErr.ExitCode()
+	} else {
+		require.NoError(t, runErr, string(out))
+	}
+	logged, readErr := os.ReadFile(record)
+	if readErr != nil {
+		require.True(t, os.IsNotExist(readErr), readErr)
+	}
+	return string(out), code, strings.Split(strings.TrimSpace(string(logged)), "\n")
+}
+
+// (c2) The packages the bar-macos step really passes to go test are exactly
+// the serial and parallel manifests, in that order, before the flags.
+func TestRemoteBarMacOS_NonShardJob_PassesExactlySerialThenParallelPackages(t *testing.T) {
+	out, code, lines := runCommittedBar(t, "")
+	require.Equal(t, 0, code, out)
+	require.Len(t, lines, 1, "exactly one go test run, got %v", lines)
+	fields := strings.Fields(lines[0])
+	require.Equal(t, "test", fields[0])
+	var pkgs []string
+	i := 1
+	for ; i < len(fields) && !strings.HasPrefix(fields[i], "-"); i++ {
+		pkgs = append(pkgs, fields[i])
+	}
+	want := append(manifestPackages(t, "serial"), manifestPackages(t, "parallel")...)
+	require.Equal(t, want, pkgs, "go test must receive the serial then parallel manifests exactly")
+	require.Equal(t, "-race -count=1 -p 2 -timeout 20m", strings.Join(fields[i:], " "))
+}
+
+// (c3) A failing bar-list must fail the step; a substitution that runs two
+// lists would otherwise mask the first one's failure.
+func TestRemoteBarMacOS_NonShardJob_FailingBarListFailsTheStepBeforeGoTest(t *testing.T) {
+	for _, list := range []string{"serial", "parallel"} {
+		t.Run(list, func(t *testing.T) {
+			out, code, lines := runCommittedBar(t, list)
+			require.NotEqual(t, 0, code, "a failing bar-list %s must fail the step: %s", list, out)
+			require.Contains(t, out, "shim: bar-list failed")
+			require.Equal(t, []string{""}, lines, "go test must not run after a bar-list failure")
+		})
+	}
+}
+
+// (g) Every new job checks out the scratch ref and carries the snapshot tree
+// and base verification of the bar job, with the env it reads.
+func TestRemoteBarMacOS_NewJobs_PinCheckoutRefAndSnapshotVerification(t *testing.T) {
+	jobs := readRBJobs(t)
+	mac, shard, cmd := requireJobsPresent(t, jobs)
+	ref := stepRunByName(t, jobs["bar"], "Verify snapshot tree")
+	require.Contains(t, ref, "BASE_COMMIT", "reference verify step lost its base check")
+	for name, j := range map[string]rbJob{macShardJob: shard, macCmdJob: cmd, macBarJob: mac} {
+		require.Equal(t, ref, stepRunByName(t, j, "Verify snapshot tree"), "%s: verify step must equal the bar job's", name)
+		require.Equal(t, "${{ inputs.base_commit }}", j.Env["BASE_COMMIT"], name)
+		require.Equal(t, "${{ inputs.expected_tree }}", j.Env["EXPECTED_TREE"], name)
+		var checkout *rbStep
+		for i := range j.Steps {
+			if strings.HasPrefix(j.Steps[i].Uses, "actions/checkout@") {
+				require.Nil(t, checkout, "%s: more than one checkout", name)
+				checkout = &j.Steps[i]
+			}
+		}
+		require.NotNil(t, checkout, name)
+		require.Equal(t, "${{ inputs.scratch_ref }}", checkout.With["ref"], name)
+		require.Equal(t, "0", checkout.With["fetch-depth"], name)
+		require.Equal(t, "false", checkout.With["persist-credentials"], name)
+	}
 }

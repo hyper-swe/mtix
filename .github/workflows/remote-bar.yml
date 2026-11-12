@@ -482,8 +482,12 @@ jobs:
         # No mapfile: the macOS default bash is 3.2. Package paths have no spaces.
         run: |
           make lint-go
-          pkgs=$(bash scripts/ci-go-shards.sh bar-list serial; bash scripts/ci-go-shards.sh bar-list parallel)
-          [ -n "$pkgs" ] || { echo "empty package list" >&2; exit 1; }
+          # One list per assignment: a substitution running both lists would
+          # report only the second one's exit status and hide a failed first.
+          serial=$(bash scripts/ci-go-shards.sh bar-list serial) || { echo "bar-list serial failed" >&2; exit 1; }
+          parallel=$(bash scripts/ci-go-shards.sh bar-list parallel) || { echo "bar-list parallel failed" >&2; exit 1; }
+          pkgs="$serial $parallel"
+          [ -n "$serial" ] && [ -n "$parallel" ] || { echo "empty package list" >&2; exit 1; }
           # shellcheck disable=SC2086
           go test $pkgs -race -count=1 -p 2 -timeout 20m
       - name: Run govulncheck
@@ -491,7 +495,6 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           go list ./... | grep -v node_modules | xargs "$(go env GOPATH)/bin/govulncheck"
-
 
   bar-macos-shard:
     needs: validate
@@ -620,6 +623,7 @@ jobs:
         run: |
           pattern=$(bash scripts/cmd-mtix-shards.sh pattern "$SHARD")
           go test ./cmd/mtix/ -race -count=1 -p 1 -timeout 20m -run "$pattern"
+
   web:
     needs: validate
     # Optional (input web): the web checks CI and release run, plus a byte

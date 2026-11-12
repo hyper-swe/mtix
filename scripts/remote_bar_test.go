@@ -870,7 +870,7 @@ func TestRemoteBarWorkflow_GoFlags_NeverSetInAnyEnvBlock(t *testing.T) {
 	}
 }
 
-func TestRemoteBarWorkflow_GoEnvWrite_PrecedesTheBar(t *testing.T) {
+func TestRemoteBarWorkflow_NoJob_WritesGoEnvOrRunsTestRace(t *testing.T) {
 	// MTIX-112.17.42.6: no job runs make test-race any more, so no job needs
 	// go env -w; every job passes -p explicitly (or runs one package).
 	for name, job := range readRBJobs(t) {

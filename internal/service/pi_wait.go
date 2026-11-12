@@ -21,6 +21,8 @@ type PiWaitStore interface {
 	InboxList(ctx context.Context, agentID string) ([]sqlite.InboxEvent, error)
 	ClaimWake(ctx context.Context, key model.WakeKey, lease time.Duration) (model.WakeAttempt, bool, error)
 	RecordWakeResult(ctx context.Context, attempt model.WakeAttempt, r model.WakeResult) error
+	UpgradeWakeConfirmed(ctx context.Context, key model.WakeKey) error
+	InboxEventAcked(ctx context.Context, agent string, seq int64) (bool, error)
 }
 
 // PiWaitOptions injects every capability of the pi wait adapter.
@@ -32,8 +34,8 @@ type PiWaitOptions struct {
 }
 
 // PiWait is the attach adapter of the pi harness (MTIX-112.19.7, ADR-007 section 2.7).
-// Its wait verb is the scanner for its own registration: it claims through the same wake
-// ledger as the host scanner (which skips pi rows), so one event produces one wake and a
+// Its wait verb is the scanner for its own registration: it claims through the single
+// WakeClaimer over the same wake ledger as the host scanner (which skips pi rows), so one event produces one wake and a
 // claimed event never wakes again, acknowledged or not. Run returns nil only after a
 // successful claim, a terminal ledger row and one wake line on stdout.
 type PiWait struct{ opts PiWaitOptions }
@@ -88,6 +90,10 @@ func (p *PiWait) tryClaim(ctx context.Context, st PiWaitStore, hostID, uid, sess
 	if err != nil {
 		return model.WakeAttempt{}, false, fmt.Errorf("pi wait list registrations: %w", err)
 	}
+	claimer, err := NewWakeClaimer(st, p.opts.Lease, defaultWakeEvidence(nil, st))
+	if err != nil {
+		return model.WakeAttempt{}, false, fmt.Errorf("pi wait claim function: %w", err)
+	}
 	for i := range regs {
 		reg := &regs[i]
 		if reg.Harness != harnessPi || reg.SessionHandle != session {
@@ -102,7 +108,7 @@ func (p *PiWait) tryClaim(ctx context.Context, st PiWaitStore, hostID, uid, sess
 				continue
 			}
 			key := model.NewWakeKey(model.WakeRecipient{AgentID: reg.AgentID, HostID: reg.HostID, UID: reg.UID}, ev.Seq, reg.Epoch, ev.EventID)
-			attempt, claimed, err := st.ClaimWake(ctx, key, p.opts.Lease)
+			attempt, claimed, err := claimer.Claim(ctx, key) // the one claim function, so a reclaim is evidence-checked
 			if err != nil {
 				return model.WakeAttempt{}, false, fmt.Errorf("pi wait claim event %d: %w", ev.Seq, err)
 			}

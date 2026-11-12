@@ -99,3 +99,51 @@ func TestClaimWake_TerminalRow_IsNeverReclaimed(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, won, "a sent event never wakes again")
 }
+
+// A reclaimed event that a route-bearing result then finalizes keeps the reclaimed-after-crash
+// marker, so the ledger and the doctor count the one permitted duplicate (MTIX-112.40.13).
+func TestRecordWakeResult_ReclaimedClaim_KeepsMarkerAcrossRouteResults(t *testing.T) {
+	for name, result := range map[string]model.WakeResult{
+		"route and reason": {Outcome: model.WakeSent, Route: "socket-push", Reason: "frame-written"},
+		"route only":       {Outcome: model.WakeSent, Route: "socket-push"},
+		"bare outcome":     {Outcome: model.WakeSent},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, err := sqlite.New(t.TempDir(), nil)
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, s.Close()) })
+			now := time.Date(2026, 11, 11, 12, 0, 0, 0, time.UTC)
+			s.SetClock(func() time.Time { return now })
+			key := model.WakeKey{AgentID: "a", HostID: "h", UID: "u", EventSeq: 5, Epoch: 1}
+			_, won, err := s.ClaimWake(t.Context(), key, time.Minute)
+			require.NoError(t, err)
+			require.True(t, won)
+			now = now.Add(2 * time.Minute)
+			second, won, err := s.ClaimWake(t.Context(), key, time.Minute)
+			require.NoError(t, err)
+			require.True(t, won)
+			require.True(t, second.Reclaimed)
+			require.NoError(t, s.RecordWakeResult(t.Context(), second, result))
+			stats, err := s.WakeLedgerStats(t.Context())
+			require.NoError(t, err)
+			require.EqualValues(t, 1, stats.Reclaimed, "the reclaim stays counted after the redelivery is recorded")
+			outcome, reason := reclaimRow(t, s)
+			require.Equal(t, string(model.WakeSent), outcome)
+			require.Equal(t, model.WakeReasonReclaimedAfterCrash, reason)
+		})
+	}
+}
+
+// A first claim finalized with a result keeps that result's own reason.
+func TestRecordWakeResult_FirstClaim_KeepsResultReason(t *testing.T) {
+	s, err := sqlite.New(t.TempDir(), nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	key := model.WakeKey{AgentID: "a", HostID: "h", UID: "u", EventSeq: 5, Epoch: 1}
+	first, won, err := s.ClaimWake(t.Context(), key, time.Minute)
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, s.RecordWakeResult(t.Context(), first, model.WakeResult{Outcome: model.WakeSent, Route: "socket-push", Reason: "frame-written"}))
+	_, reason := reclaimRow(t, s)
+	require.Equal(t, "frame-written", reason)
+}

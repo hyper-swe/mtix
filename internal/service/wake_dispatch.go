@@ -38,7 +38,8 @@ type WakeDispatcherOptions struct {
 	Alerts WakeAlertWriter
 	Send   func(context.Context, model.WakeAttempt) error
 	// Evidence says whether a reclaimed claim's first push already landed (MTIX-112.40.13);
-	// nil means no evidence is available, so a reclaim delivers once more.
+	// nil derives the inbox acknowledgement evidence from the store when it can read the inbox
+	// (InboxAckEvidence); without such a store a reclaim delivers once more.
 	Evidence WakeEvidence
 	// Adapters are the delivery routes, selected per registration in route order.
 	// Send, when set, joins them as the legacy route. At least one of the two is required.
@@ -108,7 +109,7 @@ func dispatcherClaimer(opts WakeDispatcherOptions) *WakeClaimer {
 	if !ok {
 		return nil
 	}
-	c, _ := NewWakeClaimer(ledger, time.Minute, opts.Evidence) // the lease is a positive constant
+	c, _ := NewWakeClaimer(ledger, time.Minute, defaultWakeEvidence(opts.Evidence, opts.Store)) // the lease is a positive constant
 	return c
 }
 

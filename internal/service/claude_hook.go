@@ -67,7 +67,8 @@ type ClaudeHookDeps struct {
 	RenewEvery time.Duration // how often a long wait renews the lease; 0 = LeaseTTL/3
 	ClaimLease time.Duration
 	// Evidence says whether a reclaimed claim's first push already landed (MTIX-112.40.13);
-	// nil means no evidence is available, so a reclaim delivers once more.
+	// nil derives the inbox acknowledgement evidence from the store when it can read the inbox
+	// (InboxAckEvidence); without such a store a reclaim delivers once more.
 	Evidence WakeEvidence
 	Now      func() time.Time // the clock; nil = time.Now
 
@@ -99,7 +100,7 @@ func NewClaudeHook(d ClaudeHookDeps) *ClaudeHook {
 	}
 	h := &ClaudeHook{d: d}
 	if ledger, ok := d.Claims.(WakeClaimLedger); ok {
-		h.claimer, _ = NewWakeClaimer(ledger, d.ClaimLease, d.Evidence) // a non-positive lease keeps the direct claim
+		h.claimer, _ = NewWakeClaimer(ledger, d.ClaimLease, defaultWakeEvidence(d.Evidence, d.Claims)) // a non-positive lease keeps the direct claim
 	}
 	return h
 }

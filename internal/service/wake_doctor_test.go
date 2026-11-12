@@ -5,6 +5,7 @@
 package service_test
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -66,6 +67,11 @@ func TestWakeLedgerDoctor_ReclaimedAndCappedWakes_WarnWithFixAndJSONFields(t *te
 	require.Equal(t, service.DoctorWarn, got.Status)
 	require.Contains(t, got.Detail, "1 wake(s) were reclaimed-after-crash")
 	require.NotEmpty(t, got.Fix)
+	require.Contains(t, got.Fix, "does not clear by itself", "the fix says how the warning ends: it is a retained count with no prune command")
+	require.Contains(t, got.Fix, "stop growing")
+	encoded, err := json.Marshal(got.Data)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"reclaimed":1,"capped":0}`, string(encoded), "the --json data keys are a stable contract")
 
 	*now = now.Add(2 * time.Minute)
 	_, won, err = s.ClaimWake(t.Context(), key, time.Minute) // the second expiry is capped

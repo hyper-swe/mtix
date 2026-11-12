@@ -53,5 +53,5 @@ func wakeReclaimResult(stats model.WakeLedgerStats, detail string) DoctorResult 
 	return DoctorResult{Status: DoctorWarn,
 		Detail: fmt.Sprintf("%d wake(s) were reclaimed-after-crash (a crash between push and record can wake a session twice) and %d closed at reclaim-cap. %s", stats.Reclaimed, stats.Capped, detail),
 		Data:   map[string]any{"reclaimed": stats.Reclaimed, "capped": stats.Capped},
-		Fix:    "Read the inbox with mtix inbox: a reclaim-cap message was not woken again but is still unread. If reclaims keep appearing, stop the listener or dispatcher that keeps dying, then run mtix doctor."}
+		Fix:    "Read the inbox with mtix inbox: a reclaim-cap message was not woken again but is still unread. If reclaims keep appearing, stop the listener or dispatcher that keeps dying, then run mtix doctor. This warning counts retained wake rows and this build has no command that prunes them, so it does not clear by itself: it is healthy when the counts stop growing between doctor runs."}
 }

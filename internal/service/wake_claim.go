@@ -76,3 +76,27 @@ func (c *WakeClaimer) Resolve(ctx context.Context, attempt model.WakeAttempt) (m
 	}
 	return model.WakeAttempt{}, false, nil
 }
+
+// WakeStallLedger is the ledger capability stalled-turn recovery needs on top of the claim
+// ledger: the one compare-and-set reopen of a sent, unconfirmed event (MTIX-112.40.12).
+type WakeStallLedger interface {
+	ReopenStalledWake(ctx context.Context, key model.WakeKey, window time.Duration) (model.WakeAttempt, bool, error)
+}
+
+// ReclaimStalled takes the one permitted redelivery of an event whose push went unconfirmed
+// because the session's turn never ended (MTIX-112.40.12, FR-20). It is the same claim
+// function as Claim, never a second one: the ledger reopens the sent row once under a fresh
+// fence (sent more than window ago, retry cap one), and Resolve then checks the delivery
+// evidence while that fence is held, so an event the session already read is settled as
+// confirmed and not pushed again. The bool is true only when the caller must deliver.
+func (c *WakeClaimer) ReclaimStalled(ctx context.Context, key model.WakeKey, window time.Duration) (model.WakeAttempt, bool, error) {
+	ledger, ok := c.ledger.(WakeStallLedger)
+	if !ok {
+		return model.WakeAttempt{}, false, fmt.Errorf("wake ledger cannot reopen a stalled event: %w", model.ErrInvalidInput)
+	}
+	attempt, reopened, err := ledger.ReopenStalledWake(ctx, key, window)
+	if err != nil || !reopened {
+		return model.WakeAttempt{}, false, err
+	}
+	return c.Resolve(ctx, attempt)
+}

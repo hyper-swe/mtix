@@ -27,6 +27,7 @@ func TestWakeDeliveryStatusGuidance_Skills_DocumentStatesCommandsAndDoctorRows(t
 				"wake.listener.hook-installed", "wake.listener.waiter-armed", "wake.listener.route-contract", "wake.listener.bypass-hold",
 				"data.reachable", "data.blocked_by", "seeded-only", "MTIX-112.40.10", "never silently skipped",
 				"ordinary setting and needs no terminal", "appear only on rows read from the wake ledger",
+				"wake.listener.stalled", "T = `wake.confirm_window`", "measured from the event", "needs no timer", "noticed at the next dispatcher pass", "stall-unconfirmed", "single claim path", "mtix inbox --agent <agent> --wait",
 			} {
 				require.Contains(t, body, phrase)
 			}
@@ -37,7 +38,7 @@ func TestWakeDeliveryStatusGuidance_Skills_DocumentStatesCommandsAndDoctorRows(t
 func TestWakeDeliveryStatusGuidance_ManagedBriefings_PointAtStatusAndWindow(t *testing.T) {
 	for _, name := range []string{"agents.md.tmpl", "claude.md.tmpl"} {
 		body := readAgentInstruction(t, filepath.Join("templates", name))
-		for _, phrase := range []string{"mtix inbox status --agent", "wake.confirm_window", "wake.listener.*", "seeded-only", "MTIX-112.40.10", "applies `wake.confirm_window` now"} {
+		for _, phrase := range []string{"mtix inbox status --agent", "wake.confirm_window", "wake.listener.*", "seeded-only", "MTIX-112.40.10", "applies `wake.confirm_window` now", "`stalled`", "measured from the event with no timer", "next dispatcher pass", "wake.listener.stalled"} {
 			require.Contains(t, body, phrase, name)
 		}
 	}

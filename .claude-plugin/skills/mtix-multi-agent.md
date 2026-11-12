@@ -738,6 +738,7 @@ Send with `mtix comment <id> "<text>" --to <agent> --await-reply=<duration>` (MC
 | `queued` | A session and a dispatcher exist and no nudge is recorded yet | `mtix inbox status --agent <agent>` |
 | `nudged` | A nudge was sent and the confirmation window is open | wait, then `mtix inbox status --agent <agent>` |
 | `unconfirmed` | A nudge was sent and `wake.confirm_window` passed unseen | `mtix inbox --agent <agent> --wait` |
+| `stalled` | An addressed message is unread for longer than `wake.confirm_window` and no hook waiter is armed: the session's turn has not ended | `mtix inbox --agent <agent> --wait` |
 | `confirmed` | The session was seen acting on the nudge | none |
 | `held` | The route needs approval: `mtix agent allow <agent>` | read the inbox: `mtix inbox --agent <agent>` |
 | `undeliverable` | No route could deliver; `reason` says why | `mtix inbox --agent <agent> --wait` |
@@ -748,12 +749,23 @@ Send with `mtix comment <id> "<text>" --to <agent> --await-reply=<duration>` (MC
 
 `unconfirmed` is derived at read time from `wake.confirm_window` (default 30 seconds; set it with
 `mtix config set wake.confirm_window 60`, whole seconds 1 to 86400; it is an ordinary setting and needs no terminal). It is never written as an inbox event and no timer runs.
+
+`stalled` (MTIX-112.40.12) is derived the same way and is also never written as an inbox event. The hook route arms its waiter
+only at session start and when a turn ends (Stop), so a turn that never ends leaves no waiter and later mail would otherwise
+wait unseen. The bound is T = `wake.confirm_window`, measured from the event (or from the recorded push when one was sent), and it
+needs no timer: a stall is noticed at the next dispatcher pass, `mtix inbox status` read or `mtix doctor` run, not at the instant T
+passes. With a push route live (the session socket) the dispatcher redelivers the stalled event once through the same single claim path
+(never a second push, and an event the session already read is settled as confirmed); a second stall is closed
+`undeliverable` with reason `stall-unconfirmed` and not retried. With the hook route alone nothing is sent and no ledger row is
+written: the report is read-time only, the message stays in the inbox, and the waiter armed when the turn ends still wakes the
+session for it. The exact fix is `mtix inbox --agent <agent> --wait`, or end or interrupt the stuck turn.
 In this build the states `nudged`, `unconfirmed`, `confirmed`, `held` and `undeliverable` come from wake ledger
 rows, and nothing writes ledger rows until a delivery route is built, so they are seeded-only today. Approving a held
 wake does not yet send a fresh nudge (follow-up MTIX-112.40.10); read the inbox yourself.
 
 `mtix doctor --json` reports `wake.listener.routes`, `wake.listener.dispatcher` and `wake.listener.unconfirmed-rate`
-(warns above 20 percent unconfirmed over 24 hours), each with a runnable `fix`. The rows `wake.listener.hook-installed`,
+(warns above 20 percent unconfirmed over 24 hours), each with a runnable `fix`. The row `wake.listener.stalled` warns (with `data.agents`
+naming the agents) when an addressed message has waited longer than `wake.confirm_window` with no hook waiter armed, and prints the `fix`; it is INFO otherwise. The rows `wake.listener.hook-installed`,
 `wake.listener.waiter-armed`, `wake.listener.route-contract` and `wake.listener.bypass-hold` are present as INFO rows
 with `data.reachable` false and `data.blocked_by` naming the ticket whose adapter is not built yet (hook waiter
 MTIX-112.40.4 and install MTIX-112.40.5, session socket MTIX-112.40.3): they are not reachable in this build and are never silently skipped.

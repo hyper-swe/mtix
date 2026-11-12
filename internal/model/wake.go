@@ -40,6 +40,12 @@ const (
 	WakeReasonReclaimedAfterCrash = "reclaimed-after-crash"
 	// WakeReasonReclaimCap closes an event whose reclaimed claim also expired unfinished.
 	WakeReasonReclaimCap = "reclaim-cap"
+	// WakeReasonStallUnconfirmed closes an event whose stalled-turn redelivery also went
+	// unconfirmed: the retry cap is one (MTIX-112.40.12). The event is reported, not retried.
+	WakeReasonStallUnconfirmed = "stall-unconfirmed"
+	// WakeReasonWaiterNotArmed is the derived reason of the stalled state: no hook waiter is
+	// armed, so the session's turn never reached Stop (MTIX-112.40.12). It is never stored.
+	WakeReasonWaiterNotArmed = "waiter-not-armed"
 )
 
 // WakeOutcome is claimed until a send completes; both send outcomes are terminal.

@@ -63,7 +63,7 @@ func (l liveSetting) set(v string) { l.value.Store(v) }
 func (l liveSetting) WakeSettings(string) (map[string]model.WakeSetting, []oplocal.Report, error) {
 	return map[string]model.WakeSetting{
 		"wake.live": {Value: l.value.Load().(string)}, "wake.max_hop_depth": {Value: "32"},
-		"wake.backoff_after_unacked": {Value: "5"},
+		"wake.backoff_after_unacked": {Value: "5"}, model.WakeConfirmWindowKey: {Value: "30"},
 	}, nil, nil
 }
 

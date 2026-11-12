@@ -45,7 +45,7 @@ func TestWakeOutcomeState_EveryOutcome_MapsToOneDocumentedState(t *testing.T) {
 
 func TestWakeStates_Documented_ListIsClosedAndSorted(t *testing.T) {
 	require.Equal(t, []model.WakeState{
-		"confirmed", "held", "no-dispatcher", "no-live-session", "nudged", "off", "queued", "undeliverable", "unconfirmed", "unknown",
+		"confirmed", "held", "no-dispatcher", "no-live-session", "nudged", "off", "queued", "stalled", "undeliverable", "unconfirmed", "unknown",
 	}, model.WakeStates())
 }
 

@@ -99,20 +99,20 @@ func CSRFMiddleware() gin.HandlerFunc {
 }
 
 // CORSMiddleware applies the browser origin rule for the web UI of a
-// server bound to bind:port (FR-9.1, MTIX-95.14). A request without an
-// Origin header comes from a non-browser client and passes. A request
-// whose Origin allowedOrigin accepts (http or https on localhost or a
-// loopback IP, any port, or the server's own origin on a bind address that
-// names it) gets that origin in Access-Control-Allow-Origin. Any other
-// Origin is refused with 403 and code ORIGIN_NOT_ALLOWED, preflight
-// included.
-func CORSMiddleware(bind, port string) gin.HandlerFunc {
+// server bound to bind:port (FR-9.1, MTIX-95.14, MTIX-221). A request
+// without an Origin header comes from a non-browser client and passes. A
+// request whose Origin allowedOrigin accepts (the server's own origin:
+// http on the configured port with a loopback alias or the bind host, or
+// an entry of extra) gets that origin in Access-Control-Allow-Origin. Any
+// other Origin is refused with 403 and code ORIGIN_NOT_ALLOWED, preflight
+// included. No response carries Access-Control-Allow-Credentials.
+func CORSMiddleware(bind, port string, extra ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
-		if !allowedOrigin(origin, bind, port) {
+		if !allowedOrigin(origin, bind, port, extra) {
 			c.AbortWithStatusJSON(http.StatusForbidden, ErrorResponse{Error: ErrorDetail{
 				Code:    "ORIGIN_NOT_ALLOWED",
-				Message: "browser requests are accepted only from local origins or this server's own origin",
+				Message: "browser requests are accepted only from this server's own origin or an allowed origin",
 			}})
 			return
 		}

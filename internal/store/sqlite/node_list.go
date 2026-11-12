@@ -150,6 +150,12 @@ func buildFilterClausesWithPrefix(filter store.NodeFilter, prefix string) ([]str
 		args = append(args, label)
 	}
 
+	// LabelsAny filter (MTIX-255.4): any-of match over the labels JSON array.
+	// One EXISTS clause with one bound "?" per label; json_each.value is compared
+	// by exact, case-sensitive equality, so a label such as desk:now matches
+	// literally (no LIKE, no wildcards, nothing to escape).
+	addLabelsAnyClause(&clauses, &args, prefix, filter.LabelsAny)
+
 	// Text filter (MTIX-146): every word must appear in the title, description
 	// or prompt. Each word binds three escaped LIKE parameters; LIKE is
 	// case-insensitive for ASCII in SQLite, and '%', '_' and '\' match
@@ -172,4 +178,21 @@ func buildFilterClausesWithPrefix(filter store.NodeFilter, prefix string) ([]str
 	}
 
 	return clauses, args
+}
+
+// addLabelsAnyClause appends the any-of labels predicate (MTIX-255.4) when
+// labels is non-empty. Only "?" placeholders enter the SQL text; every label
+// is bound as a parameter.
+func addLabelsAnyClause(clauses *[]string, args *[]any, prefix string, labels []string) {
+	if len(labels) == 0 {
+		return
+	}
+	placeholders := make([]string, len(labels))
+	for i, label := range labels {
+		placeholders[i] = "?"
+		*args = append(*args, label)
+	}
+	*clauses = append(*clauses, fmt.Sprintf(
+		"EXISTS (SELECT 1 FROM json_each(%slabels) WHERE json_each.value IN (%s))",
+		prefix, strings.Join(placeholders, ",")))
 }

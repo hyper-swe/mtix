@@ -50,7 +50,9 @@ func (s *Server) searchNodes(c *gin.Context) {
 		Under:    csvQueryParam(c, "under"),
 		Assignee: csvQueryParam(c, "assignee"),
 		NodeType: csvQueryParam(c, "type"),
-		Project:  s.resolveProjectScope(c),
+		// ?labels=a,b matches nodes carrying ANY listed label (MTIX-255.4).
+		LabelsAny: csvQueryParam(c, "labels"),
+		Project:   s.resolveProjectScope(c),
 	}
 	for _, st := range csvQueryParam(c, "status") {
 		filter.Status = append(filter.Status, model.Status(st))

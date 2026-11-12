@@ -42,10 +42,10 @@ type busyReadCase struct {
 func busyReadCases() []busyReadCase {
 	return []busyReadCase{
 		{"show", func() error { return runShow("TEST-1") }, true},
-		{"list", func() error { return runList("", "", "", "", "", "", "", "", 0, false, 50, "", false) }, true},
+		{"list", func() error { return runList(listOptions{limit: 50}) }, true},
 		{"tree", func() error { return runTree("TEST-1", 10) }, true},
 		{"ready", func() error { return runReady("", false) }, true},
-		{"search", func() error { return runSearch([]string{"Reviewed"}, "", "", "", "", "", "", "", 50, "", false) }, true},
+		{"search", func() error { return runSearch(searchOptions{words: []string{"Reviewed"}, limit: 50}) }, true},
 		{"context", func() error { return runContext("TEST-1", 0, false) }, true},
 		{"progress", func() error { return runProgress("TEST-1") }, true},
 		{"stats", runStats, false},

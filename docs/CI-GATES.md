@@ -234,7 +234,7 @@ shards 1, 2 and 3: macOS 6m26s, 7m59s and 9m14s; Ubuntu 8m19s, 5m17s and 6m01s.
 All six are under budget; the slowest uses 46 percent of the timeout. If any
 shard job exceeds the budget, raise the shard count. The shard count lives in `cmd-mtix-shards.sh` (`SHARDS`) and
 a workflow test fails if CI, the PostgreSQL job and the remote bar disagree. The
-macOS remote bar still runs `make test-race` unsharded (tracked separately).
+macOS remote bar (`--os macos-latest`) is sharded the same way (MTIX-112.17.42.6): see "macOS remote bar" below.
 
 ### PostgreSQL and remote bar
 
@@ -256,7 +256,29 @@ from the single `pg-16 ./cmd/mtix/` and `pg-17 ./cmd/mtix/` names to the six
 `cmd/mtix shard N` names. That raised the count from 17 to 21; the SQLite
 PR split above raises it to 25. The remote bar's Linux run covers exactly what `make test-race` covers,
 split into parallel jobs (see "Remote bar package sets" below). The `--os macos-latest` run
-still uses `make test-race`.
+covers the same set in sharded macOS jobs (see "macOS remote bar" below).
+
+## macOS remote bar
+
+The whole-package `make test-race` run on macOS overran the 20-minute per-package
+timeout for `cmd/mtix` and `internal/store/sqlite` under `-race`. The `--os macos-latest`
+run therefore uses three jobs that mirror the Linux ones (MTIX-112.17.42.6):
+
+- `bar-macos`: `make lint-go`, `govulncheck`, and every package that is neither sharded
+  nor `cmd/mtix` (the `serial` and `parallel` manifests in `scripts/remote-bar-packages/`,
+  `-p 2`). It no longer runs `make test-race`. There is no PostgreSQL on macOS, so the
+  PostgreSQL-gated suites skip there, as before.
+- `bar-macos-shard`: the same matrix as the Linux `bar-shard` job (`internal/store/sqlite`
+  in 3 shards, `internal/service` in 2), each guarded by `ci-go-shards.sh test-check`.
+- `bar-macos-cmd`: `cmd/mtix` in the shards of `scripts/cmd-mtix-shards.sh`, guarded by its
+  `check`.
+
+Every `go test` keeps `-race -count=1 -timeout 20m`, with no `-skip` or `-short`. The step
+names are the ones `scripts/remote-bar.sh` classifies. `scripts/remote_bar_macos_shards_test.go`
+parses the workflow and fails if the macOS shard set differs from the Linux one, a package or
+`cmd/mtix` shard is dropped or listed twice, a flag differs from Linux, a check step comes after
+its run step, or `bar-macos` runs `make test-race` or loses `lint-go` or `govulncheck`. Raise a shard
+count in the Linux matrix and the macOS matrix together, or that test fails.
 
 ## Remote bar
 

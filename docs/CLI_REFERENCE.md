@@ -1352,6 +1352,7 @@ List nodes with filters
 | `--fields` |  | Restrict output to these fields (comma-separated) |  |
 | `--format` |  | Output format: briefing |  |
 | `--issue-type` |  | Filter by work classification (bug, feature, task, chore, refactor, test, doc; comma-separated) |  |
+| `--labels` |  | Filter by label, any-of (comma-separated; exact, case-sensitive, e.g. desk:now,desk:backlog) |  |
 | `--limit` |  | Maximum results | 50 |
 | `--max-field-chars` |  | Truncate field values (briefing format) | 0 |
 | `--priority` |  | Filter by priority (comma-separated for multiple) |  |
@@ -1658,6 +1659,7 @@ result further. With no words, only the filters apply.
 | `--assignee` |  | Filter by assignee (comma-separated for multiple) |  |
 | `--changed-since` |  | Only nodes updated after this RFC3339 time or relative duration (e.g. 1h, 30m) |  |
 | `--fields` |  | Restrict JSON output to these fields (comma-separated) |  |
+| `--labels` |  | Filter by label, any-of (comma-separated; exact, case-sensitive, e.g. desk:now,desk:backlog) |  |
 | `--limit` |  | Maximum results | 50 |
 | `--priority` |  | Filter by priority (comma-separated, 1-5) |  |
 | `--project` |  | Scope to a single project prefix (default: primary) |  |

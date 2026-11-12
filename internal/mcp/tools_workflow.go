@@ -299,6 +299,7 @@ func registerSearchTool(reg *ToolRegistry, svc *service.NodeService, primaryProj
 				"status":   {Type: "string", Description: "Filter by status"},
 				"assignee": {Type: "string", Description: "Filter by assignee"},
 				"under":    {Type: "string", Description: "Filter by subtree"},
+				"labels":   {Type: "string", Description: "Comma-separated labels; a node matches when it carries ANY of them (exact, case-sensitive, e.g. desk:now,desk:backlog)"},
 				"project":  {Type: "string", Description: "Scope to a project prefix; omit for the primary project, 'all' to span every project"},
 				"limit":    {Type: "number", Description: "Max results (default 50)"},
 			},
@@ -309,6 +310,7 @@ func registerSearchTool(reg *ToolRegistry, svc *service.NodeService, primaryProj
 			Status   string `json:"status"`
 			Assignee string `json:"assignee"`
 			Under    string `json:"under"`
+			Labels   string `json:"labels"`
 			Project  string `json:"project"`
 			Limit    int    `json:"limit"`
 		}
@@ -320,8 +322,9 @@ func registerSearchTool(reg *ToolRegistry, svc *service.NodeService, primaryProj
 		}
 
 		filter := service.NodeFilter{
-			Project: resolveScopeProject(p.Project, primaryProject),
-			Text:    service.SplitSearchText(p.Query),
+			Project:   resolveScopeProject(p.Project, primaryProject),
+			Text:      service.SplitSearchText(p.Query),
+			LabelsAny: splitCSVParam(p.Labels),
 		}
 		if p.Query != "" && len(filter.Text) == 0 {
 			filter.Text = []string{p.Query} // blank query: let the service reject it

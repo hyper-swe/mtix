@@ -93,6 +93,7 @@ func newSearchCmd() *cobra.Command {
 		limit        int
 		project      string
 		allProjects  bool
+		labels       string
 	)
 
 	cmd := &cobra.Command{
@@ -102,7 +103,7 @@ func newSearchCmd() *cobra.Command {
 ASCII letters only, and literal) in a node's title, description or prompt; filter flags narrow the
 result further. With no words, only the filters apply.`,
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runSearch(args, status, assignee, nodeType, under, priority, fields, changedSince, limit, project, allProjects)
+			return runSearchLabelled(labels, args, status, assignee, nodeType, under, priority, fields, changedSince, limit, project, allProjects)
 		},
 	}
 
@@ -111,6 +112,7 @@ result further. With no words, only the filters apply.`,
 	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by node type (comma-separated for multiple)")
 	cmd.Flags().StringVar(&under, "under", "", "Filter by parent subtree (comma-separated for multiple)")
 	cmd.Flags().StringVar(&priority, "priority", "", "Filter by priority (comma-separated, 1-5)")
+	cmd.Flags().StringVar(&labels, "labels", "", "Filter by label, any-of (comma-separated; exact, case-sensitive, e.g. desk:now,desk:backlog)")
 	cmd.Flags().StringVar(&fields, "fields", "", "Restrict JSON output to these fields (comma-separated)")
 	cmd.Flags().StringVar(&changedSince, "changed-since", "", "Only nodes updated after this RFC3339 time or relative duration (e.g. 1h, 30m)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "Maximum results")
@@ -120,6 +122,11 @@ result further. With no words, only the filters apply.`,
 }
 
 func runSearch(words []string, status, assignee, nodeType, under, priority, fields, changedSince string, limit int, project string, allProjects bool) error {
+	return runSearchLabelled("", words, status, assignee, nodeType, under, priority, fields, changedSince, limit, project, allProjects)
+}
+
+// runSearchLabelled is runSearch plus the --labels any-of filter (MTIX-255.4).
+func runSearchLabelled(labels string, words []string, status, assignee, nodeType, under, priority, fields, changedSince string, limit int, project string, allProjects bool) error {
 	if app.nodeSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -147,6 +154,7 @@ func runSearch(words []string, status, assignee, nodeType, under, priority, fiel
 		Priority:     priorities,
 		Project:      scope,
 		ChangedSince: since,
+		LabelsAny:    splitCSV(labels),
 	}
 	for _, s := range splitCSV(status) {
 		filter.Status = append(filter.Status, model.Status(s))

@@ -110,6 +110,7 @@ func newListCmd() *cobra.Command {
 		limit         int
 		project       string
 		allProjects   bool
+		labels        string
 	)
 
 	cmd := &cobra.Command{
@@ -118,7 +119,7 @@ func newListCmd() *cobra.Command {
 		Short:   "List nodes with filters",
 		Aliases: []string{"ls"},
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runList(status, under, assignee, nodeType, priority, fields, changedSince, outputFormat, maxFieldChars, showEmpty, limit, project, allProjects, issueType)
+			return runListLabelled(labels, status, under, assignee, nodeType, priority, fields, changedSince, outputFormat, maxFieldChars, showEmpty, limit, project, allProjects, issueType)
 		},
 	}
 
@@ -128,6 +129,7 @@ func newListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&nodeType, "type", "", "Filter by hierarchy node type (epic, story, issue, micro; comma-separated); use --issue-type for work classification")
 	cmd.Flags().StringVar(&issueType, "issue-type", "", "Filter by work classification (bug, feature, task, chore, refactor, test, doc; comma-separated)")
 	cmd.Flags().StringVar(&priority, "priority", "", "Filter by priority (comma-separated for multiple)")
+	cmd.Flags().StringVar(&labels, "labels", "", "Filter by label, any-of (comma-separated; exact, case-sensitive, e.g. desk:now,desk:backlog)")
 	cmd.Flags().StringVar(&fields, "fields", "", "Restrict output to these fields (comma-separated)")
 	cmd.Flags().StringVar(&changedSince, "changed-since", "", "Only nodes updated after this RFC3339 time or relative duration (e.g. 1h, 30m)")
 	cmd.Flags().StringVar(&outputFormat, "format", "", "Output format: briefing")
@@ -267,6 +269,12 @@ func annotationByline(a model.Annotation) string {
 // The fields parameter restricts output to the specified fields per FR-17.3.
 // The outputFormat parameter selects "briefing" format per FR-17.4.
 func runList(status, under, assignee, nodeType, priority, fields, changedSince, outputFormat string, maxFieldChars int, showEmpty bool, limit int, project string, allProjects bool, issueType ...string) error {
+	return runListLabelled("", status, under, assignee, nodeType, priority, fields, changedSince, outputFormat, maxFieldChars, showEmpty, limit, project, allProjects, issueType...)
+}
+
+// runListLabelled is runList plus the --labels any-of filter (MTIX-255.4):
+// labels is a comma-separated list, a node matches when it carries any of them.
+func runListLabelled(labels, status, under, assignee, nodeType, priority, fields, changedSince, outputFormat string, maxFieldChars int, showEmpty bool, limit int, project string, allProjects bool, issueType ...string) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
@@ -294,6 +302,7 @@ func runList(status, under, assignee, nodeType, priority, fields, changedSince, 
 		Priority:     priorities,
 		Project:      scope,
 		ChangedSince: since,
+		LabelsAny:    splitCSV(labels),
 	}
 	for _, s := range splitCSV(status) {
 		filter.Status = append(filter.Status, model.Status(s))

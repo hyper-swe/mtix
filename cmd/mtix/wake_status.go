@@ -16,6 +16,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/hyper-swe/mtix/internal/service"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // defaultStatusRows is how many recent wake rows mtix inbox status shows.
@@ -77,8 +78,57 @@ func newCLIWakeStatusService() *service.WakeStatusService {
 			}
 			return app.store.WakeStatusRows(ctx, host, uid, agent, limit)
 		},
-		Clock: time.Now,
+		Pending:    pendingWakeEvents,
+		WaiterLive: wakeWaiterLive,
+		HookRoute:  hookRouteRegistration,
+		Clock:      time.Now,
 	})
+}
+
+// pendingWakeEvents lists the agent's unacknowledged addressed events without refreshing the
+// agent's session liveness: a status read must not look like the agent reading its inbox.
+func pendingWakeEvents(ctx context.Context, agent string) ([]service.PendingEvent, error) {
+	events, err := app.store.InboxList(sqlite.WithSessionTouch(ctx, sqlite.SessionTouch{}), agent)
+	if err != nil {
+		return nil, fmt.Errorf("list pending events: %w", err)
+	}
+	out := make([]service.PendingEvent, 0, len(events))
+	for _, e := range events {
+		out = append(out, service.PendingEvent{Seq: e.Seq, At: e.CreatedAt})
+	}
+	return out, nil
+}
+
+// hookRouteRegistration reports whether the agent's registration on this host wakes through
+// the hook route (the Claude Code harness), the only route that arms a waiter.
+func hookRouteRegistration(ctx context.Context, agent string) (bool, error) {
+	host, uid, err := wakeStatusHost()
+	if err != nil || host == "" {
+		return false, err
+	}
+	regs, err := app.store.ListRegistrations(ctx, host, uid)
+	if err != nil {
+		return false, fmt.Errorf("list registrations: %w", err)
+	}
+	for _, r := range regs {
+		if r.AgentID == agent {
+			return service.IsHookRouteHarness(r.Harness), nil
+		}
+	}
+	return false, nil
+}
+
+// wakeWaiterLive reports whether a hook waiter lease is armed for the agent on this host.
+func wakeWaiterLive(ctx context.Context, agent string) (bool, error) {
+	host, uid, err := wakeStatusHost()
+	if err != nil || host == "" {
+		return false, err
+	}
+	live, err := app.store.WakeWaiterLive(ctx, sqlite.WakeLeaseKey{AgentID: agent, HostID: host, UID: uid})
+	if err != nil {
+		return false, fmt.Errorf("read waiter lease: %w", err)
+	}
+	return live, nil
 }
 
 // registeredWakeAgents lists the agent ids registered on this host and user.
@@ -119,9 +169,13 @@ func newInboxStatusCmd() *cobra.Command {
 		Use:   "status",
 		Short: "Show the wake delivery state for an agent and its recent wake outcomes",
 		Long: `Show the wake delivery state for an agent and its last wake outcomes with age
-(MTIX-112.40.6). States: queued, nudged, unconfirmed, confirmed, held, undeliverable,
-off, no-live-session, no-dispatcher, unknown. unconfirmed is derived at read time from
-wake.confirm_window (default 30 seconds) and is never written as an inbox event.
+(MTIX-112.40.6). States: queued, nudged, unconfirmed, stalled, confirmed, held,
+undeliverable, off, no-live-session, no-dispatcher, unknown. unconfirmed is derived at read
+time from wake.confirm_window (default 30 seconds) and is never written as an inbox event.
+stalled (MTIX-112.40.12) is derived the same way: an addressed message unread for longer
+than wake.confirm_window, measured from the event, with no hook waiter armed because the
+session's turn has not ended. No timer runs; it is noticed when this command, mtix doctor or
+a dispatcher pass runs.
 This reads local state only and never contacts a hub.`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error { return runInboxStatus(agent, limit) },

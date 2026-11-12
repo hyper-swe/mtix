@@ -34,6 +34,12 @@ func (d *WakeDispatcher) guardWakeHop(ctx context.Context, key model.WakeKey, st
 	if err != nil || !ok {
 		return 0, verdictSkip, err
 	}
+	return d.hopVerdict(ctx, key)
+}
+
+// hopVerdict applies the chain-depth guard to one event: send, or held with an alert. A
+// stalled-turn redelivery runs the same guard (MTIX-112.40.12).
+func (d *WakeDispatcher) hopVerdict(ctx context.Context, key model.WakeKey) (int64, wakeVerdict, error) {
 	hop, err := d.store.WakeEventHop(ctx, key)
 	if err != nil {
 		return 0, verdictSkip, fmt.Errorf("read candidate chain depth: %w", err)

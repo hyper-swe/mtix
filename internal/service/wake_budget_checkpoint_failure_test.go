@@ -59,7 +59,10 @@ func TestWakeBudget_RewindCheckpointFailureAbortsBeforeFloorHealing(t *testing.T
 			require.NoError(t, err)
 			cause := errors.New("protected checkpoint storage failed")
 			err = b.state.UpdateWakeBudget(t.Context(), key.Recipient(), func(m *oplocal.WakeBudgetMirror, _ func() error) error {
-				a := wakeAdmission{key: key, policy: policy, mirror: m, save: func() error { return cause }}
+				a := wakeAdmission{key: key, policy: policy, mirror: m, save: func() error { return cause },
+					claim: func(admit WakeAdmitFunc) (model.WakeBudgetResult, error) {
+						return b.store.ClaimWakeBudget(t.Context(), key, time.Minute, admit)
+					}}
 				return b.claimLocked(t.Context(), &a)
 			})
 			require.ErrorIs(t, err, cause)

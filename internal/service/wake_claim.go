@@ -76,3 +76,39 @@ func (c *WakeClaimer) Resolve(ctx context.Context, attempt model.WakeAttempt) (m
 	}
 	return model.WakeAttempt{}, false, nil
 }
+
+// WakeAdmitFunc is the budget admission a claim is written under: it sees the proposed
+// fenced claim and decides whether it may be written (ClaimWakeBudget).
+type WakeAdmitFunc = func(model.WakeBudgetProposal) (model.WakeBudgetDecision, error)
+
+// WakeStallLedger is the ledger capability stalled-turn recovery needs on top of the claim
+// ledger: the one reopen of a sent, unconfirmed event under a budget admission (MTIX-112.40.12).
+type WakeStallLedger interface {
+	ReopenStalledWake(ctx context.Context, key model.WakeKey, window time.Duration, admit WakeAdmitFunc) (model.WakeBudgetResult, error)
+}
+
+// StalledAdmission runs the recipient's budget and back-off admission around a reopen. The
+// dispatcher supplies it, so a recovery obeys the same gates as a first wake; it returns the
+// won attempt, or false when the budget held it or another claimant owns it.
+type StalledAdmission func(ctx context.Context, key model.WakeKey, reopen func(WakeAdmitFunc) (model.WakeBudgetResult, error)) (model.WakeAttempt, bool, error)
+
+// ReclaimStalled takes the one permitted redelivery of an event whose push went unconfirmed
+// because the session's turn never ended (MTIX-112.40.12, FR-20). It is the same claim
+// function as Claim, never a second one: the ledger reopens the sent row once under a fresh
+// fence (sent more than window ago, retry cap one) inside the admission the caller supplies,
+// and Resolve then checks the delivery evidence while that fence is held, so an event the
+// session already read is settled as confirmed and not pushed again. The bool is true only
+// when the caller must deliver.
+func (c *WakeClaimer) ReclaimStalled(ctx context.Context, key model.WakeKey, window time.Duration, admission StalledAdmission) (model.WakeAttempt, bool, error) {
+	ledger, ok := c.ledger.(WakeStallLedger)
+	if !ok || admission == nil {
+		return model.WakeAttempt{}, false, fmt.Errorf("wake ledger cannot reopen a stalled event: %w", model.ErrInvalidInput)
+	}
+	attempt, won, err := admission(ctx, key, func(admit WakeAdmitFunc) (model.WakeBudgetResult, error) {
+		return ledger.ReopenStalledWake(ctx, key, window, admit)
+	})
+	if err != nil || !won {
+		return model.WakeAttempt{}, false, err
+	}
+	return c.Resolve(ctx, attempt)
+}

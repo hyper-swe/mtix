@@ -41,6 +41,9 @@ type WakeDispatcherOptions struct {
 	// nil derives the inbox acknowledgement evidence from the store when it can read the inbox
 	// (InboxAckEvidence); without such a store a reclaim delivers once more.
 	Evidence WakeEvidence
+	// Stall feeds stalled-turn recovery (MTIX-112.40.12); nil derives it from Settings and the
+	// store, and recovery is off when they cannot supply it.
+	Stall *WakeStallDeps
 	// Adapters are the delivery routes, selected per registration in route order.
 	// Send, when set, joins them as the legacy route. At least one of the two is required.
 	Adapters   []WakeAdapter
@@ -72,6 +75,7 @@ type WakeDispatcher struct {
 	holds      WakeHoldStore
 	reeval     reevaluationScope
 	claimer    *WakeClaimer // resolves a reclaimed claim; nil when the store is not a full ledger
+	stall      *WakeStallDeps
 }
 
 // NewWakeDispatcher requires storage, delivery and durable alert capabilities.
@@ -100,7 +104,7 @@ func NewWakeDispatcher(opts WakeDispatcherOptions) (*WakeDispatcher, error) {
 	if opts.Send != nil {
 		adapters = append(adapters, legacyAdapter{send: opts.Send})
 	}
-	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, adapters: orderAdapters(adapters), alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store), reeval: reevaluationScope{host: opts.HostID, uid: opts.UID, filter: opts.CandidateFilter}, claimer: dispatcherClaimer(opts)}, nil
+	return &WakeDispatcher{store: opts.Store, alerts: opts.Alerts, adapters: orderAdapters(adapters), alertAgent: opts.AlertAgent, settings: opts.Settings, held: opts.Held, budgets: budgets, holds: holdStore(opts.Store), reeval: reevaluationScope{host: opts.HostID, uid: opts.UID, filter: opts.CandidateFilter}, claimer: dispatcherClaimer(opts), stall: defaultStallDeps(opts)}, nil
 }
 
 // dispatcherClaimer builds the single claim function over the store when it is a full ledger.
@@ -153,7 +157,8 @@ func (d *WakeDispatcher) PassSkipping(ctx context.Context, keys []model.WakeKey,
 			return err
 		}
 	}
-	var failures error
+	// A stalled turn is noticed here, on activity, never by a timer (MTIX-112.40.12).
+	failures := d.recoverStalled(ctx)
 	st := &passState{blocked: map[string]bool{}, skip: skip}
 	for _, key := range orderedCandidates(keys) {
 		if err := ctx.Err(); err != nil {

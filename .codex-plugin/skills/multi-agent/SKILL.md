@@ -664,7 +664,7 @@ Send with `mtix comment <id> "<text>" --to <agent> --await-reply=<duration>` (MC
 only at session start and when a turn ends (Stop), so a turn that never ends leaves no waiter and later mail would otherwise
 wait unseen. The bound is T = `wake.confirm_window`, measured from the event (or from the recorded push when one was sent), and it
 needs no timer: a stall is noticed at the next dispatcher pass, `mtix inbox status` read or `mtix doctor` run, not at the instant T
-passes. With a push route live (the session socket) the dispatcher redelivers the stalled event once through the same single claim path
+passes. Redelivery applies only when a push route is configured for the registration, and this build ships none that is reachable, so a stalled event is reported (`mtix inbox status`, `mtix doctor`) and stays in the inbox. When a push route is configured, the dispatcher selects stalled events from the wake ledger on each pass (bounded per pass), applies the same gates as a first wake (`wake.live`, budget and back-off, hop guard), and redelivers the event once through the same single claim path
 (never a second push, and an event the session already read is settled as confirmed); a second stall is closed
 `undeliverable` with reason `stall-unconfirmed` and not retried. With the hook route alone nothing is sent and no ledger row is
 written: the report is read-time only, the message stays in the inbox, and the waiter armed when the turn ends still wakes the

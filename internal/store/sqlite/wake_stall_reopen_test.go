@@ -31,6 +31,15 @@ func sentRow(t *testing.T, s *sqlite.Store, key model.WakeKey) {
 	require.NoError(t, s.RecordWakeResult(context.Background(), attempt, model.WakeResult{Outcome: model.WakeSent, Route: "hook-waiter"}))
 }
 
+// reopenStalled reopens under an admission that allows every claim, so the tests judge the
+// stall rule and the cap alone; the budget gate has its own tests.
+func reopenStalled(s *sqlite.Store, key model.WakeKey, window time.Duration) (model.WakeAttempt, bool, error) {
+	res, err := s.ReopenStalledWake(context.Background(), key, window, func(model.WakeBudgetProposal) (model.WakeBudgetDecision, error) {
+		return model.WakeBudgetDecision{Allow: true}, nil
+	})
+	return res.Attempt, res.Won, err
+}
+
 func TestReopenStalledWake_SentPastWindow_ReopensOnceThenCaps(t *testing.T) {
 	now := wakeTime()
 	s := openWakeStore(t, t.TempDir()+"/a.db", now)
@@ -39,7 +48,7 @@ func TestReopenStalledWake_SentPastWindow_ReopensOnceThenCaps(t *testing.T) {
 	later := now.Add(time.Minute)
 	s.SetClock(func() time.Time { return later })
 
-	attempt, ok, err := s.ReopenStalledWake(context.Background(), key, 30*time.Second)
+	attempt, ok, err := reopenStalled(s, key, 30*time.Second)
 	require.NoError(t, err)
 	require.True(t, ok, "a sent row older than the window is reopened")
 	require.True(t, attempt.Reclaimed)
@@ -53,7 +62,7 @@ func TestReopenStalledWake_SentPastWindow_ReopensOnceThenCaps(t *testing.T) {
 	require.NoError(t, s.RecordWakeResult(context.Background(), attempt, model.WakeResult{Outcome: model.WakeSent, Route: "claude-socket"}))
 	later2 := later.Add(time.Minute)
 	s.SetClock(func() time.Time { return later2 })
-	_, ok, err = s.ReopenStalledWake(context.Background(), key, 30*time.Second)
+	_, ok, err = reopenStalled(s, key, 30*time.Second)
 	require.NoError(t, err)
 	require.False(t, ok, "the retry cap is one")
 	got, _, err = s.ReadWakeResult(context.Background(), key)
@@ -75,6 +84,11 @@ func TestReopenStalledWake_NotStalledRows_AreUntouched(t *testing.T) {
 			sentRow(t, s, key)
 			require.NoError(t, s.UpgradeWakeConfirmed(context.Background(), key))
 		}, model.WakeConfirmed},
+		{"confirmed and long past the window", func(t *testing.T, s *sqlite.Store, key model.WakeKey) {
+			sentRow(t, s, key)
+			require.NoError(t, s.UpgradeWakeConfirmed(context.Background(), key))
+			s.SetClock(func() time.Time { return now.Add(10 * time.Minute) })
+		}, model.WakeConfirmed},
 		{"in-flight claim", func(t *testing.T, s *sqlite.Store, key model.WakeKey) {
 			_, won, err := s.ClaimWake(context.Background(), key, time.Minute)
 			require.NoError(t, err)
@@ -86,7 +100,7 @@ func TestReopenStalledWake_NotStalledRows_AreUntouched(t *testing.T) {
 			s := openWakeStore(t, t.TempDir()+"/b.db", now)
 			key := stallKey(int64(i + 1))
 			tt.setup(t, s, key)
-			_, ok, err := s.ReopenStalledWake(context.Background(), key, window)
+			_, ok, err := reopenStalled(s, key, window)
 			require.NoError(t, err)
 			require.False(t, ok)
 			got, _, err := s.ReadWakeResult(context.Background(), key)
@@ -96,18 +110,18 @@ func TestReopenStalledWake_NotStalledRows_AreUntouched(t *testing.T) {
 	}
 	t.Run("no row", func(t *testing.T) {
 		s := openWakeStore(t, t.TempDir()+"/c.db", now)
-		_, ok, err := s.ReopenStalledWake(context.Background(), stallKey(9), window)
+		_, ok, err := reopenStalled(s, stallKey(9), window)
 		require.NoError(t, err)
 		require.False(t, ok)
 	})
 	t.Run("non-positive window", func(t *testing.T) {
 		s := openWakeStore(t, t.TempDir()+"/g.db", now)
-		_, _, err := s.ReopenStalledWake(context.Background(), stallKey(1), 0)
+		_, _, err := reopenStalled(s, stallKey(1), 0)
 		require.ErrorIs(t, err, model.ErrInvalidInput)
 	})
 	t.Run("invalid key", func(t *testing.T) {
 		s := openWakeStore(t, t.TempDir()+"/d.db", now)
-		_, _, err := s.ReopenStalledWake(context.Background(), model.WakeKey{}, window)
+		_, _, err := reopenStalled(s, model.WakeKey{}, window)
 		require.ErrorIs(t, err, model.ErrInvalidInput)
 	})
 }
@@ -127,7 +141,7 @@ func TestReopenStalledWake_ConcurrentReopeners_ExactlyOneWins(t *testing.T) {
 		wg.Add(1)
 		go func(s *sqlite.Store) {
 			defer wg.Done()
-			_, ok, err := s.ReopenStalledWake(context.Background(), key, 30*time.Second)
+			_, ok, err := reopenStalled(s, key, 30*time.Second)
 			require.NoError(t, err)
 			wins <- ok
 		}([]*sqlite.Store{first, second}[i%2])
@@ -159,5 +173,51 @@ func TestWakeWaiterLive_FollowsLeaseExpiry(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, live, "an expired lease is no waiter")
 	_, err = s.WakeWaiterLive(context.Background(), sqlite.WakeLeaseKey{})
+	require.ErrorIs(t, err, model.ErrInvalidInput)
+}
+
+func TestReopenStalledWake_BudgetHolds_LeavesSentRowUntouched(t *testing.T) {
+	now := wakeTime()
+	s := openWakeStore(t, t.TempDir()+"/h.db", now)
+	key := stallKey(1)
+	sentRow(t, s, key)
+	s.SetClock(func() time.Time { return now.Add(time.Minute) })
+	res, err := s.ReopenStalledWake(context.Background(), key, 30*time.Second, func(model.WakeBudgetProposal) (model.WakeBudgetDecision, error) {
+		return model.WakeBudgetDecision{Allow: false}, nil
+	})
+	require.NoError(t, err)
+	require.False(t, res.Won)
+	require.True(t, res.Held, "the budget refused the reopen")
+	got, _, err := s.ReadWakeResult(context.Background(), key)
+	require.NoError(t, err)
+	require.Equal(t, model.WakeSent, got.Outcome, "a refused reopen writes nothing")
+}
+
+func TestStalledWakeCandidates_ListsOnlyUnackedSentRowsOfThisHost(t *testing.T) {
+	now := wakeTime()
+	s := openWakeStore(t, t.TempDir()+"/i.db", now)
+	for seq := int64(1); seq <= 3; seq++ {
+		sentRow(t, s, stallKey(seq))
+	}
+	_, won, err := s.ClaimWake(context.Background(), stallKey(4), time.Minute)
+	require.NoError(t, err)
+	require.True(t, won, "a claimed, unsent row is not a candidate")
+	_, err = s.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO agent_inbox_ack(agent_id,event_seq,acked_at) VALUES(?,?,?)`, "TEST-agent", 2, now.Format(time.RFC3339Nano))
+	require.NoError(t, err)
+
+	_, err = s.WriteDB().ExecContext(context.Background(),
+		`INSERT INTO agent_inbox_cursor(agent_id,cursor) VALUES(?,?)`, "TEST-agent", 0)
+	require.NoError(t, err)
+	keys, err := s.StalledWakeCandidates(context.Background(), "TEST-host", "1000", 10)
+	require.NoError(t, err)
+	require.Equal(t, []model.WakeKey{stallKey(1), stallKey(3)}, keys, "event 2 is acknowledged")
+	keys, err = s.StalledWakeCandidates(context.Background(), "", "", 1)
+	require.NoError(t, err)
+	require.Equal(t, []model.WakeKey{stallKey(1)}, keys, "an empty scope does not narrow, and the limit bounds")
+	keys, err = s.StalledWakeCandidates(context.Background(), "OTHER-host", "", 10)
+	require.NoError(t, err)
+	require.Empty(t, keys)
+	_, err = s.StalledWakeCandidates(context.Background(), "", "", 0)
 	require.ErrorIs(t, err, model.ErrInvalidInput)
 }

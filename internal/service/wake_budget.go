@@ -61,6 +61,9 @@ type wakeAdmission struct {
 	rewound bool
 	// returned: an inbox read already returned and charged this event.
 	returned bool
+	// claim writes the fenced claim once admission allows it: the ordinary claim, or the
+	// reopen of a stalled sent event (MTIX-112.40.12). Both share this one admission.
+	claim func(func(model.WakeBudgetProposal) (model.WakeBudgetDecision, error)) (model.WakeBudgetResult, error)
 }
 
 func (b *wakeBudgets) claim(ctx context.Context, key model.WakeKey) (model.WakeAttempt, bool, error) {
@@ -80,11 +83,26 @@ const (
 
 // claimState also reports whether the budget held the wake or another claim is in flight.
 func (b *wakeBudgets) claimState(ctx context.Context, key model.WakeKey) (model.WakeAttempt, bool, wakeClaimState, error) {
+	return b.admitVia(ctx, key, func(admit WakeAdmitFunc) (model.WakeBudgetResult, error) {
+		return b.store.ClaimWakeBudget(ctx, key, time.Minute, admit)
+	})
+}
+
+// admitStalled is the StalledAdmission of the dispatcher: the reopen of a stalled sent event
+// goes through the same budget and back-off admission as a first claim.
+func (b *wakeBudgets) admitStalled(ctx context.Context, key model.WakeKey, reopen func(WakeAdmitFunc) (model.WakeBudgetResult, error)) (model.WakeAttempt, bool, error) {
+	attempt, won, _, err := b.admitVia(ctx, key, reopen)
+	return attempt, won, err
+}
+
+// admitVia applies the recipient's wake budget and back-off policy to a claim that claim
+// writes (see wakeAdmission.claim) and reports why it was not won.
+func (b *wakeBudgets) admitVia(ctx context.Context, key model.WakeKey, claim func(WakeAdmitFunc) (model.WakeBudgetResult, error)) (model.WakeAttempt, bool, wakeClaimState, error) {
 	policy, err := b.policy(key.AgentID)
 	if err != nil {
 		return model.WakeAttempt{}, false, claimSettled, fmt.Errorf("load wake admission policy: %w", err)
 	}
-	admission := wakeAdmission{key: key, policy: policy}
+	admission := wakeAdmission{key: key, policy: policy, claim: claim}
 	err = b.state.UpdateWakeBudget(ctx, key.Recipient(), func(m *oplocal.WakeBudgetMirror, save func() error) error {
 		admission.mirror, admission.save = m, save
 		if claimErr := b.claimLocked(ctx, &admission); claimErr != nil {
@@ -118,7 +136,7 @@ func (b *wakeBudgets) claimLocked(ctx context.Context, a *wakeAdmission) error {
 	if returnedErr := b.noteReturned(ctx, a); returnedErr != nil {
 		return returnedErr
 	}
-	a.result, err = b.store.ClaimWakeBudget(ctx, a.key, time.Minute, a.prepareWakeAdmission)
+	a.result, err = a.claim(a.prepareWakeAdmission)
 	if err != nil {
 		return fmt.Errorf("persist accounted wake claim: %w", err)
 	}

@@ -39,7 +39,10 @@ type WakeStatusDeps struct {
 	// either is nil the stalled state is not derived (MTIX-112.40.12).
 	Pending    func(ctx context.Context, agent string) ([]PendingEvent, error)
 	WaiterLive func(ctx context.Context, agent string) (bool, error)
-	Clock      func() time.Time
+	// HookRoute reports whether the agent's registration wakes through the hook route, the only
+	// route that arms a waiter. When nil every registered agent is taken to be on it.
+	HookRoute func(ctx context.Context, agent string) (bool, error)
+	Clock     func() time.Time
 }
 
 // PendingEvent is an addressed event its recipient has not acknowledged.

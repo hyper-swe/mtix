@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // StallInput is what the stall rule judges for one addressed, unacknowledged event.
@@ -57,6 +58,10 @@ type WakeStallDeps struct {
 	Window func(agent string) (time.Duration, error)
 	// WaiterLive reports whether a hook waiter is armed for the registration.
 	WaiterLive func(ctx context.Context, key model.WakeKey) (bool, error)
+	// HookRoute reports whether the key's registration wakes through the hook route, the only
+	// route that can stall. Nil means every registration; the derived default reads the
+	// registration, so a legacy or unregistered wake is never redelivered as a stall.
+	HookRoute func(ctx context.Context, key model.WakeKey) (bool, error)
 }
 
 // defaultStallDeps derives recovery inputs from the dispatcher's settings and store.
@@ -73,7 +78,31 @@ func defaultStallDeps(opts WakeDispatcherOptions) *WakeStallDeps {
 		WaiterLive: func(ctx context.Context, key model.WakeKey) (bool, error) {
 			return waiters.WakeWaiterLive(ctx, WakeLeaseKey{AgentID: key.AgentID, HostID: key.HostID, UID: key.UID})
 		},
+		HookRoute: func(ctx context.Context, key model.WakeKey) (bool, error) {
+			return hookRegistration(ctx, opts.Store, key)
+		},
 	}
+}
+
+// hookRegistration reports whether the key's agent has a claude-harness registration on its
+// host and user: the hook route. A store that cannot list registrations has none.
+func hookRegistration(ctx context.Context, store WakeStore, key model.WakeKey) (bool, error) {
+	lister, ok := store.(interface {
+		ListRegistrations(ctx context.Context, hostID, uid string) ([]sqlite.Registration, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	regs, err := lister.ListRegistrations(ctx, key.HostID, key.UID)
+	if err != nil {
+		return false, fmt.Errorf("list registrations for stall recovery: %w", err)
+	}
+	for _, r := range regs {
+		if r.AgentID == key.AgentID {
+			return r.Harness == "claude", nil
+		}
+	}
+	return false, nil
 }
 
 // confirmWindow reads the effective wake.confirm_window for an agent.
@@ -92,15 +121,30 @@ func confirmWindow(settings WakeSettingsReader, agent string) (time.Duration, er
 	return time.Duration(seconds) * time.Second, nil
 }
 
-// recoverStalled redelivers, at most once per event, the events of the passed keys whose push
-// went unconfirmed because the session's turn never ended (MTIX-112.40.12). It runs at the
-// start of a pass, only when a push route is live for the registration: with the hook route
-// alone nothing is written, so a later Stop waiter still claims the event. Every redelivery
-// goes through the single WakeClaimer, then the same deliverWake and recordWake as a normal
-// send. A failure on one event does not stop the others.
-func (d *WakeDispatcher) recoverStalled(ctx context.Context, keys []model.WakeKey) error {
-	if d.stall == nil || d.claimer == nil {
+// stalledPassLimit bounds how many stalled candidates one pass examines.
+const stalledPassLimit = 16
+
+// WakeStalledLister reads the sent, still unacknowledged wake rows a stalled turn may have
+// left unconfirmed (MTIX-112.40.12).
+type WakeStalledLister interface {
+	StalledWakeCandidates(ctx context.Context, hostID, uid string, limit int) ([]model.WakeKey, error)
+}
+
+// recoverStalled redelivers, at most once per event, the events whose push went unconfirmed
+// because the session's turn never ended (MTIX-112.40.12). It does not depend on the keys the
+// scanner passes: those sit above each registration's mark, and a sent event is below it.
+// It selects the candidates itself from the wake ledger, bounded per pass, so recovery is
+// driven by the activity that runs the pass and by no timer. With the hook route alone
+// nothing is written, so a later Stop waiter still claims the event. A failure on one event
+// does not stop the others.
+func (d *WakeDispatcher) recoverStalled(ctx context.Context) error {
+	lister, ok := d.store.(WakeStalledLister)
+	if d.stall == nil || d.claimer == nil || !ok {
 		return nil
+	}
+	keys, err := lister.StalledWakeCandidates(ctx, d.reeval.host, d.reeval.uid, stalledPassLimit)
+	if err != nil {
+		return fmt.Errorf("select stalled wake candidates: %w", err)
 	}
 	var failures error
 	for _, key := range keys {
@@ -112,31 +156,37 @@ func (d *WakeDispatcher) recoverStalled(ctx context.Context, keys []model.WakeKe
 	return failures
 }
 
+// recoverStalledOne runs the same gates a first wake runs: a live push route, the live wake
+// switch, the hop guard and the budget and back-off admission. Nothing it refuses is
+// written. The wake.live switch off means no claim and no adapter call (FR-20.3).
 func (d *WakeDispatcher) recoverStalledOne(ctx context.Context, key model.WakeKey) error {
 	if !d.HasLiveRoute(ctx, key) {
 		return nil // hook route alone: derived report only, no ledger write
+	}
+	if off, err := d.liveWakeOff(key.AgentID); err != nil || off {
+		return err
 	}
 	window, err := d.stall.Window(key.AgentID)
 	if err != nil || window <= 0 {
 		return err
 	}
-	live, err := d.stall.WaiterLive(ctx, key)
-	if err != nil || live {
+	if live, lerr := d.stall.WaiterLive(ctx, key); lerr != nil || live {
+		return lerr
+	}
+	if d.stall.HookRoute != nil {
+		if hook, herr := d.stall.HookRoute(ctx, key); herr != nil || !hook {
+			return herr
+		}
+	}
+	hop, verdict, err := d.hopVerdict(ctx, key)
+	if err != nil || verdict != verdictSend {
 		return err
 	}
-	attempt, won, err := d.claimer.ReclaimStalled(ctx, key, window)
+	attempt, won, err := d.claimer.ReclaimStalled(ctx, key, window, d.budgets.admitStalled)
 	if err != nil || !won {
 		return err
 	}
-	result, sendErr := d.deliverWake(ctx, attempt)
-	finishCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	defer cancel()
-	recordErr := d.recordWake(finishCtx, attempt, result)
-	if sendErr != nil {
-		sendErr = fmt.Errorf("redeliver stalled wake: %w", sendErr)
-	}
-	if recordErr != nil {
-		recordErr = fmt.Errorf("record stalled wake redelivery: %w", recordErr)
-	}
-	return errors.Join(sendErr, recordErr)
+	attempt.Hop = hop
+	_, err = d.deliverClaimed(ctx, attempt)
+	return err
 }

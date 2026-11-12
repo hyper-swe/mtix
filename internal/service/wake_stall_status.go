@@ -21,6 +21,9 @@ func (s *WakeStatusService) stalledEvents(ctx context.Context, agent string) (ma
 	if s.deps.Pending == nil || s.deps.WaiterLive == nil {
 		return nil, nil
 	}
+	if on, err := s.hookRouteWithLiveWake(ctx, agent); err != nil || !on {
+		return nil, err
+	}
 	live, err := s.deps.WaiterLive(ctx, agent)
 	if err != nil || live {
 		return nil, wrapStall("waiter", err)
@@ -42,6 +45,21 @@ func (s *WakeStatusService) stalledEvents(ctx context.Context, agent string) (ma
 		bySeq[r.EventSeq] = r
 	}
 	return s.judgeStalled(agent, pending, bySeq, window), nil
+}
+
+// hookRouteWithLiveWake says whether stalled can apply to the agent at all: live wake is on
+// (an agent with wake.live off is never told its turn has not ended) and its registration
+// is on the hook route, the only route that arms a waiter.
+func (s *WakeStatusService) hookRouteWithLiveWake(ctx context.Context, agent string) (bool, error) {
+	liveOn, _, err := s.deps.Settings(agent)
+	if err != nil || !liveOn {
+		return false, wrapStall("settings", err)
+	}
+	if s.deps.HookRoute == nil {
+		return true, nil
+	}
+	hook, err := s.deps.HookRoute(ctx, agent)
+	return hook, wrapStall("route", err)
 }
 
 func wrapStall(what string, err error) error {

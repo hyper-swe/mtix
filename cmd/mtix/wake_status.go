@@ -80,6 +80,7 @@ func newCLIWakeStatusService() *service.WakeStatusService {
 		},
 		Pending:    pendingWakeEvents,
 		WaiterLive: wakeWaiterLive,
+		HookRoute:  hookRouteRegistration,
 		Clock:      time.Now,
 	})
 }
@@ -96,6 +97,25 @@ func pendingWakeEvents(ctx context.Context, agent string) ([]service.PendingEven
 		out = append(out, service.PendingEvent{Seq: e.Seq, At: e.CreatedAt})
 	}
 	return out, nil
+}
+
+// hookRouteRegistration reports whether the agent's registration on this host wakes through
+// the hook route (the Claude Code harness), the only route that arms a waiter.
+func hookRouteRegistration(ctx context.Context, agent string) (bool, error) {
+	host, uid, err := wakeStatusHost()
+	if err != nil || host == "" {
+		return false, err
+	}
+	regs, err := app.store.ListRegistrations(ctx, host, uid)
+	if err != nil {
+		return false, fmt.Errorf("list registrations: %w", err)
+	}
+	for _, r := range regs {
+		if r.AgentID == agent {
+			return r.Harness == "claude", nil
+		}
+	}
+	return false, nil
 }
 
 // wakeWaiterLive reports whether a hook waiter lease is armed for the agent on this host.

@@ -158,7 +158,7 @@ func (d *WakeDispatcher) PassSkipping(ctx context.Context, keys []model.WakeKey,
 		}
 	}
 	// A stalled turn is noticed here, on activity, never by a timer (MTIX-112.40.12).
-	failures := d.recoverStalled(ctx, keys)
+	failures := d.recoverStalled(ctx)
 	st := &passState{blocked: map[string]bool{}, skip: skip}
 	for _, key := range orderedCandidates(keys) {
 		if err := ctx.Err(); err != nil {

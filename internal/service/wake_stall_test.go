@@ -56,6 +56,15 @@ func TestEventStalled_NonPositiveWindow_NeverStalls(t *testing.T) {
 	require.False(t, service.EventStalled(service.StallInput{EventAt: now.Add(-time.Hour), Now: now}))
 }
 
+// allowAdmission is a budget admission that allows every claim, so the claimer tests judge
+// the stall rule and the cap alone.
+func allowAdmission(_ context.Context, _ model.WakeKey, reopen func(service.WakeAdmitFunc) (model.WakeBudgetResult, error)) (model.WakeAttempt, bool, error) {
+	res, err := reopen(func(model.WakeBudgetProposal) (model.WakeBudgetDecision, error) {
+		return model.WakeBudgetDecision{Allow: true}, nil
+	})
+	return res.Attempt, res.Won, err
+}
+
 func stallClaimer(t *testing.T, st *sqlite.Store) *service.WakeClaimer {
 	t.Helper()
 	c, err := service.NewWakeClaimer(st, time.Minute, service.InboxAckEvidence(st))
@@ -73,19 +82,19 @@ func TestWakeClaimerReclaimStalled_ReopensOnceAcknowledgedIsConfirmedAndCapHolds
 	require.True(t, won)
 	require.NoError(t, st.RecordWakeResult(t.Context(), attempt, model.WakeResult{Outcome: model.WakeSent, Route: "hook-waiter"}))
 
-	_, won, err = c.ReclaimStalled(t.Context(), key, stallWindow)
+	_, won, err = c.ReclaimStalled(t.Context(), key, stallWindow, allowAdmission)
 	require.NoError(t, err)
 	require.False(t, won, "within the window nothing is reopened")
 
 	*now = now.Add(2 * stallWindow)
-	re, won, err := c.ReclaimStalled(t.Context(), key, stallWindow)
+	re, won, err := c.ReclaimStalled(t.Context(), key, stallWindow, allowAdmission)
 	require.NoError(t, err)
 	require.True(t, won, "unacknowledged and past the window: one redelivery")
 	require.True(t, re.Reclaimed)
 	require.NoError(t, st.RecordWakeResult(t.Context(), re, model.WakeResult{Outcome: model.WakeSent, Route: "claude-socket"}))
 
 	*now = now.Add(2 * stallWindow)
-	_, won, err = c.ReclaimStalled(t.Context(), key, stallWindow)
+	_, won, err = c.ReclaimStalled(t.Context(), key, stallWindow, allowAdmission)
 	require.NoError(t, err)
 	require.False(t, won, "the retry cap is one")
 	got, _, err := st.ReadWakeResult(t.Context(), key)
@@ -104,7 +113,7 @@ func TestWakeClaimerReclaimStalled_AcknowledgedEvent_SettlesConfirmedWithoutRede
 	require.NoError(t, st.RecordWakeResult(t.Context(), attempt, model.WakeResult{Outcome: model.WakeSent, Route: "hook-waiter"}))
 	require.NoError(t, st.InboxAck(t.Context(), bothRoutesRecipient.AgentID, seq), "the stalled turn recovered and read the message")
 	*now = now.Add(2 * stallWindow)
-	_, won, err := c.ReclaimStalled(t.Context(), key, stallWindow)
+	_, won, err := c.ReclaimStalled(t.Context(), key, stallWindow, allowAdmission)
 	require.NoError(t, err)
 	require.False(t, won)
 	got, _, err := st.ReadWakeResult(t.Context(), key)
@@ -115,7 +124,7 @@ func TestWakeClaimerReclaimStalled_AcknowledgedEvent_SettlesConfirmedWithoutRede
 func TestWakeClaimerReclaimStalled_LedgerWithoutStallSupport_ReturnsInvalidInput(t *testing.T) {
 	c, err := service.NewWakeClaimer(bareLedger{}, time.Minute, nil)
 	require.NoError(t, err)
-	_, _, err = c.ReclaimStalled(t.Context(), bothRoutesKey(1), stallWindow)
+	_, _, err = c.ReclaimStalled(t.Context(), bothRoutesKey(1), stallWindow, allowAdmission)
 	require.ErrorIs(t, err, model.ErrInvalidInput)
 }
 

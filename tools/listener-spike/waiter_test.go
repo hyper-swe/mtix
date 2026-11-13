@@ -102,8 +102,19 @@ func (e waiterEnv) readLoopPID(label string) (int, bool) {
 // on the parsed value, never on the file merely existing (MTIX-260).
 func (e waiterEnv) waitLoopPID(t *testing.T, label string) int {
 	t.Helper()
-	var pid int
+	return e.waitLoopPIDObserved(t, label, nil)
+}
+
+// waitLoopPIDObserved is waitLoopPID with onPoll called before each read, with
+// the 1-based poll number, so a test can change the pid file between polls.
+func (e waiterEnv) waitLoopPIDObserved(t *testing.T, label string, onPoll func(poll int)) int {
+	t.Helper()
+	var pid, polls int
 	require.Eventually(t, func() bool {
+		polls++
+		if onPoll != nil {
+			onPoll(polls)
+		}
 		var ok bool
 		pid, ok = e.readLoopPID(label)
 		return ok

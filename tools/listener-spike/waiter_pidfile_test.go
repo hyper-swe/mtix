@@ -86,3 +86,31 @@ func TestLoopScript_PIDFile_IsNeverObservedEmpty(t *testing.T) {
 	<-done
 	require.Zero(t, torn.Load(), "the pid file was visible but empty "+strconv.Itoa(int(torn.Load()))+" times in "+strconv.Itoa(runs)+" runs")
 }
+
+// TestWaitLoopPID_FileEmptyThenPartialThenComplete_WaitsForTheParsedPID pins
+// the parsed-pid wait on its own, independent of the atomic rename in
+// loopScript: the test writes the pid file itself, leaving it empty and then
+// unparseable across several polls before the pid lands. A wait that returns
+// on existence, or after one read, returns early or with pid 0 (MTIX-260).
+func TestWaitLoopPID_FileEmptyThenPartialThenComplete_WaitsForTheParsedPID(t *testing.T) {
+	e := newWaiterEnv(t)
+	path := e.loopPIDFile("w")
+	polls := 0
+	got := e.waitLoopPIDObserved(t, "w", func(poll int) {
+		polls = poll
+		var content string
+		switch {
+		case poll == 1:
+			content = "" // created and truncated, nothing written yet
+		case poll < 5:
+			content = "ab" // present but not a pid
+		case poll < 7:
+			content = "-1\n"
+		default:
+			content = "4242\n"
+		}
+		require.NoError(t, os.WriteFile(path, []byte(content), 0o600))
+	})
+	require.Equal(t, 4242, got)
+	require.GreaterOrEqual(t, polls, 7, "the wait returned before the pid was written")
+}

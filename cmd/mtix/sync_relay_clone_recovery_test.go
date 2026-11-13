@@ -281,7 +281,7 @@ func requireRejoinContract(t *testing.T, steps []sqlite.RelayRejoinStep) {
 	assert.Equal(t, 1, ticks, "the new project ticks once after the clone")
 	for _, step := range steps {
 		if step.Command == "mtix sync relay tick" && !step.InNewProject {
-			assert.Contains(t, step.Text, sqlite.RelayCloneOnSyncedQuarantineLine, "the old project's tick output is to be read")
+			assert.Contains(t, step.Text, sqlite.RelayCloneOnSyncedListQuarantine, "the old project's stored skips are to be read")
 		}
 		if step.Command == "mtix sync relay tick" && step.InNewProject {
 			assert.Contains(t, step.Text, "stop the daemon in the old project", "the old daemon stops before the final tick")
@@ -384,19 +384,28 @@ func TestRelayClone_RecoveryWithTaskNumberCollision_StopsAndRetiresNothing(t *te
 		}
 		ran++
 		if step.Command == "mtix sync relay tick" && !step.InNewProject {
-			require.Contains(t, errOut, "relay ingest quarantined a record", "the log line the step's log search looks for is real")
+			require.Contains(t, errOut, "relay ingest quarantined a record", "the skip is logged")
 			require.Contains(t, out, "quarantined 1 record(s) from authenticated peers:", "the colliding record is skipped at this tick")
-			require.Contains(t, step.Text, sqlite.RelayCloneOnSyncedQuarantineLine)
+			require.Contains(t, step.Text, sqlite.RelayCloneOnSyncedListQuarantine)
 			require.Contains(t, step.Text, sqlite.RelayCloneOnSyncedStop)
+			rows := relayQuarantineRows(t, oldDir)
+			require.Len(t, rows, 1, "the step's list command shows the skipped record")
+			require.Equal(t, "open", rows[0].Relay.State)
 			stopped = true
 			break
 		}
 	}
 	require.True(t, stopped)
 	assert.Equal(t, 1, ran, "the recovery stops at step 1")
-	assert.Equal(t, "STOP, do not continue: keep the old project, do not run `mtix sync relay retire-peer`, "+
-		"and ask the project maintainer. Records the old project skipped are kept in no store, and the durable fix is MTIX-268",
-		sqlite.RelayCloneOnSyncedStop)
+	for _, w := range []string{"STOP, do not continue", "keep the old project", "do not run `mtix sync relay retire-peer`",
+		"mtix sync quarantine resolve --handle <handle> --recreate --reason <why>", "`mtix sync quarantine resolve --handle <handle> --accept --reason <why>`", "start this recovery again from step 1"} {
+		assert.Contains(t, sqlite.RelayCloneOnSyncedStop, w)
+	}
+	assert.NotContains(t, sqlite.RelayCloneOnSyncedStop, "MTIX-268", "the durable fix has landed")
+	for _, w := range []string{"holds both copies", "mtix cancel <id> --reason \"duplicate of <other-id>\"",
+		"stays stored only in the old project", "keep that project", "use it when the author peer still holds the task"} {
+		assert.Contains(t, sqlite.RelayCloneOnSyncedStop, w, "the choice and its cost are stated")
+	}
 
 	status := mustCLI(t, oldDir, "sync", "relay", "status")
 	assert.NotContains(t, status, "RETIRED", "no peer id was retired")
@@ -408,40 +417,53 @@ func TestRelayClone_RecoveryWithTaskNumberCollision_StopsAndRetiresNothing(t *te
 	assert.Empty(t, entries, "the new project was never created")
 }
 
-// TestRelayCloneOnSyncedLogSearch_FindsOnlyARecordedSkip runs the step 1 log
-// search for real: it prints the line a supervised daemon captured and is
-// silent when there is no log.
-func TestRelayCloneOnSyncedLogSearch_FindsOnlyARecordedSkip(t *testing.T) {
-	dir := t.TempDir()
-	run := func() string {
-		c := exec.Command("sh", "-c", sqlite.RelayCloneOnSyncedLogSearch) //nolint:gosec // constant command under test
-		c.Dir = dir
-		out, _ := c.CombinedOutput()
-		return string(out)
-	}
-	assert.Empty(t, run(), "no daemon log, no output, no error text")
-	require.NoError(t, os.MkdirAll(filepath.Join(dir, ".mtix", "logs"), 0o700))
-	logFile := filepath.Join(dir, ".mtix", "logs", "daemon.err.log")
-	require.NoError(t, os.WriteFile(logFile, []byte("level=INFO msg=ok\n"), 0o600))
-	assert.Empty(t, run(), "a log without a skip prints nothing")
-	require.NoError(t, os.WriteFile(logFile, []byte("level=ERROR msg=\"relay ingest quarantined a record from an authenticated peer\" peer=x\n"), 0o600))
-	assert.Contains(t, run(), "relay ingest quarantined a record")
-}
-
-// TestRelayClone_SkipFromEarlierTick_IsNotDetectedAndSaysSo pins the known
-// gap (MTIX-268): a skip made by an earlier interactive tick leaves neither
-// the tick line nor a log, so step 1 shows nothing, and the step text says
-// plainly that this cannot be detected and that step 9 does not catch it.
-func TestRelayClone_SkipFromEarlierTick_IsNotDetectedAndSaysSo(t *testing.T) {
+// TestRelayClone_SkipFromEarlierTick_IsStillListedAndStopsStep1 pins the fix
+// for MTIX-268: a skip made by an earlier tick (which printed its line once and
+// is gone) is stored, so step 1's list command finds it later.
+func TestRelayClone_SkipFromEarlierTick_IsStillListedAndStopsStep1(t *testing.T) {
 	identityOperatorState(t)
 	oldDir, _, _ := rejoinFixture(t, true, true)
 	step := sqlite.RelayCloneOnSyncedSteps()[0]
 	out := mustCLI(t, oldDir, "sync", "relay", "tick")
 	assert.NotContains(t, out, "quarantined", "the earlier tick already skipped the record")
-	assert.Contains(t, step.Text, "cannot be detected until MTIX-268 lands")
-	assert.Contains(t, step.Text, "step 9 does not catch it")
-	_, err := os.Stat(filepath.Join(oldDir, ".mtix", "logs", "daemon.err.log"))
-	assert.True(t, os.IsNotExist(err), "an interactive tick leaves no log")
+	rows := relayQuarantineRows(t, oldDir)
+	require.Len(t, rows, 1, "the skip is stored")
+	assert.Equal(t, "open", rows[0].Relay.State)
+	assert.Contains(t, step.Text, "for this tick or an earlier one")
+}
+
+// TestRelayClone_RecoveryAfterRecreatingTheSkippedTask_Completes runs the
+// recovery for a colliding board: step 1 stops, the skipped task is recreated
+// under a new id with sync quarantine resolve, and the recovery then runs from
+// step 1 to step 9 with nothing missing by uid.
+func TestRelayClone_RecoveryAfterRecreatingTheSkippedTask_Completes(t *testing.T) {
+	identityOperatorState(t)
+	oldDir, _, relay := rejoinFixture(t, true, false)
+	steps := sqlite.RelayCloneOnSyncedSteps()
+	mustCLI(t, oldDir, "sync", "relay", "tick")
+	rows := relayQuarantineRows(t, oldDir)
+	require.Len(t, rows, 1)
+	mustCLI(t, oldDir, "sync", "quarantine", "resolve", "--handle", rows[0].Handle, "--recreate", "--reason", "keep the other peer's task")
+	assert.Equal(t, "resolved", relayQuarantineRows(t, oldDir)[0].Relay.State)
+	row, _ := relayDoctorRow(t, oldDir)
+	assert.True(t, row.Pass, "nothing is open any more")
+
+	snaps, err := filepath.Glob(filepath.Join(relay, "bootstrap", "*"))
+	require.NoError(t, err)
+	for _, snap := range snaps {
+		require.NoError(t, os.Remove(snap))
+	}
+	newDir := t.TempDir()
+	var newList string
+	for _, step := range steps[:9] {
+		out := runRejoinStep(t, step, oldDir, newDir, relay)
+		if step.Command == sqlite.RelayCloneOnSyncedListCommand {
+			newList = out
+		}
+	}
+	oldList := mustCLI(t, oldDir, "list", "--json", "--all-projects", "--limit", "100000", "--fields", "uid")
+	assert.Empty(t, missingUIDs(t, oldList, newList), "the recreated task is in the new project")
+	assert.Contains(t, mustCLI(t, newDir, "list", "--json"), "Other peer work")
 }
 
 // TestRelayClone_VerifyStepCoversEveryTaskInEveryProject builds a board of
@@ -508,10 +530,9 @@ func TestListUIDs_TruncatedRead_FailsTheCount(t *testing.T) {
 func requireStepWords(t *testing.T, steps []sqlite.RelayRejoinStep) {
 	t.Helper()
 	words := [][]string{
-		{"in this project", "read its output", "STOP", "keep the old project", "do not run `mtix sync relay retire-peer`",
-			"ask the project maintainer", "MTIX-268", "only on the tick that skipped", "persisted nowhere (MTIX-268)",
-			sqlite.RelayCloneOnSyncedLogSearch, "STOP the same way", "earlier interactive tick leaves no trace",
-			"cannot be detected until MTIX-268 lands", "step 9 does not catch it"},
+		{"in this project", sqlite.RelayCloneOnSyncedListQuarantine, "source relay and relay.state open", "STOP", "keep the old project",
+			"do not run `mtix sync relay retire-peer`", "mtix sync quarantine resolve --handle", "--recreate --reason", "--accept --reason",
+			"start this recovery again from step 1", "for this tick or an earlier one"},
 		{"in this project", "includes that work"},
 		{"in a new project", "with the same prefix as this project"},
 		{"NEW peer id", "never reuse"},
@@ -522,7 +543,7 @@ func requireStepWords(t *testing.T, steps []sqlite.RelayRejoinStep) {
 		{"verify there with `" + sqlite.RelayCloneOnSyncedListCommand + "`", "in the old project", "equal its `total`", "truncated",
 			"`uid` field", "never by id or title", "restart the daemon in the old project", "keep using the old project",
 			"leave the new project unused (delete nothing)", "do not run `mtix sync relay retire-peer`", "ask the project maintainer",
-			"the new project's peer id", "MTIX-268"},
+			"the new project's peer id"},
 		{"only when the checks of steps 1 and 9 passed", "prune window", "unset means the machine id", "stop using the old project"},
 	}
 	require.Len(t, steps, len(words))

@@ -70,6 +70,9 @@ type Store interface {
 	ResolveDisplayPathByUID(ctx context.Context, uid string) (string, error)
 	JournalTail(ctx context.Context) (int64, error)
 	InitHookScanFloorAtTail(ctx context.Context) error
+	// RecordRelayQuarantine stores a record the §6.4 policy skips, so it
+	// survives the cursor moving past it (MTIX-268).
+	RecordRelayQuarantine(ctx context.Context, rec sqlite.RelayQuarantineRecord) error
 }
 
 // Config configures a poll over a relay's peer directories.
@@ -91,6 +94,9 @@ type Config struct {
 	Unauthenticated bool
 
 	Logger *slog.Logger
+
+	// Now is the clock for quarantine timestamps; nil uses the wall clock.
+	Now func() time.Time
 }
 
 // Quarantine records a record skipped under the §6.4 authenticated
@@ -120,6 +126,10 @@ type Stats struct {
 
 	Quarantines []Quarantine
 	Stalls      []Stall
+
+	// fatal is a local store failure met while refusing a record: the
+	// poll stops and returns it, with the cursor still before the record.
+	fatal error
 
 	// ForeignEntries are names under peers/ that are not peer ids.
 	// Reported, never parsed and never removed.
@@ -234,6 +244,9 @@ func (in *Ingestor) ingestPeer(ctx context.Context, peer segment.PeerDir, stats 
 			}
 			position = next
 		}
+		if stats.fatal != nil {
+			return stats.fatal
+		}
 		if stop {
 			// A stall is durable: nothing past it is read, this poll or
 			// any later one, until the medium is repaired.
@@ -332,21 +345,21 @@ func (in *Ingestor) ingestSegment(ctx context.Context, peerID string, file segme
 func (in *Ingestor) applyRecord(ctx context.Context, peerID string, header segment.Header, rec segment.Record, stats *Stats) bool {
 	var e model.SyncEvent
 	if err := decodeEvent(rec.Payload, &e); err != nil {
-		return in.refuse(stats, peerID, header, rec, "", err)
+		return in.refuse(ctx, stats, peerID, header, rec, nil, err)
 	}
 	// The §5.1 envelope, run locally. On the hub topology these rules
 	// ran on a server the fleet trusts; on a relay there is no server,
 	// so the reader is the validator.
 	if err := validator.Validate(&e, time.Now().UTC(), nil); err != nil {
-		return in.refuse(stats, peerID, header, rec, e.EventID, err)
+		return in.refuse(ctx, stats, peerID, header, rec, &e, err)
 	}
 	// Every node id the record names must be inside the node id grammar,
 	// as at pull (MTIX-187).
 	if err := validator.ValidateEventNodeIDs(&e); err != nil {
-		return in.refuse(stats, peerID, header, rec, e.EventID, err)
+		return in.refuse(ctx, stats, peerID, header, rec, &e, err)
 	}
 	if err := in.checkUID(ctx, &e); err != nil {
-		return in.refuse(stats, peerID, header, rec, e.EventID, err)
+		return in.refuse(ctx, stats, peerID, header, rec, &e, err)
 	}
 
 	// Everything that makes the event real happens here: dedupe against
@@ -357,14 +370,17 @@ func (in *Ingestor) applyRecord(ctx context.Context, peerID string, header segme
 	if err := in.cfg.Store.WithTx(ctx, func(tx *sql.Tx) error {
 		return in.cfg.Store.IdempotentApply(ctx, tx, &e)
 	}); err != nil {
-		return in.refuse(stats, peerID, header, rec, e.EventID, err)
+		return in.refuse(ctx, stats, peerID, header, rec, &e, err)
 	}
 	stats.Applied++
 	return false
 }
 
-// refuse applies the §6.4 policy to a record the gate rejected.
-func (in *Ingestor) refuse(stats *Stats, peerID string, header segment.Header, rec segment.Record, eventID string, cause error) bool {
+// refuse applies the §6.4 policy to a record the gate rejected. On an
+// authenticated relay the record is stored (relay_quarantine) before the
+// cursor can move past it, so a skipped record is never lost (MTIX-268); if
+// the store cannot take it the poll fails instead and the cursor stays put.
+func (in *Ingestor) refuse(ctx context.Context, stats *Stats, peerID string, header segment.Header, rec segment.Record, e *model.SyncEvent, cause error) bool {
 	if in.cfg.Unauthenticated {
 		in.log.Error("relay ingest stalled on an unverifiable record",
 			slog.String("peer", peerID), slog.Uint64("rs", rec.RS), slog.Any("error", cause))
@@ -374,13 +390,20 @@ func (in *Ingestor) refuse(stats *Stats, peerID string, header segment.Header, r
 		})
 		return true
 	}
+	row := in.quarantineRecord(peerID, header, rec, e, cause)
+	if err := in.cfg.Store.RecordRelayQuarantine(ctx, row); err != nil {
+		in.log.Error("relay ingest could not store a quarantined record",
+			slog.String("peer", peerID), slog.Uint64("rs", rec.RS), slog.Any("error", err))
+		stats.fatal = fmt.Errorf("store quarantined relay record %s rs %d: %w", peerID, rec.RS, err)
+		return true
+	}
 	in.log.Error("relay ingest quarantined a record from an authenticated peer",
 		slog.String("peer", peerID), slog.Uint64("rs", rec.RS),
-		slog.String("event_id", format.EventID(eventID)), slog.Any("error", cause))
+		slog.String("event_id", format.EventID(row.EventID)), slog.Any("error", cause))
 	stats.Quarantined++
 	stats.Quarantines = append(stats.Quarantines, Quarantine{
 		PeerID: peerID, Segment: header.SegmentNo, RS: rec.RS,
-		EventID: eventID, Reason: cause.Error(),
+		EventID: row.EventID, Reason: cause.Error(),
 	})
 	return false
 }

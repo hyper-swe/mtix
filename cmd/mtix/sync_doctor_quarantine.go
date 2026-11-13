@@ -35,7 +35,8 @@ func appendQuarantineCheck(ctx context.Context, r DoctorReport, st *sqlite.Store
 			check.Fix = fix
 		}
 	}
-	return appendDoctorCheck(r, check)
+	// MTIX-268: records relay ingest skipped get their own row beside this one.
+	return appendRelayQuarantineCheck(ctx, appendDoctorCheck(r, check), st)
 }
 
 // checkQuarantinedEvents passes when no unacknowledged pulled event remains.

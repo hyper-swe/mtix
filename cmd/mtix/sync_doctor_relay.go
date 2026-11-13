@@ -21,6 +21,10 @@ import (
 	"github.com/hyper-swe/mtix/internal/relay/tick"
 )
 
+// relayQuarantineCheckName is the name of the doctor's relay quarantine row
+// (MTIX-268; sync_doctor_relay_quarantine.go builds it).
+const relayQuarantineCheckName = "relay quarantined records"
+
 // relayVerdictCodes is the FR-21 §9 registry, pinned.
 //
 // Doctor reports against exactly this list. A code that appears without

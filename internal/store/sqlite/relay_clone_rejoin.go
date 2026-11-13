@@ -22,24 +22,25 @@ type RelayRejoinStep struct {
 	Command string
 }
 
-// RelayCloneOnSyncedQuarantineLine is the exact text a relay tick prints when
-// it skipped records from authenticated peers; the recovery looks for it.
-const RelayCloneOnSyncedQuarantineLine = "quarantined N record(s) from authenticated peers:"
+// RelayCloneOnSyncedListQuarantine is the read-only command that lists the
+// records relay ingest skipped. The skip is persisted (MTIX-268), so an open
+// relay row is visible on any later run, not only on the tick that skipped it.
+const RelayCloneOnSyncedListQuarantine = "mtix sync quarantine list --json"
 
-// RelayCloneOnSyncedStop is the STOP prose of the recovery. It names no
-// command that could lose data: a record the old project skipped at ingest
-// (for example two peers that took the same task number) is kept in no store
-// until MTIX-268 persists the relay-ingest quarantine, so no manual step can
-// safely bring it back, and a recreate would duplicate the task on its author.
+// RelayCloneOnSyncedStop is the STOP prose of step 1. A record the old project
+// skipped at ingest (for example two peers that took the same task number) is
+// stored in the relay quarantine; the export stamps its peer's stream past it,
+// so a new project would lack it until the row is settled. Settling is a choice,
+// not a repair: a recreate makes a NEW task that every peer receives, including
+// the author, who then holds two copies; an accept keeps the record only in the
+// old project's store.
 const RelayCloneOnSyncedStop = "STOP, do not continue: keep the old project, do not run `mtix sync relay retire-peer`, " +
-	"and ask the project maintainer. Records the old project skipped are kept in no store, and the " +
-	"durable fix is MTIX-268"
-
-// RelayCloneOnSyncedLogSearch is the command that searches the supervised
-// daemon's captured log for a record skipped at ingest. It exists only where
-// a daemon ran the tick; an interactive tick prints to the terminal and
-// leaves no trace.
-const RelayCloneOnSyncedLogSearch = "grep -s 'relay ingest quarantined a record' .mtix/logs/daemon.err.log"
+	"and settle every open relay record first: read each with `mtix sync quarantine list --json`, then choose per record. " +
+	"`mtix sync quarantine resolve --handle <handle> --accept --reason <why>` keeps it unapplied (use it when the author peer still holds the task), " +
+	"and the record then stays stored only in the old project, so keep that project. " +
+	"`mtix sync quarantine resolve --handle <handle> --recreate --reason <why>` (a skipped create_node only) adds a NEW task here that syncs to every peer, " +
+	"including the author, who then holds both copies: on the author peer close one with `mtix cancel <id> --reason \"duplicate of <other-id>\"`. " +
+	"When none is open, start this recovery again from step 1"
 
 // RelayCloneOnSyncedListCommand lists every task of every project with only
 // its uid. The limit is far above any board; step 9 also checks that the
@@ -52,7 +53,7 @@ const RelayCloneOnSyncedListCommand = "mtix list --json --all-projects --limit 1
 // new id, so the prose says what to do with both. It deletes nothing.
 const RelayCloneOnSyncedStopHalfJoined = "STOP, do not continue: restart the daemon in the old project and keep using the old project, " +
 	"leave the new project unused (delete nothing), do not run `mtix sync relay retire-peer`, and ask the project maintainer, " +
-	"telling them the new project's peer id; the durable fix is MTIX-268"
+	"telling them the new project's peer id"
 
 // RelayCloneOnSyncedSteps lists how a peer that already syncs rejoins: as a
 // NEW peer in a new project. A new project that kept the old peer id would
@@ -66,17 +67,15 @@ const RelayCloneOnSyncedStopHalfJoined = "STOP, do not continue: restart the dae
 // and the story is judged by its intent (a working, narrowed recovery).
 //
 // The recovery fails closed on collisions: a record the old project skipped
-// at ingest is kept in no store and the export stamps its peer's stream past
-// it, so the new project would lack it. Step 1 STOPs on the quarantined line
-// and step 9 STOPs when the new project lacks any task (by uid) of the old
+// at ingest is stored in the relay quarantine, and the export stamps its
+// peer's stream past it, so the new project would lack it until it is settled.
+// Step 1 STOPs on an open relay row and step 9 STOPs when the new project lacks any task (by uid) of the old
 // project; nothing is retired before step 10.
 func RelayCloneOnSyncedSteps() []RelayRejoinStep {
 	return []RelayRejoinStep{
-		{false, "in this project run `mtix sync relay tick` so this peer publishes the work it holds, and read its output: if it has a " +
-			"`" + RelayCloneOnSyncedQuarantineLine + "` line, " + RelayCloneOnSyncedStop + ". That line appears only on the tick that skipped " +
-			"the record and is persisted nowhere (MTIX-268). Also run `" + RelayCloneOnSyncedLogSearch + "` here: if it prints anything, " +
-			"STOP the same way. A skip made by an earlier interactive tick leaves no trace and cannot be detected until MTIX-268 lands; " +
-			"step 9 does not catch it", "mtix sync relay tick"},
+		{false, "in this project run `mtix sync relay tick` so this peer publishes the work it holds, then run `" +
+			RelayCloneOnSyncedListQuarantine + "`: if any entry has source relay and relay.state open (the tick skipped a record, " +
+			"for this tick or an earlier one), " + RelayCloneOnSyncedStop, "mtix sync relay tick"},
 		{false, "in this project run `mtix sync relay clone --export` so the relay holds a snapshot that includes that work", "mtix sync relay clone --export"},
 		{true, "in a new project run `mtix init <PREFIX>` with the same prefix as this project", "mtix init <PREFIX>"},
 		{true, "set a NEW peer id there with `mtix config set sync.relay.peer_id <new-peer-id>` and never reuse this " +

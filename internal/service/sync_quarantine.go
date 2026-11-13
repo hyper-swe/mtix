@@ -16,7 +16,8 @@ const quarantineListPage = sqlite.QuarantineAcknowledgementPageSize
 
 // QuarantinedEvent is one event held in the local quarantine
 // (sync_quarantine) as `mtix sync quarantine list` shows it: a pulled event
-// (MTIX-95.11) or an own event push holds (source push, MTIX-95.12). It
+// (MTIX-95.11), an own event push holds (source push, MTIX-95.12) or a
+// record relay ingest skipped (source relay, MTIX-268). It
 // carries the event's id, node, op and Lamport clock (read from the raw
 // event), the pass that first quarantined it, why, how many attempts
 // failed, when it was first seen and last attempted, and the version of
@@ -35,6 +36,8 @@ type QuarantinedEvent struct {
 	LastAttempt     string                     `json:"last_attempt"`
 	CLIVersion      string                     `json:"cli_version"`
 	Acknowledgement *QuarantineAcknowledgement `json:"acknowledgement,omitempty"`
+	// Relay is set on a row with source "relay" (MTIX-268).
+	Relay *RelayQuarantined `json:"relay,omitempty"`
 }
 
 // ListQuarantined returns every quarantined event, held push events
@@ -43,7 +46,16 @@ type QuarantinedEvent struct {
 // row, and it contacts no hub. An empty quarantine is an empty, non-nil
 // slice.
 func (s *SyncService) ListQuarantined(ctx context.Context) ([]QuarantinedEvent, error) {
-	return s.listQuarantined(ctx, QuarantineHandleLen)
+	events, err := s.listQuarantined(ctx, QuarantineHandleLen)
+	if err != nil {
+		return nil, err
+	}
+	// MTIX-268: records relay ingest skipped come after the hub rows.
+	relay, err := s.relayQuarantined(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(events, relay...), nil
 }
 
 // listQuarantined is ListQuarantined with a settable handle base length, so a

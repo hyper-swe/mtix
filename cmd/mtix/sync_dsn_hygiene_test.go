@@ -104,6 +104,9 @@ func sweepLocalCommands() []sweepCommand {
 		{name: "sync quarantine acknowledge", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "quarantine", "acknowledge", ackCLIEventID}, pos, "--reason", "DSN output sweep")
 		}},
+		{name: "sync quarantine resolve", argv: func(pos []string) []string {
+			return cmdLine([]string{"sync", "quarantine", "resolve"}, pos, "--handle", "00000000", "--accept", "--reason", "DSN output sweep")
+		}},
 		{name: "sync quarantine list", argv: sweepPath("sync", "quarantine", "list")},
 		{name: "sync repair", argv: func(pos []string) []string {
 			return cmdLine([]string{"sync", "repair"}, pos, "--status")

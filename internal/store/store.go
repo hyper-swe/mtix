@@ -65,6 +65,10 @@ type CreateNodeOptions struct {
 	Provisional bool
 	// ClaimParentAssignee requests the current in-progress parent assignment within the create transaction.
 	ClaimParentAssignee bool
+	// InTx, when set, runs inside the create transaction after the node is
+	// written; an error rolls the create back (MTIX-268: a relay quarantine
+	// row is settled with the task that recreates it).
+	InTx func(ctx context.Context, tx *sql.Tx, node *model.Node) error
 }
 
 // Store defines the data access contract for mtix.

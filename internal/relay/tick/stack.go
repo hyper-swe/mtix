@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"time"
 
 	"github.com/hyper-swe/mtix/internal/relay/ingest"
 	"github.com/hyper-swe/mtix/internal/relay/keyring"
@@ -53,6 +54,9 @@ type StackConfig struct {
 	BatchLimit      int
 
 	Logger *slog.Logger
+
+	// Now stamps quarantined records at ingest (MTIX-268); nil takes the wall clock.
+	Now func() time.Time
 }
 
 // Stack is one peer's view of a relay: what it publishes with and what
@@ -151,6 +155,7 @@ func Open(cfg StackConfig) (*Stack, error) {
 		Keys:            keys,
 		Unauthenticated: !doc.Authenticated,
 		Logger:          log,
+		Now:             cfg.Now,
 	})
 	if err != nil {
 		return nil, err

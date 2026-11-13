@@ -72,6 +72,11 @@
 #      run lost, cancelled, timed out, runner setup failed)
 #   3  tree mismatch (the runner's checkout differs from the snapshot)
 #
+# Host failures (MTIX-262, scripts/remote-bar-env.sh): a push or dispatch that
+# fails with HTTP 5xx, HTTP 429 or a network error ends the output with the
+# line "hyperswe: environment: <cause>" (cause at most 200 characters), after
+# the cleanup output and only on a non-zero exit. No other failure prints it.
+#
 # Environment: RB_REMOTE (default origin), RB_TIMEOUT_SECS (default 5400),
 # RB_POLL_SECS (default 20), RB_FIND_SECS (default 5, wait between run lookups).
 
@@ -114,6 +119,8 @@ RB_REQUESTED_WORKFLOW_REF=none
 RB_VERDICT_PRINTED=0
 # shellcheck source=remote-bar-workflow.sh
 source "$(dirname "${BASH_SOURCE[0]}")/remote-bar-workflow.sh"
+# shellcheck source=remote-bar-env.sh
+source "$(dirname "${BASH_SOURCE[0]}")/remote-bar-env.sh"
 
 # rb_remote_ok <url>: succeeds only for the hyper-swe/mtix GitHub repository.
 rb_remote_ok() {
@@ -233,7 +240,12 @@ rb_push() {
 	local commit="$1" branch="$2"
 	rb_assert_ref "refs/heads/$branch" || rb_die 2 "refusing to push non ci-scratch target: $branch"
 	RB_PUSHED=1
-	git -c push.followTags=false push --quiet --no-follow-tags --no-verify "$RB_REMOTE" "$commit:refs/heads/$branch"
+	local perr
+	if ! perr="$(git -c push.followTags=false push --quiet --no-follow-tags --no-verify "$RB_REMOTE" "$commit:refs/heads/$branch" 2>&1)"; then
+		printf '%s\n' "$perr" >&2
+		rb_env_note push "$perr"
+		return 1
+	fi
 }
 
 # rb_cleanup: deletes the scratch branch and temp files. Safe to call twice.
@@ -463,11 +475,12 @@ rb_run() {
 		case "$derr" in
 		*"Unexpected inputs"*base_commit*)
 			echo "remote-bar: main's workflow does not accept base_commit; dispatching without a base (this run is not reusable)" >&2
-			gh workflow run "$RB_WORKFLOW" --repo "$RB_REPO_SLUG" --ref main \
+			derr="$(gh workflow run "$RB_WORKFLOW" --repo "$RB_REPO_SLUG" --ref main \
 				-f "scratch_ref=$RB_BRANCH" -f "expected_tree=$tree" -f "wrapper_version=$RB_VERSION" \
-				"${opts[@]+"${opts[@]}"}" || rb_die 2 "dispatch failed" ;;
+				"${opts[@]+"${opts[@]}"}" 2>&1)" || { printf '%s\n' "$derr" >&2; rb_env_note dispatch "$derr"; rb_die 2 "dispatch failed"; } ;;
 		*)
 			printf '%s\n' "$derr" >&2
+			rb_env_note dispatch "$derr"
 			rb_die 2 "dispatch failed" ;;
 		esac
 	fi
@@ -491,7 +504,10 @@ rb_on_exit() {
 	local status=$?
 	trap - EXIT
 	if [ "$status" != 0 ] && [ "$RB_VERDICT_PRINTED" != 1 ]; then rb_verdict error none "$status"; fi
-	rb_cleanup
+	# Cleanup output goes to stdout, then the marker (MTIX-262): nothing may
+	# follow the marker on either stream.
+	rb_cleanup 2>&1
+	rb_env_emit "$status"
 	exit "$status"
 }
 

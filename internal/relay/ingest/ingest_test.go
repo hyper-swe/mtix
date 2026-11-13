@@ -34,6 +34,7 @@ var fleetKey = []byte("fr21-ingest-fixed-test-key-32byt")
 // local store that ingests it.
 type peerRig struct {
 	store    *sqlite.Store
+	dbPath   string
 	peersDir string
 	segDir   string
 	rs       uint64
@@ -43,14 +44,15 @@ type peerRig struct {
 func newPeerRig(t *testing.T) *peerRig {
 	t.Helper()
 	root := t.TempDir()
-	st, err := sqlite.New(filepath.Join(root, "store.db"), slog.Default())
+	dbPath := filepath.Join(root, "store.db")
+	st, err := sqlite.New(dbPath, slog.Default())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
 
 	peersDir := filepath.Join(root, "relay", "peers")
 	segDir := filepath.Join(peersDir, remotePeer, "segments")
 	require.NoError(t, os.MkdirAll(segDir, 0o700))
-	return &peerRig{store: st, peersDir: peersDir, segDir: segDir, rs: 1, segNo: 1}
+	return &peerRig{store: st, dbPath: dbPath, peersDir: peersDir, segDir: segDir, rs: 1, segNo: 1}
 }
 
 func (r *peerRig) config() ingest.Config {
@@ -718,13 +720,21 @@ type sqlTx = sql.Tx
 // fakeStore drives the store-side failure paths. The narrow Store
 // interface exists so these can be exercised without a broken database.
 type fakeStore struct {
-	inner        *sqlite.Store
-	errCursor    error
-	errAdvance   error
-	errTail      error
-	errFloor     error
-	errResolveBy error
-	errTx        error
+	inner         *sqlite.Store
+	errCursor     error
+	errAdvance    error
+	errTail       error
+	errFloor      error
+	errResolveBy  error
+	errTx         error
+	errQuarantine error
+}
+
+func (f *fakeStore) RecordRelayQuarantine(ctx context.Context, rec sqlite.RelayQuarantineRecord) error {
+	if f.errQuarantine != nil {
+		return f.errQuarantine
+	}
+	return f.inner.RecordRelayQuarantine(ctx, rec)
 }
 
 func (f *fakeStore) RelayIngestCursor(ctx context.Context, peerID string) (sqlite.RelayIngestPosition, error) {

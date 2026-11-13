@@ -106,9 +106,26 @@ func runSyncQuarantineAcknowledge(ctx context.Context, w io.Writer, eventID, rea
 
 // quarantineDisplayReason appends the retained receipt without changing the original reason (MTIX-187.2).
 func quarantineDisplayReason(q service.QuarantinedEvent) string {
+	if q.Relay != nil {
+		return relayDisplayReason(q)
+	}
 	if q.Acknowledgement == nil {
 		return displayHoldReason(q.Reason)
 	}
 	a := q.Acknowledgement
 	return fmt.Sprintf("%s; acknowledged by %s at %s; raw SHA256 %s; reason: %s", displayHoldReason(q.Reason), a.Actor, a.AcknowledgedAt, a.RawEventSHA256, a.Reason)
+}
+
+// relayDisplayReason names the stream position and settlement of a relay row
+// ahead of the reason it was skipped (MTIX-268).
+func relayDisplayReason(q service.QuarantinedEvent) string {
+	r := q.Relay
+	out := fmt.Sprintf("relay %s rs %d, %s: %s", oneLine(r.PeerID), r.RS, oneLine(r.State), displayHoldReason(q.Reason))
+	if r.State == "resolved" {
+		out += fmt.Sprintf("; %s by %s at %s", r.Resolution, r.ResolvedBy, r.ResolvedAt)
+		if r.RecreatedAs != "" {
+			out += " as " + r.RecreatedAs
+		}
+	}
+	return out
 }

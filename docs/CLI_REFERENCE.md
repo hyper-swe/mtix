@@ -1874,7 +1874,7 @@ See 'mtix sync init --help' and 'mtix sync clone --help'.
 - `migrate` — Drive the ADR-003 §7 node-identity migration phases
 - `pull` — Pull events from the sync hub and apply locally (FR-18)
 - `push` — Push pending events to the sync hub (FR-18)
-- `quarantine` — Inspect retained events and acknowledge invalid-id pulled events
+- `quarantine` — Inspect retained events, acknowledge invalid-id pulled events, resolve skipped relay records
 - `reconcile` — Resolve divergent history (FR-18.13)
 - `relay` — EXPERIMENTAL: manage the file-based sync relay (FR-21)
 - `repair` — Repair local state from the local sync event log (--status)
@@ -2589,7 +2589,7 @@ so git pre-push hooks never block code pushes.
 
 **Usage:** `quarantine`
 
-Inspect retained events and acknowledge invalid-id pulled events
+Inspect retained events, acknowledge invalid-id pulled events, resolve skipped relay records
 
 Inspect the events held in the local quarantine: pulled events that
 'mtix sync pull' could not take (they failed the pull's checks, the FR-18.7
@@ -2604,10 +2604,14 @@ that the hub would accept; every other push hold stays.
 Acknowledge records a local audit receipt for a reviewed invalid-node-id
 pulled event, with a required reason; it stays retained and unapplied.
 
+Records that relay ingest skipped (source relay) are listed here too, with their
+peer and relay sequence; 'resolve' settles them.
+
 ### Subcommands
 
 - `acknowledge (<event-id> | --handle <handle>) --reason <text>` — Record a local receipt accepting an invalid-id pulled event as unapplied
 - `list` — List quarantined and held events (read-only)
+- `resolve --handle <handle> (--accept | --recreate) --reason <text>` — Settle a record relay ingest skipped: recreate it under a new id, or accept it as unapplied
 ---
 
 ## acknowledge
@@ -2656,7 +2660,9 @@ List the events held in the local quarantine, in Lamport clock order,
 then event id: handle, event id, node, op, failed attempts, first seen, last
 attempt and the reason the event was quarantined. --json adds the Lamport
 clock, the event_id_sha256, the source (pull or sweep for a pulled event, push for an event
-push holds) and the mtix version that recorded it. Acknowledged rows show
+push holds, relay for a record relay ingest skipped) and the mtix version that recorded it.
+A relay row carries a relay object: peer, relay sequence, state, resolution and the
+record payload as received. Acknowledged rows show
 their retained local receipt, including author, reason, time and raw SHA256.
 
 The handle is at least 12 hex characters of the SHA-256 of the exact event
@@ -2673,6 +2679,51 @@ machine's clock, and one that starts with "depends on held create of"
 once no creation above it (for a link, made before it) is held and the
 hub would accept it (if not, it stays held under its own reason). Every other hold stays. 'mtix sync
 doctor' names the fix for each held push event.
+---
+
+## resolve
+
+**Usage:** `resolve --handle <handle> (--accept | --recreate) --reason <text>`
+
+Settle a record relay ingest skipped: recreate it under a new id, or accept it as unapplied
+
+Settle one record that relay ingest skipped (source relay in 'mtix sync
+quarantine list'). Relay ingest skips a record from an authenticated peer when
+it cannot be applied, for example when two peers took the same next task number.
+The record is stored, and 'mtix doctor' fails until every such record is settled.
+
+--recreate (only for a skipped task creation) creates a NEW task with the
+skipped task's title, description, prompt, acceptance, priority, labels, type and
+parent, under the next free id, and marks the record resolved in the same
+transaction as the create: both happen or neither does. The new task syncs as
+local work to EVERY peer, including the author peer, which still holds the
+original under its own id and so holds BOTH copies. On the author peer close one
+of the two: mtix cancel <id> --reason "duplicate of <other-id>" (this command
+prints the new id; 'mtix sync quarantine list --json' keeps it as recreated_as).
+If the skipped task's parent was itself skipped, resolve the parent first; a
+child is refused while its parent is open or was accepted, and as ambiguous when
+another peer also had a create of the parent's id skipped. A second recreate of an
+event already recreated (a republish skipped it again) is refused; accept it. Later events the
+other peer sent for its own copy are separate records; settle each one
+(--accept after reading it). They are not remapped.
+
+--accept records that you reviewed the record and keep it unapplied. Its content
+stays stored, and only in this project's store, so keep that store; read it with
+'mtix sync quarantine list --json' (the relay object holds the payload). Use it
+when the author peer still holds the task and nobody here needs it. Nothing is
+applied and no task changes.
+
+--reason is required (at most 500 bytes). A settled record stays listed as the
+audit trail. Local only: it never contacts the hub or the relay.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--accept` |  | Keep the record unapplied and record the review | false |
+| `--handle` |  | Handle of a relay record from 'mtix sync quarantine list' |  |
+| `--reason` |  | Required explanation, recorded in the receipt |  |
+| `--recreate` |  | Create the skipped task again under a new id (skipped task creations only) | false |
 ---
 
 ## reconcile

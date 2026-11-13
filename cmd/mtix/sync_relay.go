@@ -176,6 +176,7 @@ func openRelayStack() (*tick.Stack, error) {
 		PeerID:          peer,
 		MaxSegmentBytes: int64(relayConfigInt("sync.relay.max_segment_bytes", 4<<20)),
 		Logger:          app.logger,
+		Now:             func() time.Time { return time.Now().UTC() },
 	})
 }
 

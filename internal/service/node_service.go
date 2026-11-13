@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -120,6 +121,14 @@ func (svc *NodeService) FlushSettlement(ctx context.Context) {
 // and re-settles on the next sync. The create call returns immediately either
 // way — it never waits on the hub.
 func (svc *NodeService) CreateNode(ctx context.Context, req *CreateNodeRequest) (*model.Node, error) {
+	return svc.CreateNodeInTx(ctx, req, nil)
+}
+
+// CreateNodeInTx is CreateNode with an optional hook that runs inside the create
+// transaction after the node is written (MTIX-268): if the hook fails the node is
+// not created. The hook receives the node with its allocated id.
+func (svc *NodeService) CreateNodeInTx(ctx context.Context, req *CreateNodeRequest,
+	inTx func(ctx context.Context, tx *sql.Tx, node *model.Node) error) (*model.Node, error) {
 	if err := svc.validateCreateRequest(req); err != nil {
 		return nil, err
 	}
@@ -130,7 +139,7 @@ func (svc *NodeService) CreateNode(ctx context.Context, req *CreateNodeRequest) 
 		return nil, err
 	}
 
-	if err := svc.persistCreatedNode(ctx, node, req.Assignee); err != nil {
+	if err := svc.persistCreatedNode(ctx, node, req.Assignee, inTx); err != nil {
 		return nil, fmt.Errorf("create node: %w", err)
 	}
 	svc.broadcastCreatedNode(ctx, node, req.Creator)
@@ -144,11 +153,13 @@ func (svc *NodeService) CreateNode(ctx context.Context, req *CreateNodeRequest) 
 }
 
 // persistCreatedNode allocates and optionally claims atomically (FR-2.7/FR-11.2a).
-func (svc *NodeService) persistCreatedNode(ctx context.Context, node *model.Node, assignee string) error {
+func (svc *NodeService) persistCreatedNode(ctx context.Context, node *model.Node, assignee string,
+	inTx func(ctx context.Context, tx *sql.Tx, node *model.Node) error) error {
 	return svc.store.CreateNodeAllocated(ctx, node, store.CreateNodeOptions{
 		Assignee:            assignee,
 		ClaimParentAssignee: svc.config.AutoClaim(),
 		Provisional:         node.ParentID != "" && svc.settlement.Enabled() && !svc.settlement.Reachable(),
+		InTx:                inTx,
 	})
 }
 

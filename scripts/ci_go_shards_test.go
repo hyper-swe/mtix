@@ -468,33 +468,48 @@ func TestTestShards_Patterns_SelectEveryNameExactlyOnce(t *testing.T) {
 			}
 		})
 	}
-	t.Run("read-cancel tests land in every shard", func(t *testing.T) {
+	t.Run("read-cancel tests are placed by measured shard load", func(t *testing.T) {
 		requireReadCancelTestsSpreadAcrossShards(t)
 	})
 }
 
 // requireReadCancelTestsSpreadAcrossShards feeds the real read-cancel test
-// names of internal/store/sqlite through the shard helper and requires every
-// one of 3 shards to select at least two and at most four of them, so a
-// rename cannot pile their ~400 s back into one shard (MTIX-264). The names
-// are read from the sqlite package source, so they cannot drift.
+// names of internal/store/sqlite through the shard helper and requires the
+// placement chosen from measured shard load (MTIX-264): the families test and
+// three route tests on shard 1, no read-cancel test on shard 2 (it is already
+// the longest shard), five route tests on shard 3. A rename that moves one
+// fails here. The names are read from the sqlite package source, so they
+// cannot drift.
 func requireReadCancelTestsSpreadAcrossShards(t *testing.T) {
 	t.Helper()
 	names := readCancelTestNames(t)
 	require.Len(t, names, 9, "one families test and eight route tests")
-	root := testShardFixture(t, strings.Join(names, "\n")+"\nok  \texample.com/slow\t0.01s\n", "0")
+	// Other tests of the package fill every shard, so shard 2 is not empty
+	// to the helper while it holds no read-cancel test.
+	others, _ := fakeTestListing(40)
+	root := testShardFixture(t, strings.Join(append(names, others...), "\n")+"\nok  \texample.com/slow\t0.01s\n", "0")
+	wantRoutes := map[int]int{1: 3, 2: 0, 3: 5}
 	for k := 1; k <= 3; k++ {
 		pat, err := runTestShards(root, "test-pattern", "internal/slow", "3", strconv.Itoa(k))
 		require.NoError(t, err, pat)
 		re := regexp.MustCompile(strings.TrimSpace(pat))
-		n := 0
+		routes, families := 0, 0
 		for _, name := range names {
-			if re.MatchString(name) {
-				n++
+			if !re.MatchString(name) {
+				continue
+			}
+			if strings.HasPrefix(name, "TestReadRoutes_") {
+				routes++
+			} else {
+				families++
 			}
 		}
-		require.GreaterOrEqual(t, n, 2, "shard %d selects too few read-cancel tests", k)
-		require.LessOrEqual(t, n, 4, "shard %d selects too many read-cancel tests", k)
+		require.Equal(t, wantRoutes[k], routes, "shard %d: route tests", k)
+		if k == 1 {
+			require.Equal(t, 1, families, "the families test belongs on shard 1")
+		} else {
+			require.Zero(t, families, "shard %d: families test", k)
+		}
 	}
 }
 

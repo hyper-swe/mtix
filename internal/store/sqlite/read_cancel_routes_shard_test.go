@@ -23,27 +23,31 @@ const sqliteTestShards = 3
 // (MTIX-264). Shards are chosen by djb2(test name) mod 3 + 1, and subtests are
 // never split, so one test that sweeps every route lands wholly in one shard
 // and made macOS shard 1 run 1017-1138 s against its 1200 s limit. Each route
-// is its own top-level test so the hash spreads the cost; renaming a test
-// moves it, so TestReadRouteShards_Assignment_SpreadsAcrossAllShards fails
-// until this table is updated to a name that keeps the spread.
+// is its own top-level test so the hash can place its cost, and the placement
+// follows measured shard load, not an even spread: shard 2 is already the
+// longest shard without them and gets none, shard 1 is the macOS-heavy shard
+// and gets three, shard 3 is the lightest and gets five. Renaming a test
+// moves it, so TestReadRouteShards_Assignment_FollowsMeasuredShardLoad fails
+// until the table is updated to a name that keeps this placement.
 //
 //	shard 1: TestReadFamilies_CancelledMidQuery_LeaveNoStaleSnapshot (the 12 short
-//	         families), StoreQuery, InboxAckInfo
-//	shard 2: ReadDBQueryContext, ReadDBConnPrepareContext, ConnRawPrepare
-//	shard 3: StoreQueryRow, ConnPrepareContext, TxPrepareContext
+//	         families), StoreQuery, InboxAckInfo, ReadDBConnPrepareCtx
+//	shard 2: none
+//	shard 3: StoreQueryRow, ConnPrepareContext, TxPrepareContext, ReadDBQuery,
+//	         ConnRawPrepareStmt
 var readRouteTests = map[string]struct {
 	family     string
 	shard      int
 	iterations int
 }{
-	"TestReadRoutes_StoreQuery_CancelledMidRead_LeaveNoStaleSnapshot":               {"Store.Query", 1, 20000},
-	"TestReadRoutes_InboxAckInfo_CancelledMidRead_LeaveNoStaleSnapshot":             {"InboxAckInfo", 1, 20000},
-	"TestReadRoutes_ReadDBQueryContext_CancelledMidRead_LeaveNoStaleSnapshot":       {"ReadDB.QueryContext", 2, 20000},
-	"TestReadRoutes_ReadDBConnPrepareContext_CancelledMidRead_LeaveNoStaleSnapshot": {"ReadDB.Conn.PrepareContext", 2, 20000},
-	"TestReadRoutes_ConnRawPrepare_CancelledMidRead_LeaveNoStaleSnapshot":           {"Conn.Raw.Prepare", 2, 20000},
-	"TestReadRoutes_StoreQueryRow_CancelledMidRead_LeaveNoStaleSnapshot":            {"Store.QueryRow", 3, 20000},
-	"TestReadRoutes_ConnPrepareContext_CancelledMidRead_LeaveNoStaleSnapshot":       {"Conn.PrepareContext", 3, 20000},
-	"TestReadRoutes_TxPrepareContext_CancelledMidRead_LeaveNoStaleSnapshot":         {"Tx.PrepareContext", 3, 20000},
+	"TestReadRoutes_StoreQuery_CancelledMidRead_LeaveNoStaleSnapshot":           {"Store.Query", 1, 20000},
+	"TestReadRoutes_InboxAckInfo_CancelledMidRead_LeaveNoStaleSnapshot":         {"InboxAckInfo", 1, 20000},
+	"TestReadRoutes_ReadDBQuery_CancelledMidRead_LeaveNoStaleSnapshot":          {"ReadDB.QueryContext", 3, 20000},
+	"TestReadRoutes_ReadDBConnPrepareCtx_CancelledMidRead_LeaveNoStaleSnapshot": {"ReadDB.Conn.PrepareContext", 1, 20000},
+	"TestReadRoutes_ConnRawPrepareStmt_CancelledMidRead_LeaveNoStaleSnapshot":   {"Conn.Raw.Prepare", 3, 20000},
+	"TestReadRoutes_StoreQueryRow_CancelledMidRead_LeaveNoStaleSnapshot":        {"Store.QueryRow", 3, 20000},
+	"TestReadRoutes_ConnPrepareContext_CancelledMidRead_LeaveNoStaleSnapshot":   {"Conn.PrepareContext", 3, 20000},
+	"TestReadRoutes_TxPrepareContext_CancelledMidRead_LeaveNoStaleSnapshot":     {"Tx.PrepareContext", 3, 20000},
 }
 
 // readFamiliesTestName is the test that keeps the short families.
@@ -76,18 +80,19 @@ func declaredRouteTests(t *testing.T) []string {
 	return names
 }
 
-func TestReadRouteShards_Assignment_SpreadsAcrossAllShards(t *testing.T) {
-	perShard := map[int]int{}
+// wantRoutesPerShard is the placement by measured shard load (MTIX-264):
+// three routes on shard 1, none on shard 2, five on shard 3.
+var wantRoutesPerShard = map[int]int{1: 3, 2: 0, 3: 5}
+
+func TestReadRouteShards_Assignment_FollowsMeasuredShardLoad(t *testing.T) {
+	perShard := map[int]int{1: 0, 2: 0, 3: 0}
 	for name, want := range readRouteTests {
 		require.Equal(t, want.shard, shardOfTestName(name, sqliteTestShards),
-			"%s moved shard; update the table in this file and pick a name that keeps the spread", name)
+			"%s moved shard; update the table in this file and pick a name that keeps the placement", name)
 		perShard[want.shard]++
 	}
-	perShard[shardOfTestName(readFamiliesTestName, sqliteTestShards)]++
-	for s := 1; s <= sqliteTestShards; s++ {
-		require.GreaterOrEqual(t, perShard[s], 2, "shard %d must carry at least two of the read-cancel tests: %v", s, perShard)
-		require.LessOrEqual(t, perShard[s], 4, "shard %d is overloaded with read-cancel tests: %v", s, perShard)
-	}
+	require.Equal(t, wantRoutesPerShard, perShard, "route tests per shard (shard 2 must hold none)")
+	require.Equal(t, 1, shardOfTestName(readFamiliesTestName, sqliteTestShards), "the short families test stays on shard 1")
 }
 
 func TestReadRouteShards_RouteTests_MatchTheRouteFamilies(t *testing.T) {

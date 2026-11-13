@@ -58,7 +58,7 @@ func TestSyncServiceListQuarantined_BoundedReadQueriesAndIdenticalResults(t *tes
 	for _, tc := range []struct {
 		rows     int
 		maxReads int64
-	}{{0, 1}, {500, 3}, {501, 5}} {
+	}{{0, 2}, {500, 4}, {501, 6}} { // MTIX-268: +1 for the single relay quarantine read
 		t.Run(fmt.Sprint(tc.rows), func(t *testing.T) {
 			svc, st, want := newBatchListingFixture(t, tc.rows)
 			// With no idle connections, each finished read query closes exactly one

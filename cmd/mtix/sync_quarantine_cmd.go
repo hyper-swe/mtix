@@ -23,7 +23,7 @@ import (
 func newSyncQuarantineCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "quarantine",
-		Short: "Inspect retained events and acknowledge invalid-id pulled events",
+		Short: "Inspect retained events, acknowledge invalid-id pulled events, resolve skipped relay records",
 		Long: `Inspect the events held in the local quarantine: pulled events that
 'mtix sync pull' could not take (they failed the pull's checks, the FR-18.7
 caps and the sync.max_lamport_jump bound, or their apply), and events of
@@ -35,10 +35,13 @@ this machine's clock, together with the events of its task's subtree
 that the hub would accept; every other push hold stays.
 
 Acknowledge records a local audit receipt for a reviewed invalid-node-id
-pulled event, with a required reason; it stays retained and unapplied.`,
+pulled event, with a required reason; it stays retained and unapplied.
+
+Records that relay ingest skipped (source relay) are listed here too, with their
+peer and relay sequence; 'resolve' settles them.`,
 		Args: cobra.NoArgs,
 	}
-	cmd.AddCommand(newSyncQuarantineListCmd(), newSyncQuarantineAcknowledgeCmd())
+	cmd.AddCommand(newSyncQuarantineListCmd(), newSyncQuarantineAcknowledgeCmd(), newSyncQuarantineResolveCmd())
 	return cmd
 }
 
@@ -51,7 +54,9 @@ func newSyncQuarantineListCmd() *cobra.Command {
 then event id: handle, event id, node, op, failed attempts, first seen, last
 attempt and the reason the event was quarantined. --json adds the Lamport
 clock, the event_id_sha256, the source (pull or sweep for a pulled event, push for an event
-push holds) and the mtix version that recorded it. Acknowledged rows show
+push holds, relay for a record relay ingest skipped) and the mtix version that recorded it.
+A relay row carries a relay object: peer, relay sequence, state, resolution and the
+record payload as received. Acknowledged rows show
 their retained local receipt, including author, reason, time and raw SHA256.
 
 The handle is at least 12 hex characters of the SHA-256 of the exact event

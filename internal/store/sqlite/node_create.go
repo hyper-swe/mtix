@@ -74,7 +74,10 @@ func (s *Store) CreateNodeAllocated(ctx context.Context, node *model.Node, opts 
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		assignee, err = s.createNodeAllocatedTx(ctx, tx, &candidate, opts)
-		return err
+		if err != nil || opts.InTx == nil {
+			return err
+		}
+		return opts.InTx(ctx, tx, &candidate)
 	})
 	if err != nil {
 		return err

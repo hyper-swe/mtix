@@ -48,6 +48,7 @@ func WakeListenerDoctorChecks(deps WakeListenerDoctorDeps) []DoctorCheck {
 		{ID: "wake.listener.routes", Run: func(ctx context.Context) DoctorResult { return listenerRoutesRow(ctx, deps) }},
 		{ID: "wake.listener.dispatcher", Run: func(ctx context.Context) DoctorResult { return listenerDispatcherRow(ctx, deps) }},
 		{ID: "wake.listener.unconfirmed-rate", Run: func(ctx context.Context) DoctorResult { return listenerRateRow(ctx, deps) }},
+		{ID: "wake.listener.stalled", Run: func(ctx context.Context) DoctorResult { return listenerStalledRow(ctx, deps) }},
 	}
 	for _, u := range unbuiltListenerRoutes() {
 		checks = append(checks, DoctorCheck{ID: u.id, Run: func(ctx context.Context) DoctorResult { return listenerUnbuiltRow(ctx, deps, u) }})
@@ -163,4 +164,34 @@ func listenerUnbuiltRow(ctx context.Context, deps WakeListenerDoctorDeps, u unbu
 	}
 	return DoctorResult{Status: DoctorInfo, Fix: fix, Detail: detail,
 		Data: map[string]any{"reachable": false, "blocked_by": u.blockedBy, "route": u.route}}
+}
+
+// listenerStalledRow warns when an addressed message waits unread with no hook waiter armed
+// for longer than T = wake.confirm_window: the session's turn has not ended, so nothing will
+// wake it (MTIX-112.40.12). The report is derived at read time, with no timer and no write.
+func listenerStalledRow(ctx context.Context, deps WakeListenerDoctorDeps) DoctorResult {
+	fix, _ := listenerAgentFix(ctx, deps)
+	agents, err := deps.Agents(ctx)
+	if err != nil {
+		return DoctorResult{Status: DoctorFail, Detail: "Cannot list registered agents: " + err.Error(), Fix: "mtix doctor --json"}
+	}
+	var stalledAgents []string
+	var firstFix string
+	for _, agent := range agents {
+		cur := deps.Status.Current(ctx, agent)
+		if cur.State == model.WakeStateUnknown {
+			return DoctorResult{Status: DoctorFail, Detail: "Cannot judge stalled wakes for " + agent + ": " + cur.Reason, Fix: "mtix doctor --json"}
+		}
+		if cur.State == model.WakeStateStalled {
+			stalledAgents = append(stalledAgents, agent)
+			if firstFix == "" {
+				firstFix = cur.Fix
+			}
+		}
+	}
+	if len(stalledAgents) == 0 {
+		return DoctorResult{Status: DoctorInfo, Fix: fix, Detail: "No addressed message is waiting past wake.confirm_window without an armed hook waiter."}
+	}
+	return DoctorResult{Status: DoctorWarn, Fix: firstFix, Data: map[string]any{"agents": stalledAgents},
+		Detail: fmt.Sprintf("%d agent(s) have an addressed message unread for longer than wake.confirm_window with no hook waiter armed: the session's turn has not ended, so nothing will wake it. The message is in the inbox and is delivered when the turn ends (Stop re-arms the waiter).", len(stalledAgents))}
 }

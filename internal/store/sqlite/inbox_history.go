@@ -194,7 +194,7 @@ func fileURIPath(path string) string {
 	return fileURIPathFor(path, runtime.GOOS)
 }
 
-func countUnackedInbox(ctx context.Context, db *sql.DB) (int64, error) {
+func countUnackedInbox(ctx context.Context, db rowQuerier) (int64, error) {
 	var n int64
 	if err := db.QueryRowContext(ctx, unackedInboxSQL).Scan(&n); err != nil {
 		return 0, fmt.Errorf("count unacknowledged inbox events: %w", err)

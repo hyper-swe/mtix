@@ -8,7 +8,6 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -224,7 +223,7 @@ func payloadDatabaseSnapshot(t *testing.T, s *Store) map[string][][]any {
 	return out
 }
 
-func payloadRows(t *testing.T, db *sql.DB, query string) [][]any {
+func payloadRows(t *testing.T, db rowQuerier, query string) [][]any {
 	t.Helper()
 	rows, err := db.QueryContext(context.Background(), query)
 	require.NoError(t, err)

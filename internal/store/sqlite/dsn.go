@@ -76,3 +76,25 @@ func openSQLite(path string, params ...string) (*sql.DB, error) {
 func readOnlyDSNParams() []string {
 	return []string{"mode=ro", "_pragma=query_only(1)"}
 }
+
+// openShieldedSQLite opens the reader pool: the same database and DSN as
+// openSQLite, with every connection shielded so a read cancelled mid-query
+// cannot leave a stale snapshot on it (MTIX-250, read_shield.go). It stays in
+// this file with the other driver opens (sql.OpenDB is allowed only here).
+func openShieldedSQLite(path string, params ...string) (*sql.DB, error) {
+	return openShieldedFrom(openSQLite, path, params...)
+}
+
+// openShieldedFrom is openShieldedSQLite with the plain open injected, so a test
+// can observe that the driver probe handle is closed.
+func openShieldedFrom(open func(string, ...string) (*sql.DB, error), path string, params ...string) (*sql.DB, error) {
+	probe, err := open(path, params...)
+	if err != nil {
+		return nil, err
+	}
+	drv := probe.Driver()
+	if err := probe.Close(); err != nil {
+		return nil, fmt.Errorf("close driver probe: %w", err)
+	}
+	return sql.OpenDB(shieldConnector{drv: drv, dsn: sqliteDSN(path, params...)}), nil
+}

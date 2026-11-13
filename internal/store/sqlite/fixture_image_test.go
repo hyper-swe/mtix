@@ -6,7 +6,6 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -105,7 +104,7 @@ func imageFixtureState(t *testing.T, s *Store) map[string][][]any {
 	return state
 }
 
-func imageFixturePragmas(t *testing.T, db *sql.DB) map[string]string {
+func imageFixturePragmas(t *testing.T, db rowQuerier) map[string]string {
 	t.Helper()
 	values := map[string]string{}
 	for name, query := range map[string]string{

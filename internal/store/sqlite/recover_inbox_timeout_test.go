@@ -39,12 +39,12 @@ func TestRecoverInboxJournal_RealIntegrityTimeout_ExplainsUnprovenCoverage(t *te
 	fastest := time.Hour
 	for i := 0; i < 3; i++ {
 		start := time.Now()
-		require.NoError(t, checkInboxIntegrity(t.Context(), s.readDB, warmupIntegrityTimeout))
+		require.NoError(t, checkInboxIntegrity(t.Context(), s.readDB.rawDB, warmupIntegrityTimeout))
 		fastest = min(fastest, time.Since(start))
 	}
 	limit := min(fastest/100, time.Millisecond)
 	require.Positive(t, limit)
-	require.ErrorIs(t, checkInboxIntegrity(t.Context(), s.readDB, limit), context.DeadlineExceeded)
+	require.ErrorIs(t, checkInboxIntegrity(t.Context(), s.readDB.rawDB, limit), context.DeadlineExceeded)
 	res := &RecoverResult{}
 	sourceBefore, statErr := os.Stat(s.dbPath)
 	require.NoError(t, statErr)

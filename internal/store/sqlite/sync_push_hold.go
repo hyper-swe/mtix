@@ -85,7 +85,7 @@ func (s *Store) CountHeldPushEvents(ctx context.Context) (int, error) {
 // rebuild its index of held creations (node, uid, Lamport clock and the task
 // each created), at a cost that does not grow with the payloads held.
 func (s *Store) HeldPushCreations(ctx context.Context) ([]HeldPushEvent, error) {
-	return heldPushCreations(ctx, readPool{s})
+	return heldPushCreations(ctx, pushReadAdapter{s})
 }
 
 // heldPushCreations is HeldPushCreations over q.

@@ -278,7 +278,8 @@ func appendHubReadyChecks(ctx context.Context, report DoctorReport, dsn string, 
 // appendLocalChecks adds the checks that read only the local store and
 // the project directory: queue draining, then the store checks in
 // sync_doctor_local.go (no orphan applied, quarantined events, unique node
-// uids), held push events (MTIX-95.12) and the secrets file mode.
+// uids), held push events (MTIX-95.12), a pending import refusal
+// (MTIX-112.17.16.16) and the secrets file mode.
 func appendLocalChecks(ctx context.Context, report DoctorReport) DoctorReport {
 	report = appendEnvelopeCapsCheck(report)
 	report = appendDoctorCheck(report, checkPendingExports(ctx))

@@ -101,37 +101,25 @@ func TestPushLoop_UIDAdoptedMidPush_ImportWaitsForThePush(t *testing.T) {
 	}
 	require.Equal(t, 1, sent, "the creation is sent once")
 
-	adopted, err := tryAdoptFileUID(t, "TEST-1")
-	require.NoError(t, err, "the import goes through once the push has ended")
-	node, err := app.store.GetNode(context.Background(), "TEST-1")
-	require.NoError(t, err)
-	require.Equal(t, adopted, node.UID)
+	_, err = tryAdoptFileUID(t, "TEST-1")
+	require.ErrorIs(t, err, sqlite.ErrMergeOnSyncedStore, "once the push has ended the store syncs, so the merge is refused")
 }
 
 // TestPushLoop_HeldCreationAdoptedThenRenumbered_LaterChangeStillHeld is the
-// MTIX-95.31.16 scope item: a held creation whose task adopts the file's uid
-// and is then renumbered on this machine (TEST-1 to TEST-5) still holds a
-// change made under the new number. The creation's held copy follows the
-// adopted uid, so the task is recognized by uid and no longer only by the
-// number the creation names.
-func TestPushLoop_HeldCreationAdoptedThenRenumbered_LaterChangeStillHeld(t *testing.T) {
+// A merge cannot adopt a file uid for a task after its changes were pushed:
+// the project syncs by then, and the merge is refused before any write
+// (MTIX-112.17.16.16), so the held creation keeps its own uid.
+func TestPushLoop_AdoptAfterAPush_IsRefusedAndTheHeldCreationKeepsItsUID(t *testing.T) {
 	initTestApp(t)
 	require.NoError(t, runCreate("held", "", "", 3, "", overWireCap(), "", "", ""))
 	require.NoError(t, runCreate("other", "", "", 3, "", "", "", "", ""))
 	hub := newFakePushHub()
 	require.NoError(t, pushWith(t, hub))
-
-	adopted := adoptFileUID(t, "TEST-1")
 	root := eventIDFor(t, "TEST-1", model.OpCreateNode)
-	require.Equal(t, adopted, root, "the held creation carries the adopted uid as its event id")
-	require.NoError(t, app.store.RenumberSubtree(context.Background(), "TEST-1", 5))
-	require.NoError(t, runUpdate("TEST-5", "edit under the new number", "", "", "", 0, "", ""))
-	require.NoError(t, runUpdate("TEST-2", "unrelated edit", "", "", "", 0, "", ""))
-	require.NoError(t, pushWith(t, hub))
 
-	requireHeldDependent(t, hub, "TEST-5", model.OpUpdateField, root)
-	require.False(t, hub.sent(root), "the creation stays held")
-	requireSent(t, hub, "TEST-2", model.OpUpdateField)
+	_, err := tryAdoptFileUID(t, "TEST-1")
+	require.ErrorIs(t, err, sqlite.ErrMergeOnSyncedStore)
+	require.Equal(t, root, eventIDFor(t, "TEST-1", model.OpCreateNode), "the creation is unchanged")
 }
 
 // TestPushLoop_UIDAdoptedByAutoImport_EveryEventCarriesTheAdoptedUID is the

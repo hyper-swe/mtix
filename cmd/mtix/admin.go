@@ -210,7 +210,7 @@ func newImportCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&f.mode, "mode", "merge",
-		"Import mode: merge, or replace (DELETES every existing ticket first; typed confirmation required)")
+		"Import mode: merge (refused on a project that syncs with a hub), or replace (DELETES every existing ticket first; typed confirmation required)")
 	cmd.Flags().BoolVar(&f.force, "force", false, "Allow importing zero nodes into a non-empty database")
 	cmd.Flags().BoolVar(&f.recomputeChecksum, "recompute-checksum", false,
 		"Recovery only (MTIX-26.5): replace the file's checksum with one computed over its current content, accepting hand-reconstructed exports")

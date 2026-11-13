@@ -22,6 +22,7 @@ prompt chain propagation, and multi-agent orchestration.
 - `attach` — Harness glue entry points (internal; called through the attach shim)
 - `backup <path>` — Create a backup of the mtix database
 - `blocked [id]` — List nodes blocked by dependencies, or show the blockers of one node
+- `board` — Show a read-only board of nodes grouped by status column
 - `cancel <id>` — Cancel a node with mandatory reason
 - `claim <id>` — Claim a node for an agent
 - `comment <id> <text>` — Add a comment annotation to a node
@@ -367,6 +368,31 @@ edges, not a node list. The project scope flags apply only to the list form.
 |------|-------|-------------|---------|
 | `--all-projects` |  | Span all projects | false |
 | `--project` |  | Scope to a single project prefix (default: primary) |  |
+---
+
+## board
+
+**Usage:** `board`
+
+Show a read-only board of nodes grouped by status column
+
+Show nodes grouped into one column per status (open, in_progress, blocked,
+deferred, done, cancelled, invalidated) with a count per column. Read-only.
+--limit caps the items shown per column; the count is always the full total.
+Known limit: each column is a separate query, not one snapshot, so a node changed
+while the board is built can show in two columns or in none; rerun if exact numbers matter.
+With --json the output is {"columns":[{"name","count","items":[{"id","title","priority","assignee"}]}]}.
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--all-projects` |  | Span all projects | false |
+| `--assignee` |  | Filter by assignee (comma-separated for multiple) |  |
+| `--labels` |  | Filter by label, any-of (comma-separated; exact, case-sensitive, e.g. desk:now,desk:backlog) |  |
+| `--limit` |  | Maximum items shown per column (at least 1; counts are unaffected) | 20 |
+| `--project` |  | Scope to a single project prefix (default: primary) |  |
+| `--under` |  | Only nodes under these parents (comma-separated) |  |
 ---
 
 ## cancel
@@ -1127,7 +1153,7 @@ Import nodes from JSON export
 | `--confirm` |  | Confirm renumbering in a non-empty live store (ADR-003 §6): incoming provisional nodes, and local tasks whose id the file gives to a different task; without it such an import is reported but not applied | false |
 | `--force` |  | Allow importing zero nodes into a non-empty database | false |
 | `--force-rename` |  | On an incoming uid that collides with a different local node, re-stamp the import node with a fresh local uid instead of rejecting (ADR-003 §6) | false |
-| `--mode` |  | Import mode: merge, or replace (DELETES every existing ticket first; typed confirmation required) | merge |
+| `--mode` |  | Import mode: merge (refused on a project that syncs with a hub), or replace (DELETES every existing ticket first; typed confirmation required) | merge |
 | `--ours` |  | Merge only: comma-separated task ids whose differing status, assignee, agent state, wake time and deletion state keep your values | [] |
 | `--prefer` |  | Merge only: for every task whose status, assignee, agent state, wake time or deletion state differs from the file's, take the file's values (theirs) or keep yours (ours); without a choice such a merge is reported and writes nothing |  |
 | `--recompute-checksum` |  | Recovery only (MTIX-26.5): replace the file's checksum with one computed over its current content, accepting hand-reconstructed exports | false |
@@ -1301,9 +1327,13 @@ mtix inbox lease release --agent developer --holder "$HOLDER"
 Show the wake delivery state for an agent and its recent wake outcomes
 
 Show the wake delivery state for an agent and its last wake outcomes with age
-(MTIX-112.40.6). States: queued, nudged, unconfirmed, confirmed, held, undeliverable,
-off, no-live-session, no-dispatcher, unknown. unconfirmed is derived at read time from
-wake.confirm_window (default 30 seconds) and is never written as an inbox event.
+(MTIX-112.40.6). States: queued, nudged, unconfirmed, stalled, confirmed, held,
+undeliverable, off, no-live-session, no-dispatcher, unknown. unconfirmed is derived at read
+time from wake.confirm_window (default 30 seconds) and is never written as an inbox event.
+stalled (MTIX-112.40.12) is derived the same way: an addressed message unread for longer
+than wake.confirm_window, measured from the event, with no hook waiter armed because the
+session's turn has not ended. No timer runs; it is noticed when this command, mtix doctor or
+a dispatcher pass runs.
 This reads local state only and never contacts a hub.
 
 ### Flags

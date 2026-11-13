@@ -1089,6 +1089,44 @@ For a raw read-only query, the same facts are in `sync_events` (`op_type = 'comm
 
 ## Search and Queries
 
+### Board view
+
+`mtix board` prints a read-only board: one column per status (open, in_progress,
+blocked, deferred, done, cancelled, invalidated) with a count per column and the
+nodes in it. It never changes anything.
+
+```bash
+# The whole board
+mtix board
+
+# Work under one parent, tagged for the desk, at most 10 cards per column
+mtix board --under PROJ-1 --labels desk:now,desk:backlog --limit 10
+
+# Machine-readable
+mtix board --json
+```
+
+It takes `--under`, `--labels` (any-of, as for `mtix list`), `--assignee`,
+`--project` and `--all-projects`. `--under` includes the named node itself.
+`--limit` (default 20, at least 1) caps the cards shown per column; the count in
+each column header is always the full total, and an empty column is still shown
+with `(0)`. On a console that is not UTF-8 (`LC_ALL`, `LC_CTYPE` or `LANG`
+without UTF-8) the markers are plain ASCII.
+
+Known limit: each column is read as a separate query, not from one snapshot. If
+another agent changes a node while the board is built, that node can appear in two
+columns or in none, and the counts may not add up. Run the board again if exact
+numbers matter.
+
+The `--json` shape is stable:
+
+```json
+{"columns":[{"name":"open","count":3,"items":[{"id":"PROJ-1","title":"...","priority":2,"assignee":""}]}]}
+```
+
+`items` is always an array, never null, and `assignee` is an empty string when
+the node is unassigned.
+
 ### Text Search
 
 ```bash
@@ -1560,6 +1598,7 @@ message is lost.
 | `queued` | A session and a dispatcher exist and no nudge is recorded yet | `mtix inbox status --agent <agent>` |
 | `nudged` | A nudge was sent and the confirmation window is open | wait, then `mtix inbox status --agent <agent>` |
 | `unconfirmed` | A nudge was sent and `wake.confirm_window` passed unseen | `mtix inbox --agent <agent> --wait` |
+| `stalled` | An addressed message is unread for longer than `wake.confirm_window` and no hook waiter is armed: the session's turn has not ended | `mtix inbox --agent <agent> --wait` |
 | `confirmed` | The session was seen acting on the nudge | none |
 | `held` | The route needs approval: `mtix agent allow <agent>` | read the inbox: `mtix inbox --agent <agent>` |
 | `undeliverable` | No route could deliver; `reason` says why | `mtix inbox --agent <agent> --wait` |
@@ -1570,12 +1609,23 @@ message is lost.
 
 `unconfirmed` is derived at read time from `wake.confirm_window` (default 30 seconds; set it with
 `mtix config set wake.confirm_window 60`, whole seconds 1 to 86400; it is an ordinary setting and needs no terminal). It is never written as an inbox event and no timer runs.
+
+`stalled` (MTIX-112.40.12) is derived the same way and is also never written as an inbox event. The hook route arms its waiter
+only at session start and when a turn ends (Stop), so a turn that never ends leaves no waiter and later mail would otherwise
+wait unseen. The bound is T = `wake.confirm_window`, measured from the event (or from the recorded push when one was sent), and it
+needs no timer: a stall is noticed at the next dispatcher pass, `mtix inbox status` read or `mtix doctor` run, not at the instant T
+passes. Redelivery applies only when a push route is configured for the registration, and this build ships none that is reachable, so a stalled event is reported (`mtix inbox status`, `mtix doctor`) and stays in the inbox. When a push route is configured, the dispatcher selects stalled events from the wake ledger on each pass (bounded per pass), applies the same gates as a first wake (`wake.live`, budget and back-off, hop guard), and redelivers the event once through the same single claim path
+(never a second push, and an event the session already read is settled as confirmed); a second stall is closed
+`undeliverable` with reason `stall-unconfirmed` and not retried. With the hook route alone nothing is sent and no ledger row is
+written: the report is read-time only, the message stays in the inbox, and the waiter armed when the turn ends still wakes the
+session for it. The exact fix is `mtix inbox --agent <agent> --wait`, or end or interrupt the stuck turn.
 In this build the states `nudged`, `unconfirmed`, `confirmed`, `held` and `undeliverable` come from wake ledger
 rows, and nothing writes ledger rows until a delivery route is built, so they are seeded-only today. Approving a held
 wake does not yet send a fresh nudge (follow-up MTIX-112.40.10); read the inbox yourself.
 
 `mtix doctor --json` reports `wake.listener.routes`, `wake.listener.dispatcher` and `wake.listener.unconfirmed-rate`
-(warns above 20 percent unconfirmed over 24 hours), each with a runnable `fix`. The rows `wake.listener.hook-installed`,
+(warns above 20 percent unconfirmed over 24 hours), each with a runnable `fix`. The row `wake.listener.stalled` warns (with `data.agents`
+naming the agents) when an addressed message has waited longer than `wake.confirm_window` with no hook waiter armed, and prints the `fix`; it is INFO otherwise. The rows `wake.listener.hook-installed`,
 `wake.listener.waiter-armed`, `wake.listener.route-contract` and `wake.listener.bypass-hold` are present as INFO rows
 with `data.reachable` false and `data.blocked_by` naming the ticket whose adapter is not built yet (hook waiter
 MTIX-112.40.4 and install MTIX-112.40.5, session socket MTIX-112.40.3): they are not reachable in this build and are never silently skipped.
@@ -2120,6 +2170,8 @@ mtix import project-data.json
 mtix import project-data.json --mode replace
 ```
 
+**Merge and automatic import on a project that syncs.** A merge import (`mtix import --mode merge`) writes no sync journal, so on a store that syncs with a hub or relay a later hub edit to a merged value would silently overwrite it. Since 0.6.0 the merge is refused there before anything is written, with `import failed: this store syncs with a hub, and a merge import writes no sync journal ...`. Run `mtix sync pull` to take the hub's board, or load the file into a new project made with `mtix init` that has no hub configured (`mkdir` a new directory, run `mtix init` there, then `mtix import <file> --mode merge`; a copy of the project directory carries the sync mark and the hub config, so it still refuses) and make the edits again here with mtix commands, which are journaled. There is no opt-out flag. The automatic import of a changed `.mtix/tasks.json` follows the same rule: on a store that syncs, a file that changes a task the store already holds, or adds a dependency with an end the store already holds, is refused (`auto-import of .mtix/tasks.json refused: the file changes ...`), printed once per command, recorded for `mtix sync`, and the pulled file is left alone; run `mtix sync --fix`, which keeps the local store and rewrites the file from it: that is the step that ends the refusal. To take the hub's board as well, run `mtix sync pull` first and then `mtix sync --fix`: a pull alone leaves the file refused (it then reads as a conflict). Before it rewrites the file, `mtix sync --fix` keeps a copy of the `.mtix/tasks.json` on disk, when it differs from the last export, at `.mtix/data/refused-boards/tasks-<UTC time>.json` (a name already taken is never replaced) and prints the path; re-make the file's edits from that copy with mtix commands, which are journaled. A file that only adds tasks, and links between them, still imports, but the import writes no sync event for them, so they stay local only unless their author pushed them to the hub. The import prints a notice saying so (`the tasks this import added (...) wrote no sync event and stay local only unless their author pushed them to the hub`), and `mtix sync doctor` reports a refusal that still awaits a decision as its `pending import refusal` check: the detail names the kind and the file, `fix` names the ways out (also in `--json`): where it lists more than one, give them to the user and let the user choose, because `mtix sync --fix` drops the file's edits and the option that deletes local tasks needs the typed count at a terminal; the check passes when none is pending, and fails with the read error when the refusal record cannot be read. Journaling merges is planned for a later release.
+
 **Replace mode** deletes every node, dependency, agent and session, then writes the file's content with every field, annotations and activity included. An export followed by a replace import leaves the store as it was. The automatic import of a changed `.mtix/tasks.json` (after a `git pull` or checkout) is a replace import, but it is refused when it would delete local data (see "Automatic import of `.mtix/tasks.json`" below); `mtix import --mode replace` is gated since 0.5.4 (MTIX-90): it prints the ticket count and needs that count typed at an interactive terminal, so an agent never runs it: ask the user (see `docs/DESTRUCTIVE-COMMANDS.md`). A file written before 0.5.4 (`schema_version` 1.0.0) carries no annotations or activity, so a replace import of it leaves every node without them.
 
 **Replace import on a project that syncs.** `mtix import --mode replace` is refused, before the typed confirmation and with nothing written, when the local store holds tasks and syncs with a hub or relay: it has pushed or pulled events, carries the hub-connected mark, or a hub DSN or relay is configured (MTIX-107.31). A replace deletes tasks and changes whose events stay in the local sync log, and `mtix sync pull` treats those events as already held, so it would never restore them. To take the board on the hub, run `mtix sync push`, check that `mtix sync status` shows `pending` 0, then `mtix sync reconcile --discard-local --yes`, then `mtix sync pull` (the discard asks for the ticket count typed at an interactive terminal). To load the file as it is, import it into a project that does not sync. A replace into an empty store, such as a restore into a fresh data directory, still runs. The automatic import never deletes a task whose events the sync log holds either: it refuses any replace that would delete local data, as described below. A project that never synced has shared nothing, so a replace there discards the pending events of the tasks it drops (and the pending links that point at them) in the same transaction; otherwise the first push after a hub is configured would create tasks the board does not hold. A store that published to or ingested from a file relay counts as synced. The automatic import also records a configured relay directory, hub endpoint or stored hub DSN as the hub-connected mark before it imports, so a relay whose first publish did not finish (the records are on the medium but the publish cursor was not written) counts as synced too, and a replace that would discard events readers may hold is refused; a project with a relay configured but never published is therefore refused at the automatic import, as `mtix import --mode replace` already was. The evidence is the same everywhere (the automatic import, `mtix import --mode replace` and the `board matches sync log` check): the stored hub-connected mark, a pulled event, a pushed event, a relay cursor, a relay directory, `sync.enabled` or `sync.endpoint` in the config, a DSN in `.mtix/secrets`, a DSN that is refused (a DSN key in a tracked config file, or a secrets file with the wrong mode, even an empty one), and an exported `MTIX_SYNC_DSN`. Only a DSN in the secrets file is recorded as the mark, by its content and whatever its mode, so fixing the mode of a secrets file that holds a DSN does not lift a refusal. The exported variable, a DSN key in a tracked config file and an empty wrong-mode secrets file are only transient: while any of them is present, `mtix import --mode replace` is refused and an automatic replace is refused when it would delete local data or drop a task the sync log holds (an automatic import that deletes nothing still runs), and nothing is recorded, so a project that never synced is not trapped once it is unset. Evidence that cannot be read, such as a secrets file that is not a regular file, a dangling link or one over the size cap, stops the automatic import without importing anything, and makes `mtix import --mode replace` and the check refuse, naming the cause; a missing secrets file is no evidence.
@@ -2245,7 +2297,7 @@ mtix: auto-import of .mtix/tasks.json refused: a replace import of the changed f
   PROJ-2: 1 activity entry, fields agent_state, assignee
 Nothing was imported. Until you choose, mtix refuses again on every command, and writing commands save to the local store but leave .mtix/tasks.json as it is.
 Choose one, run from the project root (/path/to/project):
-  mtix import .mtix/tasks.json --mode merge    backs up the database, keeps every value the refusal lists and adds the file's changes: ...
+  mtix import .mtix/tasks.json --mode merge    backs up the database, keeps every value the refusal lists and adds the file's changes: ... On a project that syncs with a hub the merge is refused (it writes no sync journal): run `mtix sync pull` and then `mtix sync --fix` (a pull alone leaves the refusal pending), or merge into a new project made with `mtix init` that has no hub configured (a copy of the project directory carries the sync mark and the hub config, so it still refuses).
   mtix sync --fix                              keep the local store and rewrite .mtix/tasks.json from it; every change in the file is dropped
   mtix import .mtix/tasks.json --mode replace  make the file win and delete the local data listed above (it needs the ticket count typed at an interactive terminal; a verified snapshot is written first)
 ```
@@ -2267,12 +2319,13 @@ To choose: when the file came from a client older than 0.5.4, use `mtix sync --f
 | Kind (`mtix sync --json`) | Cause | Way out |
 |------|-------|---------|
 | `lossy` | The file would delete local data | The three commands above |
-| `conflict` | Both the file and the local store changed since the last sync | Merge them with `mtix import .mtix/tasks.json --mode merge` (the merge writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's: it lists each conflict, and you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, which it records in the task's activity; where they agree, your other field values win when the task's content (title, description, prompt, acceptance, labels) matches the file's, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid), keep the local store with `mtix sync --fix`, or keep the file with `--mode replace` (it needs the ticket count typed at an interactive terminal (no flag supplies it)). If you changed nothing locally, use the way out under "Conflict baseline" above instead. When the replace would also delete local data, the conflict is printed as a refusal that lists it, and the line names what the replace deletes |
+| `conflict` | Both the file and the local store changed since the last sync | Merge them with `mtix import .mtix/tasks.json --mode merge` (the merge writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's: it lists each conflict, and you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, which it records in the task's activity; where they agree, your other field values win when the task's content (title, description, prompt, acceptance, labels) matches the file's, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid), keep the local store with `mtix sync --fix`, or keep the file with `--mode replace` (it needs the ticket count typed at an interactive terminal (no flag supplies it)). If you changed nothing locally, use the way out under "Conflict baseline" above instead. When the replace would also delete local data, the conflict is printed as a refusal that lists it, and the line names what the replace deletes. On a project that syncs with a hub the merge is refused (it writes no sync journal): run `mtix sync pull` and then `mtix sync --fix` (a pull alone leaves the refusal pending), or merge into a new project made with `mtix init` that has no hub configured (a copy of the project directory carries the sync mark and the hub config, so it still refuses). |
+| `merge_synced` | On a project that syncs with a hub, the file changes a task the store holds or adds a dependency with an end the store holds; an import writes no sync journal, so a later hub edit would silently overwrite the value and a peer would never hear of the link | `mtix sync --fix` keeps the local store, rewrites the file from it and ends the refusal; to take the hub's board as well, run `mtix sync pull` first and then `mtix sync --fix`, because a pull alone leaves the file refused. Before it rewrites the file, `mtix sync --fix` keeps a copy of the `.mtix/tasks.json` on disk, when it differs from the last export, at `.mtix/data/refused-boards/tasks-<UTC time>.json` (a name already taken is never replaced) and prints the path; re-make the file's edits from that copy with mtix commands, which are journaled |
 | `newer_schema` | A newer mtix wrote the file | Upgrade mtix, then run any command. Do not rewrite it from the local store, which would downgrade it to the older format |
 | `invalid_file` | The file fails its checks (it is not an mtix export, does not parse, or its node count, checksum or times are wrong, for example after a merge by hand) | Repair and check the file, then `mtix import .mtix/tasks.json --recompute-checksum`; to keep the local board, `mtix sync --fix`, which works even when the file does not parse (`mtix sync` without `--fix` then reports the parse error) |
 | `unreadable_store` | The local store cannot be exported | `mtix recover`, then import the file |
 | `backup_failed` | The backup before the import could not be written | Free disk space; the next command retries |
-| `not_imported` | The file changed on disk and was not imported, for example with automatic import off | `mtix import .mtix/tasks.json --mode merge` (the merge writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's: it lists each conflict, and you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, which it records in the task's activity; where they agree, your other field values win when the task's content (title, description, prompt, acceptance, labels) matches the file's, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid), or keep the local board with `mtix sync --fix` |
+| `not_imported` | The file changed on disk and was not imported, for example with automatic import off | `mtix import .mtix/tasks.json --mode merge` (the merge writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's: it lists each conflict, and you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, which it records in the task's activity; where they agree, your other field values win when the task's content (title, description, prompt, acceptance, labels) matches the file's, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid), or keep the local board with `mtix sync --fix`. On a project that syncs with a hub the merge is refused (it writes no sync journal), so the way out is `mtix sync --fix` (after `mtix sync pull` when you want the hub's board as well); to load the file anyway, merge it into a new project made with `mtix init` that has no hub configured (a copy of the project directory carries the sync mark and the hub config, so it still refuses). |
 
 **Turning it off.** `sync.auto_sync: false` (`mtix config set sync.auto_sync false`) turns automatic import off. `mtix config set` accepts only true or false (in any form Go's `strconv.ParseBool` reads, such as `true`, `1`, `false`, `0`) and rejects anything else. A value written by hand that is neither true nor false leaves automatic import on, the default, with a one-line warning. `.mtix/config.yaml` is tracked in git, so the switch applies to every clone of the project. A store that holds no tasks, such as a fresh clone's, is always imported whatever the switch says, since nothing in it can be lost. With the switch off, writes keep exporting the store, in this binary's export schema, as long as `.mtix/tasks.json` is the file mtix last wrote; after a pull, the file is not overwritten (kind `not_imported`) until you import it with `mtix import .mtix/tasks.json --mode merge` or keep your board with `mtix sync --fix`. The merge writes nothing while a task's status, assignee, agent state, wake time or deletion state differs from the file's: it lists each conflict, and you rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`. Where they agree, when the task's content (title, description, prompt, acceptance, labels) matches the file's, your field values win, and otherwise the file's copy wins, undoing your edits to that task; afterwards check `git log -p .mtix/tasks.json` and reapply what it undid.
 

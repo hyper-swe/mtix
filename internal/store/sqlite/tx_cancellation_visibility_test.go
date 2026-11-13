@@ -32,7 +32,14 @@ const (
 	cancelMarkKey    = "cancel.mark"
 )
 
-func cancelKeyExists(ctx context.Context, t *testing.T, db *sql.DB, key string) bool {
+// testReadQuerier is the read surface these helpers need; the store's reader
+// pool, its writer and a plain *sql.DB all satisfy it.
+type testReadQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+func cancelKeyExists(ctx context.Context, t *testing.T, db testReadQuerier, key string) bool {
 	t.Helper()
 	var n int
 	require.NoError(t, db.QueryRowContext(ctx, `SELECT COUNT(*) FROM meta WHERE key = ?`, key).Scan(&n))
@@ -149,7 +156,7 @@ func TestWithTx_CancelledScannerWriters_AllOrNothingAndPoolsAgree(t *testing.T) 
 	require.Equal(t, fmt.Sprint(acked.Load()), writerRows[cancelMarkKey], "mark counts exactly the acknowledged writes")
 }
 
-func cancelKeys(ctx context.Context, t *testing.T, db *sql.DB) map[string]string {
+func cancelKeys(ctx context.Context, t *testing.T, db testReadQuerier) map[string]string {
 	t.Helper()
 	rows, err := db.QueryContext(ctx, `SELECT key, value FROM meta WHERE key LIKE 'cancel.%'`)
 	require.NoError(t, err)
@@ -177,7 +184,7 @@ func cancelKeys(ctx context.Context, t *testing.T, db *sql.DB) map[string]string
 type commitVisibleCtx struct {
 	context.Context
 	t   *testing.T
-	db  *sql.DB
+	db  testReadQuerier
 	key string
 }
 

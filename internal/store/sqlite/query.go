@@ -27,9 +27,11 @@ func (s *Store) WriteDB() *sql.DB {
 	return s.writeDB
 }
 
-// ReadDB returns the read database pool. Exposed for read-only
-// callers that need *sql.DB's QueryRowContext / QueryContext methods
-// directly (e.g., the workflow state detector in MTIX-15.8).
-func (s *Store) ReadDB() *sql.DB {
-	return s.readDB
+// ReadDB returns the read surface of the reader pool. Exposed for read-only
+// callers that need QueryRowContext / QueryContext directly (e.g., the
+// workflow state detector in MTIX-15.8). It is the readPool choke point, never
+// the raw *sql.DB, so a read through it cannot leave a stale snapshot after a
+// cancel (MTIX-250).
+func (s *Store) ReadDB() *ReadPool {
+	return s.readDB.reader()
 }

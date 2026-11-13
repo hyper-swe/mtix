@@ -35,7 +35,7 @@ type PushSubject struct {
 // creation whose uid no node has, the task found another way, see
 // PushSubject).
 func (s *Store) PushSubjects(ctx context.Context, eventIDs []string) (map[string]PushSubject, error) {
-	return pushSubjects(ctx, readPool{s}, eventIDs)
+	return pushSubjects(ctx, pushReadAdapter{s}, eventIDs)
 }
 
 // pushSubjects is PushSubjects over q: the store's read pool, or the write

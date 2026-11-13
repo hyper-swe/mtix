@@ -6,7 +6,6 @@ package sqlite_test
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
 
@@ -150,7 +149,7 @@ func TestHookReplace_CleanupFailureRollsBackAllState(t *testing.T) {
 }
 
 // hookReplaceBookkeeping captures all cursor and ledger values in stable order.
-func hookReplaceBookkeeping(t *testing.T, raw *sql.DB) []string {
+func hookReplaceBookkeeping(t *testing.T, raw testReadQuerier) []string {
 	t.Helper()
 	var out []string
 	for _, query := range []string{
@@ -158,7 +157,7 @@ func hookReplaceBookkeeping(t *testing.T, raw *sql.DB) []string {
 		`SELECT json_group_array(json_array(hook_name,event_seq,fired_at,outcome)) FROM (SELECT hook_name,event_seq,fired_at,outcome FROM hook_dispatch_ledger ORDER BY hook_name,event_seq)`,
 	} {
 		var value string
-		require.NoError(t, raw.QueryRow(query).Scan(&value))
+		require.NoError(t, raw.QueryRowContext(context.Background(), query).Scan(&value))
 		out = append(out, value)
 	}
 	return out

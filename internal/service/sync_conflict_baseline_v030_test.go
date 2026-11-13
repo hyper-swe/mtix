@@ -105,7 +105,13 @@ func v030BaselineHash(t *testing.T, st *sqlite.Store) string {
 
 // v030Export is Store.Export of mtix 0.3.0 with project and mtix version
 // empty, as computeDBHash called it.
-func v030Export(t *testing.T, db *sql.DB) *v030ExportData {
+// baselineQuerier is the read surface the export helpers need; the store's
+// reader pool and a plain *sql.DB both satisfy it.
+type baselineQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+func v030Export(t *testing.T, db baselineQuerier) *v030ExportData {
 	t.Helper()
 	nodes := v030Nodes(t, db)
 	deps := v053Deps(t, db)
@@ -132,7 +138,7 @@ func v030Export(t *testing.T, db *sql.DB) *v030ExportData {
 
 // v030Nodes reads the nodes as mtix 0.3.0 exported them, node_type
 // normalized to the depth's type.
-func v030Nodes(t *testing.T, db *sql.DB) []v030ExportNode {
+func v030Nodes(t *testing.T, db baselineQuerier) []v030ExportNode {
 	t.Helper()
 	rows, err := db.QueryContext(context.Background(), v030NodeSelectSQL)
 	require.NoError(t, err)

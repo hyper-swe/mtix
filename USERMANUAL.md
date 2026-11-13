@@ -3642,11 +3642,16 @@ because no process was sitting there to be woken.
 > provides. The point is only that they are *delivered*, never
 > re-minted.
 >
-> A rejoining peer that already holds tasks imports the snapshot like a merge
-> import: when a task's status, assignee, agent state, wake time or deletion
-> state differs from the snapshot's, `mtix sync relay clone` writes nothing and
-> lists each conflict; rerun it with `--prefer theirs|ours`, or `--theirs ID,ID`
-> and `--ours ID,ID` (the same rules as `mtix import --mode merge`).
+> `mtix sync relay clone` is for a workspace that holds no tasks, or one that does
+> not sync. A peer that already holds tasks and syncs (it has published or ingested
+> through a relay, or a hub is configured) is refused before anything is written:
+> the clone is a merge, which would keep the peer's local values with no sync event
+> and then move its ingest cursors past the events that would correct them, so the
+> peer would silently diverge. To rejoin, join as a NEW peer in a new project and retire the old one. Run `mtix sync relay tick` in the old project and read its output: if it has a `quarantined N record(s) from authenticated peers:` line, a task from another peer was skipped (for example two peers that took the same task number) and is kept nowhere, so STOP, do not continue: keep the old project, do not run `mtix sync relay retire-peer`, and ask the project maintainer (records the old project skipped are kept in no store; the durable fix is MTIX-268). That line appears only on the tick that skipped the record and is persisted nowhere (MTIX-268). Also run `grep -s 'relay ingest quarantined a record' .mtix/logs/daemon.err.log` in the old project: if it prints anything, STOP the same way. A skip made by an earlier interactive tick leaves no trace and cannot be detected until MTIX-268 lands; the uid check below does not catch it. Otherwise run `mtix sync relay clone --export` so the relay holds a snapshot that includes the old project's work. In a new project made with `mtix init` (the same prefix as the old project), set a new `sync.relay.peer_id` (never the old one: a reused id inherits the old published stream, which the new journal lacks, so publishing stops with `RELAY_PUBLISHER_DIVERGED` and the old project's own last work never arrives). Copy the key epoch files from `.mtix/relay/keys/` into the new project's `.mtix/relay/keys/` out of band (directory mode 0700, files mode 0600, never printed), run `mtix config set sync.relay.dir <dir>`, stop any daemon there, and run `mtix sync relay clone` (do not run `mtix sync relay attach` first: it needs local history and refuses an empty project with `RELAY_NO_SHARED_PROJECT`). Stop the daemon in the old project too, so it stops publishing under the retired id, then run `mtix sync relay tick` in the new project: it publishes under the new id and re-reads the old id's stream from the start (replaying it is harmless). Verify with `mtix list --json --all-projects --limit 100000 --fields uid` in the new project and the old project: in each the number of `uid` entries read must equal its `total` (otherwise the read was truncated and the check STOPS), and compare by the `uid` field, never by id or title. If the new project lacks any uid the old project holds, or the counts differ, STOP, do not continue: restart the daemon in the old project and keep using the old project, leave the new project unused (delete nothing), do not run `mtix sync relay retire-peer`, and ask the project maintainer, telling them the new project's peer id (the durable fix is MTIX-268). Only when both checks passed, run `mtix sync relay retire-peer <old-peer-id>` (`mtix config get sync.relay.peer_id` in the old project shows it) so the retired id no longer holds the prune window. Stop using the old project. When a clone into a workspace that does not
+> sync finds a task whose status, assignee, agent state, wake time or deletion state
+> differs from the snapshot's, it writes nothing and lists each conflict; rerun it
+> with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID` (the same rules
+> as `mtix import --mode merge`).
 
 ### Waiting for inbox events
 

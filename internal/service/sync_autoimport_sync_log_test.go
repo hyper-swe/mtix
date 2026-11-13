@@ -83,16 +83,16 @@ func TestAutoImport_SyncedStore_KeepsTasksTheLogHolds(t *testing.T) {
 		}, nil, []string{"PROJ-1", "PROJ-2", "PROJ-3", "PROJ-4"}, ""},
 		{"same id and title, uid dropped", func(t *testing.T, a *guardFixture, _ []byte) []byte {
 			return a.teammateBoard(t, func(d *sqlite.ExportData) { setUID(d, "PROJ-3", "") })
-		}, sqlite.ErrReplaceOnSyncedStore, []string{"PROJ-1", "PROJ-2", "PROJ-3"}, ""},
+		}, service.ErrAutoImportRefused, []string{"PROJ-1", "PROJ-2", "PROJ-3"}, ""},
 		{"same id and title, uid changed", func(t *testing.T, a *guardFixture, _ []byte) []byte {
 			return a.teammateBoard(t, func(d *sqlite.ExportData) { setUID(d, "PROJ-3", "01900000-0000-7000-8000-000000000abc") })
-		}, sqlite.ErrReplaceOnSyncedStore, []string{"PROJ-1", "PROJ-2", "PROJ-3"}, ""},
+		}, service.ErrAutoImportRefused, []string{"PROJ-1", "PROJ-2", "PROJ-3"}, ""},
 		{"teammate renumbers a task", func(t *testing.T, a *guardFixture, _ []byte) []byte {
 			b := teammateClone(t, a)
 			require.NoError(t, b.store.RenumberSubtree(context.Background(), "PROJ-3", 7))
 			require.NoError(t, b.svc.AutoExport(context.Background(), b.mtixDir))
 			return b.read(t, "tasks.json")
-		}, nil, []string{"PROJ-1", "PROJ-2", "PROJ-7"}, ""},
+		}, service.ErrAutoImportRefused, []string{"PROJ-1", "PROJ-2", "PROJ-3"}, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

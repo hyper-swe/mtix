@@ -28,6 +28,11 @@ type receivedImport struct {
 }
 
 func (s *SyncService) applyReceivedImport(ctx context.Context, ri *receivedImport) error {
+	// MTIX-112.17.16.16: an import writes no sync journal, so on a store that
+	// syncs it must not change a held task; nothing is backed up or written.
+	if err := s.refuseSyncedUpdates(ctx, ri.mtixDir, ri.fileHash, ri.diff, ri.assumeSynced); err != nil {
+		return err
+	}
 	// Step 7: back up, then import in replace mode (FR-15.2d, FR-15.2f).
 	backupPath, err := s.backupDB(ctx, ri.mtixDir, ri.fileHash, ri.local)
 	if err != nil {
@@ -47,7 +52,7 @@ func (s *SyncService) applyReceivedImport(ctx context.Context, ri *receivedImpor
 	if importErr != nil {
 		return fmt.Errorf("auto-import: %w", importErr)
 	}
-	s.noticeImported(ri.mtixDir, ri.diff, backupPath) // FR-15.2k: never silent
+	s.noticeImported(ctx, ri.mtixDir, ri.diff, backupPath, ri.assumeSynced) // FR-15.2k: never silent
 	s.noticeResolved(ri.resolution)
 	s.noticeHistoryImport(importRes)
 	s.noticeOlderWriter(ri.incoming.MtixVersion) // MTIX-95.31.19.9: once per imported file

@@ -57,20 +57,20 @@ func upgradedClones(t *testing.T) (origin, b *guardFixture) {
 
 // TestAutoImport_AdoptingUID_CarriesUIDOntoPendingEvents verifies the
 // automatic import that adopts the file's uid for a task moves the uid of
-// the task's pending events with it, and leaves another task's events and
-// pushed events alone.
+// the task's pending events with it, and leaves another task's events alone (a store
+// with pushed events syncs, and the import is refused there, MTIX-112.17.16.16).
 func TestAutoImport_AdoptingUID_CarriesUIDOntoPendingEvents(t *testing.T) {
 	ctx := context.Background()
 	origin, b := upgradedClones(t)
 	mine, other := uidAt(t, b, "PROJ-1"), uidAt(t, b, "PROJ-2")
 	queuePending(t, b, "pending-1", mine)
 	_, err := b.store.WriteDB().ExecContext(ctx,
-		`INSERT INTO sync_events SELECT 'pushed-1', project_prefix, node_id, op_type, payload, wall_clock_ts,
-		 lamport_clock, vector_clock, author_id, author_machine_hash, 'pushed', created_at, retained_until, uid
+		`INSERT INTO sync_events SELECT 'other-1', project_prefix, node_id, op_type, payload, wall_clock_ts,
+		 lamport_clock, vector_clock, author_id, author_machine_hash, 'pending', created_at, retained_until, uid
 		 FROM sync_events WHERE event_id = 'pending-1'`)
 	require.NoError(t, err)
 	_, err = b.store.WriteDB().ExecContext(ctx, `UPDATE sync_events SET node_id = 'PROJ-2', uid = ?
-		WHERE event_id = 'pushed-1'`, other)
+		WHERE event_id = 'other-1'`, other)
 	require.NoError(t, err)
 
 	require.NoError(t, b.svc.AutoImport(ctx, b.mtixDir))
@@ -78,7 +78,8 @@ func TestAutoImport_AdoptingUID_CarriesUIDOntoPendingEvents(t *testing.T) {
 	theirs := uidAt(t, origin, "PROJ-1")
 	require.Equal(t, theirs, uidAt(t, b, "PROJ-1"), "the file's uid is adopted")
 	assert.Equal(t, theirs, pendingUID(t, b, "pending-1"), "the pending event follows the task")
-	assert.Equal(t, other, pendingUID(t, b, "pushed-1"), "another task's pushed event is untouched")
+	assert.Equal(t, uidAt(t, b, "PROJ-2"), pendingUID(t, b, "other-1"), "another task's pending event follows its own task")
+	assert.NotEqual(t, theirs, pendingUID(t, b, "other-1"), "and not the first task's uid")
 }
 
 // TestAutoImport_PushRunning_SkipsWithNoticeAndRunsNextTime verifies the

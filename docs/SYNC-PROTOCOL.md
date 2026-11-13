@@ -851,6 +851,16 @@ hook journal's `Synced` flag keeps its semantics: it is still derived
 from `applied_events`, and an own event returned by a pull is recorded
 there, as it was before this rule.
 
+## Merge import and the sync log
+
+A merge import (`mtix import --mode merge`) writes no sync events, so on a store that syncs it is refused
+before any write (`sqlite.ErrMergeOnSyncedStore`, the same evidence as the replace guard below); a later hub
+edit would otherwise overwrite the merged values by last-writer-wins. The automatic import is a replace; on a
+store that syncs it is refused when the file changes a task the store holds or adds a dependency with an end the
+store holds (refusal kind `merge_synced`; `mtix sync --fix` ends it, and a pull alone does not) and imports a file
+that only adds tasks and links between them, which stay local only unless their author pushed them (the import writes no sync event). `mtix sync --fix` keeps a copy of the `.mtix/tasks.json` on disk, when it differs from the last export, at
+`.mtix/data/refused-boards/tasks-<UTC time>.json` first. Journaling merges is future work.
+
 ## Replace import and the sync log
 
 A replace import (`mtix import --mode replace`, and the automatic import

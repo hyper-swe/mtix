@@ -74,7 +74,7 @@ func TestAutoImport_RelayConfiguredFirstPublishUnrecorded_RefusesAndDiscardsNoth
 			err = f.svc.AutoImport(ctx, f.mtixDir)
 
 			if tt.refused {
-				require.ErrorIs(t, err, sqlite.ErrReplaceOnSyncedStore)
+				require.ErrorIs(t, err, service.ErrAutoImportRefused)
 				assert.Equal(t, before, pendingEventCount(t, f, "PROJ-3"), "nothing readers may hold is discarded")
 				var held int
 				require.NoError(t, f.store.WriteDB().QueryRowContext(ctx,
@@ -127,7 +127,7 @@ func TestAutoImport_ExportedDSN_RefusesWhileSetAndWritesNoMark(t *testing.T) {
 	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) { setUID(d, "PROJ-3", "") }))
 
 	err := f.svc.AutoImport(ctx, f.mtixDir)
-	require.ErrorIs(t, err, sqlite.ErrReplaceOnSyncedStore, "an exported DSN refuses the replace")
+	require.ErrorIs(t, err, service.ErrAutoImportRefused, "an exported DSN refuses the import")
 	assert.Equal(t, before, pendingEventCount(t, f, "PROJ-3"), "nothing readers may hold is discarded")
 	mark, markErr := f.store.HubMark(ctx)
 	require.NoError(t, markErr)
@@ -207,7 +207,7 @@ func TestAutoImport_RefusedDSN_RefusesAndWritesNoMark(t *testing.T) {
 	before := pendingEventCount(t, f, "PROJ-3")
 	f.pull(t, f.teammateBoard(t, func(d *sqlite.ExportData) { setUID(d, "PROJ-3", "") }))
 
-	require.ErrorIs(t, f.svc.AutoImport(ctx, f.mtixDir), sqlite.ErrReplaceOnSyncedStore)
+	require.ErrorIs(t, f.svc.AutoImport(ctx, f.mtixDir), service.ErrAutoImportRefused)
 	assert.Equal(t, before, pendingEventCount(t, f, "PROJ-3"))
 	mark, err := f.store.HubMark(ctx)
 	require.NoError(t, err)

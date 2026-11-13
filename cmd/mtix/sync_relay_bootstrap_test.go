@@ -68,6 +68,7 @@ func TestRelayCloneImport_NewestSnapshot_AdvancesPositionsAndClearsRetirement(t 
 	replacement, err := sqlite.New(filepath.Join(t.TempDir(), "joining.db"), app.logger)
 	require.NoError(t, err)
 	app.store = replacement
+	app.syncSvc = newSyncService(func() time.Time { return time.Now().UTC() }, app.syncOptions) // rebind to the joining store
 	out, diagnostic, err := relayCommandOutput(newRelayCloneCmd())
 	require.NoError(t, err)
 	require.NotContains(t, diagnostic, "clear retirement")

@@ -481,7 +481,11 @@ func newRelayCloneCmd() *cobra.Command {
 		Short: "Export or import a bootstrap snapshot",
 		Long: "A peer joining after pruning cannot tail from the start. Any current\n" +
 			"peer exports a snapshot into the relay; the joiner imports it and\n" +
-			"begins tailing from the stamped positions.",
+			"begins tailing from the stamped positions. Import is for a project that\n" +
+			"holds no tasks or does not sync: a project that holds tasks and already\n" +
+			"syncs is refused (nothing is written), and rejoins as a NEW peer: a new\n" +
+			"project with a new sync.relay.peer_id, then clone there (see the\n" +
+			"mtix-sync skill).",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			dir, err := requireRelay()
 			if err != nil {
@@ -496,13 +500,13 @@ func newRelayCloneCmd() *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&export, "export", false, "Produce a snapshot instead of consuming one")
 	cmd.Flags().StringVar(&f.prefer, "prefer", "",
-		"Import only: for every task whose status, assignee, agent state, wake time or deletion state differs from "+
+		"Import only (a project that does not sync): for every task whose status, assignee, agent state, wake time or deletion state differs from "+
 			"the snapshot's, take the snapshot's values (theirs) or keep yours (ours); without a choice such an import "+
 			"is reported and writes nothing")
 	cmd.Flags().StringSliceVar(&f.theirs, "theirs", nil,
-		"Import only: comma-separated task ids whose differing workflow values take the snapshot's")
+		"Import only (a project that does not sync): comma-separated task ids whose differing workflow values take the snapshot's")
 	cmd.Flags().StringSliceVar(&f.ours, "ours", nil,
-		"Import only: comma-separated task ids whose differing workflow values keep yours")
+		"Import only (a project that does not sync): comma-separated task ids whose differing workflow values keep yours")
 	return cmd
 }
 
@@ -567,7 +571,8 @@ func runRelayCloneExport(ctx context.Context, cmd *cobra.Command, dir string) er
 	return nil
 }
 
-// runRelayCloneImport consumes the newest snapshot in the relay.
+// runRelayCloneImport consumes the newest snapshot in the relay. It refuses a
+// store that holds tasks and already syncs (MTIX-112.17.16.43).
 // A snapshot task whose status, assignee, agent state, wake time or deletion
 // state differs from the local one refuses the import until --prefer,
 // --theirs or --ours settles it (MTIX-95.31.13).
@@ -583,6 +588,9 @@ func runRelayCloneImport(ctx context.Context, cmd *cobra.Command, dir string, f 
 	if len(names) == 0 {
 		return fmt.Errorf("no bootstrap snapshot in %s; ask a current peer to run `mtix sync relay clone --export`",
 			filepath.Join(dir, bootstrap.DirName))
+	}
+	if guardErr := refuseSyncedRelayClone(ctx); guardErr != nil { // MTIX-112.17.16.43: before any write or cursor advance
+		return guardErr
 	}
 	path := filepath.Join(dir, bootstrap.DirName, names[len(names)-1])
 	opts := sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge, Workflow: workflowResolution(f),

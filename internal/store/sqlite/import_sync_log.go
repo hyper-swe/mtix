@@ -33,6 +33,12 @@ const MergeOnSyncedWays = "To take the hub's changes, run mtix sync pull. To loa
 	"made with mtix init that has no hub configured (a copy of the project directory carries the sync mark and the hub " +
 	"config, so it still refuses), then make the edits again with mtix commands, which are journaled"
 
+// ErrRelayCloneOnSyncedStore marks a relay snapshot clone refused because the
+// store already holds tasks and syncs through a relay or hub: the clone is a
+// merge that keeps local values with no sync event and then moves the ingest
+// cursors past the events that would correct them (MTIX-112.17.16.43).
+var ErrRelayCloneOnSyncedStore = errors.New("relay snapshot clone refused on a store that already syncs")
+
 // maxNamedNodes caps how many node ids a refusal or a doctor check names.
 const maxNamedNodes = 10
 

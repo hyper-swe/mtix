@@ -231,6 +231,9 @@ func TestHelperProcessMtixCLI(_ *testing.T) {
 		return
 	}
 	args := strings.Fields(os.Getenv("MTIX_TEST_HELPER_ARGS"))
+	if argv := os.Getenv("MTIX_TEST_HELPER_ARGV"); argv != "" {
+		args = strings.Split(argv, "\x1f") // arguments that hold spaces
+	}
 	err := runArgs(args)
 	_ = closeApp()
 	if err != nil {

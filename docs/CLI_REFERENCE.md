@@ -2764,16 +2764,20 @@ Export or import a bootstrap snapshot
 
 A peer joining after pruning cannot tail from the start. Any current
 peer exports a snapshot into the relay; the joiner imports it and
-begins tailing from the stamped positions.
+begins tailing from the stamped positions. Import is for a project that
+holds no tasks or does not sync: a project that holds tasks and already
+syncs is refused (nothing is written), and rejoins as a NEW peer: a new
+project with a new sync.relay.peer_id, then clone there (see the
+mtix-sync skill).
 
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--export` |  | Produce a snapshot instead of consuming one | false |
-| `--ours` |  | Import only: comma-separated task ids whose differing workflow values keep yours | [] |
-| `--prefer` |  | Import only: for every task whose status, assignee, agent state, wake time or deletion state differs from the snapshot's, take the snapshot's values (theirs) or keep yours (ours); without a choice such an import is reported and writes nothing |  |
-| `--theirs` |  | Import only: comma-separated task ids whose differing workflow values take the snapshot's | [] |
+| `--ours` |  | Import only (a project that does not sync): comma-separated task ids whose differing workflow values keep yours | [] |
+| `--prefer` |  | Import only (a project that does not sync): for every task whose status, assignee, agent state, wake time or deletion state differs from the snapshot's, take the snapshot's values (theirs) or keep yours (ours); without a choice such an import is reported and writes nothing |  |
+| `--theirs` |  | Import only (a project that does not sync): comma-separated task ids whose differing workflow values take the snapshot's | [] |
 ---
 
 ## init

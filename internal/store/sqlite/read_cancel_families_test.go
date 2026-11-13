@@ -9,6 +9,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"log/slog"
+	"sort"
 	"testing"
 	"time"
 
@@ -186,44 +187,65 @@ func cancelReadFamilies(st *Store) map[string]func(context.Context) {
 }
 
 // TestReadFamilies_CancelledMidQuery_LeaveNoStaleSnapshot cancels a read of
-// every family at a varying instant, on a reader pool of ONE connection so the
-// next read reuses it, and asserts the next read sees a fresh write. A stale
-// WAL snapshot left by a cancelled read would hide it (MTIX-250; the same
-// property TestReadPaths_CancelledMidQuery_LeaveNoStaleSnapshot holds for the
-// inbox reads of MTIX-112.3). Each family gets its own Store, because a stale
-// connection never recovers and would fail every later family for it.
+// every non-route family at a varying instant, on a reader pool of ONE
+// connection so the next read reuses it, and asserts the next read sees a
+// fresh write. A stale WAL snapshot left by a cancelled read would hide it
+// (MTIX-250; the same property
+// TestReadPaths_CancelledMidQuery_LeaveNoStaleSnapshot holds for the inbox
+// reads of MTIX-112.3). Each family gets its own Store, because a stale
+// connection never recovers and would fail every later family for it. The
+// eight route families run in their own top-level TestReadRoutes_* tests
+// (read_cancel_routes_test.go) so the CI shard hash spreads their cost
+// (MTIX-264; table in read_cancel_routes_shard_test.go).
 func TestReadFamilies_CancelledMidQuery_LeaveNoStaleSnapshot(t *testing.T) {
-	for name := range cancelReadFamilies(nil) {
+	for _, name := range shortReadFamilyNames() {
 		t.Run(name, func(t *testing.T) {
-			st, err := New(t.TempDir(), slog.Default())
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = st.Close() })
-			seedCancelFixture(t, st)
-			st.readDB.SetMaxOpenConns(1)
-			read := cancelReadFamilies(st)[name]
 			iterations := readCancelIterations
 			if name == "Verify" {
 				iterations = readCancelSlowIterations
 			}
-			if sweepsRoute(name) {
-				iterations = readCancelRouteIterations
-			}
-			for i := 0; i < iterations; i++ {
-				ctx, cancel := context.WithCancel(t.Context())
-				go func() { time.Sleep(time.Duration(i%40) * 5 * time.Microsecond); cancel() }()
-				read(ctx)
-				cancel()
-				key := fmt.Sprintf("%s-%d", name, i)
-				_, err := st.writeDB.ExecContext(t.Context(), `INSERT INTO meta(key,value) VALUES(?,?)`, key, "v")
-				require.NoError(t, err)
-				rctx, rc := context.WithTimeout(t.Context(), 2*time.Second)
-				var n int
-				err = st.readDB.QueryRowContext(rctx, `SELECT COUNT(*) FROM meta WHERE key=?`, key).Scan(&n)
-				rc()
-				require.NoError(t, err, "iter %d", i)
-				require.Equal(t, 1, n, "stale snapshot after cancelled %s, iter %d", name, i)
-			}
+			sweepCancelledFamily(t, name, iterations)
 		})
+	}
+}
+
+// shortReadFamilyNames lists the families TestReadFamilies_... sweeps: every
+// family except the routes, which have their own TestReadRoutes_* tests.
+func shortReadFamilyNames() []string {
+	var names []string
+	for name := range cancelReadFamilies(nil) {
+		if !sweepsRoute(name) {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// sweepCancelledFamily runs the cancel sweep for one family on a fresh Store.
+func sweepCancelledFamily(t *testing.T, name string, iterations int) {
+	t.Helper()
+	st, err := New(t.TempDir(), slog.Default())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = st.Close() })
+	seedCancelFixture(t, st)
+	st.readDB.SetMaxOpenConns(1)
+	read := cancelReadFamilies(st)[name]
+	require.NotNil(t, read, "unknown read family %q", name)
+	for i := 0; i < iterations; i++ {
+		ctx, cancel := context.WithCancel(t.Context())
+		go func() { time.Sleep(time.Duration(i%40) * 5 * time.Microsecond); cancel() }()
+		read(ctx)
+		cancel()
+		key := fmt.Sprintf("%s-%d", name, i)
+		_, err := st.writeDB.ExecContext(t.Context(), `INSERT INTO meta(key,value) VALUES(?,?)`, key, "v")
+		require.NoError(t, err)
+		rctx, rc := context.WithTimeout(t.Context(), 2*time.Second)
+		var n int
+		err = st.readDB.QueryRowContext(rctx, `SELECT COUNT(*) FROM meta WHERE key=?`, key).Scan(&n)
+		rc()
+		require.NoError(t, err, "iter %d", i)
+		require.Equal(t, 1, n, "stale snapshot after cancelled %s, iter %d", name, i)
 	}
 }
 

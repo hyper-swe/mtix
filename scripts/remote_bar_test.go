@@ -478,8 +478,11 @@ done
 emit() { if [ -n "$jqexpr" ]; then printf '%s' "$1" | jq -r "$jqexpr"; else printf '%s\n' "$1"; fi; }
 case "$1 $2" in
 "workflow run")
-  [ -n "$STUB_FAIL_DISPATCH" ] && { echo "HTTP 502 bad gateway" >&2; exit 1; }
-  case "$*" in *base_commit=*) [ -n "$STUB_REJECT_BASE" ] && { echo "Unexpected inputs provided: base_commit" >&2; exit 1; } ;; esac
+  [ -n "$STUB_FAIL_DISPATCH" ] && { echo "${STUB_DISPATCH_MSG:-HTTP 502 bad gateway}" >&2; exit 1; }
+  case "$*" in
+  *base_commit=*) [ -n "$STUB_REJECT_BASE" ] && { echo "Unexpected inputs provided: base_commit" >&2; exit 1; } ;;
+  *) [ -n "$STUB_FAIL_NOBASE" ] && { echo "$STUB_FAIL_NOBASE" >&2; exit 1; } ;;
+  esac
   exit 0 ;;
 "run list")
   case "$*" in *"--status success"*) emit "${STUB_REUSE_RUNS:-[]}"; exit 0 ;; esac

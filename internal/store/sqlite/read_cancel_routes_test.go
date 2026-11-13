@@ -23,8 +23,8 @@ func sweepRouteByTestName(t *testing.T) {
 // One top-level test per route family, each with the full
 // readCancelRouteIterations sweep, so the CI shard hash (scripts/ci-go-shards.sh,
 // djb2 of the test name) can place their cost on chosen SQLite shards instead of
-// putting all of it in one: three on shard 1, none on shard 2, five on shard 3,
-// by measured shard load (MTIX-264). The shard table is in
+// putting all of it in one: two on each of the four shards, by measured route
+// cost (MTIX-264, MTIX-270). The shard table is in
 // read_cancel_routes_shard_test.go; the sweep and its detection window are
 // described at readCancelRouteIterations.
 
@@ -53,17 +53,17 @@ func TestReadRoutes_ConnRawPrepareStmt_CancelledMidRead_LeaveNoStaleSnapshot(t *
 	sweepRouteByTestName(t)
 }
 
-// TestReadRoutes_StoreQueryRow_CancelledMidRead_LeaveNoStaleSnapshot sweeps cancelled Store.QueryRow reads (MTIX-250, MTIX-264).
-func TestReadRoutes_StoreQueryRow_CancelledMidRead_LeaveNoStaleSnapshot(t *testing.T) {
+// TestReadRoutes_StoreQueryRowPool_CancelledMidRead_LeaveNoStaleSnapshot sweeps cancelled Store.QueryRow reads (MTIX-250, MTIX-264).
+func TestReadRoutes_StoreQueryRowPool_CancelledMidRead_LeaveNoStaleSnapshot(t *testing.T) {
 	sweepRouteByTestName(t)
 }
 
-// TestReadRoutes_ConnPrepareContext_CancelledMidRead_LeaveNoStaleSnapshot sweeps cancelled Conn.PrepareContext reads (MTIX-250, MTIX-264).
-func TestReadRoutes_ConnPrepareContext_CancelledMidRead_LeaveNoStaleSnapshot(t *testing.T) {
+// TestReadRoutes_ConnPrepareContextRoute_CancelledMidRead_LeaveNoStaleSnapshot sweeps cancelled Conn.PrepareContext reads (MTIX-250, MTIX-264).
+func TestReadRoutes_ConnPrepareContextRoute_CancelledMidRead_LeaveNoStaleSnapshot(t *testing.T) {
 	sweepRouteByTestName(t)
 }
 
-// TestReadRoutes_TxPrepareContext_CancelledMidRead_LeaveNoStaleSnapshot sweeps cancelled Tx.PrepareContext reads (MTIX-250, MTIX-264).
-func TestReadRoutes_TxPrepareContext_CancelledMidRead_LeaveNoStaleSnapshot(t *testing.T) {
+// TestReadRoutes_TxPrepareContextMain_CancelledMidRead_LeaveNoStaleSnapshot sweeps cancelled Tx.PrepareContext reads (MTIX-250, MTIX-264).
+func TestReadRoutes_TxPrepareContextMain_CancelledMidRead_LeaveNoStaleSnapshot(t *testing.T) {
 	sweepRouteByTestName(t)
 }

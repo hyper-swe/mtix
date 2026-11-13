@@ -475,22 +475,21 @@ func TestTestShards_Patterns_SelectEveryNameExactlyOnce(t *testing.T) {
 
 // requireReadCancelTestsSpreadAcrossShards feeds the real read-cancel test
 // names of internal/store/sqlite through the shard helper and requires the
-// placement chosen from measured shard load (MTIX-264): the families test and
-// three route tests on shard 1, no read-cancel test on shard 2 (it is already
-// the longest shard), five route tests on shard 3. A rename that moves one
+// placement chosen from measured route cost (MTIX-264, MTIX-270) over the four
+// SQLite shards: two route tests on each shard, and the families test on shard
+// 3 with its two routes. A rename that moves one
 // fails here. The names are read from the sqlite package source, so they
 // cannot drift.
 func requireReadCancelTestsSpreadAcrossShards(t *testing.T) {
 	t.Helper()
 	names := readCancelTestNames(t)
 	require.Len(t, names, 9, "one families test and eight route tests")
-	// Other tests of the package fill every shard, so shard 2 is not empty
-	// to the helper while it holds no read-cancel test.
+	// Other tests of the package fill every shard.
 	others, _ := fakeTestListing(40)
 	root := testShardFixture(t, strings.Join(append(names, others...), "\n")+"\nok  \texample.com/slow\t0.01s\n", "0")
-	wantRoutes := map[int]int{1: 3, 2: 0, 3: 5}
-	for k := 1; k <= 3; k++ {
-		pat, err := runTestShards(root, "test-pattern", "internal/slow", "3", strconv.Itoa(k))
+	wantRoutes := map[int]int{1: 2, 2: 2, 3: 2, 4: 2}
+	for k := 1; k <= 4; k++ {
+		pat, err := runTestShards(root, "test-pattern", "internal/slow", "4", strconv.Itoa(k))
 		require.NoError(t, err, pat)
 		re := regexp.MustCompile(strings.TrimSpace(pat))
 		routes, families := 0, 0
@@ -505,8 +504,8 @@ func requireReadCancelTestsSpreadAcrossShards(t *testing.T) {
 			}
 		}
 		require.Equal(t, wantRoutes[k], routes, "shard %d: route tests", k)
-		if k == 1 {
-			require.Equal(t, 1, families, "the families test belongs on shard 1")
+		if k == 3 {
+			require.Equal(t, 1, families, "the families test belongs on shard 3")
 		} else {
 			require.Zero(t, families, "shard %d: families test", k)
 		}

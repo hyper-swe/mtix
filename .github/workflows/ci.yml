@@ -54,7 +54,9 @@ jobs:
 
   test-go-sqlite:
     # MTIX-112.17.29: the unsharded SQLite race run approached 20m on macOS.
-    # Reuse the remote bar's three exact test-name shards on each OS.
+    # MTIX-270: four exact test-name shards on each OS, because three left one
+    # shard within 15 percent of the 20m package limit. The remote bar keeps its own
+    # three (remote-bar.yml bar-shard).
     name: test-go-sqlite (${{ matrix.os }}, shard ${{ matrix.shard }})
     strategy:
       fail-fast: false
@@ -63,7 +65,7 @@ jobs:
         # and schedule runs add macOS. An absent leg is absent from the matrix,
         # so the aggregate below never has to tolerate a skipped job.
         os: ${{ fromJSON(github.event_name == 'pull_request' && '["ubuntu-22.04"]' || '["ubuntu-22.04","macos-latest"]') }}
-        shard: ["1", "2", "3"]
+        shard: ["1", "2", "3", "4"]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,12 +78,12 @@ jobs:
       - name: Verify exact package coverage
         run: bash scripts/ci-go-shards.sh check
       - name: Verify exact SQLite test coverage
-        run: bash scripts/ci-go-shards.sh test-check internal/store/sqlite 3
+        run: bash scripts/ci-go-shards.sh test-check internal/store/sqlite 4
       - name: Run SQLite shard race tests
         env:
           SHARD: ${{ matrix.shard }}
         run: |
-          pattern=$(bash scripts/ci-go-shards.sh test-pattern internal/store/sqlite 3 "$SHARD")
+          pattern=$(bash scripts/ci-go-shards.sh test-pattern internal/store/sqlite 4 "$SHARD")
           go test ./internal/store/sqlite/ -race -count=1 -timeout 20m -run "$pattern"
 
   test-go-service:

@@ -319,6 +319,31 @@ The failing-test names often sit earlier in the log than the last 200 lines, so
 read the first block to see which tests failed. The verdict line and the exit
 code are unchanged.
 
+### Host failures: the environment marker (MTIX-262)
+
+When the scratch-branch push or the workflow dispatch fails because GitHub
+answered HTTP 5xx or HTTP 429, or because the network failed (connection reset
+or refused, a timeout, a name that does not resolve, the remote end hanging up),
+the wrapper exits 2 and its last non-empty output line is exactly:
+
+```text
+hyperswe: environment: <cause>
+```
+
+The line is flush left, is printed once, and comes after the scratch-branch
+cleanup output, so nothing follows it on stdout or stderr. The cause is at most
+200 characters and is written by the script, for example `GitHub returned HTTP
+500 on the scratch-branch push` or `network failure reaching GitHub on the
+workflow dispatch`. The review loop reads this line as a host failure rather than
+a red bar, so the round is not spent.
+
+The line is never printed on exit 0 or for any other failure: an auth refusal
+(403), a ref refusal (422), 404, a tree mismatch, a red bar, a cancelled or
+timed out run, or a lost run. The first HTTP status in the error text decides:
+any status other than 5xx or 429 is not environmental even if the text also
+mentions a connection. Failures while fetching `origin/main`, finding the run or
+waiting for it are not marked.
+
 ### Workflow changes and older bases
 
 The wrapper refuses a snapshot that changes `.github`, because GitHub runs

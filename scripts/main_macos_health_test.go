@@ -42,9 +42,18 @@ if [ "$f" != runs ] && [ "$pag" = 0 ]; then head -n 3 "$FIX/$f.json"; else cat "
 
 var healthExpected = []string{
 	"test-go-shard (macos-latest, other)",
-	"test-go-sqlite (macos-latest, shard 1)", "test-go-sqlite (macos-latest, shard 2)", "test-go-sqlite (macos-latest, shard 3)",
+	"test-go-sqlite (macos-latest, shard 1)", "test-go-sqlite (macos-latest, shard 2)", "test-go-sqlite (macos-latest, shard 3)", "test-go-sqlite (macos-latest, shard 4)",
 	"test-go-cmd (macos-latest, shard 1)", "test-go-cmd (macos-latest, shard 2)", "test-go-cmd (macos-latest, shard 3)",
 	"test-go-service (macos-latest, shard 1)", "test-go-service (macos-latest, shard 2)",
+}
+
+// allExpectedJobs maps every expected macOS job to the given conclusion.
+func allExpectedJobs(conclusion string) map[string]string {
+	m := map[string]string{}
+	for _, name := range healthExpected {
+		m[name] = conclusion
+	}
+	return m
 }
 
 func hJob(name, conclusion string) string {
@@ -161,8 +170,8 @@ func healthCases() []healthCase {
 		{"cancelled macOS job", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(map[string]string{"test-go-cmd (macos-latest, shard 1)": "cancelled"})}, false, "shard 1)=cancelled", "11", ""},
 		{"timed out macOS job", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(map[string]string{"test-go-cmd (macos-latest, shard 1)": "timed_out"})}, false, "=timed_out", "11", ""},
 		{"skipped macOS job is red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(map[string]string{"test-go-cmd (macos-latest, shard 1)": "skipped"})}, false, "=skipped", "11", ""},
-		{"all macOS jobs skipped is red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(map[string]string{healthExpected[0]: "skipped", healthExpected[1]: "skipped", healthExpected[2]: "skipped", healthExpected[3]: "skipped", healthExpected[4]: "skipped", healthExpected[5]: "skipped", healthExpected[6]: "skipped", healthExpected[7]: "skipped", healthExpected[8]: "skipped"})}, false, "=skipped", "11", ""},
-		{"missing one expected job is red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(nil, healthExpected[6])}, false, "missing expected macOS jobs: test-go-cmd (macos-latest, shard 3)", "11", ""},
+		{"all macOS jobs skipped is red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(allExpectedJobs("skipped"))}, false, "=skipped", "11", ""},
+		{"missing one expected job is red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(nil, healthExpected[7])}, false, "missing expected macOS jobs: test-go-cmd (macos-latest, shard 3)", "11", ""},
 		{"no macOS jobs is red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJob("lint", "success") + "\n"}, false, "missing expected macOS jobs", "11", ""},
 		{"unexpected macOS job red", map[string]string{"runs.json": hRuns(push("11", "completed", "success", 1)), "jobs-11-a1.json": hJobs(nil) + hJob("extra (macos-14)", "failure") + "\n"}, false, "extra (macos-14)=failure", "11", ""},
 		{"first-attempt run in progress is ignored", map[string]string{"runs.json": hRuns(push("12", "in_progress", "", 1), push("11", "completed", "success", 1)), "jobs-11-a1.json": green, "jobs-12-a1.json": red}, true, "judged main run 11", "11", "12"},
@@ -194,7 +203,7 @@ func healthCases() []healthCase {
 		{"dedupe: higher attempt rows listed first, green re-run", map[string]string{"runs.json": hRuns(push("12", "completed", "success", 2)), "jobs-12-a2.json": hJobsAttempt(green, 2) + hJobsAttempt(red, 1)}, true, "judged main run 12", "12", ""},
 		{"dedupe: higher attempt rows listed first, red re-run", map[string]string{"runs.json": hRuns(push("12", "completed", "failure", 2)), "jobs-12-a2.json": hJobsAttempt(red, 2) + hJobsAttempt(green, 1)}, false, "=failure", "12", ""},
 		{"walk: failure plus cancelled in attempt 2 is red over green attempt 1", map[string]string{"runs.json": hRuns(push("12", "in_progress", "", 3)), "jobs-12-a2.json": hJobs(map[string]string{healthExpected[1]: "cancelled", healthExpected[3]: "failure"}), "jobs-12-a1.json": green}, false, "=failure", "12", ""},
-		{"walk: missing job in attempt 2 is red over green attempt 1", map[string]string{"runs.json": hRuns(push("12", "in_progress", "", 3)), "jobs-12-a2.json": hJobs(nil, healthExpected[6]), "jobs-12-a1.json": green}, false, "missing expected macOS jobs", "12", ""},
+		{"walk: missing job in attempt 2 is red over green attempt 1", map[string]string{"runs.json": hRuns(push("12", "in_progress", "", 3)), "jobs-12-a2.json": hJobs(nil, healthExpected[7]), "jobs-12-a1.json": green}, false, "missing expected macOS jobs", "12", ""},
 		{"walk: skipped job in attempt 2 is red over green attempt 1", map[string]string{"runs.json": hRuns(push("12", "in_progress", "", 3)), "jobs-12-a2.json": hJobs(map[string]string{healthExpected[1]: "skipped"}), "jobs-12-a1.json": green}, false, "=skipped", "12", ""},
 		{"garbage runs fails closed", map[string]string{"runs.json": `not json`}, false, "cannot read main CI state", "", ""},
 		{"empty runs fails closed", map[string]string{"runs.json": ``}, false, "cannot read main CI state", "", ""},

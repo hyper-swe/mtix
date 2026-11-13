@@ -395,8 +395,8 @@ provider-specific quirks.
 
 ### CI
 
-Every PR must pass all 25 of its checks (full Linux matrix plus one macOS job) and
-every main push and nightly run all 33 (eighteen Go race shards and the strict
+Every PR must pass all 26 of its checks (full Linux matrix plus one macOS job) and
+every main push and nightly run all 35 (twenty Go race shards and the strict
 `test-go` aggregate). A red macOS run on main blocks merges until it is fixed: the PR check is
 advisory, and the merger runs `scripts/main-macos-health.sh` immediately before
 every merge, from the copy on `origin/main` (exact command in the CI gates doc). Label the repairing PR

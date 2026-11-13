@@ -25,7 +25,7 @@ func TestGoWorkflow_SQLiteShards_CoverBothOSesWithUnchangedFlags(t *testing.T) {
 	require.Equal(t, "test-go-sqlite (${{ matrix.os }}, shard ${{ matrix.shard }})", job.Name)
 	require.Equal(t, "${{ matrix.os }}", job.RunsOn)
 	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, job.Strategy.Matrix.OS.For("push"))
-	require.Equal(t, []string{"1", "2", "3"}, job.Strategy.Matrix.Shard)
+	require.Equal(t, []string{"1", "2", "3", "4"}, job.Strategy.Matrix.Shard)
 	require.Empty(t, job.Strategy.Matrix.Include)
 	require.Empty(t, job.Strategy.Matrix.Exclude)
 	require.NotNil(t, job.Strategy.FailFast)
@@ -37,11 +37,11 @@ func TestGoWorkflow_SQLiteShards_CoverBothOSesWithUnchangedFlags(t *testing.T) {
 		require.Empty(t, step.If)
 		require.Nil(t, step.ContinueOnError)
 		packageGuard = packageGuard || step.Run == "bash scripts/ci-go-shards.sh check"
-		testGuard = testGuard || step.Run == "bash scripts/ci-go-shards.sh test-check internal/store/sqlite 3"
+		testGuard = testGuard || step.Run == "bash scripts/ci-go-shards.sh test-check internal/store/sqlite 4"
 		if strings.Contains(step.Run, "go test") {
 			race = true
 			require.Equal(t, "${{ matrix.shard }}", step.Env["SHARD"])
-			require.Equal(t, "pattern=$(bash scripts/ci-go-shards.sh test-pattern internal/store/sqlite 3 \"$SHARD\")\ngo test ./internal/store/sqlite/ -race -count=1 -timeout 20m -run \"$pattern\"\n", step.Run)
+			require.Equal(t, "pattern=$(bash scripts/ci-go-shards.sh test-pattern internal/store/sqlite 4 \"$SHARD\")\ngo test ./internal/store/sqlite/ -race -count=1 -timeout 20m -run \"$pattern\"\n", step.Run)
 		}
 		if strings.HasPrefix(step.Uses, "actions/checkout@") {
 			fullHistory = step.With["fetch-depth"] == 0
@@ -98,8 +98,8 @@ func sqliteCommandFixture(t *testing.T) string {
 set -eu
 case "$*" in
 check) [ "$FAIL_AT" != package-check ] ;;
-'test-check internal/store/sqlite 3') [ "$FAIL_AT" != test-check ] ;;
-'test-pattern internal/store/sqlite 3 2')
+'test-check internal/store/sqlite 4') [ "$FAIL_AT" != test-check ] ;;
+'test-pattern internal/store/sqlite 4 2')
   [ "$FAIL_AT" != pattern ]
   printf '%s\n' '^(TestShard2)$'
   ;;
@@ -126,9 +126,9 @@ func TestSQLiteShards_CompiledInventory_EachNameSelectedExactlyOnce(t *testing.T
 		}
 	}
 	require.NotEmpty(t, names)
-	patterns := make([]*regexp.Regexp, 3)
+	patterns := make([]*regexp.Regexp, 4)
 	for i := range patterns {
-		out, err := exec.Command("bash", "ci-go-shards.sh", "test-pattern", "internal/store/sqlite", "3", fmt.Sprint(i+1)).CombinedOutput()
+		out, err := exec.Command("bash", "ci-go-shards.sh", "test-pattern", "internal/store/sqlite", "4", fmt.Sprint(i+1)).CombinedOutput()
 		require.NoError(t, err, string(out))
 		patterns[i], err = regexp.Compile(strings.TrimSpace(string(out)))
 		require.NoError(t, err)
@@ -145,9 +145,9 @@ func TestSQLiteShards_CompiledInventory_EachNameSelectedExactlyOnce(t *testing.T
 		}
 		require.Equal(t, 1, hits, "%s must run in exactly one SQLite shard", name)
 	}
-	check, err := exec.Command("bash", "ci-go-shards.sh", "test-check", "internal/store/sqlite", "3").CombinedOutput()
+	check, err := exec.Command("bash", "ci-go-shards.sh", "test-check", "internal/store/sqlite", "4").CombinedOutput()
 	require.NoError(t, err, string(check))
-	require.Contains(t, string(check), fmt.Sprintf("%d tests in 3 shards, split is exact", len(unique)))
+	require.Contains(t, string(check), fmt.Sprintf("%d tests in 4 shards, split is exact", len(unique)))
 }
 
 // The workflow hardcodes SQLite rather than consuming sqlite.txt.

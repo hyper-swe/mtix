@@ -10,7 +10,10 @@
 #   bash scripts/ci-go-shards.sh test-check <dir> <N>
 #   bash scripts/ci-go-shards.sh test-pattern <dir> <N> <k>
 #       split one package's tests into N shards by a stable hash of the test
-#       name; test-pattern prints the -run regex of shard k
+#       name; test-pattern prints the -run regex of shard k. The shard count is
+#       the caller's: ci.yml runs internal/store/sqlite in 4 (MTIX-270) and
+#       internal/service in 2; the remote bar keeps its own counts in
+#       remote-bar.yml (sqlite 3, service 2)
 set -euo pipefail
 export LC_ALL=C
 

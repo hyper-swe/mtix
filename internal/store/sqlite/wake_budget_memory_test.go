@@ -21,7 +21,7 @@ func TestWakeBudgetSource_VolatileDatabaseIsRefused(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	// A volatile connection has no durable location to identify across restores.
-	store := &Store{readDB: db}
+	store := &Store{readDB: newReadPool(db)}
 	source, err := store.WakeBudgetSource(t.Context())
 	require.ErrorIs(t, err, model.ErrInvalidInput)
 	require.Empty(t, source)

@@ -71,7 +71,7 @@ func TestExportWithInbox_ReadFault_NeverPublishesPartialExport(t *testing.T) {
 			}})
 			wrapped.SetMaxOpenConns(1)
 			original := s.readDB
-			s.readDB = wrapped
+			s.readDB = newReadPool(wrapped)
 			t.Cleanup(func() { s.readDB = original; require.NoError(t, wrapped.Close()) })
 			data, err := s.ExportWithInbox(t.Context(), "TEST", "")
 			require.Error(t, err)

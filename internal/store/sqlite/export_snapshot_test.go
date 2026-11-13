@@ -41,7 +41,7 @@ func TestExportSnapshot_ProcessInterleavingKeepsCoherentTables(t *testing.T) {
 	}}
 	wrapped := sql.OpenDB(connector)
 	original := store.readDB
-	store.readDB = wrapped
+	store.readDB = newReadPool(wrapped)
 	t.Cleanup(func() { store.readDB = original; require.NoError(t, wrapped.Close()) })
 	actual, err := store.Export(context.Background(), "SNAP", "test")
 	require.NoError(t, err, "native writer/SQL fixture must complete before behavioral comparison")

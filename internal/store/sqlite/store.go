@@ -38,7 +38,7 @@ func resolveDBPath(path string) string {
 type Store struct {
 	writeDB         *sql.DB
 	rollbackWriter  RollbackWriterFunc // nil in production; a test seam for the post-commit-failure rollback (MTIX-198)
-	readDB          *sql.DB
+	readDB          *readPool          // the one choke point for reader-pool reads (MTIX-250)
 	logger          *slog.Logger
 	vcReported      atomic.Bool // this Store has seen the vector-clock prune notice issued (MTIX-95.16)
 	clock           func() time.Time
@@ -153,7 +153,7 @@ func newWithRetry(dbPath string, logger *slog.Logger, rt openRetry) (*Store, err
 
 	s := &Store{
 		writeDB:      writeDB,
-		readDB:       readDB,
+		readDB:       newReadPool(readDB),
 		logger:       logger,
 		clock:        func() time.Time { return time.Now().UTC() },
 		dbDir:        filepath.Dir(dbPath),
@@ -202,7 +202,13 @@ func openDBWith(ctx context.Context, path string, isWriter, readOnly bool, rt op
 		params = []string{"_txlock=immediate" + writerConnPragmas}
 	}
 
-	db, err := openSQLite(path, params...)
+	// The reader pool opens shielded connections so a cancelled read cannot
+	// leave a stale snapshot on one (MTIX-250); the writer is never shielded.
+	open := openSQLite
+	if !isWriter {
+		open = openShieldedSQLite
+	}
+	db, err := open(path, params...)
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +387,7 @@ func (s *Store) Close() error {
 
 	// A read-only store (MTIX-58) shares one connection for both roles; don't
 	// double-close it.
-	if s.readDB != s.writeDB {
+	if !s.readDB.shares(s.writeDB) {
 		if err := s.readDB.Close(); err != nil {
 			if firstErr == nil {
 				firstErr = fmt.Errorf("close read db: %w", err)
@@ -463,7 +469,7 @@ func openReadOnlyStore(ctx context.Context, dbPath string, logger *slog.Logger,
 	}
 	return &Store{
 		writeDB:      roDB,
-		readDB:       roDB,
+		readDB:       newReadPool(roDB),
 		logger:       logger,
 		clock:        func() time.Time { return time.Now().UTC() },
 		dbDir:        filepath.Dir(dbPath),

@@ -185,10 +185,16 @@ func (s *Store) InboxAckInfo(ctx context.Context, agent string, seq int64) (AckI
 	return ackInfoSnapshot(ctx, s.readDB, agent, seq, nil)
 }
 
+// txBeginner is the part of a pool that starts a read transaction: *sql.DB or
+// the store's readPool.
+type txBeginner interface {
+	BeginTx(ctx context.Context, opts *sql.TxOptions) (*sql.Tx, error)
+}
+
 // ackInfoSnapshot runs ackInfoIn inside one read-only snapshot of db. wrap, when
 // non-nil, decorates the snapshot's reader; production passes nil and a test
 // uses it to interleave a write between two reads without a hook in the store.
-func ackInfoSnapshot(ctx context.Context, db *sql.DB, agent string, seq int64, wrap func(rowQuerier) rowQuerier) (info AckInfo, err error) {
+func ackInfoSnapshot(ctx context.Context, db txBeginner, agent string, seq int64, wrap func(rowQuerier) rowQuerier) (info AckInfo, err error) {
 	if agent == "" {
 		return AckInfo{}, fmt.Errorf("inbox ack info: agent id required: %w", model.ErrInvalidInput)
 	}

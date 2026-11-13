@@ -34,7 +34,7 @@ func TestSalvageInbox_ReportIncompleteForMailOrAckLoss(t *testing.T) {
 				require.NoError(t, err)
 			}
 			report := &RecoverResult{}
-			journal, err := salvageInboxRows(t.Context(), s.readDB, report)
+			journal, err := salvageInboxRows(t.Context(), s.readDB.rawDB, report)
 			require.NoError(t, err, "row reads succeed; incomplete is caused by loss or ack coverage")
 			require.True(t, report.InboxIncomplete)
 			notes := strings.Join(report.Notes, " ")

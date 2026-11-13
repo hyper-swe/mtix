@@ -153,10 +153,21 @@ func TestRemoteBarWorkflow_OSJobs_SplitByRunnerAndMacHasNoServices(t *testing.T)
 	// The mac job keeps the safety properties and the classified step names.
 	for _, want := range []string{
 		"- name: Verify snapshot tree", "persist-credentials: false", "fetch-depth: 0",
-		"ref: ${{ inputs.scratch_ref }}", "run: make lint-go && make test-race",
-		"- name: Run govulncheck", "run: go env -w GOFLAGS=-p=1",
+		"ref: ${{ inputs.scratch_ref }}", "make lint-go",
+		"- name: Run govulncheck", "- name: Verify exact package sets",
 	} {
 		require.Contains(t, mac, want)
+	}
+	// MTIX-112.17.42.6: the macOS bar is sharded; the job no longer runs the whole set.
+	require.NotContains(t, mac, "make test-race")
+	for _, name := range []string{"bar-macos-shard", "bar-macos-cmd"} {
+		job := jobBlock(t, wf, name)
+		require.Contains(t, job, "if: ${{ inputs.os == 'macos-latest' }}", name)
+		require.Contains(t, job, "runs-on: macos-latest", name)
+		require.NotContains(t, job, "services:", name)
+		require.NotContains(t, job, "MTIX_PG_TEST_DSN", name)
+		require.Contains(t, job, "persist-credentials: false", name)
+		require.Less(t, strings.Index(job, "Verify snapshot tree"), strings.Index(job, "go test"), name)
 	}
 	require.Less(t, strings.Index(mac, "Verify snapshot tree"), strings.Index(mac, "Run committed bar"))
 	require.Less(t, strings.Index(mac, "Run committed bar"), strings.Index(mac, "Run govulncheck"))
@@ -285,8 +296,9 @@ func TestRemoteBarWorkflow_CmdShards_CoverCmdMtixWithUnchangedFlags(t *testing.T
 	}
 	require.Contains(t, ciRun, `bash scripts/cmd-mtix-shards.sh pattern "$SHARD"`)
 	require.Contains(t, ciRun, `-race -count=1 -timeout 20m -run "$pattern"`)
-	// The macOS job still runs the whole package set.
-	require.Contains(t, jobBlock(t, wf, "bar-macos"), "run: make lint-go && make test-race\n")
+	// MTIX-112.17.42.6: macOS runs the same shards in bar-macos-cmd.
+	macCmd := stepRun(t, jobBlock(t, wf, "bar-macos-cmd"), "Run cmd/mtix shard")
+	require.Equal(t, strings.TrimSpace(run), strings.TrimSpace(macCmd))
 }
 
 func TestRemoteBar_Classify_CmdShardFailureIsABarFailure(t *testing.T) {

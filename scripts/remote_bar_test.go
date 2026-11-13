@@ -328,7 +328,7 @@ func TestRemoteBarWorkflow_Shape_IsHostedReadOnlyAndSecretFree(t *testing.T) {
 	require.Contains(t, wf, "fetch-depth: 0")
 	require.Contains(t, wf, "- name: Run govulncheck")
 	require.Contains(t, wf, "ref: ${{ inputs.scratch_ref }}")
-	require.Contains(t, wf, "run: make lint-go && make test-race")
+	require.Contains(t, wf, "make lint-go")
 	// The first step prints runner, run URL and wrapper version.
 	first := stepRun(t, wf, "Identify run")
 	for _, want := range []string{"$RUNNER_NAME", "$RUNNER_OS", "GITHUB_RUN_ID", "WRAPPER_VERSION"} {
@@ -870,14 +870,15 @@ func TestRemoteBarWorkflow_GoFlags_NeverSetInAnyEnvBlock(t *testing.T) {
 	}
 }
 
-func TestRemoteBarWorkflow_GoEnvWrite_PrecedesTheBar(t *testing.T) {
-	// MTIX-112.17.27: only the macOS job still runs make test-race and so still
-	// serializes through go env -w; the Linux jobs pass -p explicitly.
-	wf := jobBlock(t, readWorkflow(t), "bar-macos")
-	write := strings.Index(wf, "go env -w GOFLAGS=-p=1")
-	bar := strings.Index(wf, "- name: Run committed bar")
-	require.GreaterOrEqual(t, write, 0, "the -p=1 setting must be written with go env -w")
-	require.Greater(t, bar, write, "go env -w must run before the committed bar")
+func TestRemoteBarWorkflow_NoJob_WritesGoEnvOrRunsTestRace(t *testing.T) {
+	// MTIX-112.17.42.6: no job runs make test-race any more, so no job needs
+	// go env -w; every job passes -p explicitly (or runs one package).
+	for name, job := range readRBJobs(t) {
+		run := job.allRun()
+		require.NotContains(t, run, "go env -w GOFLAGS", "%s: flags are passed directly, never written with go env -w", name)
+		require.NotContains(t, run, "make test-race", name)
+	}
+	require.Contains(t, jobBlock(t, readWorkflow(t), "bar-macos"), "-race -count=1 -p 2 -timeout 20m")
 }
 
 // writeSnapFiles creates the given relative files (content "x\n") under dir.

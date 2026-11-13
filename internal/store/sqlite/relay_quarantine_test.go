@@ -170,3 +170,48 @@ func TestCreateNodeAllocated_InTxHookError_RollsTheCreateBack(t *testing.T) {
 	require.Equal(t, n.ID, seen)
 	require.NotEmpty(t, seen)
 }
+
+// TestRelayEventRecreatedTx_ReadsCommittedStateInsideTheTransaction: the lookup
+// that refuses a repeated recreate runs in the create's own transaction, so it
+// sees a recreate committed after the caller listed the rows, ignores the row
+// being resolved, and ignores accepted rows and rows of other events.
+func TestRelayEventRecreatedTx_ReadsCommittedStateInsideTheTransaction(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	first, second, other := relayQuarantineRec(4, "2026-11-13T01:00:00Z"), relayQuarantineRec(9, "2026-11-13T01:00:00Z"), relayQuarantineRec(5, "2026-11-13T01:00:00Z")
+	other.EventID = "e-other"
+	for _, r := range []sqlite.RelayQuarantineRecord{first, second, other} {
+		require.NoError(t, s.RecordRelayQuarantine(ctx, r))
+	}
+	look := func(key sqlite.RelayQuarantineKey, event string) *sqlite.RelayRecreated {
+		var got *sqlite.RelayRecreated
+		require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error {
+			var err error
+			got, err = sqlite.RelayEventRecreatedTx(ctx, tx, key, event)
+			return err
+		}))
+		return got
+	}
+	require.Nil(t, look(second.RelayQuarantineKey, "e-1"), "nothing recreated yet")
+
+	settle := func(r sqlite.RelayQuarantineRecord, resolution, as string) {
+		require.NoError(t, s.WithTx(ctx, func(tx *sql.Tx) error {
+			_, err := sqlite.ResolveRelayQuarantineTx(ctx, tx, r.RelayQuarantineKey,
+				sqlite.RelayResolution{Resolution: resolution, Actor: "a", Reason: "r", RecreatedAs: as, At: time.Now()})
+			return err
+		}))
+	}
+	settle(other, sqlite.RelayResolutionRecreate, "PROJ-8")
+	require.Nil(t, look(second.RelayQuarantineKey, "e-1"), "another event's recreate does not count")
+	settle(first, sqlite.RelayResolutionAccepted, "")
+	require.Nil(t, look(second.RelayQuarantineKey, "e-1"), "an accept does not count")
+
+	third := relayQuarantineRec(12, "2026-11-13T01:00:00Z")
+	require.NoError(t, s.RecordRelayQuarantine(ctx, third))
+	settle(third, sqlite.RelayResolutionRecreate, "PROJ-9")
+	got := look(second.RelayQuarantineKey, "e-1")
+	require.NotNil(t, got)
+	require.Equal(t, sqlite.RelayRecreated{PeerID: third.PeerID, RS: 12, RecreatedAs: "PROJ-9"}, *got)
+	require.Nil(t, look(third.RelayQuarantineKey, "e-1"), "the row itself is excluded")
+	require.Nil(t, look(second.RelayQuarantineKey, ""), "an empty event id never matches")
+}

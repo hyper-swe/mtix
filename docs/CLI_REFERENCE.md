@@ -2692,7 +2692,7 @@ quarantine list'). Relay ingest skips a record from an authenticated peer when
 it cannot be applied, for example when two peers took the same next task number.
 The record is stored, and 'mtix doctor' fails until every such record is settled.
 
---recreate (only for a skipped create_node record) creates a NEW task with the
+--recreate (only for a skipped task creation) creates a NEW task with the
 skipped task's title, description, prompt, acceptance, priority, labels, type and
 parent, under the next free id, and marks the record resolved in the same
 transaction as the create: both happen or neither does. The new task syncs as
@@ -2723,7 +2723,7 @@ audit trail. Local only: it never contacts the hub or the relay.
 | `--accept` |  | Keep the record unapplied and record the review | false |
 | `--handle` |  | Handle of a relay record from 'mtix sync quarantine list' |  |
 | `--reason` |  | Required explanation, recorded in the receipt |  |
-| `--recreate` |  | Create the skipped task again under a new id (create_node records only) | false |
+| `--recreate` |  | Create the skipped task again under a new id (skipped task creations only) | false |
 ---
 
 ## reconcile

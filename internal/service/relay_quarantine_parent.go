@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -17,7 +18,8 @@ import (
 // the id names a different local task (or none). A recreated parent supplies its
 // new id; an open or accepted one refuses, naming the parent's handle. Any other
 // parent id is used as it is.
-func recreateParent(row sqlite.RelayQuarantineRow, parentID string, rows []sqlite.RelayQuarantineRow) (string, error) {
+func recreateParent(row sqlite.RelayQuarantineRow, rawParent string, rows []sqlite.RelayQuarantineRow) (string, error) {
+	parentID := rawParent
 	if parentID == "" {
 		return "", nil
 	}
@@ -26,16 +28,18 @@ func recreateParent(row sqlite.RelayQuarantineRow, parentID string, rows []sqlit
 		keys[i] = RelayQuarantineKeyString(r.RelayQuarantineKey)
 	}
 	handles := QuarantineHandles(keys)
-	found, foundHandle, others := findSkippedParent(row, parentID, rows, handles)
+	found, foundHandle, others := findSkippedParent(row, rawParent, rows, handles)
+	accept := relayAcceptCommand(relayHandleOf(rows, row.RelayQuarantineKey))
+	parentID = format.EventID(rawParent) // payload text: quoted for the terminal
 	if len(others) > 0 {
 		return "", fmt.Errorf("the parent %s of this record is ambiguous: another peer's create of %s was also skipped "+
 			"(%s), so the id may name a different task than the one this peer meant: settle this record with "+
-			"mtix sync quarantine resolve --handle <this handle> --accept --reason \"<why>\" and recreate it by hand "+
-			"under the right parent if it is still wanted: %w", parentID, parentID, strings.Join(others, "; "), model.ErrInvalidInput)
+			"%s and recreate it by hand "+
+			"under the right parent if it is still wanted: %w", parentID, parentID, strings.Join(others, "; "), accept, model.ErrInvalidInput)
 	}
 	switch {
 	case found == nil:
-		return parentID, nil
+		return rawParent, nil
 	case found.State == sqlite.RelayQuarantineOpen:
 		return "", fmt.Errorf("the parent %s was itself skipped from peer %s (rs %d) and is not recreated yet, "+
 			"so this record would attach to whatever local task holds %s: resolve the parent first with "+
@@ -43,8 +47,8 @@ func recreateParent(row sqlite.RelayQuarantineRow, parentID string, rows []sqlit
 			parentID, row.PeerID, found.RS, parentID, foundHandle, model.ErrInvalidInput)
 	case found.RecreatedAs == "":
 		return "", fmt.Errorf("the parent %s of this record was accepted and is not a task here (handle %s): "+
-			"settle this record with mtix sync quarantine resolve --handle <this handle> --accept --reason \"<why>\": %w",
-			parentID, foundHandle, model.ErrInvalidInput)
+			"settle this record with %s: %w",
+			parentID, foundHandle, accept, model.ErrInvalidInput)
 	}
 	return found.RecreatedAs, nil
 }

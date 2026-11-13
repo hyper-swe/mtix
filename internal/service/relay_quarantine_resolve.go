@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -129,14 +130,14 @@ func markRelayResolved(ctx context.Context, tx *sql.Tx, row sqlite.RelayQuaranti
 // the create's transaction. It returns the new task id.
 func (r *RelayQuarantineResolver) recreate(ctx context.Context, row sqlite.RelayQuarantineRow, res sqlite.RelayResolution,
 	rows []sqlite.RelayQuarantineRow) (string, error) {
-	if err := refuseRepeatedRecreate(row, rows); err != nil {
-		return "", err
-	}
 	req, err := recreateRequest(row, res.Actor, rows)
 	if err != nil {
 		return "", err
 	}
 	node, err := r.nodes.CreateNodeInTx(ctx, req, func(ctx context.Context, tx *sql.Tx, n *model.Node) error {
+		if repeatErr := refuseRepeatedRecreate(ctx, tx, row, rows); repeatErr != nil {
+			return repeatErr
+		}
 		res.RecreatedAs = n.ID
 		return markRelayResolved(ctx, tx, row, res)
 	})
@@ -146,11 +147,11 @@ func (r *RelayQuarantineResolver) recreate(ctx context.Context, row sqlite.Relay
 	return node.ID, nil
 }
 
-// recreateRequest turns a skipped create_node record into a create request that
+// recreateRequest turns a skipped task creation into a create request that
 // keeps its content; the id is allocated fresh.
 func recreateRequest(row sqlite.RelayQuarantineRow, actor string, rows []sqlite.RelayQuarantineRow) (*CreateNodeRequest, error) {
 	if row.OpType != string(model.OpCreateNode) {
-		return nil, fmt.Errorf("--recreate applies only to a create_node record, and this record is %q: "+
+		return nil, fmt.Errorf("--recreate applies only to a skipped task creation, and this record is a %q operation: "+
 			"read it with 'mtix sync quarantine list --json', then settle it with --accept: %w",
 			row.OpType, model.ErrInvalidInput)
 	}
@@ -186,21 +187,18 @@ func relayResolveResult(row sqlite.RelayQuarantineRow, res sqlite.RelayResolutio
 	}
 }
 
-// refuseRepeatedRecreate stops a second recreate of the same event: a republish
+// refuseRepeatedRecreate stops a second recreate of the same event, inside the
+// create's transaction (so a concurrent recreate cannot slip past): a republish
 // (reset-peer) can make ingest skip the same event again at a new position, and
-// recreating it would add a third copy. The message names the first recreate;
-// accept stays available.
-func refuseRepeatedRecreate(row sqlite.RelayQuarantineRow, rows []sqlite.RelayQuarantineRow) error {
-	if row.EventID == "" {
-		return nil
+// recreating it would add another copy. The error rolls the new task back; the
+// message names the first recreate and the exact accept command.
+func refuseRepeatedRecreate(ctx context.Context, tx *sql.Tx, row sqlite.RelayQuarantineRow, rows []sqlite.RelayQuarantineRow) error {
+	prior, err := sqlite.RelayEventRecreatedTx(ctx, tx, row.RelayQuarantineKey, row.EventID)
+	if err != nil || prior == nil {
+		return err
 	}
-	for _, r := range rows {
-		if r.RelayQuarantineKey != row.RelayQuarantineKey && r.EventID == row.EventID &&
-			r.State == sqlite.RelayQuarantineResolved && r.Resolution == sqlite.RelayResolutionRecreate {
-			return fmt.Errorf("this record repeats event %s, which relay record %s rs %d already recreated as %s: "+
-				"a second recreate would add another copy; settle this one with mtix sync quarantine resolve "+
-				"--handle <this handle> --accept --reason \"<why>\": %w", row.EventID, r.PeerID, r.RS, r.RecreatedAs, model.ErrInvalidInput)
-		}
-	}
-	return nil
+	return fmt.Errorf("this record repeats event %s, which relay record %s rs %d already recreated as %s: "+
+		"a second recreate would add another copy; settle this one with %s: %w",
+		format.EventID(row.EventID), prior.PeerID, prior.RS, prior.RecreatedAs,
+		relayAcceptCommand(relayHandleOf(rows, row.RelayQuarantineKey)), model.ErrInvalidInput)
 }

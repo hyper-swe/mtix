@@ -96,3 +96,23 @@ func resolveRelayHandle(rows []sqlite.RelayQuarantineRow, handle string) (sqlite
 	}
 	return sqlite.RelayQuarantineRow{}, fmt.Errorf("relay quarantine handle %s: %w", handle, model.ErrNotFound)
 }
+
+// relayHandleOf is the printed handle of one relay row among all of them.
+func relayHandleOf(rows []sqlite.RelayQuarantineRow, key sqlite.RelayQuarantineKey) string {
+	keys := make([]string, len(rows))
+	for i, r := range rows {
+		keys[i] = RelayQuarantineKeyString(r.RelayQuarantineKey)
+	}
+	handles := QuarantineHandles(keys)
+	for i, r := range rows {
+		if r.RelayQuarantineKey == key {
+			return handles[i]
+		}
+	}
+	return QuarantineHandle(RelayQuarantineKeyString(key))
+}
+
+// relayAcceptCommand is the exact accept command for one handle.
+func relayAcceptCommand(handle string) string {
+	return fmt.Sprintf(`mtix sync quarantine resolve --handle %s --accept --reason "<why>"`, handle)
+}

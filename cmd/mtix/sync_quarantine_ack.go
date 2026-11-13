@@ -120,7 +120,7 @@ func quarantineDisplayReason(q service.QuarantinedEvent) string {
 // ahead of the reason it was skipped (MTIX-268).
 func relayDisplayReason(q service.QuarantinedEvent) string {
 	r := q.Relay
-	out := fmt.Sprintf("relay %s rs %d, %s: %s", r.PeerID, r.RS, r.State, displayHoldReason(q.Reason))
+	out := fmt.Sprintf("relay %s rs %d, %s: %s", oneLine(r.PeerID), r.RS, oneLine(r.State), displayHoldReason(q.Reason))
 	if r.State == "resolved" {
 		out += fmt.Sprintf("; %s by %s at %s", r.Resolution, r.ResolvedBy, r.ResolvedAt)
 		if r.RecreatedAs != "" {

@@ -55,7 +55,7 @@ func relayQuarantineCheck(rows []sqlite.RelayQuarantineRow) DoctorCheck {
 		}
 		if len(open) < relayQuarantineListed {
 			open = append(open, fmt.Sprintf("%s rs %d (%s %s)", rows[i].PeerID, rows[i].RS,
-				oneLine(rows[i].OpType), oneLine(rows[i].NodeID)))
+				relayOpLabel(rows[i].OpType), oneLine(rows[i].NodeID)))
 		}
 	}
 	if first == nil {
@@ -94,4 +94,13 @@ func relayResolveFix(r *sqlite.RelayQuarantineRow, handle string) string {
 		`or mtix sync quarantine resolve --handle %s --recreate --reason "<why>" (adds a copy of the task here that syncs to every peer, `+
 		`so the author peer then holds both and must cancel one with mtix cancel <id> --reason "duplicate of <other-id>"); `+
 		`repeat for each open row`, accept, handle)
+}
+
+// relayOpLabel names an operation for people: the internal create operation is a
+// task creation (agent docs do not carry internal operation names).
+func relayOpLabel(op string) string {
+	if op == string(model.OpCreateNode) {
+		return "task creation"
+	}
+	return oneLine(op)
 }

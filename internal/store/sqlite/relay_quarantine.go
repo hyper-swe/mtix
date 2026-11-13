@@ -6,6 +6,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -171,4 +172,38 @@ func ResolveRelayQuarantineTx(ctx context.Context, tx *sql.Tx, key RelayQuaranti
 		return false, fmt.Errorf("resolve relay quarantine rows: %w", err)
 	}
 	return n == 1, nil
+}
+
+// RelayRecreated names a relay row that already recreated an event.
+type RelayRecreated struct {
+	PeerID      string
+	RS          uint64
+	RecreatedAs string
+}
+
+// RelayEventRecreatedTx reports, in the caller's transaction, whether a row
+// other than key already recreated eventID (a republish can make ingest skip
+// the same event again at a new stream position; MTIX-268). Reading it inside
+// the create's transaction means a concurrent recreate cannot slip past.
+func RelayEventRecreatedTx(ctx context.Context, tx *sql.Tx, key RelayQuarantineKey, eventID string) (*RelayRecreated, error) {
+	if eventID == "" {
+		return nil, nil
+	}
+	var out RelayRecreated
+	var rs int64
+	// The first other row that settled this event as a recreate.
+	err := tx.QueryRowContext(ctx, `
+		SELECT peer_id, rs, recreated_as FROM relay_quarantine
+		WHERE event_id = ? AND state = 'resolved' AND resolution = 'recreated'
+		  AND NOT (peer_id = ? AND pub_epoch = ? AND rs = ?)
+		ORDER BY peer_id, pub_epoch, rs LIMIT 1`,
+		eventID, key.PeerID, int64(key.PubEpoch), int64(key.RS)).Scan(&out.PeerID, &rs, &out.RecreatedAs) //nolint:gosec // G115: relay sequences are far below 2^63
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("check recreated relay event: %w", err)
+	}
+	out.RS = uint64(rs) //nolint:gosec // G115: stored from a uint64 below 2^63
+	return &out, nil
 }

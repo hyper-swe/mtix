@@ -38,7 +38,7 @@ const RelayCloneOnSyncedStop = "STOP, do not continue: keep the old project, do 
 	"and settle every open relay record first: read each with `mtix sync quarantine list --json`, then choose per record. " +
 	"`mtix sync quarantine resolve --handle <handle> --accept --reason <why>` keeps it unapplied (use it when the author peer still holds the task), " +
 	"and the record then stays stored only in the old project, so keep that project. " +
-	"`mtix sync quarantine resolve --handle <handle> --recreate --reason <why>` (a skipped create_node only) adds a NEW task here that syncs to every peer, " +
+	"`mtix sync quarantine resolve --handle <handle> --recreate --reason <why>` (a skipped task creation only) adds a NEW task here that syncs to every peer, " +
 	"including the author, who then holds both copies: on the author peer close one with `mtix cancel <id> --reason \"duplicate of <other-id>\"`. " +
 	"When none is open, start this recovery again from step 1"
 

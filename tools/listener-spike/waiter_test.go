@@ -73,7 +73,54 @@ func newWaiterEnv(t *testing.T) waiterEnv {
 // loopScript is the wrapped command: it records its own pid, then waits for
 // the release file and gives up by itself after about a minute, so a test
 // that dies early can never leave it running for long.
-const loopScript = `echo $$ >"$3"; i=0; while [ ! -e "$1" ] && [ "$i" -lt 3000 ]; do sleep 0.02; i=$((i+1)); done; exit "$2"`
+//
+// The pid is written to a temporary file and renamed into place. A plain
+// "echo $$ >file" makes the shell create and truncate the file before it
+// writes, so a reader that waited only for the file to exist (Stat) could read
+// zero bytes and fail with strconv.Atoi: parsing "" (MTIX-260, seen on a
+// loaded macOS runner). The rename is atomic, so the pid file is never visible
+// until it holds the whole pid. Readers still wait on a parsed pid
+// (readLoopPID, waitLoopPID) as a second guard.
+const loopScript = `echo $$ >"$3.tmp" && mv "$3.tmp" "$3"; i=0; while [ ! -e "$1" ] && [ "$i" -lt 3000 ]; do sleep 0.02; i=$((i+1)); done; exit "$2"`
+
+// readLoopPID parses the pid the wrapped command of the waiter named label
+// recorded. It reports ready only for a positive pid: a missing, empty or
+// unparseable file means the command has not finished writing it yet.
+func (e waiterEnv) readLoopPID(label string) (int, bool) {
+	data, err := os.ReadFile(e.loopPIDFile(label)) //nolint:gosec // G304: path under this test's TempDir
+	if err != nil {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pid <= 0 {
+		return 0, false
+	}
+	return pid, true
+}
+
+// waitLoopPID blocks until readLoopPID is ready and returns the pid. It waits
+// on the parsed value, never on the file merely existing (MTIX-260).
+func (e waiterEnv) waitLoopPID(t *testing.T, label string) int {
+	t.Helper()
+	return e.waitLoopPIDObserved(t, label, nil)
+}
+
+// waitLoopPIDObserved is waitLoopPID with onPoll called before each read, with
+// the 1-based poll number, so a test can change the pid file between polls.
+func (e waiterEnv) waitLoopPIDObserved(t *testing.T, label string, onPoll func(poll int)) int {
+	t.Helper()
+	var pid, polls int
+	require.Eventually(t, func() bool {
+		polls++
+		if onPoll != nil {
+			onPoll(polls)
+		}
+		var ok bool
+		pid, ok = e.readLoopPID(label)
+		return ok
+	}, waiterDeadline(), 10*time.Millisecond, "the wrapped command never recorded a pid")
+	return pid
+}
 
 // loopPIDFile is where the wrapped command of the waiter named label
 // records its pid.

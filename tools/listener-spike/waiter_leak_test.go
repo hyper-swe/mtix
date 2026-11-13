@@ -41,15 +41,10 @@ func TestWaiterHelper_DeliberateFailure(t *testing.T) {
 	require.Eventually(t, func() bool {
 		ev := e.events(t)
 		holder = e.armedLabel(t)
-		if holder == "" || count(ev, "guard-skip") != 1 {
-			return false
-		}
-		_, err := os.Stat(e.loopPIDFile(holder))
-		return err == nil
+		return holder != "" && count(ev, "guard-skip") == 1
 	}, waiterDeadline(), 10*time.Millisecond)
-	loop, err := os.ReadFile(e.loopPIDFile(holder))
-	require.NoError(t, err)
-	pids := []string{strconv.Itoa(w0.Process.Pid), strconv.Itoa(w1.Process.Pid), strings.TrimSpace(string(loop))}
+	loop := e.waitLoopPID(t, holder)
+	pids := []string{strconv.Itoa(w0.Process.Pid), strconv.Itoa(w1.Process.Pid), strconv.Itoa(loop)}
 	// Real file in the report path is written last so the parent only sees
 	// complete reports.
 	tmp := report + ".tmp"
@@ -129,13 +124,9 @@ func TestWaiterGuard_SIGTERM_StopsTheWrappedCommandAndReleasesTheLock(t *testing
 	e := newWaiterEnv(t)
 	cmd := e.arm(t, "w", 0)
 	require.Eventually(t, func() bool {
-		_, err := os.Stat(e.loopPIDFile("w"))
-		return count(e.events(t), "armed") == 1 && err == nil
+		return count(e.events(t), "armed") == 1
 	}, waiterDeadline(), 10*time.Millisecond)
-	data, err := os.ReadFile(e.loopPIDFile("w"))
-	require.NoError(t, err)
-	loop, err := strconv.Atoi(strings.TrimSpace(string(data)))
-	require.NoError(t, err)
+	loop := e.waitLoopPID(t, "w")
 	require.NoError(t, cmd.Process.Signal(syscall.SIGTERM))
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()

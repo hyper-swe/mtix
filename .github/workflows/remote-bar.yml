@@ -337,7 +337,7 @@ jobs:
 
   bar-cmd:
     needs: validate
-    # MTIX-112.17.24: the cmd/mtix tests in three deterministic shards (see
+    # MTIX-112.17.24: the cmd/mtix tests in four deterministic shards (see
     # scripts/cmd-mtix-shards.sh), each with its own PostgreSQL service. Same
     # flags as test-race: -race, -count=1, 20m, nothing skipped.
     if: ${{ inputs.os != 'macos-latest' }}
@@ -346,7 +346,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ["1", "2", "3"]
+        shard: ["1", "2", "3", "4"]
     services:
       postgres:
         image: postgres:16
@@ -574,7 +574,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ["1", "2", "3"]
+        shard: ["1", "2", "3", "4"]
     env:
       WRAPPER_VERSION: ${{ inputs.wrapper_version }}
       SCRATCH_REF: ${{ inputs.scratch_ref }}

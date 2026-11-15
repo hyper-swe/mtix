@@ -159,25 +159,26 @@ func TestGoWorkflow_Aggregate_RejectsEveryNonSuccessResult(t *testing.T) {
 	}
 }
 
-func TestGoWorkflow_CheckCount_MatchesThirtyFiveChecks(t *testing.T) {
+func TestGoWorkflow_CheckCount_MatchesThirtyNineChecks(t *testing.T) {
 	// MTIX-112.17.22.1: 25 - 2 (cli shard) + 6 (test-go-cmd) = 29.
 	// MTIX-112.51: plus two service shards on each OS = 33.
 	// MTIX-270: a fourth SQLite shard on each OS = 35.
+	// MTIX-272: a fourth cmd/mtix shard on each OS and per PostgreSQL version = 39.
 	// MTIX-112.17.42: that is the push and schedule count; pull_request runs
-	// omit the nine macOS SQLite, cmd/mtix and service legs (see
+	// omit the ten macOS SQLite, cmd/mtix and service legs (see
 	// ci_pr_macos_capacity_test.go).
-	require.Equal(t, 35, countCIChecks(t, "push"))
-	require.Equal(t, 35, countCIChecks(t, "schedule"))
+	require.Equal(t, 39, countCIChecks(t, "push"))
+	require.Equal(t, 39, countCIChecks(t, "schedule"))
 }
 
-// MTIX-112.17.24: cmd/mtix runs as three shards per PostgreSQL version.
+// MTIX-112.17.24: cmd/mtix runs as four shards per PostgreSQL version.
 func TestGoWorkflow_PostgresCmdShards_RunEveryShardOnBothVersionsWithUnchangedFlags(t *testing.T) {
 	jobs := readCIJobs(t)
 	job, ok := jobs["test-go-postgres-cmd"]
 	require.True(t, ok)
 	require.Equal(t, "pg-${{ matrix.pg }} cmd/mtix shard ${{ matrix.shard }}", job.Name)
 	require.Equal(t, []string{"16", "17"}, job.Strategy.Matrix.PG)
-	require.Equal(t, []string{"1", "2", "3"}, job.Strategy.Matrix.Shard)
+	require.Equal(t, []string{"1", "2", "3", "4"}, job.Strategy.Matrix.Shard)
 	require.Empty(t, job.Strategy.Matrix.Include)
 	require.Empty(t, job.Strategy.Matrix.Exclude)
 	require.False(t, *job.Strategy.FailFast)
@@ -203,9 +204,9 @@ func TestGoWorkflow_PostgresCmdShards_RunEveryShardOnBothVersionsWithUnchangedFl
 	require.NotContains(t, jobs["test-go-postgres-docker"].Strategy.Matrix.Pkg, "./cmd/mtix/")
 }
 
-// MTIX-112.17.22.1: cmd/mtix runs as three hash shards on each OS, with the
+// MTIX-112.17.22.1: cmd/mtix runs as four hash shards on each OS, with the
 // same script, shard count and flags as the PostgreSQL and remote-bar shards.
-func TestGoWorkflow_CmdShards_RunThreeHashShardsOnBothOSesWithUnchangedFlags(t *testing.T) {
+func TestGoWorkflow_CmdShards_RunFourHashShardsOnBothOSesWithUnchangedFlags(t *testing.T) {
 	jobs := readCIJobs(t)
 	job, ok := jobs["test-go-cmd"]
 	require.True(t, ok)
@@ -213,7 +214,7 @@ func TestGoWorkflow_CmdShards_RunThreeHashShardsOnBothOSesWithUnchangedFlags(t *
 	require.Equal(t, "test-go-cmd (${{ matrix.os }}, shard ${{ matrix.shard }})", job.Name)
 	require.Equal(t, "${{ matrix.os }}", job.RunsOn)
 	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, job.Strategy.Matrix.OS.For("push"))
-	require.Equal(t, []string{"1", "2", "3"}, job.Strategy.Matrix.Shard)
+	require.Equal(t, []string{"1", "2", "3", "4"}, job.Strategy.Matrix.Shard)
 	require.Empty(t, job.Strategy.Matrix.Include)
 	require.Empty(t, job.Strategy.Matrix.Exclude)
 	require.False(t, *job.Strategy.FailFast)
@@ -244,7 +245,7 @@ func TestGoWorkflow_CmdShards_RunThreeHashShardsOnBothOSesWithUnchangedFlags(t *
 	// The shard count in CI must equal the script's, or tests would go unrun.
 	script, err := os.ReadFile("cmd-mtix-shards.sh")
 	require.NoError(t, err)
-	require.Contains(t, string(script), "\nSHARDS=3\n")
+	require.Contains(t, string(script), "\nSHARDS=4\n")
 	pg := jobs["test-go-postgres-cmd"].Strategy.Matrix.Shard
 	require.Equal(t, job.Strategy.Matrix.Shard, pg)
 }

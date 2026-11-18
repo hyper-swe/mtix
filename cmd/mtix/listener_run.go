@@ -24,12 +24,18 @@ type daemonListener struct {
 	now   func() time.Time
 	hub   bool // a hub DSN is configured
 	relay bool // a relay folder is configured
+	// stopRequested reports a request from `mtix daemon stop --listener`
+	// (MTIX-276); nil means none can arrive.
+	stopRequested func() bool
 }
 
 // Done reports whether the listener must exit and why. It is checked after
 // every pass, so the process ends within one local tick of the last lease
 // going, which is always inside one listen interval.
 func (l *daemonListener) Done() (bool, string) {
+	if l.stopRequested != nil && l.stopRequested() {
+		return true, "stop requested (mtix daemon stop --listener)"
+	}
 	in, err := l.load()
 	if err != nil {
 		return true, "listener inputs unreadable (" + err.Error() + ")"
@@ -80,5 +86,10 @@ func newDaemonListener(hub bool, intervalSec int) (*daemonListener, error) {
 		return nil, fmt.Errorf("mtix daemon --listen: %w", err)
 	}
 	src.grandfatherInterval = time.Duration(intervalSec) * time.Second
-	return &daemonListener{load: src.snapshot, now: src.now, hub: hub, relay: relayDir() != ""}, nil
+	// A request left by an earlier stop must not end this new listener at once.
+	if err := clearListenerStopRequest(app.mtixDir); err != nil {
+		return nil, fmt.Errorf("mtix daemon --listen: %w", err)
+	}
+	return &daemonListener{load: src.snapshot, now: src.now, hub: hub, relay: relayDir() != "",
+		stopRequested: func() bool { return listenerStopRequested(app.mtixDir) }}, nil
 }

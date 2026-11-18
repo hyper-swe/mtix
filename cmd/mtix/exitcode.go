@@ -47,6 +47,30 @@ const (
 	// exitCodeClaudeHookWake: `mtix hook claude-session` has an envelope on stderr and
 	// wants the Claude harness to wake the session (asyncRewake reads exit 2).
 	exitCodeClaudeHookWake = 2
+
+	// exitCodeListenerUnverified: `mtix daemon status|stop --listener` found the
+	// daemon lock held by a process that is not a verified listener (MTIX-276).
+	exitCodeListenerUnverified = 8
+
+	// exitCodeListenerRespawned: `mtix daemon stop --listener` ended the listener
+	// and a live waiter started a new one; end the waiters first (MTIX-276).
+	exitCodeListenerRespawned = 9
+
+	// exitCodeListenerNone: `mtix daemon status --listener` found the daemon
+	// lock free, so nothing runs (MTIX-276). It is its own code so that an error (outside a
+	// project, a lease or lock read failure: exit 1) never looks like "none":
+	// a recovery gate requires exactly this code.
+	exitCodeListenerNone = 10
+
+	// exitCodeListenerStillRunning: `mtix daemon stop --listener` could not end
+	// the listener (timeout, unverified process, or Windows) (MTIX-276).
+	exitCodeListenerStillRunning = 11
+
+	// exitCodeListenerDaemonHeld: `mtix daemon status|stop --listener` found
+	// the daemon lock held by a daemon that is not a listener (the OS service
+	// or a foreground daemon) (MTIX-276). Exit 10 therefore means strictly
+	// that the lock is free and nothing runs.
+	exitCodeListenerDaemonHeld = 12
 )
 
 // exitCodeForError maps an error to its contract exit code.
@@ -66,6 +90,16 @@ func exitCodeForError(err error) int {
 		return exitCodeInboxEmpty
 	case errors.Is(err, errClaudeHookWake):
 		return exitCodeClaudeHookWake
+	case errors.Is(err, errListenerUnverified):
+		return exitCodeListenerUnverified
+	case errors.Is(err, errListenerRespawned):
+		return exitCodeListenerRespawned
+	case errors.Is(err, errListenerNotRunning):
+		return exitCodeListenerNone
+	case errors.Is(err, errListenerDaemonHeld):
+		return exitCodeListenerDaemonHeld
+	case errors.Is(err, errListenerStillRunning):
+		return exitCodeListenerStillRunning
 	case errors.Is(err, errHardenPending), errors.Is(err, service.ErrDoctorChecksFailed):
 		return exitCodeHardenPending
 	default:

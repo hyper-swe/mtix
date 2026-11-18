@@ -21,6 +21,9 @@ var errDaemonServiceNotRunning = errors.New("daemon service is not running")
 type serviceDeps struct {
 	run  serviceRunner
 	spec func(intervalSec int) (*serviceSpec, error)
+	// listener builds the control for `status|stop --listener` (MTIX-276); nil
+	// means this process's own project.
+	listener func() (*listenerCtl, error)
 }
 
 // bestEffortServiceCmd reports whether argv is an idempotency pre-clean whose failure carries no

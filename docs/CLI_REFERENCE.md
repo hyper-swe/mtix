@@ -584,8 +584,8 @@ Push and dispatch lock files and their data directory must be real and user-owne
 
 - `install` — Register the daemon as an OS service (boot-start, crash-restart)
 - `start` — Start the installed daemon service (re-enables it after stop)
-- `status` — Show the installed daemon service's state; fails when stopped
-- `stop` — Stop the daemon service; it stays stopped until start
+- `status` — Show the installed daemon service's state; fails when stopped (--listener: show the detached inbox listener)
+- `stop` — Stop the daemon service; it stays stopped until start (--listener: end the detached inbox listener)
 - `uninstall` — End and unregister the daemon service and remove its unit file
 ---
 
@@ -613,14 +613,29 @@ Start the installed daemon service (re-enables it after stop)
 
 **Usage:** `status`
 
-Show the installed daemon service's state; fails when stopped
+Show the installed daemon service's state; fails when stopped (--listener: show the detached inbox listener)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--json` |  | With --listener: print the result as JSON | false |
+| `--listener` |  | Show the detached inbox listener (pid, waiters) instead of the OS service; exits 0 when running, 10 when the lock is free and nothing runs (1 is an error), 12 when a non-listener daemon holds the lock, 8 when the lock holder is not a verified listener | false |
 ---
 
 ## stop
 
 **Usage:** `stop`
 
-Stop the daemon service; it stays stopped until start
+Stop the daemon service; it stays stopped until start (--listener: end the detached inbox listener)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--json` |  | With --listener: print the result as JSON | false |
+| `--listener` |  | Act on the detached inbox listener (mtix daemon --listen) instead of the OS service; exits 0 stopped, 9 a live waiter started a new listener, 11 still running or not verified, 12 only a non-listener daemon holds the lock | false |
+| `--timeout` |  | With --listener: how long to wait for the listener to exit before escalating | 30s |
 ---
 
 ## uninstall

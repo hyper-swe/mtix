@@ -583,10 +583,10 @@ Push and dispatch lock files and their data directory must be real and user-owne
 ### Subcommands
 
 - `install` — Register the daemon as an OS service (boot-start, crash-restart)
-- `start` — Start the installed daemon service
-- `status` — Show the installed daemon service's state
-- `stop` — Stop the installed daemon service
-- `uninstall` — Unregister the daemon service and remove its unit file
+- `start` — Start the installed daemon service (re-enables it after stop)
+- `status` — Show the installed daemon service's state; fails when stopped
+- `stop` — Stop the daemon service; it stays stopped until start
+- `uninstall` — End and unregister the daemon service and remove its unit file
 ---
 
 ## install
@@ -606,28 +606,28 @@ Register the daemon as an OS service (boot-start, crash-restart)
 
 **Usage:** `start`
 
-Start the installed daemon service
+Start the installed daemon service (re-enables it after stop)
 ---
 
 ## status
 
 **Usage:** `status`
 
-Show the installed daemon service's state
+Show the installed daemon service's state; fails when stopped
 ---
 
 ## stop
 
 **Usage:** `stop`
 
-Stop the installed daemon service
+Stop the daemon service; it stays stopped until start
 ---
 
 ## uninstall
 
 **Usage:** `uninstall`
 
-Unregister the daemon service and remove its unit file
+End and unregister the daemon service and remove its unit file
 ---
 
 ## decompose

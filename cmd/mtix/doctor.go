@@ -141,8 +141,8 @@ func newConfiguredDoctorService() (*service.DoctorService, error) {
 	if err := registerServeExposureCheck(svc); err != nil { // MTIX-220
 		return nil, fmt.Errorf("register serve exposure check: %w", err)
 	}
-	if err := registerDaemonLogsCheck(svc); err != nil {
-		return nil, fmt.Errorf("register daemon logs check: %w", err)
+	if err := registerDaemonChecks(svc); err != nil { // daemon logs; MTIX-275 service state
+		return nil, fmt.Errorf("register daemon checks: %w", err)
 	}
 	if err := svc.Register(documentFreshnessCheck(filepath.Dir(app.mtixDir))); err != nil {
 		return nil, fmt.Errorf("register documentation check: %w", err)

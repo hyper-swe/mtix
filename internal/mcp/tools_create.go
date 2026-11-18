@@ -26,7 +26,7 @@ func createToolDefinition() ToolDef {
 			"priority":    {Type: "number", Description: "Priority 1-5 (1=critical)"},
 			"issue_type":  {Type: "string", Description: "Work classification (omitted = unset)", Enum: issueTypeEnums()},
 			"assignee":    {Type: "string", Description: "Atomically claim the new node for this agent/user; creator is independent; empty means no explicit assignment (parent auto-claim still applies); nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters"},
-			"creator":     {Type: "string", Description: "Author of the new node (defaults to mcp)"},
+			"creator":     {Type: "string", Description: "Author of the new node (defaults to the server's MTIX_AUTHOR_ID or author_id, then mcp); a child is auto-claimed only when this equals the parent's assignee"},
 		}},
 	}
 }
@@ -46,7 +46,7 @@ type createToolArgs struct {
 }
 
 // callCreateTool routes classification and assignment through the service's atomic boundary.
-func callCreateTool(ctx context.Context, svc *service.NodeService, primaryProject string, args json.RawMessage) (*ToolsCallResult, error) {
+func callCreateTool(ctx context.Context, svc *service.NodeService, primaryProject, author string, args json.RawMessage) (*ToolsCallResult, error) {
 	var argsIn createToolArgs
 	if err := json.Unmarshal(args, &argsIn); err != nil {
 		return nil, fmt.Errorf("parse create args: %w", err)
@@ -55,9 +55,7 @@ func callCreateTool(ctx context.Context, svc *service.NodeService, primaryProjec
 	if req.Project == "" {
 		req.Project = primaryProject
 	}
-	if req.Creator == "" {
-		req.Creator = "mcp"
-	}
+	req.Creator = resolveMCPCreator(req.Creator, author)
 	if req.Priority == 0 {
 		req.Priority = model.PriorityMedium
 	}

@@ -43,7 +43,7 @@ func installedSpec(t *testing.T) *serviceSpec {
 	return spec
 }
 
-func TestDaemonServiceStateDoctor_StoppedButLive_WarnsWithKillFix(t *testing.T) {
+func TestDaemonServiceStateDoctor_StoppedButLive_WarnsWithStopFix(t *testing.T) {
 	fm := &fakeManager{status: func() (string, error) { return "", exitErr{code: 113} }}
 	row := runDaemonServiceDoctor(t, installedSpec(t), func() (bool, int, error) { return true, 4242, nil }, fm)
 	require.NotNil(t, row)

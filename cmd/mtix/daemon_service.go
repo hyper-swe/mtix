@@ -63,13 +63,63 @@ type serviceSpec struct {
 func buildServiceSpec(goos, exe, projectRoot, home string, intervalSec int) (*serviceSpec, error) {
 	slug := projectSlug(projectRoot)
 	runArgs := fmt.Sprintf("%s -C %s daemon --interval %d", exe, projectRoot, intervalSec)
-	logDir := filepath.Join(projectRoot, ".mtix", "logs")
 
 	switch goos {
 	case "darwin":
-		label := "com.hyperswe.mtix.daemon." + slug
-		path := filepath.Join(home, "Library", "LaunchAgents", label+".plist")
-		content := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+		return darwinServiceSpec(slug, exe, projectRoot, home, intervalSec), nil
+	case "linux":
+		return linuxServiceSpec(slug, projectRoot, home, runArgs), nil
+	case "windows":
+		return windowsServiceSpec(slug, runArgs), nil
+	}
+	return nil, fmt.Errorf("mtix daemon: %w %q", errUnsupportedServicePlatform, goos)
+}
+
+// darwinServiceSpec builds the launchd service spec (MTIX-275 verbs).
+func darwinServiceSpec(slug, exe, projectRoot, home string, intervalSec int) *serviceSpec {
+	label := "com.hyperswe.mtix.daemon." + slug
+	path := filepath.Join(home, "Library", "LaunchAgents", label+".plist")
+	content := darwinPlist(label, exe, projectRoot, intervalSec)
+	target := fmt.Sprintf("gui/%d/%s", os.Getuid(), label)
+	domain := fmt.Sprintf("gui/%d", os.Getuid())
+	return &serviceSpec{
+		Label: label, Path: path, Content: content,
+		// bootout-first makes re-install idempotent; its failure (not
+		// currently loaded) is tolerated by the runner. enable clears a
+		// disabled flag left by stop, which would make bootstrap fail.
+		Register: [][]string{
+			{"launchctl", "bootout", target},
+			{"launchctl", "enable", target},
+			{"launchctl", "bootstrap", domain, path},
+		},
+		Unregister: [][]string{
+			{"launchctl", "enable", target},
+			{"launchctl", "bootout", target},
+		},
+		// MTIX-275: KeepAlive restarts a killed job, so stop UNLOADS it
+		// (bootout) and disables it so it stays stopped across logins.
+		// start re-enables, loads (a failure because it is already loaded
+		// is tolerated) and restarts it.
+		Start: [][]string{
+			{"launchctl", "enable", target},
+			{"launchctl", "bootstrap", domain, path},
+			{"launchctl", "kickstart", "-k", target},
+		},
+		Stop: [][]string{
+			{"launchctl", "disable", target},
+			{"launchctl", "bootout", target},
+		},
+		Status: [][]string{{"launchctl", "print", target}},
+
+		NotLoadedExit: 113,
+		RunningMarker: "state = running",
+	}
+}
+
+// darwinPlist renders the launchd property list of the daemon job.
+func darwinPlist(label, exe, projectRoot string, intervalSec int) string {
+	logDir := filepath.Join(projectRoot, ".mtix", "logs")
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -90,46 +140,14 @@ func buildServiceSpec(goos, exe, projectRoot, home string, intervalSec int) (*se
 </dict>
 </plist>
 `, label, exe, projectRoot, intervalSec,
-			filepath.Join(logDir, "daemon.out.log"), filepath.Join(logDir, "daemon.err.log"))
-		target := fmt.Sprintf("gui/%d/%s", os.Getuid(), label)
-		domain := fmt.Sprintf("gui/%d", os.Getuid())
-		return &serviceSpec{
-			Label: label, Path: path, Content: content,
-			// bootout-first makes re-install idempotent; its failure (not
-			// currently loaded) is tolerated by the runner. enable clears a
-			// disabled flag left by stop, which would make bootstrap fail.
-			Register: [][]string{
-				{"launchctl", "bootout", target},
-				{"launchctl", "enable", target},
-				{"launchctl", "bootstrap", domain, path},
-			},
-			Unregister: [][]string{
-				{"launchctl", "enable", target},
-				{"launchctl", "bootout", target},
-			},
-			// MTIX-275: KeepAlive restarts a killed job, so stop UNLOADS it
-			// (bootout) and disables it so it stays stopped across logins.
-			// start re-enables, loads (a failure because it is already loaded
-			// is tolerated) and restarts it.
-			Start: [][]string{
-				{"launchctl", "enable", target},
-				{"launchctl", "bootstrap", domain, path},
-				{"launchctl", "kickstart", "-k", target},
-			},
-			Stop: [][]string{
-				{"launchctl", "disable", target},
-				{"launchctl", "bootout", target},
-			},
-			Status: [][]string{{"launchctl", "print", target}},
+		filepath.Join(logDir, "daemon.out.log"), filepath.Join(logDir, "daemon.err.log"))
+}
 
-			NotLoadedExit: 113,
-			RunningMarker: "state = running",
-		}, nil
-
-	case "linux":
-		name := "mtix-daemon-" + slug + ".service"
-		path := filepath.Join(home, ".config", "systemd", "user", name)
-		content := fmt.Sprintf(`[Unit]
+// linuxServiceSpec builds the systemd user-unit service spec (MTIX-275 verbs).
+func linuxServiceSpec(slug, projectRoot, home, runArgs string) *serviceSpec {
+	name := "mtix-daemon-" + slug + ".service"
+	path := filepath.Join(home, ".config", "systemd", "user", name)
+	content := fmt.Sprintf(`[Unit]
 Description=mtix event dispatcher daemon (%s)
 
 [Service]
@@ -140,59 +158,59 @@ RestartSec=2
 [Install]
 WantedBy=default.target
 `, projectRoot, runArgs)
-		return &serviceSpec{
-			Label: name, Path: path, Content: content,
-			Register: [][]string{
-				{"systemctl", "--user", "daemon-reload"},
-				{"systemctl", "--user", "enable", "--now", name},
-			},
-			Unregister: [][]string{
-				{"systemctl", "--user", "disable", "--now", name},
-				{"systemctl", "--user", "daemon-reload"},
-			},
-			// MTIX-275: a manual stop is not subject to Restart=always, but
-			// the enabled unit would return at the next login; disable --now
-			// keeps it stopped until start (enable --now) turns it back on.
-			Start:  [][]string{{"systemctl", "--user", "enable", "--now", name}},
-			Stop:   [][]string{{"systemctl", "--user", "disable", "--now", name}},
-			Status: [][]string{{"systemctl", "--user", "status", "--no-pager", name}},
+	return &serviceSpec{
+		Label: name, Path: path, Content: content,
+		Register: [][]string{
+			{"systemctl", "--user", "daemon-reload"},
+			{"systemctl", "--user", "enable", "--now", name},
+		},
+		Unregister: [][]string{
+			{"systemctl", "--user", "disable", "--now", name},
+			{"systemctl", "--user", "daemon-reload"},
+		},
+		// MTIX-275: a manual stop is not subject to Restart=always, but
+		// the enabled unit would return at the next login; disable --now
+		// keeps it stopped until start (enable --now) turns it back on.
+		Start:  [][]string{{"systemctl", "--user", "enable", "--now", name}},
+		Stop:   [][]string{{"systemctl", "--user", "disable", "--now", name}},
+		Status: [][]string{{"systemctl", "--user", "status", "--no-pager", name}},
 
-			NotLoadedExit: 4,
-		}, nil
-
-	case "windows":
-		label := "mtix-daemon-" + slug
-		return &serviceSpec{
-			Label: label,
-			Register: [][]string{{
-				"schtasks", "/Create", "/F", "/TN", label, "/SC", "ONLOGON",
-				"/TR", runArgs,
-			}},
-			// MTIX-275: /End alone leaves the task enabled for the next
-			// logon and fails when no instance runs, so stop ends the
-			// instance (a failure there is tolerated) and then disables the
-			// task, which fails when the task is not installed. Delete
-			// ends a running instance first.
-			Unregister: [][]string{
-				{"schtasks", "/End", "/TN", label},
-				{"schtasks", "/Delete", "/F", "/TN", label},
-			},
-			Start: [][]string{
-				{"schtasks", "/Change", "/TN", label, "/ENABLE"},
-				{"schtasks", "/Run", "/TN", label},
-			},
-			Stop: [][]string{
-				{"schtasks", "/End", "/TN", label},
-				{"schtasks", "/Change", "/TN", label, "/DISABLE"},
-			},
-			Status: [][]string{{"schtasks", "/Query", "/TN", label, "/FO", "CSV", "/NH"}},
-
-			// schtasks /Query exits 1 for a task that does not exist.
-			NotLoadedExit: 1,
-			RunningMarker: `"Running"`,
-		}, nil
+		NotLoadedExit: 4,
 	}
-	return nil, fmt.Errorf("mtix daemon: %w %q", errUnsupportedServicePlatform, goos)
+}
+
+// windowsServiceSpec builds the Task Scheduler service spec (MTIX-275 verbs).
+func windowsServiceSpec(slug, runArgs string) *serviceSpec {
+	label := "mtix-daemon-" + slug
+	return &serviceSpec{
+		Label: label,
+		Register: [][]string{{
+			"schtasks", "/Create", "/F", "/TN", label, "/SC", "ONLOGON",
+			"/TR", runArgs,
+		}},
+		// MTIX-275: /End alone leaves the task enabled for the next
+		// logon and fails when no instance runs, so stop ends the
+		// instance (a failure there is tolerated) and then disables the
+		// task, which fails when the task is not installed. Delete
+		// ends a running instance first.
+		Unregister: [][]string{
+			{"schtasks", "/End", "/TN", label},
+			{"schtasks", "/Delete", "/F", "/TN", label},
+		},
+		Start: [][]string{
+			{"schtasks", "/Change", "/TN", label, "/ENABLE"},
+			{"schtasks", "/Run", "/TN", label},
+		},
+		Stop: [][]string{
+			{"schtasks", "/End", "/TN", label},
+			{"schtasks", "/Change", "/TN", label, "/DISABLE"},
+		},
+		Status: [][]string{{"schtasks", "/Query", "/TN", label, "/FO", "CSV", "/NH"}},
+
+		// schtasks /Query exits 1 for a task that does not exist.
+		NotLoadedExit: 1,
+		RunningMarker: `"Running"`,
+	}
 }
 
 // errUnsupportedServicePlatform marks a platform without a daemon service manager.

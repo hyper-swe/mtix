@@ -46,6 +46,7 @@ func TestDaemonServiceStateDoctor_StoppedButLive_DetailEndsForegroundDaemonFirst
 	require.GreaterOrEqual(t, onlyIf, 0)
 	assert.Less(t, onlyIf, uninstall, "uninstall is conditional on the process still running")
 	assert.Contains(t, detail, "never end a process by pid")
+	assert.Contains(t, detail, "exits 1 and prints stopped: the expected result after a stop")
 	assert.NotContains(t, strings.ToLower(row.Fix+detail), "kill")
 }
 
@@ -77,6 +78,12 @@ func TestDaemonServiceStoppedLive_Docs_EndForegroundDaemonBeforeUninstall(t *tes
 				assert.Less(t, strings.Index(row, foregroundAdviceEnd), strings.Index(row, "`mtix daemon uninstall`"),
 					"ending the foreground process comes before the uninstall advice")
 				assert.Regexp(t, `never (end|advises ending) a process by pid`, row)
+				assert.Contains(t, row, "exits 1 and prints `stopped`: the expected result after a stop")
+				if strings.HasSuffix(path, "TROUBLESHOOTING.md") || strings.HasSuffix(path, "troubleshooting.md.tmpl") {
+					// The first parenthetical names both foreground forms on its own,
+					// apart from the later sentence the whole-line check is met by.
+					assert.Contains(t, line, "(a "+foregroundAdviceMtix+" or "+foregroundAdviceSync+", or a service started by an older mtix)")
+				}
 				para := row
 				if blank := strings.Index(para, "\n\n"); blank >= 0 {
 					para = para[:blank]
@@ -84,6 +91,27 @@ func TestDaemonServiceStoppedLive_Docs_EndForegroundDaemonBeforeUninstall(t *tes
 				assert.NotRegexp(t, `(?i)\b(kill|killall|pkill|taskkill|sigkill)\b`, para, "no kill advice in the row paragraph")
 			}
 			assert.Positive(t, found, "the doc copy names the row")
+		})
+	}
+}
+
+// TestDaemonServiceStoppedLive_TroubleshootingSection_HasNoDoubleBlankLine pins that the daemon
+// section of the troubleshooting guide and its template is separated from the next heading by
+// exactly one blank line (MTIX-275.5).
+func TestDaemonServiceStoppedLive_TroubleshootingSection_HasNoDoubleBlankLine(t *testing.T) {
+	const heading = "## Daemon keeps running after `mtix daemon stop`"
+	for _, path := range []string{"docs/TROUBLESHOOTING.md", "internal/docs/templates/troubleshooting.md.tmpl"} {
+		t.Run(path, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("..", "..", path))
+			require.NoError(t, err)
+			start := strings.Index(string(raw), heading)
+			require.GreaterOrEqual(t, start, 0, "the daemon section exists")
+			section := string(raw)[start+len(heading):]
+			if next := strings.Index(section, "\n## "); next >= 0 {
+				section = section[:next+1]
+			}
+			assert.NotContains(t, section, "\n\n\n", "no double blank line in the daemon section")
+			assert.True(t, strings.HasSuffix(section, "\n\n"), "one blank line before the next heading")
 		})
 	}
 }

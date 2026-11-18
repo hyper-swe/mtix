@@ -1,0 +1,27 @@
+# MTIX-272.1: known-heavy cmd/mtix tests pinned to a shard (see
+# scripts/cmd-mtix-shards.sh). Format: <TestName> <shard 1..SHARDS>.
+# Measured seconds are from one remote-bar run on ubuntu with PostgreSQL 16
+# (the 20 slowest tests, about 1000 of 3566 s); every test not listed keeps its
+# hash shard, so a new test needs no edit here. A pin for a test the binary no
+# longer lists fails `check`: rename or drop the line. Re-measure with
+# go test -v when shards drift apart.
+TestProp_BackfillConvergence 1  # 67s
+TestEnrolGuard_RealBinary_LockFixRefusesWhileAnEnrolmentHoldsIt 1  # 49s
+TestHopField_PostgresPushPull_054ReaderIgnores 1  # 40s
+TestUnclaimError_HostileAssignee_NoControlBytes 1  # 29s
+TestRelayClone_VerifyStepCoversEveryTaskInEveryProject 2  # 107s
+TestSyncQuarantineAcknowledge_ActualProcess_NegativeControls 2  # 50s
+TestRelayClone_RecoveryNamedByRefusal_RejoinsAsNewPeer 2  # 42s
+TestRunDaemon_PullFailure_RecordsRealOutcome 2  # 31s
+TestAttachSchema_PostgresPull_PreservesLocalState 3  # 69s
+TestEnrolWorktree_RealHub_PushedRerunAndDelete_Enrols_PG 3  # 54s
+TestSyncPushClone_WorkflowAfterRerun_ReplicatesStatusAndClosedAt 3  # 44s
+TestRelayClone_RecoveryAfterRecreatingTheSkippedTask_Completes 3  # 34s
+TestRenumberCollision_RealHub_NoEventAppliesUnderTheOldNumber 4  # 123s
+TestDoctorSchemaCurrent_CollisionPaths_ReportedWithTheirFix 4  # 44s
+TestDSN_NeverInAnyFR18CommandOutput 4  # 37s
+TestDoctorRecoveryHint_DisplayContract 4  # 33s
+TestDoctorDocs_FreshStaleAndPointers_ReadOnlyJSON 5  # 55s
+TestDaemonOwner_ProcessConcurrentStarts 5  # 46s
+TestEnrolGuard_RealBinary_TornMarkerAndProbeError_PrintedFixWorks 5  # 41s
+TestSyncInit_IndexMigrationOutlivesConnectBudget 5  # 32s

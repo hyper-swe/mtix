@@ -103,7 +103,7 @@ func countCIMacOSLegs(t *testing.T, event string) int {
 
 func TestCIWorkflow_PullRequest_RunsFullLinuxPlusExactlyOneMacOSJob(t *testing.T) {
 	jobs := readCIJobs(t)
-	require.Equal(t, 29, countCIChecks(t, "pull_request"))
+	require.Equal(t, 32, countCIChecks(t, "pull_request"))
 	require.Equal(t, 1, countCIMacOSLegs(t, "pull_request"))
 	shards := jobs["test-go-shards"].Strategy.Matrix
 	require.Equal(t, []string{"ubuntu-22.04", "macos-latest"}, shards.OS.For("pull_request"))
@@ -111,7 +111,7 @@ func TestCIWorkflow_PullRequest_RunsFullLinuxPlusExactlyOneMacOSJob(t *testing.T
 	for _, name := range []string{"test-go-sqlite", "test-go-cmd", "test-go-service"} {
 		m := jobs[name].Strategy.Matrix
 		require.Equal(t, []string{"ubuntu-22.04"}, m.OS.For("pull_request"), name)
-		wantShards := []string{"1", "2", "3", "4"}
+		wantShards := []string{"1", "2", "3", "4", "5"}
 		switch name {
 		case "test-go-service":
 			wantShards = []string{"1", "2"}
@@ -124,8 +124,8 @@ func TestCIWorkflow_PullRequest_RunsFullLinuxPlusExactlyOneMacOSJob(t *testing.T
 
 func TestCIWorkflow_PushAndSchedule_RunEveryMacOSLeg(t *testing.T) {
 	for _, event := range []string{"push", "schedule"} {
-		require.Equal(t, 39, countCIChecks(t, event), event)
-		require.Equal(t, 11, countCIMacOSLegs(t, event), event)
+		require.Equal(t, 43, countCIChecks(t, event), event)
+		require.Equal(t, 12, countCIMacOSLegs(t, event), event)
 		for _, name := range []string{"test-go-shards", "test-go-sqlite", "test-go-cmd", "test-go-service"} {
 			require.Equal(t, []string{"ubuntu-22.04", "macos-latest"},
 				readCIJobs(t)[name].Strategy.Matrix.OS.For(event), event+"/"+name)

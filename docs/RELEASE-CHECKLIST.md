@@ -52,9 +52,9 @@ Diff the surface area since the last tag and verify each item is documented:
       npm audit is reported but non-blocking: triage and ticket high and
       lower dev-tooling advisories (moderate @vitest/mocker: MTIX-114)
       (MTIX-95.53).
-- [ ] All 39 ordinary CI checks successful on the main push run of the exact commit to be tagged (the full macOS matrix runs there, not on PRs):
-      twenty-two Go race shards (four SQLite, four `cmd/mtix`, two service test shards and the other-package shard per OS), the strict `test-go` aggregate,
-      web, lint, four PostgreSQL package checks, eight PostgreSQL `cmd/mtix` shard checks, fault injection and build. Skipped
+- [ ] All 43 ordinary CI checks successful on the main push run of the exact commit to be tagged (the full macOS matrix runs there, not on PRs):
+      twenty-four Go race shards (four SQLite, five `cmd/mtix`, two service test shards and the other-package shard per OS), the strict `test-go` aggregate,
+      web, lint, four PostgreSQL package checks, ten PostgreSQL `cmd/mtix` shard checks, fault injection and build. Skipped
       or cancelled jobs do not count as passing. See [CI gates](CI-GATES.md).
       The release workflow's serialized PostgreSQL-enabled preflight remains
       required; ordinary CI sharding does not replace it.

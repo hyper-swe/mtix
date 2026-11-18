@@ -258,7 +258,7 @@ func TestRemoteBarWorkflow_WebChecks_FailOnDistDifferenceOrAuditFinding(t *testi
 	}
 }
 
-// MTIX-112.17.24: the Linux bar runs cmd/mtix as four PostgreSQL-backed
+// MTIX-112.17.24: the Linux bar runs cmd/mtix as five PostgreSQL-backed
 // shards next to the core packages.
 func TestRemoteBarWorkflow_CmdShards_CoverCmdMtixWithUnchangedFlags(t *testing.T) {
 	wf := readWorkflow(t)
@@ -271,7 +271,7 @@ func TestRemoteBarWorkflow_CmdShards_CoverCmdMtixWithUnchangedFlags(t *testing.T
 
 	cmd := jobBlock(t, wf, "bar-cmd")
 	require.Contains(t, cmd, "if: ${{ inputs.os != 'macos-latest' }}")
-	require.Contains(t, cmd, `shard: ["1", "2", "3", "4"]`)
+	require.Contains(t, cmd, `shard: ["1", "2", "3", "4", "5"]`)
 	require.Contains(t, cmd, "fail-fast: false")
 	require.Contains(t, cmd, "postgres:16")
 	require.Contains(t, cmd, "persist-credentials: false")
@@ -287,7 +287,7 @@ func TestRemoteBarWorkflow_CmdShards_CoverCmdMtixWithUnchangedFlags(t *testing.T
 	// flags (without the PostgreSQL-only -p 1), so a shard count change must
 	// be made in both places.
 	ci := readCIJobs(t)["test-go-cmd"]
-	require.Equal(t, []string{"1", "2", "3", "4"}, ci.Strategy.Matrix.Shard)
+	require.Equal(t, []string{"1", "2", "3", "4", "5"}, ci.Strategy.Matrix.Shard)
 	var ciRun string
 	for _, step := range ci.Steps {
 		if strings.Contains(step.Run, "go test") {

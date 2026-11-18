@@ -2807,6 +2807,28 @@ pull's position either, so later changes keep arriving.
   or `sweep` (the late-event sweep), `push` (an own event held back) or
   `relay` (a record relay ingest skipped; see below).
 
+  **A missing relay segment stops that peer's stream.** If a segment of a
+  peer's stream is missing from the relay (deleted, lost by the medium, or never
+  published), this peer does not read past the hole: `mtix sync relay tick`
+  prints `stalled on <peer> (RELAY_GAP)` with the missing relay sequences and a
+  `fix:` line, and `mtix sync doctor` fails the `relay continuity` row naming the peer and
+  the missing relay sequences with the same fix. `mtix sync relay republish` and `reset-peer` do not clear it: they
+  write after the hole and the reader stops at the hole first. Restore the
+  missing segment file from a backup of the relay medium (the next poll resumes
+  by itself), or rejoin as a new peer in a new project (the `mtix-sync` skill
+  has the steps) from a snapshot exported by a project that has already ingested
+  past the hole (`mtix sync relay status --json` there shows the holed peer's
+  `ingested_rs` at or beyond the last missing sequence), or by the peer that
+  published the stream if its own store still holds the events it published (a
+  snapshot stamps a peer's own stream at its published head). A snapshot exported
+  by the stalled project stalls again at the same hole; if no such project
+  exists, only restoring the file
+  recovers it. When the doctor cannot read a peer's stream to its newest segment
+  (an unreadable or damaged segment, or a key epoch this peer lacks), the
+  `relay continuity` row is a WARN naming the peer and the segment, not a pass:
+  a hole beyond it is not ruled out. Run `mtix sync relay tick` for the stall and
+  its recovery, then `mtix sync doctor` again.
+
   **Records the file relay skipped.** When relay ingest cannot apply a record
   from an authenticated peer (for example two peers took the same next task
   number), the record is stored in the local relay quarantine before the ingest

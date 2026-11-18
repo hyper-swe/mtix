@@ -97,6 +97,12 @@ type Snapshot struct {
 	// which is the whole point of bootstrapping after a prune.
 	Positions map[string]uint64 `json:"positions"`
 
+	// PubEpochs is the publisher epoch each position was read in. A position
+	// is only comparable within one epoch: reset-peer restarts relay sequences
+	// (FR-21 5.7). A snapshot without it, from an older build, has no epoch to
+	// compare, and its positions are read as before (MTIX-265).
+	PubEpochs map[string]uint16 `json:"pub_epochs,omitempty"`
+
 	// Export is the store copy, in the shipped export format.
 	Export *sqlite.ExportData `json:"export"`
 }
@@ -111,6 +117,9 @@ type ExportRequest struct {
 
 	// Positions is the stamped rs vector.
 	Positions map[string]uint64
+
+	// Epochs is the publisher epoch of each stamped position; optional.
+	Epochs map[string]uint16
 
 	// MtixVersion is stamped into the export; optional.
 	MtixVersion string
@@ -143,6 +152,7 @@ func ExportSnapshot(ctx context.Context, req ExportRequest) (ExportResult, error
 		ExportedBy: req.ExportedBy,
 		CreatedAt:  req.CreatedAt.UTC(),
 		Positions:  req.Positions,
+		PubEpochs:  req.Epochs,
 		Export:     data,
 	}
 	body, err := json.MarshalIndent(&snap, "", "  ")
@@ -188,6 +198,11 @@ func (r ExportRequest) validate() error {
 			return fmt.Errorf("relay bootstrap: stamped position names peer %q", peer)
 		}
 	}
+	for peer := range r.Epochs {
+		if !peerIDPattern.MatchString(peer) {
+			return fmt.Errorf("relay bootstrap: stamped epoch names peer %q", peer)
+		}
+	}
 	return nil
 }
 
@@ -211,6 +226,10 @@ type ImportRequest struct {
 type ImportResult struct {
 	// Positions are the stamped relay sequences to begin tailing from.
 	Positions map[string]uint64
+
+	// Epochs is the publisher epoch of each position; empty for a snapshot
+	// from a build that did not stamp it.
+	Epochs map[string]uint16
 
 	// NodesImported is the snapshot's node count.
 	NodesImported int
@@ -237,6 +256,7 @@ func ImportSnapshot(ctx context.Context, req ImportRequest) (ImportResult, error
 	}
 	return ImportResult{
 		Positions:     snap.Positions,
+		Epochs:        snap.PubEpochs,
 		NodesImported: snap.Export.NodeCount,
 		Report:        report,
 	}, nil

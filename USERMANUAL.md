@@ -2818,7 +2818,16 @@ pull's position either, so later changes keep arriving.
   itself skipped, resolve the parent first: a child is recreated under the
   parent's new id, and is refused while the parent is open or was accepted, or as
   ambiguous when another peer also had a create of the parent's id skipped. A
-  second recreate of an event that was already recreated is refused (accept it). Settled rows
+  second recreate of an event that was already recreated is refused (accept it).
+  A record that names a task skipped from the same peer is skipped with it: a
+  child created under that task, or a change, comment or dependency that names
+  it, is stored as its own relay row. Its reason names the skipped task as "its
+  parent task" (a child), "the task it changes" (a field, status or comment
+  change) or "the task it depends on" (a dependency added or removed), and says
+  that applying the record could change a different local task that has the same
+  number; it does not claim why the creation was skipped. Resolving the parent does not release these rows: settle each
+  child after its parent (a recreate maps it under the parent's new id) and
+  accept the others. Settled rows
   stay listed as the audit trail. The command is local only.
 
   In text output every event id is shown double-quoted with control

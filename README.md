@@ -441,7 +441,7 @@ Configuration lives in `.mtix/config.yaml`:
 ```yaml
 prefix: PROJ
 max_depth: 50
-auto_claim: false
+auto_claim: true   # a child you create under a parent you are assigned to is claimed for you
 agent_stale_threshold: 30m
 session_timeout: 8h
 data:
@@ -450,7 +450,9 @@ progress:
   weighted: false
 ```
 
-Manage via CLI: `mtix config set auto_claim true`
+Manage via CLI: `mtix config set agent.auto_claim false`
+
+`auto_claim` is on by default. When you create a task under an in-progress parent that is assigned to you, mtix assigns the new task to you and marks it in progress. When someone else creates a task under that parent, the task is created open and unassigned and appears in `mtix ready`. "You" is your author identity: `MTIX_AUTHOR_ID`, else the `author_id` config key, else `cli` (REST uses the `X-Agent-ID` header; gRPC and MCP use `creator`, and MCP falls back to the server's identity). It must equal the `--agent` you used to claim the parent, so set `MTIX_AUTHOR_ID` to that agent id. If you claim with `--agent X` while `MTIX_AUTHOR_ID` is unset, your creator is `cli`, so the children come out open and unassigned; set `MTIX_AUTHOR_ID` to the same id you pass to `--agent`. This applies to `mtix create --under` and `mtix decompose` alike. `--assign <agent>` always wins. To hand off a task you created under your own claimed work, create it with `--assign <agent>` or release it with `mtix unclaim <id> --reason <text>`.
 
 ## Documentation
 

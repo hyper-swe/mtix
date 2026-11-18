@@ -15,6 +15,8 @@ import (
 
 // initialClaimAssignee selects the current parent assignment under the create write lock.
 // The service requests parent inheritance; explicit assignment always takes precedence.
+// A child inherits the parent's assignee only when the creator is that assignee;
+// any other creator gets an open, unassigned child (FR-11.2a, MTIX-258).
 func initialClaimAssignee(ctx context.Context, tx *sql.Tx, node *model.Node, opts store.CreateNodeOptions) (string, error) {
 	if !opts.ClaimParentAssignee || opts.Assignee != "" || node.ParentID == "" {
 		return opts.Assignee, nil
@@ -24,6 +26,9 @@ func initialClaimAssignee(ctx context.Context, tx *sql.Tx, node *model.Node, opt
 	err := tx.QueryRowContext(ctx, `SELECT COALESCE(assignee, '') FROM nodes WHERE id = ? AND status = ?`, node.ParentID, model.StatusInProgress).Scan(&inherited)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("read parent assignment: %w", err)
+	}
+	if inherited == "" || inherited != node.Creator {
+		return "", nil
 	}
 	return inherited, nil
 }

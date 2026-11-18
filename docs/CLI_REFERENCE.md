@@ -1383,7 +1383,7 @@ List nodes with filters
 | `--format` |  | Output format: briefing |  |
 | `--issue-type` |  | Filter by work classification (bug, feature, task, chore, refactor, test, doc; comma-separated) |  |
 | `--labels` |  | Filter by label, any-of (comma-separated; exact, case-sensitive, e.g. desk:now,desk:backlog) |  |
-| `--limit` |  | Maximum results | 50 |
+| `--limit` |  | Maximum rows to list, at least 1 (--json carries total, the count before the limit; use mtix stats for counts) | 50 |
 | `--max-field-chars` |  | Truncate field values (briefing format) | 0 |
 | `--priority` |  | Filter by priority (comma-separated for multiple) |  |
 | `--project` |  | Scope to a single project prefix (default: primary) |  |

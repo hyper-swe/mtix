@@ -171,7 +171,12 @@ mtix list --priority 1,2 --status open --assignee agent-a,agent-b --format brief
 
 # Nodes carrying ANY of these labels (exact, case-sensitive match)
 mtix list --labels desk:now,desk:backlog --status open --json
+
+# More than the default 50 rows: raise --limit (at least 1; `--limit 0` is refused, never "unlimited")
+mtix list --status open --limit 1000 --json
 ```
+
+`mtix list` returns at most `--limit` rows (default 50). `--json` carries `total`, the match count before the limit: when `len(nodes) < total` the list is truncated, so raise `--limit` before you conclude a task is absent. For counts only, run `mtix stats`.
 
 Multiple values within one flag combine with OR; multiple flags combine with AND. All values are parameterized — no injection risk.
 

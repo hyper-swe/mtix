@@ -26,6 +26,14 @@ func TestClassifyMtixDaemon_ByArgsAndCwd_ReturnsRole(t *testing.T) {
 		{"args unreadable", Proc{}, RoleUnknown},
 		{"not mtix", Proc{Args: []string{"/bin/sleep", "daemon", "--listen"}}, RoleUnknown},
 		{"other verb", Proc{Args: []string{"mtix", "inbox", "--wait"}}, RoleUnknown},
+		{"bare name mtix", Proc{Args: []string{"mtix", "daemon"}}, RoleDaemon},
+		{"bare name mtix.exe", Proc{Args: []string{"mtix.exe", "daemon"}}, RoleDaemon},
+		{"unix path mtix", Proc{Args: []string{"/usr/local/bin/mtix", "daemon"}}, RoleDaemon},
+		{"windows path mtix.exe", Proc{Args: []string{`C:\bin\mtix.exe`, "daemon"}}, RoleDaemon},
+		{"name mtix-x", Proc{Args: []string{"mtix-x", "daemon"}}, RoleUnknown},
+		{"name mtixd", Proc{Args: []string{"mtixd", "daemon"}}, RoleUnknown},
+		{"name xmtix", Proc{Args: []string{"xmtix", "daemon"}}, RoleUnknown},
+		{"name mtix-x listener", Proc{Args: []string{"/opt/mtix-x", "daemon", "--listen"}}, RoleUnknown},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -531,7 +531,7 @@ Create a new node. Use --under to create a child node.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--acceptance` |  | Acceptance criteria |  |
-| `--assign` |  | Claim the new node for agent/user atomically (status in_progress; creator stays author); empty means no explicit assignment (parent auto-claim still applies); nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters |  |
+| `--assign` |  | Claim the new node for agent/user atomically (status in_progress; creator stays author); empty means no explicit assignment (parent auto-claim applies only when you are the in_progress parent's assignee; otherwise the child is open and unassigned); nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters |  |
 | `--description` |  | Node description |  |
 | `--labels` |  | Comma-separated labels |  |
 | `--priority` |  | Priority (1=critical, 5=backlog) | 3 |
@@ -583,10 +583,10 @@ Push and dispatch lock files and their data directory must be real and user-owne
 ### Subcommands
 
 - `install` — Register the daemon as an OS service (boot-start, crash-restart)
-- `start` — Start the installed daemon service
-- `status` — Show the installed daemon service's state
-- `stop` — Stop the installed daemon service
-- `uninstall` — Unregister the daemon service and remove its unit file
+- `start` — Start the installed daemon service (re-enables it after stop)
+- `status` — Show the installed daemon service's state; fails when stopped
+- `stop` — Stop the daemon service; it stays stopped until start
+- `uninstall` — End and unregister the daemon service and remove its unit file
 ---
 
 ## install
@@ -606,28 +606,28 @@ Register the daemon as an OS service (boot-start, crash-restart)
 
 **Usage:** `start`
 
-Start the installed daemon service
+Start the installed daemon service (re-enables it after stop)
 ---
 
 ## status
 
 **Usage:** `status`
 
-Show the installed daemon service's state
+Show the installed daemon service's state; fails when stopped
 ---
 
 ## stop
 
 **Usage:** `stop`
 
-Stop the installed daemon service
+Stop the daemon service; it stays stopped until start
 ---
 
 ## uninstall
 
 **Usage:** `uninstall`
 
-Unregister the daemon service and remove its unit file
+End and unregister the daemon service and remove its unit file
 ---
 
 ## decompose
@@ -1383,7 +1383,7 @@ List nodes with filters
 | `--format` |  | Output format: briefing |  |
 | `--issue-type` |  | Filter by work classification (bug, feature, task, chore, refactor, test, doc; comma-separated) |  |
 | `--labels` |  | Filter by label, any-of (comma-separated; exact, case-sensitive, e.g. desk:now,desk:backlog) |  |
-| `--limit` |  | Maximum results | 50 |
+| `--limit` |  | Maximum rows to list, at least 1 (--json carries total, the count before the limit; use mtix stats for counts) | 50 |
 | `--max-field-chars` |  | Truncate field values (briefing format) | 0 |
 | `--priority` |  | Filter by priority (comma-separated for multiple) |  |
 | `--project` |  | Scope to a single project prefix (default: primary) |  |

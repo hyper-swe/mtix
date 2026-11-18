@@ -11,6 +11,8 @@ import (
 )
 
 // WithTx executes fn within a database transaction per CODING-STYLE.md §5.2.
+// Reads use the writer connection shield (MTIX-261): cancellation is checked
+// between rows, so a long first step finishes before cancellation is observed.
 // On success: commits the transaction.
 // On error: rolls back the transaction and returns the error.
 // On panic: rolls back the transaction and re-panics.

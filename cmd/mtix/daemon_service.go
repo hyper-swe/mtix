@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -51,6 +52,10 @@ type serviceSpec struct {
 	// NotLoadedExit is the exit code of the Status command that proves the label is not
 	// loaded (launchctl print: 113, systemctl status: 4); 0 when none can be proven.
 	NotLoadedExit int
+
+	// RunningMarker is a substring of the Status command's output that proves the service is
+	// running ("" when a zero exit alone proves it: systemctl status exits 0 only when active).
+	RunningMarker string
 }
 
 // buildServiceSpec assembles the platform service for the project rooted at
@@ -91,17 +96,34 @@ func buildServiceSpec(goos, exe, projectRoot, home string, intervalSec int) (*se
 		return &serviceSpec{
 			Label: label, Path: path, Content: content,
 			// bootout-first makes re-install idempotent; its failure (not
-			// currently loaded) is tolerated by the runner.
+			// currently loaded) is tolerated by the runner. enable clears a
+			// disabled flag left by stop, which would make bootstrap fail.
 			Register: [][]string{
 				{"launchctl", "bootout", target},
+				{"launchctl", "enable", target},
 				{"launchctl", "bootstrap", domain, path},
 			},
-			Unregister: [][]string{{"launchctl", "bootout", target}},
-			Start:      [][]string{{"launchctl", "kickstart", "-k", target}},
-			Stop:       [][]string{{"launchctl", "kill", "SIGTERM", target}},
-			Status:     [][]string{{"launchctl", "print", target}},
+			Unregister: [][]string{
+				{"launchctl", "enable", target},
+				{"launchctl", "bootout", target},
+			},
+			// MTIX-275: KeepAlive restarts a killed job, so stop UNLOADS it
+			// (bootout) and disables it so it stays stopped across logins.
+			// start re-enables, loads (a failure because it is already loaded
+			// is tolerated) and restarts it.
+			Start: [][]string{
+				{"launchctl", "enable", target},
+				{"launchctl", "bootstrap", domain, path},
+				{"launchctl", "kickstart", "-k", target},
+			},
+			Stop: [][]string{
+				{"launchctl", "disable", target},
+				{"launchctl", "bootout", target},
+			},
+			Status: [][]string{{"launchctl", "print", target}},
 
 			NotLoadedExit: 113,
+			RunningMarker: "state = running",
 		}, nil
 
 	case "linux":
@@ -128,8 +150,11 @@ WantedBy=default.target
 				{"systemctl", "--user", "disable", "--now", name},
 				{"systemctl", "--user", "daemon-reload"},
 			},
-			Start:  [][]string{{"systemctl", "--user", "start", name}},
-			Stop:   [][]string{{"systemctl", "--user", "stop", name}},
+			// MTIX-275: a manual stop is not subject to Restart=always, but
+			// the enabled unit would return at the next login; disable --now
+			// keeps it stopped until start (enable --now) turns it back on.
+			Start:  [][]string{{"systemctl", "--user", "enable", "--now", name}},
+			Stop:   [][]string{{"systemctl", "--user", "disable", "--now", name}},
 			Status: [][]string{{"systemctl", "--user", "status", "--no-pager", name}},
 
 			NotLoadedExit: 4,
@@ -143,14 +168,35 @@ WantedBy=default.target
 				"schtasks", "/Create", "/F", "/TN", label, "/SC", "ONLOGON",
 				"/TR", runArgs,
 			}},
-			Unregister: [][]string{{"schtasks", "/Delete", "/F", "/TN", label}},
-			Start:      [][]string{{"schtasks", "/Run", "/TN", label}},
-			Stop:       [][]string{{"schtasks", "/End", "/TN", label}},
-			Status:     [][]string{{"schtasks", "/Query", "/TN", label}},
+			// MTIX-275: /End alone leaves the task enabled for the next
+			// logon and fails when no instance runs, so stop ends the
+			// instance (a failure there is tolerated) and then disables the
+			// task, which fails when the task is not installed. Delete
+			// ends a running instance first.
+			Unregister: [][]string{
+				{"schtasks", "/End", "/TN", label},
+				{"schtasks", "/Delete", "/F", "/TN", label},
+			},
+			Start: [][]string{
+				{"schtasks", "/Change", "/TN", label, "/ENABLE"},
+				{"schtasks", "/Run", "/TN", label},
+			},
+			Stop: [][]string{
+				{"schtasks", "/End", "/TN", label},
+				{"schtasks", "/Change", "/TN", label, "/DISABLE"},
+			},
+			Status: [][]string{{"schtasks", "/Query", "/TN", label, "/FO", "CSV", "/NH"}},
+
+			// schtasks /Query exits 1 for a task that does not exist.
+			NotLoadedExit: 1,
+			RunningMarker: `"Running"`,
 		}, nil
 	}
-	return nil, fmt.Errorf("mtix daemon: unsupported platform %q", goos)
+	return nil, fmt.Errorf("mtix daemon: %w %q", errUnsupportedServicePlatform, goos)
 }
+
+// errUnsupportedServicePlatform marks a platform without a daemon service manager.
+var errUnsupportedServicePlatform = errors.New("unsupported platform")
 
 // stableExecutablePath maps a Homebrew Cellar path to the formula's stable
 // `opt` symlink (MTIX-56.11). A Cellar path is VERSION-SCOPED —
@@ -197,14 +243,14 @@ func projectSlug(projectRoot string) string {
 
 // newDaemonInstallCmd builds `mtix daemon install`: write the unit (if the
 // platform uses one), then register — idempotent, so re-running refreshes.
-func newDaemonInstallCmd() *cobra.Command {
+func newDaemonInstallCmd(deps serviceDeps) *cobra.Command {
 	var intervalSec int
 	install := &cobra.Command{
 		Use:   "install",
 		Short: "Register the daemon as an OS service (boot-start, crash-restart)",
 		Args:  syncExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			spec, err := currentServiceSpec(intervalSec)
+			spec, err := deps.spec(intervalSec)
 			if err != nil {
 				return err
 			}
@@ -213,7 +259,7 @@ func newDaemonInstallCmd() *cobra.Command {
 			}
 			// Tolerate the idempotency pre-clean (e.g. bootout of a not-yet-
 			// loaded label) failing; the final command must succeed.
-			if err := runServiceCmds(cmd.Context(), cmd.OutOrStdout(), spec.Register, true); err != nil {
+			if err := runServiceCmdsWith(cmd.Context(), cmd.OutOrStdout(), spec.Register, true, deps.run); err != nil {
 				return fmt.Errorf("mtix daemon install: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "installed %s — boot-start + crash-restart active\n", spec.Label)
@@ -241,52 +287,6 @@ func writeServiceUnit(out io.Writer, spec *serviceSpec) error {
 	return nil
 }
 
-// newDaemonServiceCmds returns the service-lifecycle subcommands for `mtix
-// daemon`.
-func newDaemonServiceCmds() []*cobra.Command {
-	verb := func(use, short string, pick func(*serviceSpec) [][]string, lenient bool) *cobra.Command {
-		return &cobra.Command{
-			Use:   use,
-			Short: short,
-			Args:  syncExactArgs(0),
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				spec, err := currentServiceSpec(daemonDispatchDefaultIntervalSec)
-				if err != nil {
-					return err
-				}
-				if err := runServiceCmds(cmd.Context(), cmd.OutOrStdout(), pick(spec), lenient); err != nil {
-					return fmt.Errorf("mtix daemon %s: %w", use, err)
-				}
-				return nil
-			},
-		}
-	}
-
-	uninstall := verb("uninstall", "Unregister the daemon service and remove its unit file",
-		func(s *serviceSpec) [][]string { return s.Unregister }, true)
-	uninstall.PostRunE = func(cmd *cobra.Command, _ []string) error {
-		spec, err := currentServiceSpec(daemonDispatchDefaultIntervalSec)
-		if err != nil {
-			return err
-		}
-		if spec.Path != "" {
-			if err := os.Remove(spec.Path); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "removed %s\n", spec.Path)
-		}
-		return nil
-	}
-
-	return []*cobra.Command{
-		newDaemonInstallCmd(),
-		uninstall,
-		verb("start", "Start the installed daemon service", func(s *serviceSpec) [][]string { return s.Start }, false),
-		verb("stop", "Stop the installed daemon service", func(s *serviceSpec) [][]string { return s.Stop }, false),
-		verb("status", "Show the installed daemon service's state", func(s *serviceSpec) [][]string { return s.Status }, false),
-	}
-}
-
 // currentServiceSpec builds the spec for THIS host, binary, and project.
 func currentServiceSpec(intervalSec int) (*serviceSpec, error) {
 	if app.mtixDir == "" {
@@ -304,16 +304,30 @@ func currentServiceSpec(intervalSec int) (*serviceSpec, error) {
 	return buildServiceSpec(runtime.GOOS, exe, filepath.Dir(app.mtixDir), home, intervalSec)
 }
 
-// runServiceCmds executes each command, echoing it. With lenient=true every
+// serviceRunner executes one service-manager command, writing its output to out. It is
+// injected so tests never touch a real launchd, systemd or Task Scheduler.
+type serviceRunner func(ctx context.Context, out io.Writer, argv []string) error
+
+// execServiceRunner runs argv as a real process.
+func execServiceRunner(ctx context.Context, out io.Writer, argv []string) error {
+	c := exec.CommandContext(ctx, argv[0], argv[1:]...) // #nosec G204 -- argv is built from constants + local paths above, never user input
+	c.Stdout = out
+	c.Stderr = out
+	return c.Run()
+}
+
+// runServiceCmds executes each command for real; see runServiceCmdsWith.
+func runServiceCmds(ctx context.Context, out io.Writer, cmds [][]string, lenient bool) error {
+	return runServiceCmdsWith(ctx, out, cmds, lenient, execServiceRunner)
+}
+
+// runServiceCmdsWith executes each command, echoing it. With lenient=true every
 // command but the LAST may fail (idempotency pre-cleans like bootout of an
 // unloaded label); the last command's error is always surfaced.
-func runServiceCmds(ctx context.Context, out io.Writer, cmds [][]string, lenient bool) error {
+func runServiceCmdsWith(ctx context.Context, out io.Writer, cmds [][]string, lenient bool, run serviceRunner) error {
 	for i, argv := range cmds {
 		fmt.Fprintf(out, "$ %s\n", strings.Join(argv, " "))
-		c := exec.CommandContext(ctx, argv[0], argv[1:]...) // #nosec G204 -- argv is built from constants + local paths above, never user input
-		c.Stdout = out
-		c.Stderr = out
-		if err := c.Run(); err != nil {
+		if err := run(ctx, out, argv); err != nil {
 			if lenient && i < len(cmds)-1 {
 				continue
 			}
@@ -321,4 +335,37 @@ func runServiceCmds(ctx context.Context, out io.Writer, cmds [][]string, lenient
 		}
 	}
 	return nil
+}
+
+// newDaemonServiceCmds returns the service-lifecycle subcommands for `mtix daemon`.
+func newDaemonServiceCmds() []*cobra.Command {
+	return newDaemonServiceCmdsWith(serviceDeps{run: execServiceRunner, spec: currentServiceSpec})
+}
+
+// newDaemonServiceCmdsWith builds the verbs over injected dependencies.
+func newDaemonServiceCmdsWith(deps serviceDeps) []*cobra.Command {
+	verb := func(use, short string, do func(context.Context, io.Writer, *serviceSpec, serviceRunner) error) *cobra.Command {
+		return &cobra.Command{
+			Use:   use,
+			Short: short,
+			Args:  syncExactArgs(0),
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				spec, err := deps.spec(daemonDispatchDefaultIntervalSec)
+				if err != nil {
+					return err
+				}
+				if err := do(cmd.Context(), cmd.OutOrStdout(), spec, deps.run); err != nil {
+					return fmt.Errorf("mtix daemon %s: %w", use, err)
+				}
+				return nil
+			},
+		}
+	}
+	return []*cobra.Command{
+		newDaemonInstallCmd(deps),
+		verb("uninstall", "End and unregister the daemon service and remove its unit file", uninstallDaemonService),
+		verb("start", "Start the installed daemon service (re-enables it after stop)", startDaemonService),
+		verb("stop", "Stop the daemon service; it stays stopped until start", stopDaemonService),
+		verb("status", "Show the installed daemon service's state; fails when stopped", statusDaemonService),
+	}
 }

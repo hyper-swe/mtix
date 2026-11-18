@@ -40,6 +40,7 @@ func checkClassifiedCreateRollback(t *testing.T, failure string) {
 	require.NoError(t, err)
 	req := createClassifiedRequest(t, "bug", "")
 	req.ParentID = parent.ID
+	req.Creator = "parent-worker" // FR-11.2a: only the parent's assignee inherits the claim
 	before := classifiedCreateCounts(t, st)
 	bc.Reset()
 	if failure == "invalid priority" {

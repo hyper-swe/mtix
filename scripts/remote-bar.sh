@@ -250,6 +250,16 @@ rb_push() {
 
 # rb_cleanup: deletes the scratch branch and temp files. Safe to call twice.
 rb_cleanup() {
+	# MTIX-274: a TERM trap can run between `sleep N &` and `RB_NAP_PID=$!` in
+	# rb_nap, so RB_NAP_PID may still be empty and the sleep would be orphaned
+	# for a whole poll interval. End every background job this shell started
+	# (only its own jobs: jobs -p lists nothing else). KILL, not TERM: a job
+	# that is still a forked copy of this shell catches TERM through the
+	# inherited trap and then runs sleep unharmed; KILL cannot be caught.
+	local job
+	for job in $(jobs -p); do
+		kill -KILL "$job" >/dev/null 2>&1 || true
+	done
 	if [ -n "$RB_NAP_PID" ]; then
 		kill "$RB_NAP_PID" >/dev/null 2>&1 || true
 		RB_NAP_PID=""

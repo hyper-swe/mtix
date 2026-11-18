@@ -95,16 +95,22 @@ func appendRelayChecks(ctx context.Context, report DoctorReport) DoctorReport {
 	report = appendCheck(report, "relay record", true, relayRecordDetail(doc))
 
 	for _, c := range []struct {
-		name string
-		run  func() (bool, string)
+		name  string
+		run   func() (bool, string)
+		check func() DoctorCheck // a row that can warn builds its own DoctorCheck
 	}{
-		{"relay key", func() (bool, string) { return checkRelayKey(doc) }},
-		{"relay publishing", func() (bool, string) { return checkRelayPublishing(ctx) }},
-		{"relay peers", func() (bool, string) { return checkRelayPeers(dir, doc) }},
-		{"relay poll cadence", checkRelayPollCadence},
-		{"relay snapshots", func() (bool, string) { return checkRelaySnapshots(dir) }},
-		{"relay privacy", func() (bool, string) { return checkRelayPrivacy(dir, doc) }},
+		{"relay key", func() (bool, string) { return checkRelayKey(doc) }, nil},
+		{"relay publishing", func() (bool, string) { return checkRelayPublishing(ctx) }, nil},
+		{"relay peers", func() (bool, string) { return checkRelayPeers(dir, doc) }, nil},
+		{"relay continuity", nil, func() DoctorCheck { return checkRelayContinuity(ctx, dir, doc) }},
+		{"relay poll cadence", checkRelayPollCadence, nil},
+		{"relay snapshots", func() (bool, string) { return checkRelaySnapshots(dir) }, nil},
+		{"relay privacy", func() (bool, string) { return checkRelayPrivacy(dir, doc) }, nil},
 	} {
+		if c.check != nil {
+			report = appendDoctorCheck(report, c.check())
+			continue
+		}
 		ok, detail := c.run()
 		report = appendCheck(report, c.name, ok, detail)
 	}

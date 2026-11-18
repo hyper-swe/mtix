@@ -104,7 +104,7 @@ func runDecomposeChildren(parentID string, children []service.DecomposeInput) er
 	}
 
 	ctx := mutationContext()
-	ids, err := app.nodeSvc.Decompose(ctx, parentID, children, "cli")
+	ids, err := app.nodeSvc.Decompose(ctx, parentID, children, app.authorID)
 	if err != nil {
 		return err
 	}

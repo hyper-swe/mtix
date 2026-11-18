@@ -76,22 +76,22 @@ func resolveScopeProject(arg, primary string) string {
 }
 
 // registerCreateTool describes classification and explicit atomic assignment (FR-3.1/FR-10.4).
-func registerCreateTool(reg *ToolRegistry, svc *service.NodeService, primaryProject string) {
+func registerCreateTool(reg *ToolRegistry, svc *service.NodeService, primaryProject, author string) {
 	reg.Register(createToolDefinition(), func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
-		return callCreateTool(ctx, svc, primaryProject, args)
+		return callCreateTool(ctx, svc, primaryProject, author, args)
 	})
 }
 
 // RegisterNodeTools registers node management MCP tools per MTIX-6.2.1 / FR-17.7.
 func RegisterNodeTools(reg *ToolRegistry, nodeSvc *service.NodeService, opts ...ToolOption) {
 	cfg := applyToolOptions(opts)
-	registerCreateTool(reg, nodeSvc, cfg.primaryProject)
+	registerCreateTool(reg, nodeSvc, cfg.primaryProject, cfg.author)
 	registerShowTool(reg, nodeSvc)
 	registerListTool(reg, nodeSvc, cfg.primaryProject)
 	registerBriefingTool(reg, nodeSvc, cfg.primaryProject)
 	registerDeleteTool(reg, nodeSvc)
 	registerUndeleteTool(reg, nodeSvc)
-	registerDecomposeTool(reg, nodeSvc)
+	registerDecomposeTool(reg, nodeSvc, cfg.author)
 	registerUpdateTool(reg, nodeSvc)
 }
 
@@ -272,7 +272,11 @@ func registerUndeleteTool(reg *ToolRegistry, svc *service.NodeService) {
 	})
 }
 
-func registerDecomposeTool(reg *ToolRegistry, svc *service.NodeService) {
+// registerDecomposeTool registers mtix_decompose. The creator is the optional
+// creator argument, then the server process identity (WithAuthor), then "mcp";
+// it must equal the parent's claiming agent for the children to be auto-claimed
+// (FR-11.2a).
+func registerDecomposeTool(reg *ToolRegistry, svc *service.NodeService, author string) {
 	reg.Register(ToolDef{
 		Name:        "mtix_decompose",
 		Description: "Create multiple child nodes atomically",
@@ -281,6 +285,7 @@ func registerDecomposeTool(reg *ToolRegistry, svc *service.NodeService) {
 			Properties: map[string]SchemaProp{
 				"parent_id": {Type: "string", Description: "Parent node ID"},
 				"children":  {Type: "string", Description: "JSON array of {title, prompt, acceptance}"},
+				"creator":   {Type: "string", Description: "Author of the children; defaults to the server's MTIX_AUTHOR_ID or author_id, then mcp. Children are claimed only when this equals the parent's assignee"},
 			},
 			Required: []string{"parent_id", "children"},
 		},
@@ -288,12 +293,14 @@ func registerDecomposeTool(reg *ToolRegistry, svc *service.NodeService) {
 		var p struct {
 			ParentID string                   `json:"parent_id"`
 			Children []service.DecomposeInput `json:"children"`
+			Creator  string                   `json:"creator"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse decompose args: %w", err)
 		}
 
-		ids, err := svc.Decompose(ctx, p.ParentID, p.Children, "mcp")
+		creator := resolveMCPCreator(p.Creator, author)
+		ids, err := svc.Decompose(ctx, p.ParentID, p.Children, creator)
 		if err != nil {
 			return nil, err
 		}
@@ -453,4 +460,17 @@ func splitCSVParam(s string) []string {
 		return nil
 	}
 	return out
+}
+
+// resolveMCPCreator picks the creator identity for a node an MCP tool creates:
+// the explicit argument, then the server process identity (MTIX_AUTHOR_ID or
+// author_id, via WithAuthor), then "mcp" (FR-11.2a).
+func resolveMCPCreator(explicit, author string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if author != "" {
+		return author
+	}
+	return "mcp"
 }

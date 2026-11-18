@@ -538,13 +538,13 @@ func requireStepWords(t *testing.T, steps []sqlite.RelayRejoinStep) {
 		{"NEW peer id", "never reuse"},
 		{"out of band", "never through the relay", "0700", "0600", "never print", ".mtix/relay/keys"},
 		{"there"},
-		{"stop any daemon there", "before any `mtix sync relay attach`", "refuses an empty project"},
-		{"stop the daemon in the old project too", "retired id", "from the start", "replaying it is harmless"},
+		{"stop any daemon there with `mtix daemon stop`, then `mtix daemon uninstall`", sqlite.RelayCloneOnSyncedDaemonStopNote, "before any `mtix sync relay attach`", "refuses an empty project"},
+		{"stop the daemon in the old project too with `mtix daemon stop`, then `mtix daemon uninstall`", sqlite.RelayCloneOnSyncedDaemonStopNote, "run `mtix sync relay tick` in the new project", "retired id", "from the start", "replaying it is harmless"},
 		{"verify there with `" + sqlite.RelayCloneOnSyncedListCommand + "`", "in the old project", "equal its `total`", "truncated",
-			"`uid` field", "never by id or title", "restart the daemon in the old project", "keep using the old project",
+			"`uid` field", "never by id or title", "restart the daemon in the old project with `mtix daemon install`", sqlite.RelayCloneOnSyncedDaemonRestartNote, "keep using the old project",
 			"leave the new project unused (delete nothing)", "do not run `mtix sync relay retire-peer`", "ask the project maintainer",
 			"the new project's peer id"},
-		{"only when the checks of steps 1 and 9 passed", "prune window", "unset means the machine id", "stop using the old project"},
+		{"only when the checks of steps 1 and 9 passed", "prune window", "unset means the machine id", "in the old project", "`mtix sync relay status`", "`this peer` line", "stop using the old project"},
 	}
 	require.Len(t, steps, len(words))
 	for i, ws := range words {

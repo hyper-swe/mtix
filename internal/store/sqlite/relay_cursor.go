@@ -198,12 +198,23 @@ func (s *Store) RelayIngestCursor(ctx context.Context, peerID string) (RelayInge
 // is taken. An older epoch is a rollback splice and is refused however
 // high its rs looks.
 func (s *Store) AdvanceRelayIngestCursor(ctx context.Context, peerID string, pos RelayIngestPosition) error {
+	return advanceRelayIngestCursor(ctx, s.writeDB, peerID, pos)
+}
+
+// relayExecer is the write slice shared by a plain connection and a transaction.
+type relayExecer interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// advanceRelayIngestCursor is the cursor upsert, run on the write connection or
+// inside a transaction (MTIX-265: a clone seed writes cursor and stamp together).
+func advanceRelayIngestCursor(ctx context.Context, db relayExecer, peerID string, pos RelayIngestPosition) error {
 	if !relayPeerIDPattern.MatchString(peerID) {
 		return fmt.Errorf("advance relay ingest cursor: peer id %q is malformed: %w",
 			peerID, model.ErrInvalidInput)
 	}
 	// #nosec G115 -- positions are bounded by the frame's own field widths.
-	_, err := s.writeDB.ExecContext(ctx, `
+	_, err := db.ExecContext(ctx, `
 		INSERT INTO relay_ingest_cursor (peer_id, segment_no, rs, pub_epoch) VALUES (?, ?, ?, ?)
 		ON CONFLICT(peer_id) DO UPDATE SET
 			segment_no = CASE WHEN excluded.pub_epoch > pub_epoch

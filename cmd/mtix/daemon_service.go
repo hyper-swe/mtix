@@ -336,3 +336,36 @@ func runServiceCmdsWith(ctx context.Context, out io.Writer, cmds [][]string, len
 	}
 	return nil
 }
+
+// newDaemonServiceCmds returns the service-lifecycle subcommands for `mtix daemon`.
+func newDaemonServiceCmds() []*cobra.Command {
+	return newDaemonServiceCmdsWith(serviceDeps{run: execServiceRunner, spec: currentServiceSpec})
+}
+
+// newDaemonServiceCmdsWith builds the verbs over injected dependencies.
+func newDaemonServiceCmdsWith(deps serviceDeps) []*cobra.Command {
+	verb := func(use, short string, do func(context.Context, io.Writer, *serviceSpec, serviceRunner) error) *cobra.Command {
+		return &cobra.Command{
+			Use:   use,
+			Short: short,
+			Args:  syncExactArgs(0),
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				spec, err := deps.spec(daemonDispatchDefaultIntervalSec)
+				if err != nil {
+					return err
+				}
+				if err := do(cmd.Context(), cmd.OutOrStdout(), spec, deps.run); err != nil {
+					return fmt.Errorf("mtix daemon %s: %w", use, err)
+				}
+				return nil
+			},
+		}
+	}
+	return []*cobra.Command{
+		newDaemonInstallCmd(deps),
+		verb("uninstall", "End and unregister the daemon service and remove its unit file", uninstallDaemonService),
+		verb("start", "Start the installed daemon service (re-enables it after stop)", startDaemonService),
+		verb("stop", "Stop the daemon service; it stays stopped until start", stopDaemonService),
+		verb("status", "Show the installed daemon service's state; fails when stopped", statusDaemonService),
+	}
+}

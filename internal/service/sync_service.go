@@ -32,8 +32,11 @@ type SyncService struct {
 	clock      func() time.Time
 	retryClock func() time.Time                           // optional retry elapsed clock; nil uses the current domain clock
 	retrySleep func(context.Context, time.Duration) error // injected wait for bounded import ownership retry
-	autoSync   AutoSyncConfig                             // sync.auto_sync; nil reads as the default, on (MTIX-95.31.2)
-	notices    io.Writer                                  // user-facing auto-import notices, stderr by default (MTIX-95.31.2)
+	// marshalExport serializes the board for publication; nil uses indented
+	// JSON. Tests count calls to pin when the board is serialized (MTIX-130.20).
+	marshalExport func(*sqlite.ExportData) ([]byte, error)
+	autoSync      AutoSyncConfig // sync.auto_sync; nil reads as the default, on (MTIX-95.31.2)
+	notices       io.Writer      // user-facing auto-import notices, stderr by default (MTIX-95.31.2)
 	// binaryVersion is this mtix build's version; the older-writer warning
 	// compares the imported file's last writer with it (MTIX-95.31.19.9).
 	binaryVersion string

@@ -148,6 +148,18 @@ func (s *SyncService) snapshotPendingExport(ctx context.Context, mtixDir string)
 	return s.store.SnapshotExportRequest(ctx)
 }
 
+// marshalBoard serializes the export for publication (FR-15.3).
+func (s *SyncService) marshalBoard(data *sqlite.ExportData) ([]byte, error) {
+	if s.marshalExport != nil {
+		return s.marshalExport(data)
+	}
+	return json.MarshalIndent(data, "", "  ")
+}
+
+// publishExport writes the board to tasks.json (FR-15.3). An automatic export
+// of an unchanged board serializes nothing and keeps the published bytes, so
+// it no longer reports marshal errors; a changed board is serialized once and
+// a marshal error is returned wrapped with nothing written (MTIX-130.20).
 func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start time.Time, automatic bool) error {
 	tasksPath := filepath.Join(mtixDir, "tasks.json")
 
@@ -157,22 +169,24 @@ func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start t
 		return fmt.Errorf("export for auto-export: %w", err)
 	}
 
-	// Step 2: Marshal to indented JSON for readability and determinism.
-	jsonBytes, err := json.MarshalIndent(exportData, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal export data: %w", err)
-	}
-
 	// FR-15.3 (MTIX-150): elapsed time alone is not a board change. Keep
 	// exact published bytes while completing the same durability bookkeeping.
 	if automatic {
-		published, err := matchingPublishedExport(tasksPath, exportData)
-		if err != nil {
-			return err
+		published, matchErr := matchingPublishedExport(tasksPath, exportData)
+		if matchErr != nil {
+			return matchErr
 		}
 		if published != nil {
 			return s.recordUnchangedExport(ctx, mtixDir, published, exportData)
 		}
+	}
+
+	// Step 2: Marshal to indented JSON for readability and determinism,
+	// after the unchanged check so a board that keeps its bytes is never
+	// serialized under the exclusive lock (MTIX-130.20).
+	jsonBytes, err := s.marshalBoard(exportData)
+	if err != nil {
+		return fmt.Errorf("marshal export data: %w", err)
 	}
 
 	// Step 3: Atomic write via temp file + rename per FR-15.3c.

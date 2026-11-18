@@ -1,5 +1,9 @@
 # mtix User Manual
 
+## SQLite read cancellation
+
+SQLite reads on both reader and writer connections (including reads inside write transactions) protect against stale snapshots after cancellation. Cancellation takes effect between rows: a long first step must finish before it is observed, and lock waits remain bounded by the busy timeout. This protection is automatic; no configuration is needed. Let the operation return before retrying, and check the task state before retrying a mutation whose result is uncertain.
+
 Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
 A complete guide to using mtix for hierarchical task management.

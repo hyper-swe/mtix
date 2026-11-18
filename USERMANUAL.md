@@ -1166,6 +1166,13 @@ Commands that take no positional arguments (for example `mtix ready`,
 # List all open nodes
 mtix list --status open
 
+# List more than the default 50 rows: raise --limit (at least 1; 0 is refused)
+mtix list --status open --limit 1000
+# --json carries "total" (the matches before the limit); the table ends with
+# "showing N of TOTAL; raise --limit to list more" when rows were cut off
+# Count tasks without listing them
+mtix stats
+
 # List nodes under a parent
 mtix list --under PROJ-1
 

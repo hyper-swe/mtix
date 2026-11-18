@@ -119,7 +119,7 @@ func newListCmd() *cobra.Command {
 	cmd.Flags().StringVar(&o.outputFormat, "format", "", "Output format: briefing")
 	cmd.Flags().IntVar(&o.maxFieldChars, "max-field-chars", 0, "Truncate field values (briefing format)")
 	cmd.Flags().BoolVar(&o.showEmpty, "show-empty", false, "Include empty fields (briefing format)")
-	cmd.Flags().IntVar(&o.limit, "limit", 50, "Maximum results")
+	cmd.Flags().IntVar(&o.limit, "limit", 50, "Maximum rows to list, at least 1 (--json carries total, the count before the limit; use mtix stats for counts)")
 	addProjectScopeFlags(cmd, &o.project, &o.allProjects)
 
 	return cmd
@@ -301,6 +301,13 @@ func runList(o listOptions) error {
 	if app.store == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
+	// The store reads Limit 0 as count-only (stats relies on it) and passes a
+	// negative limit to SQLite as LIMIT -1, which reads every row. Both were
+	// silent, undocumented modes of this command, so both are refused
+	// (FR-6.3, FR-17.9, MTIX-269).
+	if o.limit < 1 {
+		return fmt.Errorf("--limit must be at least 1 (got %d): to count tasks use `mtix stats`; to see more rows raise --limit (for example --limit 1000)", o.limit)
+	}
 	filter, err := buildListFilter(o)
 	if err != nil {
 		return err
@@ -361,7 +368,7 @@ func renderListNodes(nodes []*model.Node, total int, fieldsList []string) error 
 	out.WriteTable(headers, rows)
 
 	if total > len(nodes) {
-		out.WriteHuman("\n(%d of %d shown)\n", len(nodes), total)
+		out.WriteHuman("\n(showing %d of %d; raise --limit to list more)\n", len(nodes), total)
 	}
 	return nil
 }

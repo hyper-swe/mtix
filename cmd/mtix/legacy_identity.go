@@ -116,10 +116,10 @@ func runsDaemon(args []string) bool {
 
 // daemonValueFlags are the value-taking flags that can stand between the daemon token and its
 // subcommand: the root persistent -C/--project-dir and --log-level, and --interval of the
-// daemon and its install verb. Every other flag in that range is a bool. The split form of one
+// daemon and its install verb, and --timeout of `stop --listener`. Every other flag in that range is a bool. The split form of one
 // of these (--log-level status) puts its value in the next token, which is not the subcommand.
 // TestDaemonValueFlags_MatchCommandTree keeps this set equal to the real command tree.
-var daemonValueFlags = map[string]bool{"-C": true, "--project-dir": true, "--log-level": true, "--interval": true}
+var daemonValueFlags = map[string]bool{"-C": true, "--project-dir": true, "--log-level": true, "--interval": true, "--timeout": true}
 
 // followedByServiceVerb reports whether a service verb is the subcommand after the daemon
 // token. Cobra skips flags between daemon and its subcommand, and a value-taking flag in split

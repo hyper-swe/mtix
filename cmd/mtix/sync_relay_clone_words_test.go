@@ -77,14 +77,15 @@ func TestRelayCloneOnSyncedSteps_Docs_NameRecoveryContext(t *testing.T) {
 
 // TestRelayCloneOnSyncedSteps_DaemonNote_NamesPlatformFacts pins the stop
 // note facts: stop (which holds on every OS) then uninstall (lenient when
-// nothing is installed) then status, and an honest listener wait.
+// nothing is installed) then status, and the listener stop with its status check (MTIX-276).
 func TestRelayCloneOnSyncedSteps_DaemonNote_NamesPlatformFacts(t *testing.T) {
 	note := sqlite.RelayCloneOnSyncedDaemonStopNote
 	for _, w := range []string{
 		"run `mtix daemon stop` first", "ends the running instance and keeps it stopped until `mtix daemon start`",
 		"on macOS it unloads the launchd job, so KeepAlive cannot restart it",
 		"then `mtix daemon uninstall`, which removes the service and succeeds when none is installed",
-		"then check that `mtix daemon status` fails, which it does for a stopped or missing service", "within one pass",
+		"then check that `mtix daemon status` fails, which it does for a stopped or missing service",
+		"then run `mtix daemon stop --listener`", "check that `mtix daemon status --listener` exits 10", "exit 1 is an error", "exit 12 means a daemon", "the daemon lock is free and nothing runs",
 	} {
 		assert.Contains(t, note, w)
 	}

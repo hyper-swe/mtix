@@ -361,11 +361,14 @@ func newDaemonServiceCmdsWith(deps serviceDeps) []*cobra.Command {
 			},
 		}
 	}
+	stop := verb("stop", "Stop the daemon service; it stays stopped until start (--listener: end the detached inbox listener)", stopDaemonService)
+	status := verb("status", "Show the installed daemon service's state; fails when stopped (--listener: show the detached inbox listener)", statusDaemonService)
+	addListenerFlags(deps, stop, status)
 	return []*cobra.Command{
 		newDaemonInstallCmd(deps),
 		verb("uninstall", "End and unregister the daemon service and remove its unit file", uninstallDaemonService),
 		verb("start", "Start the installed daemon service (re-enables it after stop)", startDaemonService),
-		verb("stop", "Stop the daemon service; it stays stopped until start", stopDaemonService),
-		verb("status", "Show the installed daemon service's state; fails when stopped", statusDaemonService),
+		stop,
+		status,
 	}
 }

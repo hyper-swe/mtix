@@ -17,7 +17,7 @@
 set -euo pipefail
 export LC_ALL=C
 
-SHARDS=3
+SHARDS=4
 
 die() {
 	printf 'cmd-mtix-shards: %s\n' "$*" >&2

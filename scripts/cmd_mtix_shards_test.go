@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const cmdShardCount = 3
+const cmdShardCount = 4
 
 func cmdShardFixture(t *testing.T, listing string, exit string) string {
 	t.Helper()
@@ -96,7 +96,7 @@ func TestCmdMtixShards_Assignment_IsDeterministicAcrossRuns(t *testing.T) {
 	// that did not gain it keep their pattern.
 	_, bigger := fakeListing(51)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "listing.txt"), []byte(bigger), 0o600))
-	for _, s := range []string{"1", "2", "3"} {
+	for _, s := range []string{"1", "2", "3", "4"} {
 		out, err := runCmdShards(root, "pattern", s)
 		require.NoError(t, err, out)
 	}

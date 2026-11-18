@@ -57,7 +57,7 @@ func daemonServiceStateRow(ctx context.Context, spec *serviceSpec, live func() (
 			Detail: "the service manager state matches the daemon process state"}
 	}
 	return service.DoctorResult{Status: service.DoctorWarn, Data: data, Fix: daemonServiceStoppedLiveFix,
-		Detail: fmt.Sprintf("the service manager reports the daemon service stopped, but a daemon process of this project (pid %d) is still running and may keep publishing; run the fix command, which stops the service and then checks it. If the process keeps running, run mtix daemon uninstall; never end a process by pid on this advice", pid)}
+		Detail: fmt.Sprintf("the service manager reports the daemon service stopped, but a daemon process of this project (pid %d) is still running and may keep publishing; if a foreground mtix daemon or mtix sync daemon is running, end it where it runs (Ctrl-C in its terminal, or close that terminal) first, then run the fix command, which stops the service and then checks it. Only if the process keeps running, run mtix daemon uninstall; never end a process by pid on this advice", pid)}
 }
 
 // daemonPIDFileLiveStrict is daemonPIDFileLive for the doctor row, failing CLOSED: when the

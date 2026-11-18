@@ -1,0 +1,215 @@
+{
+  "darwin": {
+    "Label": "com.hyperswe.mtix.daemon.277ae841",
+    "Path": "/home/u/Library/LaunchAgents/com.hyperswe.mtix.daemon.277ae841.plist",
+    "Content": "\u003c?xml version=\"1.0\" encoding=\"UTF-8\"?\u003e\n\u003c!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"\u003e\n\u003cplist version=\"1.0\"\u003e\n\u003cdict\u003e\n    \u003ckey\u003eLabel\u003c/key\u003e\u003cstring\u003ecom.hyperswe.mtix.daemon.277ae841\u003c/string\u003e\n    \u003ckey\u003eProgramArguments\u003c/key\u003e\n    \u003carray\u003e\n        \u003cstring\u003e/opt/mtix/bin/mtix\u003c/string\u003e\n        \u003cstring\u003e-C\u003c/string\u003e\n        \u003cstring\u003e/work/proj\u003c/string\u003e\n        \u003cstring\u003edaemon\u003c/string\u003e\n        \u003cstring\u003e--interval\u003c/string\u003e\n        \u003cstring\u003e7\u003c/string\u003e\n    \u003c/array\u003e\n    \u003ckey\u003eRunAtLoad\u003c/key\u003e\u003ctrue/\u003e\n    \u003ckey\u003eKeepAlive\u003c/key\u003e\u003ctrue/\u003e\n    \u003ckey\u003eStandardOutPath\u003c/key\u003e\u003cstring\u003e/work/proj/.mtix/logs/daemon.out.log\u003c/string\u003e\n    \u003ckey\u003eStandardErrorPath\u003c/key\u003e\u003cstring\u003e/work/proj/.mtix/logs/daemon.err.log\u003c/string\u003e\n\u003c/dict\u003e\n\u003c/plist\u003e\n",
+    "Register": [
+      [
+        "launchctl",
+        "bootout",
+        "gui/UID/com.hyperswe.mtix.daemon.277ae841"
+      ],
+      [
+        "launchctl",
+        "enable",
+        "gui/UID/com.hyperswe.mtix.daemon.277ae841"
+      ],
+      [
+        "launchctl",
+        "bootstrap",
+        "gui/UID",
+        "/home/u/Library/LaunchAgents/com.hyperswe.mtix.daemon.277ae841.plist"
+      ]
+    ],
+    "Unregister": [
+      [
+        "launchctl",
+        "enable",
+        "gui/UID/com.hyperswe.mtix.daemon.277ae841"
+      ],
+      [
+        "launchctl",
+        "bootout",
+        "gui/UID/com.hyperswe.mtix.daemon.277ae841"
+      ]
+    ],
+    "Start": [
+      [
+        "launchctl",
+        "enable",
+        "gui/UID/com.hyperswe.mtix.daemon.277ae841"
+      ],
+      [
+        "launchctl",
+        "bootstrap",
+        "gui/UID",
+        "/home/u/Library/LaunchAgents/com.hyperswe.mtix.daemon.277ae841.plist"
+      ],
+      [
+        "launchctl",
+        "kickstart",
+        "-k",
+        "gui/UID/com.hyperswe.mtix.daemon.277ae841"
+      ]
+    ],
+    "Stop": [
+      [
+        "launchctl",
+        "disable",
+        "gui/UID/com.hyperswe.mtix.daemon.277ae841"
+      ],
+      [
+        "launchctl",
+        "bootout",
+        "gui/UID/com.hyperswe.mtix.daemon.277ae841"
+      ]
+    ],
+    "Status": [
+      [
+        "launchctl",
+        "print",
+        "gui/UID/com.hyperswe.mtix.daemon.277ae841"
+      ]
+    ],
+    "NotLoadedExit": 113,
+    "RunningMarker": "state = running"
+  },
+  "linux": {
+    "Label": "mtix-daemon-277ae841.service",
+    "Path": "/home/u/.config/systemd/user/mtix-daemon-277ae841.service",
+    "Content": "[Unit]\nDescription=mtix event dispatcher daemon (/work/proj)\n\n[Service]\nExecStart=/opt/mtix/bin/mtix -C /work/proj daemon --interval 7\nRestart=always\nRestartSec=2\n\n[Install]\nWantedBy=default.target\n",
+    "Register": [
+      [
+        "systemctl",
+        "--user",
+        "daemon-reload"
+      ],
+      [
+        "systemctl",
+        "--user",
+        "enable",
+        "--now",
+        "mtix-daemon-277ae841.service"
+      ]
+    ],
+    "Unregister": [
+      [
+        "systemctl",
+        "--user",
+        "disable",
+        "--now",
+        "mtix-daemon-277ae841.service"
+      ],
+      [
+        "systemctl",
+        "--user",
+        "daemon-reload"
+      ]
+    ],
+    "Start": [
+      [
+        "systemctl",
+        "--user",
+        "enable",
+        "--now",
+        "mtix-daemon-277ae841.service"
+      ]
+    ],
+    "Stop": [
+      [
+        "systemctl",
+        "--user",
+        "disable",
+        "--now",
+        "mtix-daemon-277ae841.service"
+      ]
+    ],
+    "Status": [
+      [
+        "systemctl",
+        "--user",
+        "status",
+        "--no-pager",
+        "mtix-daemon-277ae841.service"
+      ]
+    ],
+    "NotLoadedExit": 4,
+    "RunningMarker": ""
+  },
+  "windows": {
+    "Label": "mtix-daemon-277ae841",
+    "Path": "",
+    "Content": "",
+    "Register": [
+      [
+        "schtasks",
+        "/Create",
+        "/F",
+        "/TN",
+        "mtix-daemon-277ae841",
+        "/SC",
+        "ONLOGON",
+        "/TR",
+        "/opt/mtix/bin/mtix -C /work/proj daemon --interval 7"
+      ]
+    ],
+    "Unregister": [
+      [
+        "schtasks",
+        "/End",
+        "/TN",
+        "mtix-daemon-277ae841"
+      ],
+      [
+        "schtasks",
+        "/Delete",
+        "/F",
+        "/TN",
+        "mtix-daemon-277ae841"
+      ]
+    ],
+    "Start": [
+      [
+        "schtasks",
+        "/Change",
+        "/TN",
+        "mtix-daemon-277ae841",
+        "/ENABLE"
+      ],
+      [
+        "schtasks",
+        "/Run",
+        "/TN",
+        "mtix-daemon-277ae841"
+      ]
+    ],
+    "Stop": [
+      [
+        "schtasks",
+        "/End",
+        "/TN",
+        "mtix-daemon-277ae841"
+      ],
+      [
+        "schtasks",
+        "/Change",
+        "/TN",
+        "mtix-daemon-277ae841",
+        "/DISABLE"
+      ]
+    ],
+    "Status": [
+      [
+        "schtasks",
+        "/Query",
+        "/TN",
+        "mtix-daemon-277ae841",
+        "/FO",
+        "CSV",
+        "/NH"
+      ]
+    ],
+    "NotLoadedExit": 1,
+    "RunningMarker": "\"Running\""
+  }
+}

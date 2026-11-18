@@ -328,6 +328,8 @@ func TestBestEffortServiceCmd_OnlySchtasksEnd(t *testing.T) {
 		{"schtasks change", []string{"schtasks", "/Change", "/TN", "x", "/DISABLE"}, false},
 		{"launchctl bootout", []string{"launchctl", "bootout", "x"}, false},
 		{"other binary with /End", []string{"systemctl", "/End"}, false},
+		{"path ending in schtasks", []string{`C:\tools\schtasks`, "/End", "/TN", "x"}, false},
+		{"unix path ending in schtasks", []string{"/usr/bin/schtasks", "/End", "/TN", "x"}, false},
 		{"single element", []string{"schtasks"}, false},
 		{"empty", nil, false},
 	}

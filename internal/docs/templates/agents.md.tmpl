@@ -1,5 +1,9 @@
 # AGENTS.md — AI Agent Operating Guide
 
+## SQLite read cancellation
+
+SQLite reads on both reader and writer connections (including reads inside write transactions) protect against stale snapshots after cancellation. Cancellation takes effect between rows: a long first step must finish before it is observed, and lock waits remain bounded by the busy timeout. This protection is automatic; no configuration is needed. Let the operation return before retrying, and check the task state before retrying a mutation whose result is uncertain.
+
 Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
 > **Project:** {{ .ProjectPrefix }}
@@ -167,7 +171,12 @@ mtix list --priority 1,2 --status open --assignee agent-a,agent-b --format brief
 
 # Nodes carrying ANY of these labels (exact, case-sensitive match)
 mtix list --labels desk:now,desk:backlog --status open --json
+
+# More than the default 50 rows: raise --limit (at least 1; `--limit 0` is refused, never "unlimited")
+mtix list --status open --limit 1000 --json
 ```
+
+`mtix list` returns at most `--limit` rows (default 50). `--json` carries `total`, the match count before the limit: when `len(nodes) < total` the list is truncated, so raise `--limit` before you conclude a task is absent. For counts only, run `mtix stats`.
 
 Multiple values within one flag combine with OR; multiple flags combine with AND. All values are parameterized — no injection risk.
 

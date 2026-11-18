@@ -728,6 +728,7 @@ type fakeStore struct {
 	errResolveBy  error
 	errTx         error
 	errQuarantine error
+	errHeldLookup error
 }
 
 func (f *fakeStore) RecordRelayQuarantine(ctx context.Context, rec sqlite.RelayQuarantineRecord) error {
@@ -735,6 +736,13 @@ func (f *fakeStore) RecordRelayQuarantine(ctx context.Context, rec sqlite.RelayQ
 		return f.errQuarantine
 	}
 	return f.inner.RecordRelayQuarantine(ctx, rec)
+}
+
+func (f *fakeStore) RelayQuarantinedCreate(ctx context.Context, peerID, nodeID string) (uint64, bool, error) {
+	if f.errHeldLookup != nil {
+		return 0, false, f.errHeldLookup
+	}
+	return f.inner.RelayQuarantinedCreate(ctx, peerID, nodeID)
 }
 
 func (f *fakeStore) RelayIngestCursor(ctx context.Context, peerID string) (sqlite.RelayIngestPosition, error) {

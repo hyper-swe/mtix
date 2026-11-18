@@ -84,3 +84,18 @@ func checkNodeID(e *model.SyncEvent, field, id string) error {
 	}
 	return nil
 }
+
+// OtherNodeRef returns the id of the other task an event's payload names: the
+// parent of a create_node (empty for a root create) or the depends_on_node_id
+// of a link_dep or unlink_dep. Any other op names no second task and returns an
+// empty id. A payload that does not decode returns model.ErrInvalidInput
+// (MTIX-273: relay ingest asks it to find records that point at a skipped task).
+func OtherNodeRef(e *model.SyncEvent) (string, error) {
+	switch e.OpType {
+	case model.OpCreateNode, model.OpLinkDep, model.OpUnlinkDep:
+		_, id, err := payloadNodeRef(e)
+		return id, err
+	default:
+		return "", nil
+	}
+}

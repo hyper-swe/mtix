@@ -73,6 +73,9 @@ type Store interface {
 	// RecordRelayQuarantine stores a record the §6.4 policy skips, so it
 	// survives the cursor moving past it (MTIX-268).
 	RecordRelayQuarantine(ctx context.Context, rec sqlite.RelayQuarantineRecord) error
+	// RelayQuarantinedCreate says whether a skipped creation of the task id
+	// from this peer is held, in any state (MTIX-273).
+	RelayQuarantinedCreate(ctx context.Context, peerID, nodeID string) (rs uint64, held bool, err error)
 }
 
 // Config configures a poll over a relay's peer directories.
@@ -360,6 +363,12 @@ func (in *Ingestor) applyRecord(ctx context.Context, peerID string, header segme
 	}
 	if err := in.checkUID(ctx, &e); err != nil {
 		return in.refuse(ctx, stats, peerID, header, rec, &e, err)
+	}
+
+	// A record that names a task this peer's skipped creation numbered is
+	// held with it, before anything is applied (MTIX-273).
+	if handled, stop := in.holdForSkippedTask(ctx, stats, peerID, header, rec, &e); handled {
+		return stop
 	}
 
 	// Everything that makes the event real happens here: dedupe against

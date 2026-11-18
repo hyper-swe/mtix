@@ -49,13 +49,14 @@ const RelayCloneOnSyncedStop = "STOP, do not continue: keep the old project, do 
 const RelayCloneOnSyncedListCommand = "mtix list --json --all-projects --limit 100000 --fields uid"
 
 // RelayCloneOnSyncedDaemonStopNote follows every daemon-stop mention in the
-// recovery text and its doc copies. Stop alone does not hold on macOS, where
-// launchd restarts a KeepAlive agent, and uninstall alone does not end a
-// running instance on Windows, so the order is stop, uninstall, status. A
-// project with no installed service may print a not-installed error. Waiter
+// recovery text and its doc copies. Stop ends the running instance and holds
+// it stopped on every OS (MTIX-275: on macOS it unloads the launchd job, so
+// KeepAlive cannot restart it), uninstall removes the service and succeeds
+// when none is installed, and status fails for a stopped or missing service,
+// so the order is stop, uninstall, status. Waiter
 // listeners have no stop command, so the note says how they end
 // (cmd/mtix/listener_run.go: Done).
-const RelayCloneOnSyncedDaemonStopNote = "(for a daemon installed as an OS service, run `mtix daemon stop` first, which ends a running instance on Windows (on macOS launchd restarts it, so stop alone does not hold), then `mtix daemon uninstall`, which removes the service so nothing restarts it, then check that `mtix daemon status` fails; in a project with no installed service these commands may print a not-installed error on macOS or Windows, which is expected and harmless: continue; stop a foreground `mtix daemon` or `mtix sync daemon` where it runs, with Ctrl-C or by closing its terminal; a waiter, `mtix inbox --wait`, starts a detached listener that no command lists, so end every waiter in that project: the listener exits within one pass after the last waiter ends (about 5 seconds at the default interval), or after 15 minutes if a waiter was killed instead of ended)"
+const RelayCloneOnSyncedDaemonStopNote = "(for a daemon installed as an OS service, run `mtix daemon stop` first, which ends the running instance and keeps it stopped until `mtix daemon start` (on macOS it unloads the launchd job, so KeepAlive cannot restart it), then `mtix daemon uninstall`, which removes the service and succeeds when none is installed, then check that `mtix daemon status` fails, which it does for a stopped or missing service; stop a foreground `mtix daemon` or `mtix sync daemon` where it runs, with Ctrl-C or by closing its terminal; a waiter, `mtix inbox --wait`, starts a detached listener that no command lists, so end every waiter in that project: the listener exits within one pass after the last waiter ends (about 5 seconds at the default interval), or after 15 minutes if a waiter was killed instead of ended)"
 
 // RelayCloneOnSyncedDaemonRestartNote follows every daemon-restart mention.
 const RelayCloneOnSyncedDaemonRestartNote = "(for a service removed with `mtix daemon uninstall`, run `mtix daemon install` again; start a foreground daemon again where it ran)"

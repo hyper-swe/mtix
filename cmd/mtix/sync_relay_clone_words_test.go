@@ -69,27 +69,28 @@ func TestRelayCloneOnSyncedSteps_Docs_NameRecoveryContext(t *testing.T) {
 			assert.Equal(t, c.restarts, strings.Count(recovery, restartMention), "install mention followed by its note")
 			// Every other daemon verb in the line must be one the notes name.
 			for _, m := range daemonVerbMention.FindAllStringSubmatch(recovery, -1) {
-				assert.Contains(t, []string{"uninstall", "install", "status", "stop"}, m[1], "unexpected daemon verb %q", m[1])
+				assert.Contains(t, []string{"uninstall", "install", "status", "stop", "start"}, m[1], "unexpected daemon verb %q", m[1])
 			}
 		})
 	}
 }
 
 // TestRelayCloneOnSyncedSteps_DaemonNote_NamesPlatformFacts pins the stop
-// note facts: stop then uninstall then status, the harmless not-installed
-// error, the macOS caveat, the Windows instance end, and an honest listener
-// wait.
+// note facts: stop (which holds on every OS) then uninstall (lenient when
+// nothing is installed) then status, and an honest listener wait.
 func TestRelayCloneOnSyncedSteps_DaemonNote_NamesPlatformFacts(t *testing.T) {
 	note := sqlite.RelayCloneOnSyncedDaemonStopNote
 	for _, w := range []string{
-		"run `mtix daemon stop` first", "ends a running instance on Windows", "on macOS launchd restarts it, so stop alone does not hold",
-		"then `mtix daemon uninstall`", "then check that `mtix daemon status` fails",
-		"not-installed error", "expected and harmless: continue", "within one pass",
+		"run `mtix daemon stop` first", "ends the running instance and keeps it stopped until `mtix daemon start`",
+		"on macOS it unloads the launchd job, so KeepAlive cannot restart it",
+		"then `mtix daemon uninstall`, which removes the service and succeeds when none is installed",
+		"then check that `mtix daemon status` fails, which it does for a stopped or missing service", "within one pass",
 	} {
 		assert.Contains(t, note, w)
 	}
+	assert.NotContains(t, note, "stop alone does not hold", "MTIX-275: stop now holds on macOS")
+	assert.NotContains(t, note, "not-installed error", "MTIX-275: stop and uninstall are lenient when nothing is installed")
 	assert.NotContains(t, note, "about 10 seconds")
-	assert.NotContains(t, note, "succeeds when none is installed")
 }
 
 // TestRelayCloneOnSyncedSteps_DaemonNote_PinnedInStepsAndStopText pins the

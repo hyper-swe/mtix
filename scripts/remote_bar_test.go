@@ -799,6 +799,37 @@ func TestRemoteBar_Run_TermWhilePollingCleansUpPromptly(t *testing.T) {
 		return errors.Is(syscall.Kill(-pgid, 0), syscall.ESRCH)
 	}, 5*time.Second, 100*time.Millisecond, "an orphan sleep survived the wrapper")
 	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+
+	// MTIX-274: a TERM or INT that lands after the nap sleep starts but before its
+	// pid is captured used to orphan the sleep. A DEBUG trap (an if block, so a
+	// non-matching command returns 0 and set -e stays quiet) sends the signal at
+	// exactly that statement, so the window is hit every time instead of rarely.
+	for _, sc := range []struct {
+		name, sig string
+		want      int
+	}{{"term", "TERM", 143}, {"interrupt", "INT", 130}} {
+		t.Run(sc.name+" between nap start and pid capture leaves no orphan", func(t *testing.T) {
+			race := `source "$RB_SCRIPT"; set -T; rb_install_traps; ` +
+				`trap 'if [[ $BASH_COMMAND == "RB_NAP_PID=\$!" ]]; then kill -` + sc.sig + ` $$; fi' DEBUG; rb_nap 59`
+			raceCmd := exec.Command("bash", "-c", race)
+			raceCmd.Env = cleanEnv("RB_SCRIPT=" + abs)
+			raceCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+			require.NoError(t, raceCmd.Start())
+			racePgid := raceCmd.Process.Pid
+			t.Cleanup(func() { _ = syscall.Kill(-racePgid, syscall.SIGKILL) })
+			raceDone := make(chan error, 1)
+			go func() { raceDone <- raceCmd.Wait() }()
+			select {
+			case <-raceDone:
+			case <-time.After(10 * time.Second):
+				t.Fatal("the wrapper did not exit within 10s of the signal")
+			}
+			require.Equal(t, sc.want, raceCmd.ProcessState.ExitCode(), "the signal was delivered at the pid capture")
+			require.Eventually(t, func() bool {
+				return errors.Is(syscall.Kill(-racePgid, 0), syscall.ESRCH)
+			}, 5*time.Second, 50*time.Millisecond, "the nap sleep outlived the wrapper")
+		})
+	}
 }
 
 func dryRunTree(t *testing.T, out string) string {

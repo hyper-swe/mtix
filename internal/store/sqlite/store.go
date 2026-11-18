@@ -202,13 +202,9 @@ func openDBWith(ctx context.Context, path string, isWriter, readOnly bool, rt op
 		params = []string{"_txlock=immediate" + writerConnPragmas}
 	}
 
-	// The reader pool opens shielded connections so a cancelled read cannot
-	// leave a stale snapshot on one (MTIX-250); the writer is never shielded.
-	open := openSQLite
-	if !isWriter {
-		open = openShieldedSQLite
-	}
-	db, err := open(path, params...)
+	// Both pools need the shield: reads inside write transactions and direct
+	// writer queries have the same cancellation exposure (MTIX-250, MTIX-261).
+	db, err := openShieldedSQLite(path, params...)
 	if err != nil {
 		return nil, err
 	}

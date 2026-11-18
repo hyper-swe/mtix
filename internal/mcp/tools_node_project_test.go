@@ -152,7 +152,7 @@ func createdProject(t *testing.T, reg *ToolRegistry, args string) string {
 
 func TestCreateTool_OmittedProject_UsesPrimary(t *testing.T) {
 	reg := NewToolRegistry()
-	registerCreateTool(reg, newTestNodeService(), "MTIX")
+	registerCreateTool(reg, newTestNodeService(), "MTIX", "")
 
 	assert.Equal(t, "MTIX", createdProject(t, reg, `{"title":"Default scope"}`),
 		"an omitted project must default to the configured primary")
@@ -160,7 +160,7 @@ func TestCreateTool_OmittedProject_UsesPrimary(t *testing.T) {
 
 func TestCreateTool_WithProject_UsesIt(t *testing.T) {
 	reg := NewToolRegistry()
-	registerCreateTool(reg, newTestNodeService(), "MTIX")
+	registerCreateTool(reg, newTestNodeService(), "MTIX", "")
 
 	assert.Equal(t, "OPS", createdProject(t, reg, `{"title":"Explicit scope","project":"OPS"}`),
 		"an explicit project must override the primary")
@@ -170,7 +170,7 @@ func TestCreateTool_WithProject_UsesIt(t *testing.T) {
 // list `project` as required (only `title`).
 func TestCreateTool_NoLongerRequiresProject(t *testing.T) {
 	reg := NewToolRegistry()
-	registerCreateTool(reg, newTestNodeService(), "MTIX")
+	registerCreateTool(reg, newTestNodeService(), "MTIX", "")
 
 	var def *ToolDef
 	for i := range reg.List() {

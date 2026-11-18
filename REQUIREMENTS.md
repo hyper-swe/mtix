@@ -757,7 +757,7 @@ agent:
   session_timeout: "4h"        # Auto-end sessions after this duration
   stuck_timeout: ""            # Auto-unclaim stuck agents after this duration (default: disabled; e.g., "1h")
   id_pattern: "agent-*"        # Pattern to classify agent IDs as LLM-generated (for assembled_prompt attribution)
-  auto_claim: true             # When creating under a claimed parent, auto-claim for the same agent (see FR-11.2a)
+  auto_claim: true   # Auto-claim a child for you when you create it under a parent you're assigned to (see FR-11.2a)
 
 context:
   token_estimator: "chars4"    # Token counting method for --max-tokens truncation (default: characters ÷ 4)
@@ -775,7 +775,19 @@ ui:
   theme: "system"              # light | dark | system
 ```
 
-**FR-11.2a** When `auto_claim` is true and a node is created under a parent that is `in_progress` with an assignee, the system MUST: (1) create the node with status `open`, (2) immediately perform a `claim` operation for the parent's assignee in the same transaction. This preserves the state machine (the node transitions `open → in_progress` properly), generates correct activity events (`created` + `status_change`), and ensures `previous_status` is set correctly. The two operations are atomic — no observable intermediate state.
+**FR-11.2a: Automatic claiming of child tasks**
+
+When you create a task under a parent task that's in progress and assigned to an agent, mtix decides who owns the new task:
+
+- If you're the parent's assignee, mtix assigns the new task to you and marks it in progress. The claim happens in the same transaction as the create.
+- If you're not the parent's assignee, mtix creates the new task as open and unassigned. The task appears in `mtix ready`.
+- If you set an assignee with `--assign`, mtix uses that assignee in every case.
+
+This rule applies to `mtix create --under`, `mtix decompose`, and the matching API, gRPC, and MCP calls. The `agent.auto_claim` setting turns the rule on and off. It's on by default.
+
+**Why:** An agent that splits its own claimed work into smaller tasks keeps those tasks, so it can continue without claiming each one. Work that someone else files under a claimed task stays visible, so other agents can pick it up.
+
+**To hand off a task you created under your own claimed work:** create it with `--assign <agent>`, or release it with `mtix unclaim <id> --reason <text>`.
 
 ### FR-12: Prompt Chain & Context Propagation
 

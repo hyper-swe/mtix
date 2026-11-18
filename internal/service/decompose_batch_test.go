@@ -48,7 +48,7 @@ func TestDecompose_LateRefusal_RollsBackWholeBatch(t *testing.T) {
 			if tc.mutate != nil {
 				tc.mutate(&children[2])
 			}
-			ids, err := svc.Decompose(ctx, parent.ID, children, "author")
+			ids, err := svc.Decompose(ctx, parent.ID, children, "parent-worker")
 			require.Error(t, err)
 			assert.Empty(t, ids)
 			assertDecomposeState(t, st, before)
@@ -58,7 +58,7 @@ func TestDecompose_LateRefusal_RollsBackWholeBatch(t *testing.T) {
 				require.NoError(t, err)
 			}
 			children[2] = service.DecomposeInput{Title: "Third"}
-			ids, err = svc.Decompose(ctx, parent.ID, children, "author")
+			ids, err = svc.Decompose(ctx, parent.ID, children, "parent-worker")
 			require.NoError(t, err)
 			assert.Equal(t, []string{"TEST-1.2", "TEST-1.3", "TEST-1.4"}, ids)
 			parentCommitted, err := st.GetNode(ctx, parent.ID)
@@ -110,7 +110,11 @@ func TestDecompose_BatchCommit_PreservesIdentityAndEventOrder(t *testing.T) {
 			bc.Reset()
 			observed := &observingDecomposeStore{Store: st, t: t, sqlite: st, bc: bc, parent: parent.ID, status: tc.status, worker: tc.worker}
 			svc = service.NewNodeService(observed, bc, &service.StaticConfig{AutoClaimEnabled: true}, nil, fixedClock(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)))
-			ids, err := svc.Decompose(ctx, parent.ID, []service.DecomposeInput{{Title: "First"}, {Title: "Second"}, {Title: "Third"}}, "author")
+			creator := "author"
+			if tc.worker != "" {
+				creator = tc.worker // FR-11.2a: only the parent's assignee inherits the claim
+			}
+			ids, err := svc.Decompose(ctx, parent.ID, []service.DecomposeInput{{Title: "First"}, {Title: "Second"}, {Title: "Third"}}, creator)
 			require.NoError(t, err)
 			require.Equal(t, []string{"TEST-1.1", "TEST-1.2", "TEST-1.3"}, ids)
 			events := bc.Events()

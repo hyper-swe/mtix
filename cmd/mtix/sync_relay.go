@@ -335,13 +335,23 @@ func printRelayPass(cmd *cobra.Command, res tick.Result) {
 	}
 }
 
+// relayGapRecovery is the recovery for a segment missing from a peer's stream
+// (MTIX-265). `republish` and `reset-peer` cannot clear it: they append after
+// the hole, and the reader stops at the hole before reaching them.
+const relayGapRecovery = "restore the missing segment file from a backup of the relay medium (the next poll resumes by itself); " +
+	"otherwise ask the user, then rejoin as a new peer in a new project from a snapshot exported by a project already past the hole " +
+	"(`mtix sync relay status --json` there shows the peer's ingested_rs at or beyond the last missing sequence) or by the peer that published the stream, if its own store still holds the events it published " +
+	"(the mtix-sync skill's refused-clone row has the steps). " +
+	"A snapshot from the stalled project stalls again; if no such project exists only restoring the file recovers it. " +
+	"`mtix sync relay republish` does not clear a gap"
+
 // relayStallRecovery names the command that clears each stall.
 func relayStallRecovery(code string) string {
 	switch code {
 	case "RELAY_SEGMENT_CORRUPT":
 		return "ask that peer to run `mtix sync relay republish --from <rs>`, or re-bootstrap with `mtix sync relay clone`"
 	case "RELAY_GAP":
-		return "ask that peer to run `mtix sync relay republish --from <rs>`, or re-bootstrap with `mtix sync relay clone`"
+		return relayGapRecovery
 	case "RELAY_KEY_ABSENT":
 		return "install the missing key epoch under the relay keys directory (mode 0600)"
 	case "RELAY_SYMLINK", "RELAY_FOREIGN_ENTRY":
@@ -546,7 +556,7 @@ func runRelayCloneExport(ctx context.Context, cmd *cobra.Command, dir string) er
 	if err != nil {
 		return err
 	}
-	positions, err := relayPeerPositions(ctx, dir)
+	stamp, err := relayStampPositions(ctx, dir, peer)
 	if err != nil {
 		return err
 	}
@@ -560,7 +570,8 @@ func runRelayCloneExport(ctx context.Context, cmd *cobra.Command, dir string) er
 		Project:    prefix,
 		ExportedBy: peer,
 		CreatedAt:  time.Now().UTC(),
-		Positions:  positions,
+		Positions:  stamp.Positions,
+		Epochs:     stamp.Epochs,
 	})
 	if err != nil {
 		return err
@@ -603,10 +614,11 @@ func runRelayCloneImport(ctx context.Context, cmd *cobra.Command, dir string, f 
 	if err != nil {
 		return err
 	}
-	for peer, rs := range res.Positions {
-		if advErr := app.store.AdvanceRelayIngestCursor(ctx, peer, sqlite.RelayIngestPosition{RS: rs}); advErr != nil {
-			return advErr
-		}
+	// The cursor is seeded as it always was (epoch 0, so the store advances it
+	// on the first poll) with the stamped epoch beside it, atomically; the stamp
+	// feeds the continuity check only (MTIX-265).
+	if seedErr := bootstrap.SeedCloneCursors(ctx, app.store, res); seedErr != nil {
+		return seedErr
 	}
 	peer, err := relayPeerID()
 	if err == nil {
@@ -620,19 +632,13 @@ func runRelayCloneImport(ctx context.Context, cmd *cobra.Command, dir string, f 
 	return nil
 }
 
-// relayPeerPositions reads this store's view of every peer's position.
-func relayPeerPositions(ctx context.Context, dir string) (map[string]uint64, error) {
+// relayStampPositions is what a snapshot stamps: this store's position in every
+// peer's stream and the publisher epoch it was read in, with this peer's own
+// stream at its published head, which the snapshot holds (MTIX-265).
+func relayStampPositions(ctx context.Context, dir, self string) (bootstrap.Stamp, error) {
 	peers, _, err := relayPeerDirs(dir)
 	if err != nil {
-		return nil, err
+		return bootstrap.Stamp{}, err
 	}
-	out := make(map[string]uint64, len(peers))
-	for _, peer := range peers {
-		pos, err := app.store.RelayIngestCursor(ctx, peer)
-		if err != nil {
-			return nil, err
-		}
-		out[peer] = pos.RS
-	}
-	return out, nil
+	return bootstrap.StampPositions(ctx, app.store, self, peers)
 }

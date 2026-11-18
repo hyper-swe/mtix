@@ -363,6 +363,8 @@ func TestCheckContinuity(t *testing.T) {
 			segment.Cursor{SegmentNo: 1, RS: 50}, h(2, 50, 0), true},
 		{"a publisher epoch bump restarts the sequence at a declared base",
 			segment.Cursor{SegmentNo: 4, RS: 900, PubEpoch: 1}, h(5, 500, 2), false},
+		{"a publisher epoch bump may not skip a segment",
+			segment.Cursor{SegmentNo: 4, RS: 900, PubEpoch: 1}, h(6, 500, 2), true},
 		{"a publisher epoch bump still moves forward through segments",
 			segment.Cursor{SegmentNo: 4, RS: 900, PubEpoch: 1}, h(4, 500, 2), true},
 		{"a publisher epoch rollback is refused",

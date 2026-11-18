@@ -104,8 +104,11 @@ func (c *listenerCtl) escalate(out io.Writer, before listenerReport) error {
 		return fail("the process changed while waiting")
 	}
 	fmt.Fprintf(out, "listener did not exit on request; sending SIGTERM to the verified listener (pid %d)\n", before.PID)
+	// A failed signal (the listener exited first, or permission denied) is not
+	// read as an error on its own: the lock decides. Free means the listener
+	// ended; held means it is still running (exit 11), never success.
 	if err := c.signal(before.PID); err != nil {
-		return fmt.Errorf("signal the listener: %w", err)
+		fmt.Fprintf(out, "SIGTERM could not be delivered (%v); re-checking the lock\n", err)
 	}
 	if !c.waitFree(listenerTermWait) {
 		fmt.Fprintf(out, "listener still running after SIGTERM (pid %d)\n", before.PID)

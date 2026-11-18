@@ -37,6 +37,7 @@ type ctlFake struct {
 	sleeps         int
 	onSleep        func(f *ctlFake)
 	onSignal       func(f *ctlFake)
+	signalErr      error
 }
 
 func listenerProc(start string) procinfo.Proc {
@@ -67,7 +68,7 @@ func (f *ctlFake) ctl() *listenerCtl {
 			if f.onSignal != nil {
 				f.onSignal(f)
 			}
-			return nil
+			return f.signalErr
 		},
 		writeStop: func() error { f.stopSet++; return nil },
 		clearStop: func() error { f.stopClr++; return nil },
@@ -243,6 +244,36 @@ func TestListenerStop_Timeout_FailsClosedWithoutASignal(t *testing.T) {
 			require.Error(t, err)
 			assert.Empty(t, f.signals, "an unverified process is never signaled")
 			assert.GreaterOrEqual(t, f.stopClr, 1, "a failed stop withdraws its request")
+		})
+	}
+}
+
+// A failed SIGTERM re-checks the lock instead of reporting a generic error
+// (MTIX-276.3): a listener that ended on its own reads as stopped, and one
+// still holding the lock reads as still running (exit 11), never as success.
+func TestListenerStop_SignalFails_RechecksTheLock(t *testing.T) {
+	tests := []struct {
+		name    string
+		freeNow bool
+	}{
+		{"listener ended before the signal", true},
+		{"listener still holds the lock", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newCtlFake()
+			f.signalErr = errors.New("signal process 42: os: process already finished")
+			f.onSignal = func(f *ctlFake) { f.held = !tt.freeNow }
+			var out bytes.Buffer
+			err := f.ctl().stop(&out, listenerStopOpts{timeout: 2 * time.Second}, false)
+			assert.Equal(t, []int{42}, f.signals)
+			if tt.freeNow {
+				require.NoError(t, err)
+				assert.Contains(t, out.String(), "listener stopped")
+				return
+			}
+			require.ErrorIs(t, err, errListenerStillRunning)
+			assert.Contains(t, out.String(), "still running")
 		})
 	}
 }

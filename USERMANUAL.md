@@ -3549,14 +3549,28 @@ same events, the same convergence, the same hooks firing on arrival.
 mtix sync relay init /mnt/shared/team-relay
 mtix config set sync.relay.dir /mnt/shared/team-relay
 
-# Copy the printed key file to every other peer, out of band —
-# not through the relay directory itself. Then, on each peer:
+# Copy the key files out of band (never print their contents).
+# Only on existing peers with matching local history (fresh peers: see below):
 mtix config set sync.relay.dir /mnt/shared/team-relay
 mtix sync relay attach /mnt/shared/team-relay
 
 # From here the daemon carries it, exactly as with a hub:
 mtix daemon
 ```
+
+**Fresh late joiner (no local tasks).** On an existing peer, run `mtix sync relay tick` and `mtix sync relay clone --export` to publish a current bootstrap snapshot. In a fresh empty directory on the joining peer, use the same project prefix and a NEW peer id (never reuse an id whose store was lost). Ask the user to copy every relay key epoch file from the existing project's `.mtix/relay/keys/` to the new project's `.mtix/relay/keys/` out of band, after `init`: directory mode 0700, files mode 0600; never print keys or copy them through the relay. Before cloning, stop any daemon in the new project. Reusing the id of a lost store makes publishing stop with `RELAY_PUBLISHER_DIVERGED`. A relay made with `--no-auth` has no key files to copy, so skip the key step for it.
+
+Do not run `mtix sync relay attach` in this sequence, before or after clone. It checks local history against the relay's recorded history, refuses an empty project with `RELAY_NO_SHARED_PROJECT`, and importing a snapshot does not establish that history anchor. Clone and tick work without attach.
+
+```bash
+mtix init <PREFIX>
+mtix config set sync.relay.peer_id <new-peer-id>
+# Copy the relay key epoch files now, as described above.
+mtix config set sync.relay.dir <dir>
+mtix sync relay clone
+mtix sync relay tick
+```
+<!-- END RELAY LATE JOINER -->
 
 Each machine still keeps its **own local `.mtix`**. The shared directory
 carries *events*, never the database — the warning above about never
@@ -3605,35 +3619,31 @@ the rendered label back as an event ID.
 
 ### Peers whose workspace does not survive between sessions
 
-Some agent runtimes hand out a fresh, empty workspace every session. A
-peer like that can take part fully — its *store* is disposable, but its
-*membership* is not. What has to survive is identity: the peer's id and
-its relay key. Both arrive from configuration and secrets rather than
-being minted fresh, because a peer that re-mints its identity every
-session appears as a new member each time, and each abandoned one holds
-history open for everyone until an operator retires it.
+A fresh workspace whose store was lost must follow the fresh late-joiner
+sequence above: initialize the project, choose a NEW peer id, install keys,
+set the relay directory, clone, then tick. Never reuse the old publisher id
+with a new store: its journal no longer matches that id's published stream,
+so publishing can stop with `RELAY_PUBLISHER_DIVERGED`.
 
-Set `sync.relay.peer_id` to an identity the deployment owns, and the
-peer keeps it however often its workspace is rebuilt. Left unset, the
-identity derives from the machine — which is the right default whenever
-the machine is the thing that persists.
+Run a final `mtix sync relay tick` at the end of every session, before the
+store is lost: work that was never published leaves the machine only through
+that tick, and nothing can recover it afterwards.
 
-*How* those values persist is a property of your deployment, not of
-mtix: a mounted configuration file, an injected secret, whatever your
-runtime already provides. mtix's requirement is only that they arrive
-that way, never that they be re-minted.
+Each session that starts from a lost store mints a new peer id. Every
+abandoned id holds the relay's prune window open for everyone until an
+operator retires it. Record the peer id (`mtix config get sync.relay.peer_id`)
+before the store is lost, because it cannot be read afterwards. Once the
+abandoned peer's last tick has published and a live peer has ingested that
+work (compare `uid` fields with `mtix list --json --all-projects --limit
+100000 --fields uid`), the operator retires it from a live peer's project with
+`mtix sync relay retire-peer <old-peer-id>`. The recovery procedure below
+shows the full check.
 
-The session lifecycle:
+If the store survives between sessions, retain its peer id and keys and use
+this session lifecycle (no clone is needed):
 
 ```bash
-# 1. Session start — join the relay and catch up.
-mtix sync relay attach /mnt/shared/team-relay
-mtix sync relay clone            # only if the peer has no store yet
-
-# 2. During the session — one pass whenever you want to exchange work.
-mtix sync relay tick             # publish, ingest, then fire any hooks
-
-# 3. Session end — one final pass so the work leaves the machine.
+# Session start, during the session to exchange work, and session end:
 mtix sync relay tick
 ```
 
@@ -3651,38 +3661,12 @@ do not apply; addressed work still lands in the peer's inbox and is
 waiting at the start of its next turn. Nothing reports an error merely
 because no process was sitting there to be woken.
 
-<!-- The block below is ONE worked example, not a specification. mtix
-     does not require this shape, ship it, or read these files. -->
-
-> **A worked example (non-normative).** One way to deliver the three
-> values, shown once so each deployment does not have to invent it:
-> mount a small directory the runtime restores each session, and read
-> it at session start.
->
-> ```bash
-> # session-start script
-> #   /persistent/relay-id   — this peer's identity, e.g. 0123456789abcdef-desk
-> #   /persistent/relay-dir  — the shared directory path
-> #   /persistent/relay-key  — the relay key
-> mtix config set sync.relay.peer_id "$(cat /persistent/relay-id)"
-> mtix config set sync.relay.dir     "$(cat /persistent/relay-dir)"
-> install -m 600 /persistent/relay-key .mtix/relay/keys/1
->
-> mtix sync relay attach "$(cat /persistent/relay-dir)"
-> mtix sync relay clone      # the workspace is empty; catch up
-> ```
->
-> Any mechanism that delivers the same three values works as well — an
-> injected secret, a mounted config file, whatever the runtime already
-> provides. The point is only that they are *delivered*, never
-> re-minted.
->
 > `mtix sync relay clone` is for a workspace that holds no tasks, or one that does
 > not sync. A peer that already holds tasks and syncs (it has published or ingested
 > through a relay, or a hub is configured) is refused before anything is written:
 > the clone is a merge, which would keep the peer's local values with no sync event
 > and then move its ingest cursors past the events that would correct them, so the
-> peer would silently diverge. To rejoin, join as a NEW peer in a new project and retire the old one. Run `mtix sync relay tick` in the old project, then `mtix sync quarantine list --json`: an entry with source relay and relay.state open means relay ingest skipped a task from another peer (for example two peers that took the same task number) and the record is stored but not applied, so STOP, do not continue: keep the old project, do not run `mtix sync relay retire-peer`, and settle every open relay record first: read each with `mtix sync quarantine list --json`, then choose per record. `mtix sync quarantine resolve --handle <handle> --accept --reason <why>` keeps it unapplied (use it when the author peer still holds the task), and the record then stays stored only in the old project, so keep that project. `mtix sync quarantine resolve --handle <handle> --recreate --reason <why>` (a skipped task creation only) adds a NEW task here that syncs to every peer, including the author, who then holds both copies: on the author peer close one with `mtix cancel <id> --reason "duplicate of <other-id>"`. When none is open, start this recovery again from step 1. Doctor shows the same as the failing `relay quarantined records` row with the exact command. Otherwise run `mtix sync relay clone --export` so the relay holds a snapshot that includes the old project's work. In a new project made with `mtix init` (the same prefix as the old project), set a new `sync.relay.peer_id` (never the old one: a reused id inherits the old published stream, which the new journal lacks, so publishing stops with `RELAY_PUBLISHER_DIVERGED` and the old project's own last work never arrives). Copy the key epoch files from `.mtix/relay/keys/` into the new project's `.mtix/relay/keys/` out of band (directory mode 0700, files mode 0600, never printed), run `mtix config set sync.relay.dir <dir>`, stop any daemon there, and run `mtix sync relay clone` (do not run `mtix sync relay attach` first: it needs local history and refuses an empty project with `RELAY_NO_SHARED_PROJECT`). Stop the daemon in the old project too, so it stops publishing under the retired id, then run `mtix sync relay tick` in the new project: it publishes under the new id and re-reads the old id's stream from the start (replaying it is harmless). Verify with `mtix list --json --all-projects --limit 100000 --fields uid` in the new project and the old project: in each the number of `uid` entries read must equal its `total` (otherwise the read was truncated and the check STOPS), and compare by the `uid` field, never by id or title. If the new project lacks any uid the old project holds, or the counts differ, STOP, do not continue: restart the daemon in the old project and keep using the old project, leave the new project unused (delete nothing), do not run `mtix sync relay retire-peer`, and ask the project maintainer, telling them the new project's peer id. Only when both checks passed, run `mtix sync relay retire-peer <old-peer-id>` (`mtix config get sync.relay.peer_id` in the old project shows it) so the retired id no longer holds the prune window. Stop using the old project. When a clone into a workspace that does not
+> peer would silently diverge. To rejoin, join as a NEW peer in a new project and retire the old one. Run `mtix sync relay tick` in the old project, then `mtix sync quarantine list --json`: an entry with source relay and relay.state open means relay ingest skipped a task from another peer (for example two peers that took the same task number) and the record is stored but not applied, so STOP, do not continue: keep the old project, do not run `mtix sync relay retire-peer`, and settle every open relay record first: read each with `mtix sync quarantine list --json`, then choose per record. `mtix sync quarantine resolve --handle <handle> --accept --reason <why>` keeps it unapplied (use it when the author peer still holds the task), and the record then stays stored only in the old project, so keep that project. `mtix sync quarantine resolve --handle <handle> --recreate --reason <why>` (a skipped task creation only) adds a NEW task here that syncs to every peer, including the author, who then holds both copies: on the author peer close one with `mtix cancel <id> --reason "duplicate of <other-id>"`. When none is open, start this recovery again from step 1. Doctor shows the same as the failing `relay quarantined records` row with the exact command. Otherwise run `mtix sync relay clone --export` so the relay holds a snapshot that includes the old project's work. In a new project made with `mtix init` (the same prefix as the old project), set a new `sync.relay.peer_id` (never the old one: a reused id inherits the old published stream, which the new journal lacks, so publishing stops with `RELAY_PUBLISHER_DIVERGED` and the old project's own last work never arrives). Copy the key epoch files from `.mtix/relay/keys/` into the new project's `.mtix/relay/keys/` out of band (directory mode 0700, files mode 0600, never printed), run `mtix config set sync.relay.dir <dir>`, stop any daemon there, and run `mtix sync relay clone` (attach is not part of joining, before or after clone: it needs local history and refuses an empty project with `RELAY_NO_SHARED_PROJECT`). Stop the daemon in the old project too, so it stops publishing under the retired id, then run `mtix sync relay tick` in the new project: it publishes under the new id and re-reads the old id's stream from the start (replaying it is harmless). Verify with `mtix list --json --all-projects --limit 100000 --fields uid` in the new project and the old project: in each the number of `uid` entries read must equal its `total` (otherwise the read was truncated and the check STOPS), and compare by the `uid` field, never by id or title. If the new project lacks any uid the old project holds, or the counts differ, STOP, do not continue: restart the daemon in the old project and keep using the old project, leave the new project unused (delete nothing), do not run `mtix sync relay retire-peer`, and ask the project maintainer, telling them the new project's peer id. Only when both checks passed, run `mtix sync relay retire-peer <old-peer-id>` (`mtix config get sync.relay.peer_id` in the old project shows it) so the retired id no longer holds the prune window. Stop using the old project. When a clone into a workspace that does not
 > sync finds a task whose status, assignee, agent state, wake time or deletion state
 > differs from the snapshot's, it writes nothing and lists each conflict; rerun it
 > with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID` (the same rules

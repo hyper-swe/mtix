@@ -4,7 +4,7 @@
 
 SQLite reads on both reader and writer connections (including reads inside write transactions) protect against stale snapshots after cancellation. Cancellation takes effect between rows: a long first step must finish before it is observed, and lock waits remain bounded by the busy timeout. This protection is automatic; no configuration is needed. Let the operation return before retrying, and check the task state before retrying a mutation whose result is uncertain.
 
-Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
+Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled: the child is claimed for the parent's assignee only when the creator is that assignee, otherwise it is created open and unassigned. The creator is your author identity (MTIX_AUTHOR_ID, else the author_id config key, else cli), and it must equal the --agent you used to claim the parent; set MTIX_AUTHOR_ID to that agent id. If you claim with --agent X while MTIX_AUTHOR_ID is unset, your creator is cli, so the children come out open and unassigned; set MTIX_AUTHOR_ID to the same id you pass to --agent. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
 A complete guide to using mtix for hierarchical task management.
 
@@ -417,7 +417,7 @@ mtix create "Build authentication module" \
 
 Sync carries classification on `create_node` and on `update_field` with `field_name: "issue_type"` and a JSON string `new_value`; `""` clears it. Apply validates values before writes, deduplication, held-event acknowledgement and LWW comparison, rejecting unknown types and non-string values even when an event loses or is already held. The hub stores and forwards these field events under its envelope checks. Upgrade every replica before emitting classification updates. A 0.5.4 replica quarantines `issue_type` updates and continues pulling other events. These updates remain quarantined until the replica is upgraded. After upgrading, run `mtix sync pull` to retry them automatically; retry runs locally before contacting the hub. Updates that apply successfully leave the quarantine. Use `mtix sync quarantine list` to inspect any events still held.
 
-`mtix create --assign <agent>` creates an open node and claims it atomically, yielding `in_progress` with normal claim activity and agent state. The creator remains the resolved author (`MTIX_AUTHOR_ID`, configured author, then `cli`). An explicit assignee overrides parent auto-claim; without it, the existing parent auto-claim setting applies. Creation, its sequence allocation and either explicit or parent auto-claim commit together. Any refused create leaves the counter unchanged; a failed claim leaves no node, creation/claim activity or sync events. The next accepted create takes the next consecutive number.
+`mtix create --assign <agent>` creates an open node and claims it atomically, yielding `in_progress` with normal claim activity and agent state. The creator remains the resolved author (`MTIX_AUTHOR_ID`, configured author, then `cli`). An explicit assignee overrides parent auto-claim; without it, a child created under an in_progress parent is claimed for the parent's assignee only when the creator is that assignee (`agent.auto_claim`, on by default); any other creator gets an open, unassigned child that `mtix ready` lists. To hand off, create with `--assign <agent>` or release with `mtix unclaim <id> --reason <text>`. Creation, its sequence allocation and either explicit or parent auto-claim commit together. Any refused create leaves the counter unchanged; a failed claim leaves no node, creation/claim activity or sync events. The next accepted create takes the next consecutive number.
 
 MCP `mtix_create`, REST create and gRPC create accept `issue_type` and `assignee` with the same behavior. MCP accepts an optional `creator` (default `mcp`), REST retains the `X-Agent-ID` author, and gRPC retains `creator`; none uses the assignee as creator. Sync carries issue type as an optional create payload field; older payloads leave the issue type unset. Upgrade every replica before relying on synchronized issue type. A node created while a 0.5.4 replica is attached stays unclassified on that replica after upgrade; already-applied create events are not replayed. Assignment uses the ordinary claim event.
 
@@ -1759,7 +1759,7 @@ runs this program for you. Whether a Stop hook re-arms the waiter after a wake-d
 | Key | Default | Description |
 |-----|---------|-------------|
 | `prefix` | `PROJ` | Project ID prefix |
-| `auto_claim` | `false` | Auto-claim children when parent is claimed |
+| `agent.auto_claim` | `true` | Claim a child for you when you create it under an in-progress parent you are assigned to. A child created by anyone else is open and unassigned. "You" is your author identity (`MTIX_AUTHOR_ID`, else `author_id`, else `cli`; `X-Agent-ID` on REST, `creator` on gRPC and MCP), and it must equal the `--agent` you used to claim the parent: set `MTIX_AUTHOR_ID` to that agent id. If you claim with `--agent X` while `MTIX_AUTHOR_ID` is unset, your creator is `cli`, so the children come out open and unassigned; set `MTIX_AUTHOR_ID` to the same id you pass to `--agent`. `--assign` always wins. Applies to `mtix create --under`, `mtix decompose` and the API, gRPC and MCP calls. To hand off, create with `--assign <agent>` or release with `mtix unclaim <id> --reason <text>`. |
 | `max_depth` | `50` | Advisory depth warning (does not reject) |
 | `agent.stale_threshold` | `24h` | Duration before agent is considered stale |
 | `agent.stuck_timeout` | `0` (disabled) | Auto-unclaim stuck agents after this duration |
@@ -2806,6 +2806,28 @@ pull's position either, so later changes keep arriving.
   the failed tries; `source` (in `--json`) is `pull` (the regular fetch)
   or `sweep` (the late-event sweep), `push` (an own event held back) or
   `relay` (a record relay ingest skipped; see below).
+
+  **A missing relay segment stops that peer's stream.** If a segment of a
+  peer's stream is missing from the relay (deleted, lost by the medium, or never
+  published), this peer does not read past the hole: `mtix sync relay tick`
+  prints `stalled on <peer> (RELAY_GAP)` with the missing relay sequences and a
+  `fix:` line, and `mtix sync doctor` fails the `relay continuity` row naming the peer and
+  the missing relay sequences with the same fix. `mtix sync relay republish` and `reset-peer` do not clear it: they
+  write after the hole and the reader stops at the hole first. Restore the
+  missing segment file from a backup of the relay medium (the next poll resumes
+  by itself), or rejoin as a new peer in a new project (the `mtix-sync` skill
+  has the steps) from a snapshot exported by a project that has already ingested
+  past the hole (`mtix sync relay status --json` there shows the holed peer's
+  `ingested_rs` at or beyond the last missing sequence), or by the peer that
+  published the stream if its own store still holds the events it published (a
+  snapshot stamps a peer's own stream at its published head). A snapshot exported
+  by the stalled project stalls again at the same hole; if no such project
+  exists, only restoring the file
+  recovers it. When the doctor cannot read a peer's stream to its newest segment
+  (an unreadable or damaged segment, or a key epoch this peer lacks), the
+  `relay continuity` row is a WARN naming the peer and the segment, not a pass:
+  a hole beyond it is not ruled out. Run `mtix sync relay tick` for the stall and
+  its recovery, then `mtix sync doctor` again.
 
   **Records the file relay skipped.** When relay ingest cannot apply a record
   from an authenticated peer (for example two peers took the same next task

@@ -4,7 +4,6 @@
 package ingest
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -66,6 +65,9 @@ type Store interface {
 	IdempotentApply(context.Context, *sql.Tx, *model.SyncEvent) error
 	RelayIngestCursor(ctx context.Context, peerID string) (sqlite.RelayIngestPosition, error)
 	AdvanceRelayIngestCursor(ctx context.Context, peerID string, pos sqlite.RelayIngestPosition) error
+	// RelayCloneStampEpoch is the epoch a snapshot stamped for a peer, read
+	// for the continuity check only (MTIX-265).
+	RelayCloneStampEpoch(ctx context.Context, peerID string) (uint16, error)
 	WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error
 	ResolveDisplayPathByUID(ctx context.Context, uid string) (string, error)
 	JournalTail(ctx context.Context) (int64, error)
@@ -233,20 +235,38 @@ func (in *Ingestor) ingestPeer(ctx context.Context, peer segment.PeerDir, stats 
 	if err != nil {
 		return err
 	}
+	// walk is where the stream has been read to in THIS poll, for the
+	// continuity check only. It differs from position only for a clone-seeded
+	// cursor, whose early segments are read without the persisted position
+	// moving (MTIX-265).
+	walkStart, err := in.chainStart(ctx, peer.PeerID, prev)
+	if err != nil {
+		return err
+	}
+	walk := newChain(walkStart)
+	// position decides WHICH RECORDS ARE APPLIED, and it is what the base
+	// build used: a clone-seeded cursor (segment 0) applies as epoch 0, so the
+	// clone replays every retained record and LWW judges them against the
+	// events of the other streams. The stamped epoch feeds the continuity
+	// check only; letting it skip records would drop events the snapshot has
+	// no LWW history for (MTIX-265). The clone import persists epoch 0 as base
+	// did and stores the stamped epoch apart (chainStart), so the cursor moves
+	// on the first poll and a later poll never re-reads a judged record.
 	position := Position{SegmentNo: prev.SegmentNo, RS: prev.RS, PubEpoch: prev.PubEpoch}
+	if position.SegmentNo == 0 {
+		position.PubEpoch = 0
+	}
 
 	for _, file := range Unread(segs, position) {
-		outcome, stop := in.ingestSegment(ctx, peer.PeerID, file, file.No < newest, position, stats)
-		next, moved := Next(position, outcome)
-		if moved {
-			if err := in.cfg.Store.AdvanceRelayIngestCursor(ctx, peer.PeerID,
-				sqlite.RelayIngestPosition{
-					SegmentNo: next.SegmentNo, RS: next.RS, PubEpoch: next.PubEpoch,
-				}); err != nil {
-				return err
-			}
-			position = next
+		outcome, stop := in.ingestSegment(ctx, peer.PeerID, segmentTurn{file: file, sealed: file.No < newest, prev: position, ch: walk}, stats)
+		if !stop && outcome.Verdict == nil {
+			walk.advance(Position{SegmentNo: outcome.Reached.SegmentNo, RS: outcome.Reached.RS, PubEpoch: outcome.Reached.PubEpoch})
 		}
+		next, err := in.advance(ctx, peer.PeerID, position, outcome)
+		if err != nil {
+			return err
+		}
+		position = next
 		if stats.fatal != nil {
 			return stats.fatal
 		}
@@ -257,81 +277,6 @@ func (in *Ingestor) ingestPeer(ctx context.Context, peer segment.PeerDir, stats 
 		}
 	}
 	return nil
-}
-
-// ingestSegment reads and applies one segment, returning what the scan
-// reached and whether the peer's stream stops here.
-func (in *Ingestor) ingestSegment(ctx context.Context, peerID string, file segment.File, sealed bool, prev Position, stats *Stats) (Outcome, bool) {
-	raw, err := readSegment(file.Path)
-	if err != nil {
-		in.stall(stats, peerID, file.No, segment.CodeOf(err), err)
-		return Outcome{Verdict: err}, true
-	}
-	header, err := segment.ParseHeader(raw)
-	if err != nil {
-		in.stall(stats, peerID, file.No, segment.CodeOf(err), err)
-		return Outcome{Verdict: err}, true
-	}
-	key, err := in.keyFor(header)
-	if err != nil {
-		in.stall(stats, peerID, file.No, segment.CodeOf(err), err)
-		return Outcome{Verdict: err}, true
-	}
-
-	sc, err := segment.NewScanner(bytes.NewReader(raw), segment.ScanOptions{
-		Sealed:       sealed,
-		Key:          key,
-		ExpectPeerID: peerID,
-	})
-	if err != nil {
-		in.stall(stats, peerID, file.No, segment.CodeOf(err), err)
-		return Outcome{Verdict: err}, true
-	}
-
-	out := Outcome{Header: header}
-	applied := segment.Cursor{
-		SegmentNo: header.SegmentNo, RS: prev.RS, PubEpoch: header.PubEpoch,
-	}
-	if header.PubEpoch != prev.PubEpoch {
-		// A new publisher epoch restarts relay sequences at a declared
-		// base, so the previous epoch's position says nothing about
-		// where this segment begins.
-		applied.RS = header.FirstRS - 1
-	}
-	for sc.Next() {
-		rec := sc.Record()
-		if rec.RS <= applied.RS {
-			// Already applied in an earlier poll; the scan re-reads a
-			// segment from its start when resuming inside it.
-			continue
-		}
-		if stop := in.applyRecord(ctx, peerID, header, rec, stats); stop {
-			// A policy stall banks what was APPLIED, not what was
-			// delivered: the refused record itself must stay ahead of
-			// the cursor so the next poll meets it again and the stall
-			// is durable rather than silently stepped over.
-			out.Reached = applied
-			return out, true
-		}
-		applied.RS = rec.RS
-	}
-	out.Reached = applied
-	out.Truncated = sc.Truncated()
-	out.Verdict = sc.Err()
-
-	if out.Verdict != nil {
-		// A MAC failure is a corruption-class verdict like any other —
-		// the reader stalls on it per §5.4 — and it ALSO increments the
-		// §8.2 counter, because a spike for one peer means something
-		// that is not that peer is writing its directory. One condition,
-		// a verdict and a signal.
-		if errors.Is(out.Verdict, segment.ErrMACMismatch) {
-			stats.AuthFailures++
-		}
-		in.stall(stats, peerID, file.No, segment.CodeOf(out.Verdict), out.Verdict)
-		return out, true
-	}
-	return out, false
 }
 
 // applyRecord runs the ingest gate and, if it passes, the shipped apply
@@ -491,4 +436,19 @@ func decodeEvent(payload []byte, e *model.SyncEvent) error {
 		return fmt.Errorf("decode relay record payload: %w", err)
 	}
 	return nil
+}
+
+// advance moves the persisted cursor to where the outcome reached, and returns
+// the position the next segment is read from.
+func (in *Ingestor) advance(ctx context.Context, peerID string, position Position, outcome Outcome) (Position, error) {
+	next, moved := Next(position, outcome)
+	if !moved {
+		return position, nil
+	}
+	if err := in.cfg.Store.AdvanceRelayIngestCursor(ctx, peerID, sqlite.RelayIngestPosition{
+		SegmentNo: next.SegmentNo, RS: next.RS, PubEpoch: next.PubEpoch,
+	}); err != nil {
+		return position, err
+	}
+	return next, nil
 }

@@ -39,6 +39,7 @@ type peerRig struct {
 	segDir   string
 	rs       uint64
 	segNo    uint64
+	pubEpoch uint16 // publisher epoch of published segments; zero means 1
 }
 
 func newPeerRig(t *testing.T) *peerRig {
@@ -101,6 +102,9 @@ func (r *peerRig) publish(t *testing.T, key []byte, payloads ...[]byte) {
 		FirstRS:       r.rs,
 		KeyEpoch:      1,
 		PubEpoch:      1,
+	}
+	if r.pubEpoch != 0 {
+		h.PubEpoch = r.pubEpoch
 	}
 	if key != nil {
 		h.Flags |= segment.FlagAuthenticated
@@ -736,6 +740,10 @@ func (f *fakeStore) RecordRelayQuarantine(ctx context.Context, rec sqlite.RelayQ
 		return f.errQuarantine
 	}
 	return f.inner.RecordRelayQuarantine(ctx, rec)
+}
+
+func (f *fakeStore) RelayCloneStampEpoch(ctx context.Context, peerID string) (uint16, error) {
+	return f.inner.RelayCloneStampEpoch(ctx, peerID)
 }
 
 func (f *fakeStore) RelayQuarantinedCreate(ctx context.Context, peerID, nodeID string) (uint64, bool, error) {

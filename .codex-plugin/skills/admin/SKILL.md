@@ -498,7 +498,7 @@ Run `mtix config get <key>` to view a setting and `mtix config set <key> <value>
 Key configuration options:
 - `prefix` — project prefix for dot-notation IDs
 - `max_depth` — maximum hierarchy depth (default: 50)
-- `auto_claim` — whether to auto-claim on creation
+- `auto_claim` — whether a child you create under a parent you are assigned to is claimed for you (default on); a child created by anyone else stays open and unassigned; "you" is your author identity (MTIX_AUTHOR_ID, else author_id), which must equal the --agent used to claim the parent
 - `sync.max_lamport_jump` — how far above the local Lamport clock a pulled event may be stamped before `mtix sync pull` quarantines it (default: 4294967296, that is 2^32; a positive integer; see Sync Recovery: Quarantined Pulled Events)
 - `agent_stale_threshold` — heartbeat timeout for stale detection (default: 30m)
 - `session_timeout` — maximum session duration (default: 8h)

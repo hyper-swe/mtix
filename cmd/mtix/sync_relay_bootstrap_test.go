@@ -42,6 +42,7 @@ func TestRelayCloneExport_PeerPositions_PersistsSnapshotAndPrivacyAdvice(t *test
 	require.NoError(t, json.Unmarshal(body, &snap))
 	require.Equal(t, diagnosticSelf, snap.ExportedBy)
 	require.Equal(t, map[string]uint64{diagnosticOther: 17}, snap.Positions)
+	require.Equal(t, map[string]uint16{diagnosticOther: 1}, snap.PubEpochs, "the publisher epoch travels with each position")
 	require.False(t, snap.CreatedAt.IsZero())
 	require.Len(t, snap.Export.Nodes, 1)
 	require.Equal(t, "Relay command history", snap.Export.Nodes[0].Title)
@@ -61,6 +62,7 @@ func TestRelayCloneImport_NewestSnapshot_AdvancesPositionsAndClearsRetirement(t 
 			Store: app.store, RelayDir: dir, Project: "TEST", ExportedBy: diagnosticOther,
 			CreatedAt: time.Date(2026, 1, 1+i, 12, 0, 0, 0, time.UTC),
 			Positions: map[string]uint64{diagnosticOther: uint64(8 + i)},
+			Epochs:    map[string]uint16{diagnosticOther: 2},
 		})
 		require.NoError(t, err)
 	}
@@ -79,6 +81,10 @@ func TestRelayCloneImport_NewestSnapshot_AdvancesPositionsAndClearsRetirement(t 
 	pos, err := app.store.RelayIngestCursor(t.Context(), diagnosticOther)
 	require.NoError(t, err)
 	require.Equal(t, uint64(9), pos.RS)
+	require.Zero(t, pos.PubEpoch, "the cursor is seeded as base did, so the store advances it on the first poll")
+	stamp, err := app.store.RelayCloneStampEpoch(t.Context(), diagnosticOther)
+	require.NoError(t, err)
+	require.Equal(t, uint16(2), stamp, "the stamped publisher epoch is kept apart for the continuity check")
 	doc, err := metadata.Read(dir)
 	require.NoError(t, err)
 	require.Empty(t, doc.RetiredPeers)
@@ -145,15 +151,36 @@ func TestRelayCloneExport_NaturalFailures_RefuseWithoutSnapshot(t *testing.T) {
 	}
 }
 
-func TestRelayPeerPositions_EmptyAndClosedStore_ReflectDurableState(t *testing.T) {
+func TestRelayStampPositions_EmptyAndClosedStore_ReflectDurableState(t *testing.T) {
 	dir := initCommandRelay(t, true)
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, tick.PeersDirName), 0o700))
-	positions, err := relayPeerPositions(t.Context(), dir)
+	stamp, err := relayStampPositions(t.Context(), dir, diagnosticSelf)
 	require.NoError(t, err)
-	require.Empty(t, positions)
+	require.Empty(t, stamp.Positions)
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, tick.PeersDirName, diagnosticOther), 0o700))
 	require.NoError(t, app.store.Close())
-	positions, err = relayPeerPositions(t.Context(), dir)
+	stamp, err = relayStampPositions(t.Context(), dir, diagnosticSelf)
 	require.Error(t, err)
-	require.Nil(t, positions)
+	require.Empty(t, stamp.Positions)
+}
+
+// TestRelayCloneExport_OwnStream_StampedAtThePublishedHead: the exporter never
+// ingests itself, so its ingest cursor for its own stream is empty, yet the
+// snapshot holds every event it published. Stamped zero, a clone would read the
+// stream as a fresh reader and stall RELAY_GAP once retention pruned segment 1
+// (MTIX-265).
+func TestRelayCloneExport_OwnStream_StampedAtThePublishedHead(t *testing.T) {
+	dir := initCommandRelay(t, true)
+	require.NoError(t, os.MkdirAll(filepath.Join(dir, tick.PeersDirName, diagnosticSelf), 0o700))
+	require.NoError(t, app.store.AdvanceRelayPushCursor(t.Context(), 4, 6)) // rs 1-5 published
+	_, _, err := relayCommandOutput(newRelayCloneCmd(), "--export")
+	require.NoError(t, err)
+	names, err := bootstrap.SnapshotNames(dir)
+	require.NoError(t, err)
+	body, err := os.ReadFile(filepath.Join(dir, bootstrap.DirName, names[0]))
+	require.NoError(t, err)
+	var snap bootstrap.Snapshot
+	require.NoError(t, json.Unmarshal(body, &snap))
+	require.Equal(t, uint64(5), snap.Positions[diagnosticSelf])
+	require.Equal(t, uint16(1), snap.PubEpochs[diagnosticSelf])
 }

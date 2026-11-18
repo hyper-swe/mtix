@@ -531,7 +531,7 @@ Create a new node. Use --under to create a child node.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--acceptance` |  | Acceptance criteria |  |
-| `--assign` |  | Claim the new node for agent/user atomically (status in_progress; creator stays author); empty means no explicit assignment (parent auto-claim still applies); nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters |  |
+| `--assign` |  | Claim the new node for agent/user atomically (status in_progress; creator stays author); empty means no explicit assignment (parent auto-claim applies only when you are the in_progress parent's assignee; otherwise the child is open and unassigned); nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters |  |
 | `--description` |  | Node description |  |
 | `--labels` |  | Comma-separated labels |  |
 | `--priority` |  | Priority (1=critical, 5=backlog) | 3 |

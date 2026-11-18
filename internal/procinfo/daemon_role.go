@@ -6,7 +6,6 @@ package procinfo
 import (
 	"path/filepath"
 	"slices"
-	"strings"
 )
 
 // DaemonRole is what a process holding the board's daemon lock is, judged
@@ -37,7 +36,7 @@ func ClassifyMtixDaemon(p Proc, projectDir string) (DaemonRole, string) {
 	if len(p.Args) == 0 {
 		return RoleUnknown, "the process arguments cannot be read"
 	}
-	if !strings.HasPrefix(strings.TrimSuffix(normalizeBase(p.Args[0]), ".exe"), "mtix") {
+	if base := normalizeBase(p.Args[0]); base != "mtix" && base != "mtix.exe" {
 		return RoleUnknown, "the process is not an mtix binary"
 	}
 	if p.Cwd != "" && projectDir != "" && filepath.Clean(p.Cwd) != filepath.Clean(projectDir) {

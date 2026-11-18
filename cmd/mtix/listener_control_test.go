@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -19,20 +20,23 @@ import (
 
 // ctlFake is one injected host: no process, signal or clock is real.
 type ctlFake struct {
-	goos     string
-	held     bool
-	lockErr  error
-	pid      int
-	proc     procinfo.Proc
-	procErr  error
-	leases   []oplocal.ListenLease
-	signals  []int
-	stopSet  int
-	stopClr  int
-	clock    time.Time
-	sleeps   int
-	onSleep  func(f *ctlFake)
-	onSignal func(f *ctlFake)
+	goos           string
+	held           bool
+	lockErr        error
+	leaseErr       error
+	leaseCalls     int
+	leaseErrOnCall int // when > 0, only that (1-based) lease read fails
+	pid            int
+	proc           procinfo.Proc
+	procErr        error
+	leases         []oplocal.ListenLease
+	signals        []int
+	stopSet        int
+	stopClr        int
+	clock          time.Time
+	sleeps         int
+	onSleep        func(f *ctlFake)
+	onSignal       func(f *ctlFake)
 }
 
 func listenerProc(start string) procinfo.Proc {
@@ -51,7 +55,13 @@ func (f *ctlFake) ctl() *listenerCtl {
 		lockHeld:   func() (bool, error) { return f.held, f.lockErr },
 		readPID:    func() (int, error) { return f.pid, nil },
 		info:       func(int) (procinfo.Proc, error) { return f.proc, f.procErr },
-		leases:     func() ([]oplocal.ListenLease, error) { return f.leases, nil },
+		leases: func() ([]oplocal.ListenLease, error) {
+			f.leaseCalls++
+			if f.leaseErrOnCall > 0 && f.leaseCalls != f.leaseErrOnCall {
+				return f.leases, nil
+			}
+			return f.leases, f.leaseErr
+		},
 		signal: func(pid int) error {
 			f.signals = append(f.signals, pid)
 			if f.onSignal != nil {
@@ -245,4 +255,67 @@ func TestListenerStop_StillHeldAfterSignal_Fails(t *testing.T) {
 	assert.Equal(t, []int{42}, f.signals)
 	assert.False(t, errors.Is(err, errListenerNotRunning))
 	assert.Contains(t, out.String(), "still running")
+}
+
+// A waiter-lease read failure must never read as "lock free" (exit 10): the
+// relay clone and retire-peer recovery gate treats exit 10 as the only proof
+// that nothing runs (MTIX-276.4). The lock is free here on purpose, so a
+// swallowed lease error would fall through to the not-running answer.
+func TestListenerControl_LeaseReadError_ExitsOneNeverTenOrZero(t *testing.T) {
+	leaseFail := errors.New("lease directory unreadable")
+	tests := []struct {
+		name string
+		run  func(c *listenerCtl, out *bytes.Buffer) error
+	}{
+		{"status", func(c *listenerCtl, out *bytes.Buffer) error { return c.status(out, false) }},
+		{"status json", func(c *listenerCtl, out *bytes.Buffer) error { return c.status(out, true) }},
+		{"stop", func(c *listenerCtl, out *bytes.Buffer) error {
+			return c.stop(out, listenerStopOpts{timeout: time.Second}, false)
+		}},
+	}
+	for _, held := range []bool{false, true} {
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("%s held=%t", tt.name, held), func(t *testing.T) {
+				f := newCtlFake()
+				f.held = held
+				f.leaseErr = leaseFail
+				var out bytes.Buffer
+				err := tt.run(f.ctl(), &out)
+				require.ErrorIs(t, err, leaseFail)
+				assert.NotErrorIs(t, err, errListenerNotRunning)
+				assert.Equal(t, 1, exitCodeForError(err))
+				assert.Empty(t, out.String(), "no state is reported on a failed read")
+				assert.Zero(t, f.stopSet, "no stop request is written")
+				assert.Empty(t, f.signals)
+			})
+		}
+	}
+}
+
+// The lease read can also fail on a later call inside one stop: after the
+// listener exited (afterStop) and while re-verifying it before a signal
+// (escalate). Neither may turn into success or a signal (MTIX-276.4).
+func TestListenerStop_LeaseReadErrorAfterStop_ReturnsTheError(t *testing.T) {
+	leaseFail := errors.New("lease directory unreadable")
+	f := newCtlFake()
+	f.leaseErr, f.leaseErrOnCall = leaseFail, 2
+	f.onSleep = func(f *ctlFake) { f.held = false }
+	var out bytes.Buffer
+	err := f.ctl().stop(&out, listenerStopOpts{timeout: 3 * time.Second}, false)
+	require.ErrorIs(t, err, leaseFail)
+	assert.Equal(t, 1, exitCodeForError(err))
+	assert.NotContains(t, out.String(), "listener stopped")
+	assert.Empty(t, f.signals)
+}
+
+func TestListenerStop_LeaseReadErrorInEscalate_FailsClosedWithoutASignal(t *testing.T) {
+	f := newCtlFake()
+	f.leaseErr, f.leaseErrOnCall = errors.New("lease directory unreadable"), 2
+	var out bytes.Buffer
+	err := f.ctl().stop(&out, listenerStopOpts{timeout: 2 * time.Second}, false)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, errListenerNotRunning)
+	assert.Contains(t, out.String(), "could not be re-checked")
+	assert.Empty(t, f.signals, "a failed re-check never signals")
+	assert.GreaterOrEqual(t, f.stopClr, 1, "a failed stop withdraws its request")
 }

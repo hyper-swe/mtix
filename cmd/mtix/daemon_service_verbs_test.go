@@ -283,3 +283,57 @@ func TestStopAndUninstall_NonFinalFailureNotLoaded_IsForgivenPerOS(t *testing.T)
 		}
 	}
 }
+
+// On Windows, schtasks /End exits nonzero when the task is installed but no instance runs.
+// That failure carries no information and must not fail stop or uninstall (MTIX-275.3).
+func TestStopAndUninstall_WindowsEndFailsWhileInstalledNotRunning_Succeeds(t *testing.T) {
+	for _, verb := range []string{"stop", "uninstall"} {
+		t.Run(verb, func(t *testing.T) {
+			spec := specFor(t, "windows")
+			spec.Path = filepath.Join(t.TempDir(), "unit")
+			require.NoError(t, os.WriteFile(spec.Path, []byte("unit"), 0o600))
+			fm := &fakeManager{
+				failing: map[string]error{"schtasks /End": exitErr{code: 1}},
+				status:  func() (string, error) { return `"mtix","N/A","Ready"`, nil },
+			}
+			var out bytes.Buffer
+			var err error
+			want := joinCmds(spec.Stop)
+			if verb == "stop" {
+				err = stopDaemonService(t.Context(), &out, spec, fm.run)
+			} else {
+				want = joinCmds(spec.Unregister)
+				err = uninstallDaemonService(t.Context(), &out, spec, fm.run)
+			}
+			require.NoError(t, err)
+			assert.Equal(t, want, fm.ran, "every command runs after the failed /End")
+			assert.NotContains(t, out.String(), "not loaded", "the /End failure is forgiven by design, not by a not-loaded proof")
+			if verb == "uninstall" {
+				assert.NoFileExists(t, spec.Path, "the unit file is removed")
+			}
+		})
+	}
+}
+
+// Only the schtasks /End idempotency pre-clean is forgiven without proof (MTIX-275.3).
+func TestBestEffortServiceCmd_OnlySchtasksEnd(t *testing.T) {
+	tests := []struct {
+		name string
+		argv []string
+		want bool
+	}{
+		{"schtasks end", []string{"schtasks", "/End", "/TN", "x"}, true},
+		{"schtasks end lowercase", []string{"schtasks", "/end", "/TN", "x"}, true},
+		{"schtasks delete", []string{"schtasks", "/Delete", "/F", "/TN", "x"}, false},
+		{"schtasks change", []string{"schtasks", "/Change", "/TN", "x", "/DISABLE"}, false},
+		{"launchctl bootout", []string{"launchctl", "bootout", "x"}, false},
+		{"other binary with /End", []string{"systemctl", "/End"}, false},
+		{"single element", []string{"schtasks"}, false},
+		{"empty", nil, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, bestEffortServiceCmd(tt.argv))
+		})
+	}
+}

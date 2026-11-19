@@ -134,7 +134,11 @@ func TestCloneThenPull_LinkDepWhoseEndArrivesAfterTheClone_AppliedByRetry(t *tes
 
 	require.NoError(t, err)
 	requireNotApplied(t, link)
-	requireQuarantinedAs(t, link, quarantineSourcePull, sqlite.CloneOrphanReason)
+	// The clone records its own CLI version, so check the row, not the pull helper's.
+	q, ok := quarantined(t)[link.EventID]
+	require.True(t, ok, "the link_dep is quarantined by the clone")
+	require.Equal(t, quarantineSourcePull, q.Source)
+	require.Contains(t, q.Reason, sqlite.CloneOrphanReason)
 	_, err = applyPullBatch(ctx, testIngest(nil), app.store, quarantineSourcePull, []*model.SyncEvent{target})
 	require.NoError(t, err)
 	t.Setenv(transport.EnvDSN, "")

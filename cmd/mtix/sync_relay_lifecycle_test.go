@@ -314,6 +314,8 @@ func assertRelayInitKeyMode(t *testing.T, authenticated bool, doc *metadata.Rela
 		require.Contains(t, out, "WARNING: this relay is UNAUTHENTICATED")
 		require.Contains(t, out, "Every peer must set sync.relay.require_auth=false")
 		require.NotContains(t, out, "attach")
+		require.Contains(t, out, "doctor will keep saying so")
+		require.NotContains(t, out, "key epoch")
 	}
 }
 

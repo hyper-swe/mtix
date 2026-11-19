@@ -69,5 +69,28 @@ func TestRelayAttachHint_NoSharedProject_CommandsParseAndMatchDocs(t *testing.T)
 		}
 		require.Contains(t, joined, "mtix sync relay clone --export")
 		require.Contains(t, joined, "mtix config set sync.relay.require_auth false")
+		assertRelayJoinHintInstructions(t, hint.Error())
 	}
+}
+
+// assertRelayJoinHintInstructions pins the non-command instructions of the
+// clone-first join hint, so dropping any of them from the text fails here.
+func assertRelayJoinHintInstructions(t *testing.T, text string) {
+	t.Helper()
+	for _, phrase := range []string{
+		"NEW id; never reuse a lost store's id", // a reused id inherits the old stream
+		"out of band, never through the relay or by printing keys",
+		"directory 0700, files 0600",
+		"stop any daemon in the new project before cloning",
+		"Do not attach before or after clone",
+	} {
+		require.Contains(t, text, phrase)
+	}
+	// The sequence opens with the tick on the existing peer, then the export,
+	// and the clone and the closing tick come last.
+	tick := strings.Index(text, "`mtix sync relay tick`")
+	export := strings.Index(text, "`mtix sync relay clone --export`")
+	clone := strings.Index(text, "Run `mtix sync relay clone`")
+	closing := strings.LastIndex(text, "`mtix sync relay tick`")
+	require.True(t, tick >= 0 && tick < export && export < clone && clone < closing, text)
 }

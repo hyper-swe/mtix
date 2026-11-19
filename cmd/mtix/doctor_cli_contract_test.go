@@ -232,6 +232,11 @@ func TestDoctorCLI_BrokenRelay_OnlyApplicableRowsExitTwo(t *testing.T) {
 			assert.Equal(t, "warn", row["status"])
 			continue
 		}
+		if row["id"] == "daemon.detached-listener" {
+			// A configured relay applies the detached-listener row; no listener is the clean state (MTIX-276.1).
+			assert.Equal(t, "pass", row["status"], row)
+			continue
+		}
 		assert.True(t, strings.HasPrefix(row["id"], "sync."), row)
 		assert.NotContains(t, row["id"], "pg")
 		assert.NotContains(t, row["id"], "schema-current")

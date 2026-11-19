@@ -124,5 +124,8 @@ func registerDaemonChecks(svc *service.DoctorService) error {
 	if err := registerDaemonLogsCheck(svc); err != nil {
 		return fmt.Errorf("register daemon logs check: %w", err)
 	}
+	if err := registerDetachedListenerCheck(svc, app.mtixDir != "" && relayDir() != "", productionListenerCtl); err != nil {
+		return fmt.Errorf("register detached listener diagnostics: %w", err)
+	}
 	return registerDaemonServiceStateDoctor(svc)
 }

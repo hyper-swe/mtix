@@ -25,7 +25,7 @@ func (s *Store) AdvanceWakeScanCursor(ctx context.Context, host, uid string, tar
 	if host == "" || uid == "" || target < 0 || lease <= 0 {
 		return fmt.Errorf("invalid wake scan target or lease: %w", model.ErrInvalidInput)
 	}
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		request := wakeCursorRequest{host: host, uid: uid, target: target, cutoff: s.clock().UTC().Add(-lease)}
 		floor, err := liveWakeScanTarget(ctx, tx, request)
 		if err != nil {

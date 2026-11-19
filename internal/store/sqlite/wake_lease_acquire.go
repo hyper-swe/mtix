@@ -28,7 +28,7 @@ func (s *Store) acquireWakeLease(ctx context.Context, key WakeLeaseKey, holder s
 	}
 	var lease WakeLease
 	var held bool
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		now := s.clock().UTC()
 		row, readErr := readWakeLease(ctx, tx, key)
 		if readErr != nil && !errors.Is(readErr, sql.ErrNoRows) {

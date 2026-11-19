@@ -4,6 +4,7 @@
 package hooks
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -89,7 +90,7 @@ func strictProgram(h Hook, in *hookInputs, index int) (string, error) {
 		return "", fmt.Errorf("program %q cannot be resolved: %w", launcher, err)
 	}
 	if _, _, inside := projectPath(in.logical, in.root, resolved); inside {
-		return "", fmt.Errorf("program %q resolves to %q inside the project; a project file is a script and must be pinned instead", launcher, resolved)
+		return "", &insideProjectError{launcher: launcher, resolved: resolved}
 	}
 	return resolved, nil
 }
@@ -352,6 +353,10 @@ func (a *Approvals) programApproval(h Hook) (ProgramApproval, bool) {
 	if err != nil {
 		entry.Program = h.Exec.Command[index]
 		entry.Detail = err.Error()
+		var inside *insideProjectError
+		if errors.As(err, &inside) {
+			entry.Fix = insideProjectFix(h.Name)
+		}
 		return entry, true
 	}
 	entry.Program = program

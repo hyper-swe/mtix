@@ -165,7 +165,7 @@ type RegistrationSnapshot struct {
 // the row changes both fields, so the fresh row survives (zero rows).
 func (s *Store) DeleteRegistrationIf(ctx context.Context, key RegistrationKey, seen RegistrationSnapshot) (int64, error) {
 	var n int64
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		// Compare-and-delete: epoch and last_seen identify the exact row version examined.
 		res, err := tx.ExecContext(ctx,
 			`DELETE FROM agent_registrations
@@ -191,7 +191,7 @@ func (s *Store) TouchRegistration(ctx context.Context, key RegistrationKey, hand
 		return 0, nil
 	}
 	var n int64
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
 			`UPDATE agent_registrations SET last_seen = ?
 			  WHERE agent_id = ? AND host_id = ? AND uid = ? AND session_handle = ?`,

@@ -21,7 +21,7 @@ func (s *Store) claimHookDispatch(ctx context.Context, hook string, event Journa
 	claim := hookDispatchClaim{hook: hook, seq: event.Seq, now: now.Format(time.RFC3339), cutoff: now.Add(-lease).Format(time.RFC3339)}
 	var won bool
 	matched := true
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		if guarded {
 			matched, err = hookJournalIdentityMatches(ctx, tx, event)
@@ -81,7 +81,7 @@ func canClaimHookDispatchTx(ctx context.Context, tx *sql.Tx, claim hookDispatchC
 
 func (s *Store) recordHookDispatchOutcome(ctx context.Context, hook string, event JournalEvent, outcome string, guarded bool) (bool, error) {
 	matched := true
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		if guarded {
 			matched, err = hookJournalIdentityMatches(ctx, tx, event)

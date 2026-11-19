@@ -97,8 +97,8 @@ func RelayCloneOnSyncedSteps() []RelayRejoinStep {
 		{true, "copy the relay key epoch files from .mtix/relay/keys here into .mtix/relay/keys there, out of band and never " +
 			"through the relay (directory mode 0700, files mode 0600; never print them)", ""},
 		{true, "run `mtix config set sync.relay.dir <dir>` there", "mtix config set sync.relay.dir <dir>"},
-		{true, "stop any daemon there with `mtix daemon stop`, then `mtix daemon uninstall` " + RelayCloneOnSyncedDaemonStopNote + ", then run `mtix sync relay clone` there before any `mtix sync relay attach`, which needs local history and " +
-			"refuses an empty project", "mtix sync relay clone"},
+		{true, "stop any daemon there with `mtix daemon stop`, then `mtix daemon uninstall` " + RelayCloneOnSyncedDaemonStopNote + ", then run `mtix sync relay clone` there (attach is not part of joining, before or after clone: it needs local history and " +
+			"refuses an empty project with `RELAY_NO_SHARED_PROJECT`)", "mtix sync relay clone"},
 		{true, "stop the daemon in the old project too with `mtix daemon stop`, then `mtix daemon uninstall` " + RelayCloneOnSyncedDaemonStopNote + ", so it stops publishing under the retired id, then run `mtix sync relay tick` in the new project; " +
 			"it publishes under the new id and re-reads the old id's stream from the start (replaying it is harmless)", "mtix sync relay tick"},
 		{true, "verify there with `" + RelayCloneOnSyncedListCommand + "`, and run the same command in the old project: in each project " +

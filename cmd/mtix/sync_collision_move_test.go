@@ -97,6 +97,10 @@ func TestCollisionMove_RetryRenumbersOnce(t *testing.T) {
 
 // Avoid consulting network interfaces in sandboxed tests; this is the same
 // durable identity cache that the store normally populates on its first write.
+// Needed in every setup that creates a task (runCreate) or computes the local
+// first event hash: the first write computes machine_hash from the host's
+// network interfaces, which a sandbox denies (netlinkrib: operation not
+// permitted), so the test would fail on the host, not on the code under test.
 func cacheCollisionMachineHash(t *testing.T) {
 	t.Helper()
 	require.NoError(t, app.store.WithTx(context.Background(), func(tx *sql.Tx) error {

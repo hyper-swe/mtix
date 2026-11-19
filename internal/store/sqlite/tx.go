@@ -28,6 +28,14 @@ func (s *Store) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) (err erro
 	return s.withWriteTx(ctx, fn, true)
 }
 
+// withLocalTx runs fn as local bookkeeping (hook ledger, inbox delivery and
+// wake rows): same guards as WithTx, but no on-commit callbacks, because these
+// rows never change exported content and must not record an export request,
+// trigger the exporter, hook dispatch or hub contact (MTIX-130.20.3).
+func (s *Store) withLocalTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	return s.withWriteTx(ctx, fn, false)
+}
+
 // withWriteTx shares all write guards. Local bookkeeping suppresses mutation
 // callbacks so export metadata and quarantine receipts cannot schedule task exports.
 func (s *Store) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error, notify bool) (err error) {

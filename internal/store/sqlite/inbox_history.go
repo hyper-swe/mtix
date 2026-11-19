@@ -180,6 +180,7 @@ func CountUnackedInboxFile(ctx context.Context, dbPath string) (int64, error) {
 // countUnackedRO opens path with the given URI parameters and counts; it never
 // writes.
 func countUnackedRO(ctx context.Context, path string, params ...string) (int64, error) {
+	// One count then close; the immutable fallback gets a new handle (MTIX-261.1).
 	db, err := openSQLite(path, params...)
 	if err != nil {
 		return 0, fmt.Errorf("open read-only: %w", err)

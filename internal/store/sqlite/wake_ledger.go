@@ -29,7 +29,7 @@ func (s *Store) claimWake(ctx context.Context, key model.WakeKey, lease time.Dur
 		return model.WakeAttempt{}, false, err
 	}
 	var result model.WakeAttempt
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		result, err = s.claimWakeTx(ctx, tx, key, lease, token)
 		return err

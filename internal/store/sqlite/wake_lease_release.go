@@ -24,7 +24,7 @@ func (s *Store) ReleaseWakeLease(ctx context.Context, key WakeLeaseKey, holder s
 		return ReleaseResult{}, fmt.Errorf("release wake lease holder required: %w", model.ErrInvalidInput)
 	}
 	var result ReleaseResult
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		row, err := readWakeLease(ctx, tx, key)
 		if errors.Is(err, sql.ErrNoRows) || err == nil && row.Holder != holder {
 			return fmt.Errorf("not the holder of this wake lease: %w", model.ErrAlreadyClaimed)

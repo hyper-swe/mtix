@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -13,9 +12,7 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/relay/bootstrap"
-	"github.com/hyper-swe/mtix/internal/relay/keyring"
 	"github.com/hyper-swe/mtix/internal/relay/lifecycle"
-	"github.com/hyper-swe/mtix/internal/relay/metadata"
 	"github.com/hyper-swe/mtix/internal/relay/segment"
 	"github.com/hyper-swe/mtix/internal/relay/tick"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
@@ -180,108 +177,6 @@ func openRelayStack() (*tick.Stack, error) {
 	})
 }
 
-func newRelayInitCmd() *cobra.Command {
-	var noAuth bool
-	cmd := &cobra.Command{
-		Use:   "init <dir>",
-		Short: "Create a relay in a shared directory",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			peer, err := relayPeerID()
-			if err != nil {
-				return err
-			}
-			prefix, hash, err := app.store.GetOrComputeLocalFirstEventHash(ctx)
-			if err != nil {
-				return fmt.Errorf("read local project history: %w", err)
-			}
-			if prefix == "" {
-				return fmt.Errorf("this store has no project history yet; create a node before initializing a relay")
-			}
-			relayID, err := clock.NewEventID()
-			if err != nil {
-				return fmt.Errorf("mint relay id: %w", err)
-			}
-			res, err := lifecycle.Init(lifecycle.InitRequest{
-				RelayDir:      args[0],
-				KeysDir:       relayKeysDir(),
-				RelayID:       relayID,
-				CreatedAt:     time.Now().UTC(),
-				CreatedBy:     peer,
-				Projects:      []metadata.Project{{Prefix: prefix, FirstEventHash: hash}},
-				Authenticated: !noAuth,
-				Rand:          rand.Reader,
-			})
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "relay initialized at %s for project %s\n", args[0], prefix)
-			if noAuth {
-				fmt.Fprintf(cmd.OutOrStdout(),
-					"WARNING: this relay is UNAUTHENTICATED. Anything that can write %s can write events.\n"+
-						"  Every peer must attach with sync.relay.require_auth=false, and doctor will keep saying so.\n", args[0])
-			} else {
-				fmt.Fprintf(cmd.OutOrStdout(),
-					"key epoch %d written to %s (mode 0600) — copy it to every peer out of band\n",
-					res.KeyEpoch, relayKeysDir())
-			}
-			fmt.Fprintf(cmd.OutOrStdout(), "next: mtix config set sync.relay.dir %s\n", args[0])
-			return nil
-		},
-	}
-	cmd.Flags().BoolVar(&noAuth, "no-auth", false,
-		"Create an unauthenticated relay (§8.3 opt-out; records carry no MAC)")
-	return cmd
-}
-
-func newRelayAttachCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "attach <dir>",
-		Short: "Join an existing relay",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			prefix, hash, err := app.store.GetOrComputeLocalFirstEventHash(ctx)
-			if err != nil {
-				return fmt.Errorf("read local project history: %w", err)
-			}
-			res, err := lifecycle.Attach(lifecycle.AttachRequest{
-				RelayDir:      args[0],
-				KeysDir:       relayKeysDir(),
-				Local:         []metadata.Project{{Prefix: prefix, FirstEventHash: hash}},
-				Authenticated: relayRequireAuth(),
-			})
-			if err != nil {
-				return relayAttachHint(err)
-			}
-			// The attach already succeeded: caching the identity is best-effort.
-			cacheIdentityBestEffort(cmd.ErrOrStderr(), func() error { return cacheVerifiedRelay(args[0], res.Relay.RelayID) })
-			fmt.Fprintf(cmd.OutOrStdout(), "attached to relay %s\n", res.Relay.RelayID)
-			fmt.Fprintf(cmd.OutOrStdout(), "shared projects: %v\n", res.SharedProjects)
-			fmt.Fprintf(cmd.OutOrStdout(), "next: mtix config set sync.relay.dir %s\n", args[0])
-			return nil
-		},
-	}
-}
-
-// relayAttachHint names the recovery for an attach refusal. An error
-// that does not name the next command is a bug.
-func relayAttachHint(err error) error {
-	switch lifecycle.CodeOf(err) {
-	case lifecycle.CodeModeMismatch:
-		return fmt.Errorf("%w\n  fix: set sync.relay.require_auth to match the relay, or attach a relay in your mode", err)
-	case lifecycle.CodeHistoryDiverged:
-		return fmt.Errorf("%w\n  fix: these are different histories under one prefix; see the divergence resolution paths", err)
-	case lifecycle.CodeNoSharedProject:
-		return fmt.Errorf("%w\n  fix: this relay carries other projects; init your own relay instead", err)
-	}
-	if keyring.CodeOf(err) == keyring.CodeKeyAbsent {
-		return fmt.Errorf("%w\n  fix: copy the relay key into %s (mode 0600) out of band, then attach again", err, relayKeysDir())
-	}
-	return err
-}
-
 func newRelayTickCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "tick",
@@ -385,45 +280,6 @@ func newRelayStatusCmd() *cobra.Command {
 	return cmd
 }
 
-func newRelayRotateKeyCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "rotate-key",
-		Args:  syncExactArgs(0),
-		Short: "Install the next key epoch and record its boundary",
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			dir, err := requireRelay()
-			if err != nil {
-				return err
-			}
-			peer, err := relayPeerID()
-			if err != nil {
-				return err
-			}
-			pos, err := app.store.RelayPushCursor(cmd.Context())
-			if err != nil {
-				return err
-			}
-			res, err := lifecycle.RotateKey(lifecycle.RotateRequest{
-				RelayDir:     dir,
-				KeysDir:      relayKeysDir(),
-				FromRSByPeer: map[string]uint64{peer: pos.NextRS},
-				Rand:         rand.Reader,
-			})
-			if err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(),
-				"key epoch %d installed; this peer publishes under it from rs %d\n",
-				res.KeyEpoch, pos.NextRS)
-			fmt.Fprintf(cmd.OutOrStdout(),
-				"copy epoch %d to every peer out of band. Keep the OLD epoch installed until\n"+
-					"pruning has passed the boundary — a reader that loses it reads valid history as forged.\n",
-				res.KeyEpoch)
-			return nil
-		},
-	}
-}
-
 func newRelayResetPeerCmd() *cobra.Command {
 	var baseRS uint64
 	var floor int64
@@ -456,31 +312,6 @@ func newRelayResetPeerCmd() *cobra.Command {
 	cmd.Flags().Uint64Var(&baseRS, "base-rs", 1, "Relay sequence the new epoch starts at")
 	cmd.Flags().Int64Var(&floor, "floor", 0, "Journal position to republish from")
 	return cmd
-}
-
-func newRelayRetirePeerCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "retire-peer <peer-id>",
-		Short: "Drop a vanished peer from the prune quorum",
-		Long: "A peer that never acks holds every writer's retention window open\n" +
-			"forever. Retiring it releases the window. Check `mtix sync doctor`\n" +
-			"first: a peer silent for a fortnight may be a laptop on holiday, and\n" +
-			"retiring one that returns prunes history it still needs.",
-		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			dir, err := requireRelay()
-			if err != nil {
-				return err
-			}
-			if err := lifecycle.RetirePeer(dir, args[0]); err != nil {
-				return err
-			}
-			fmt.Fprintf(cmd.OutOrStdout(),
-				"%s retired; it no longer holds the prune window.\n"+
-					"If it returns, `mtix sync relay clone` re-admits it.\n", args[0])
-			return nil
-		},
-	}
 }
 
 func newRelayCloneCmd() *cobra.Command {

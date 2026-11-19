@@ -115,6 +115,7 @@ func verifyDatabase(ctx context.Context, path string) (bool, error) {
 
 	// file: URI scheme so mode=ro is honored — verification must never
 	// write, let alone create, its subject.
+	// One quick_check then close on every result; no subsequent read (MTIX-261.1).
 	db, err := openSQLite(path, "mode=ro")
 	if err != nil {
 		return false, fmt.Errorf("open for verify: %w", err)

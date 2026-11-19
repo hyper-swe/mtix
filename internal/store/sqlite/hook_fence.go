@@ -51,7 +51,7 @@ func (s *Store) AdvanceHookScanFloorForEvents(ctx context.Context, observedFloor
 		return 0, nil
 	}
 	var misses uint64
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		var current int64
 		if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(cursor),0) FROM hook_dispatch_cursor WHERE id=1`).Scan(&current); err != nil {
 			return fmt.Errorf("read current hook scan floor: %w", err)

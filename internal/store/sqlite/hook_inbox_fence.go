@@ -21,7 +21,7 @@ func (s *Store) RecordInboxDeliveryEvent(ctx context.Context, agentID string, ev
 		return false, fmt.Errorf("inbox delivery: agent id required: %w", model.ErrInvalidInput)
 	}
 	var matched bool
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		var err error
 		matched, err = hookJournalIdentityMatches(ctx, tx, event)
 		if err != nil || !matched {

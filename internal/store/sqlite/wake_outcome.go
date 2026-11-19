@@ -22,7 +22,7 @@ func (s *Store) RecordWakeOutcome(ctx context.Context, attempt model.WakeAttempt
 		return fmt.Errorf("invalid wake terminal outcome or fence: %w", model.ErrInvalidInput)
 	}
 	refused := false
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		current, previous, found, err := readWakeAttempt(ctx, tx, attempt.Key)
 		if err != nil {
 			return err

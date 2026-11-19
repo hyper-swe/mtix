@@ -148,7 +148,7 @@ func (s *Store) HookCursor(ctx context.Context) (int64, error) {
 // AdvanceHookCursor moves the dispatch watermark forward to seq (monotonic; a
 // lower seq never rewinds it).
 func (s *Store) AdvanceHookCursor(ctx context.Context, seq int64) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	return s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO hook_dispatch_cursor (id, cursor) VALUES (1, ?)
 			ON CONFLICT(id) DO UPDATE SET cursor = MAX(cursor, excluded.cursor)`, seq)
@@ -163,7 +163,7 @@ func (s *Store) RecordInboxDelivery(ctx context.Context, agentID string, eventSe
 	if agentID == "" {
 		return fmt.Errorf("inbox delivery: agent id required: %w", model.ErrInvalidInput)
 	}
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	return s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO inbox_deliveries (agent_id, event_seq, hook_name, delivered_at)
 			VALUES (?, ?, ?, ?)
@@ -186,7 +186,7 @@ type HookLogEntry struct {
 
 // WriteHookLog appends a hook-firing outcome to the audit log (stamped now).
 func (s *Store) WriteHookLog(ctx context.Context, e HookLogEntry) error {
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	return s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO hook_log (hook_name, node_id, event_name, adapter, outcome, detail, fired_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?)`,

@@ -95,7 +95,7 @@ func (s *Store) StaleHookClaims(ctx context.Context, lease time.Duration) ([]Hoo
 // below the lowest open ('claimed') ledger row so a crashed trigger's event
 // stays inside the scan window until reclaimed. Monotonic: never rewinds.
 func (s *Store) AdvanceHookScanFloorClamped(ctx context.Context, target int64) error {
-	err := s.WithTx(ctx, func(tx *sql.Tx) error { return advanceHookScanFloorTx(ctx, tx, target) })
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error { return advanceHookScanFloorTx(ctx, tx, target) })
 	if err != nil {
 		return fmt.Errorf("advance hook scan floor to %d: %w", target, err)
 	}
@@ -106,7 +106,7 @@ func (s *Store) AdvanceHookScanFloorClamped(ctx context.Context, target int64) e
 // (compaction, like the MTIX-55 ack ledger). 'claimed' rows are never pruned:
 // they are the only evidence a crashed trigger owes a re-fire.
 func (s *Store) PruneHookDispatchLedger(ctx context.Context) error {
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `
 			DELETE FROM hook_dispatch_ledger
 			 WHERE outcome <> ?
@@ -151,7 +151,7 @@ func (s *Store) InitHookOnlyScanFloorAtTail(ctx context.Context) error {
 // initHookScanFloorAtTail keeps tail observation and floor writes in the same
 // writer transaction so discard cannot leave a stale floor above the journal.
 func (s *Store) initHookScanFloorAtTail(ctx context.Context, seedWakes bool) error {
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		return initHookScanFloorAtTailTx(ctx, tx, seedWakes)
 	})
 	if err != nil {

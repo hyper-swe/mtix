@@ -19,3 +19,12 @@ func TestCI_WindowsRuntimeDocumentation_MergeGatesExplained(t *testing.T) {
 		require.Contains(t, string(src), text)
 	}
 }
+
+// The selection paragraph must name every test group the workflow runs.
+func TestCI_WindowsRuntimeDocumentation_SelectionNamesHooksLaunchTests(t *testing.T) {
+	src, err := os.ReadFile("docs/WINDOWS-RUNTIME.md")
+	require.NoError(t, err)
+	for _, text := range []string{"internal/hooks", "TestIsBareName_RelativeSpellingsAreNotBare", "TestKnownWrapperAndInterpreter_RelativeSpellingNamedLikeTheProgramIsNotKnown"} {
+		require.Contains(t, string(src), text)
+	}
+}

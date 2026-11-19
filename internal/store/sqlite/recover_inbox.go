@@ -81,12 +81,13 @@ func (r inboxRecoverer) recover(ctx context.Context, dbPath string, mirror *Expo
 	return journal
 }
 
-// sqliteOpener opens a SQLite database with DSN parameters; openSQLite in production.
+// sqliteOpener opens a SQLite database with DSN parameters; openShieldedSQLite in production.
 type sqliteOpener func(path string, params ...string) (*sql.DB, error)
 
 // salvageInboxJournal reads damaged files without writes or index dependence (FR-19.1, MTIX-112.2.1).
 func salvageInboxJournal(ctx context.Context, path string, res *RecoverResult, limit time.Duration) (*InboxJournal, error) {
-	return salvageInboxJournalWith(ctx, path, res, limit, openSQLite)
+	// Integrity-check cancellation must not leave a stale snapshot for salvage.
+	return salvageInboxJournalWith(ctx, path, res, limit, openShieldedSQLite)
 }
 
 // salvageInboxJournalWith is salvageInboxJournal with the opener passed in, so

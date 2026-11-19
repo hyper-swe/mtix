@@ -78,7 +78,8 @@ var errTransientRead = errors.New("transient store read")
 // openStoreReadOnly opens the database file at dbPath so that nothing can be
 // written through it and a missing file is never created (MTIX-112.19.8).
 func openStoreReadOnly(dbPath string) (*sql.DB, error) {
-	return openSQLite(dbPath, readOnlyDSNParams()...)
+	// The returned handle can serve multiple reads; shield cancellation (MTIX-261.1).
+	return openShieldedSQLite(dbPath, readOnlyDSNParams()...)
 }
 
 // ReadStoreInstanceIDFile returns store_instance_id from the database file at
@@ -128,6 +129,7 @@ func readStoreInstanceIDOnce(ctx context.Context, dbPath string) (id string, ret
 	if err != nil {
 		return "", err
 	}
+	// One identity query then close; retries open a fresh handle (MTIX-261.1).
 	db, err := openSQLite(dbPath, params...)
 	if err != nil {
 		return "", fmt.Errorf("open store read-only: %w", err)

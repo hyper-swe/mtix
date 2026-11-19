@@ -49,7 +49,7 @@ func addListenerFlags(deps serviceDeps, stop, status *cobra.Command) {
 			return err
 		}
 		asJSON, _ := cmd.Flags().GetBool("json")
-		return ctl.stop(cmd.OutOrStdout(), listenerStopOpts{timeout: timeout}, asJSON)
+		return ctl.stop(cmd.OutOrStdout(), listenerStopOpts{timeout: timeout, errOut: cmd.ErrOrStderr()}, asJSON)
 	}
 	status.RunE = func(cmd *cobra.Command, args []string) error {
 		listener, err := listenerMode(cmd)

@@ -11,7 +11,8 @@ import (
 	"reflect"
 )
 
-// Both store pools open through shieldConnector (MTIX-250, MTIX-261),
+// Both store pools and reusable read-only/recovery handles open through
+// shieldConnector (MTIX-250, MTIX-261, MTIX-261.1),
 // including writer reads inside transactions and through prepared statements.
 //
 // Why: in modernc.org/sqlite v1.35.0, stmt.query drops the already-stepped rows

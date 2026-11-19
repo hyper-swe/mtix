@@ -31,9 +31,9 @@ const readPoolGuardMinFiles = 100
 // from the pool (a Conn, a transaction, an alias, a ReadPool parameter). It
 // errors when given too few files to mean anything.
 //
-// It also rejects the raw openSQLite opener in store.go, including aliases,
-// so both store pools must use the shield (MTIX-261). Other short-lived
-// recovery/backup openers are outside this store-pool guard.
+// It also rejects raw openSQLite references throughout the package, including
+// aliases, except the function-scoped, documented rawOpenReasons allowlist
+// (MTIX-261.1).
 //
 // It is a syntax-level check, not a proof. It cannot see closures that hide
 // the pool, embedding, struct fields that hold it, unsafe, reflect, helpers
@@ -51,6 +51,7 @@ func readPoolBypasses(files map[string]string) ([]string, error) {
 			out = append(out, name+": cannot parse, so the read guard cannot judge it")
 			continue
 		}
+		out = append(out, rawOpenBypasses(fset, name, file)...)
 		tainted := poolDerivedNames(file)
 		ast.Inspect(file, func(n ast.Node) bool {
 			out = append(out, readPoolBypassIn(fset, name, n, tainted)...)
@@ -153,10 +154,6 @@ func readPoolBypassIn(fset *token.FileSet, name string, n ast.Node, tainted map[
 	home := filepath.Base(name) == "read_pool.go"
 	pos := func(p token.Pos) string { return name + ":" + strconv.Itoa(fset.Position(p).Line) }
 	switch x := n.(type) {
-	case *ast.Ident:
-		if x.Name == "openSQLite" && filepath.Base(name) == "store.go" {
-			return []string{pos(x.Pos()) + ": unshielded opener in store.go exposes writer reads"}
-		}
 	case *ast.SelectorExpr:
 		return accessBypassIn(pos, x, home, tainted)
 	case *ast.CompositeLit:

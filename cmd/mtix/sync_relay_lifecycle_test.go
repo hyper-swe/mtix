@@ -37,6 +37,7 @@ func relayCommandOutput(cmd *cobra.Command, args ...string) (string, string, err
 func initCommandRelay(t *testing.T, authenticated bool) string {
 	t.Helper()
 	initTestApp(t)
+	cacheCollisionMachineHash(t)
 	setDiagnosticConfig(t, "sync.relay.peer_id", diagnosticSelf)
 	require.NoError(t, runCreate("Relay command history", "", "", 3, "", "", "", "", ""))
 	dir := t.TempDir()
@@ -58,6 +59,7 @@ func TestRelayInit_AuthenticationModes_PersistHistoryAndKeys(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			initTestApp(t)
+			cacheCollisionMachineHash(t)
 			setDiagnosticConfig(t, "sync.relay.peer_id", diagnosticSelf)
 			require.NoError(t, runCreate("Initial relay history", "", "", 3, "", "", "", "", ""))
 			prefix, hash, err := app.store.GetOrComputeLocalFirstEventHash(t.Context())
@@ -87,6 +89,7 @@ func TestRelayInit_Refusals_DoNotCreateMetadata(t *testing.T) {
 	for _, scenario := range []string{"empty history", "closed store", "malformed peer", "blocked directory"} {
 		t.Run(scenario, func(t *testing.T) {
 			initTestApp(t)
+			cacheCollisionMachineHash(t)
 			setDiagnosticConfig(t, "sync.relay.peer_id", diagnosticSelf)
 			dir := filepath.Join(t.TempDir(), "relay")
 			want := "no project history"
@@ -153,7 +156,7 @@ func TestRelayAttach_Refusals_PreserveErrorAndNameRecovery(t *testing.T) {
 	}{
 		{"mode mismatch", lifecycle.ErrModeMismatch, "set sync.relay.require_auth"},
 		{"history diverged", lifecycle.ErrHistoryDiverged, "different histories under one prefix"},
-		{"no shared project", lifecycle.ErrNoSharedProject, "init your own relay"},
+		{"no shared project", lifecycle.ErrNoSharedProject, "clone-first"},
 		{"missing key", keyring.ErrKeyAbsent, "copy the relay key into"},
 		{"missing metadata", metadata.ErrRelayAbsent, ""},
 	}
@@ -202,6 +205,7 @@ func TestRelayRequireAuth_Configuration_IsExplicitOptOut(t *testing.T) {
 	saveAndResetApp(t)
 	require.True(t, relayRequireAuth())
 	initTestApp(t)
+	cacheCollisionMachineHash(t)
 	require.True(t, relayRequireAuth())
 	for _, value := range []string{"false", "true"} {
 		setDiagnosticConfig(t, "sync.relay.require_auth", value)
@@ -308,6 +312,8 @@ func assertRelayInitKeyMode(t *testing.T, authenticated bool, doc *metadata.Rela
 		require.True(t, os.IsNotExist(statErr))
 		require.Empty(t, doc.KeyEpochs)
 		require.Contains(t, out, "WARNING: this relay is UNAUTHENTICATED")
+		require.Contains(t, out, "Every peer must set sync.relay.require_auth=false")
+		require.NotContains(t, out, "attach")
 	}
 }
 

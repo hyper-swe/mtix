@@ -26,7 +26,7 @@ func (s *Store) RecordWakeResult(ctx context.Context, attempt model.WakeAttempt,
 		return fmt.Errorf("invalid wake terminal result or fence: %w", model.ErrInvalidInput)
 	}
 	refused := false
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		current, previous, found, err := readWakeAttempt(ctx, tx, attempt.Key)
 		if err != nil {
 			return err
@@ -73,7 +73,7 @@ func (s *Store) UpgradeWakeConfirmed(ctx context.Context, key model.WakeKey) err
 	if err := validateWakeClaimInput(key, time.Minute); err != nil {
 		return err
 	}
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	return s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		// Upgrade only from the sent family; every other state is left untouched.
 		res, err := tx.ExecContext(ctx, `UPDATE wake_ledger SET outcome=?,outcome_at=?
 			WHERE agent_id=? AND host_id=? AND uid=? AND event_seq=? AND epoch=? AND outcome IN (?,?)`,

@@ -1086,3 +1086,33 @@ func TestRemoteBar_Run_NoMergeBase_FailsClosedAndComparesWithMain(t *testing.T) 
 	require.Contains(t, out, "--allow-workflow-diff")
 	require.NotContains(t, out, "older base")
 }
+
+// MTIX-274.1: rb_cleanup ends its background jobs with KILL, not TERM. A job
+// that is still a forked copy of the wrapper shell catches TERM through the
+// inherited trap and carries on, so TERM would orphan the nap sleep. The stub
+// job ignores TERM (the ignore survives exec), so only KILL can end it.
+func TestRemoteBar_Cleanup_EndsABackgroundJobThatIgnoresTerm(t *testing.T) {
+	snippet := `source "$RB_SCRIPT"
+(trap '' TERM; exec sleep 300) &
+p=$!
+sleep 0.3
+rb_cleanup
+sleep 0.5
+echo "pid=$p stat=$(ps -o stat= -p "$p" 2>/dev/null | tr -d ' ')"
+kill -KILL "$p" 2>/dev/null || true`
+	out, code := bash(t, t.TempDir(), snippet)
+	require.Equal(t, 0, code, out)
+	var pid, stat string
+	for _, f := range strings.Fields(out) {
+		switch {
+		case strings.HasPrefix(f, "pid="):
+			pid = strings.TrimPrefix(f, "pid=")
+		case strings.HasPrefix(f, "stat="):
+			stat = strings.TrimPrefix(f, "stat=")
+		}
+	}
+	require.NotEmpty(t, pid, out)
+	// Gone (empty) or an unreaped zombie (Z) both mean the process ended.
+	require.True(t, stat == "" || strings.HasPrefix(stat, "Z"),
+		"rb_cleanup left a TERM-ignoring background job running (stat=%q): the job signal must be KILL", stat)
+}

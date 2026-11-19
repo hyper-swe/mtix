@@ -38,7 +38,7 @@ func (s *Store) initializeRegistrationStale(ctx context.Context) error {
 // rows updated.
 func (s *Store) MarkRegistrationStale(ctx context.Context, key RegistrationKey, epoch int64, since string) (int64, error) {
 	var n int64
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		// Conditional marker write: same epoch, not already marked.
 		res, err := tx.ExecContext(ctx,
 			`UPDATE agent_registrations SET stale_since = ?

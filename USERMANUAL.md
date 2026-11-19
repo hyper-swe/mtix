@@ -2971,6 +2971,9 @@ pull's position either, so later changes keep arriving.
   ending `held behind a quarantined creation`; the clone prints `held behind
   a quarantined creation; it applies after the creation`, and the retry
   applies it after the creation, so a teammate's delete is not lost.
+  A `link_dep` whose from or to task is missing from the hub log is
+  quarantined as an orphan, with a reason ending `node not found` (its insert
+  would fail a foreign key), so the clone completes as a pull does.
   Every pull retries them, and one applies if its task's creation arrives.
   `mtix sync doctor` names them (`N of them clone orphans`) and prints the
   acknowledge command (also in `--json`); after reviewing them with `mtix

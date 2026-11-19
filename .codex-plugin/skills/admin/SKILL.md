@@ -1077,7 +1077,9 @@ prints a "Program review" notice, and its `--json` result carries a
 `bash`, `python3`, `node`; case-insensitive, with `.exe`, `.cmd` or `.bat`
 accepted) as a bare name or as an absolute path in a PATH directory, running a
 pinned project script; any other path or name is reported with its
-symlink-resolved path. A hook that cannot be classified is reported as
+symlink-resolved path. A program that resolves inside the project (for
+example through a PATH directory that links into it) is never known by its
+name; its notice says to name that file as a pinned project script. A hook that cannot be classified is reported as
 `unknown` and needs review. `mtix hooks status` reports the same object for
 each hook, and `mtix doctor` shows the `hooks.programs` check: WARN with the
 exact fix lists the approved hooks that need review and any `hooks.yaml` load
@@ -1102,7 +1104,8 @@ agent session. `mtix hooks strict status` works without a terminal and has
 carries the same object under `strict`, and `mtix doctor` shows the
 `hooks.strict` check (PASS when the mode is off or nothing needs approval, WARN
 with the exact approval commands otherwise). An unreadable strict record
-refuses launches rather than allowing them. An approval binds the program's resolved path, not its file content: the
+refuses launches rather than allowing them. A program that resolves inside the project, or whose location
+cannot be decided, is listed with the pin step (name it as a project script), not with an approval command. An approval binds the program's resolved path, not its file content: the
 contents are not pinned, so approve only programs in locations that
 agents and other untrusted processes cannot write. A launch wrapper other than
 the known env, found by name in a PATH directory, is itself the program that

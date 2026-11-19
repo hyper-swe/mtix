@@ -70,6 +70,9 @@ func (a *Approvals) reviewOrUnknown(h Hook) ProgramReview {
 
 func classifyProgram(h Hook, in *hookInputs) ProgramReview {
 	command := h.Exec.Command
+	if in.program > 0 && envReachesProject(in.root, command[0]) {
+		return insideProjectReview(h.Name, reviewProgramPath(in.root, command[0]))
+	}
 	if _, pinned := in.scripts[in.program]; pinned {
 		return ProgramReview{Class: ClassPinnedScript, Program: command[in.program], Detail: "the program is a pinned project script"}
 	}
@@ -79,6 +82,9 @@ func classifyProgram(h Hook, in *hookInputs) ProgramReview {
 		}
 	}
 	program := reviewProgramPath(in.root, command[in.program])
+	if filepath.IsAbs(program) && programInsideProject(in.root, program) {
+		return insideProjectReview(h.Name, program)
+	}
 	return ProgramReview{
 		Class:   ClassOther,
 		Needed:  true,
@@ -147,17 +153,26 @@ func knownInterpreterPin(root, program string) (string, bool) {
 // program's own name. A bare name is looked up on the fixed PATH and is
 // returned as written.
 func knownProgramPin(root, program string, nameKnown func(string) bool) (string, bool) {
+	return knownProgramPinIn(root, filepath.SplitList(FixedHookPath(root)), program, nameKnown)
+}
+
+// knownProgramPinIn is knownProgramPin over an explicit list of fixed PATH
+// directories, so the decision can be tested against any directory layout.
+func knownProgramPinIn(root string, pathDirs []string, program string, nameKnown func(string) bool) (string, bool) {
 	if !nameKnown(program) {
 		return "", false
 	}
 	if filepath.IsAbs(program) {
 		dir := programDirectory(program)
-		if !physicalDirectory(dir) || !inPathDirectory(root, dir) {
+		if !physicalDirectory(dir) || !inPathDirectory(pathDirs, dir) || reachesProject(root, pathDirs, program) {
 			return "", false
 		}
 		return filepath.Join(dir, filepath.Base(program)), true
 	}
 	if isBareName(program) {
+		if reachesProject(root, pathDirs, program) {
+			return "", false
+		}
 		return program, true
 	}
 	return "", false
@@ -190,8 +205,8 @@ func physicalDirectory(dir string) bool {
 // the launcher does, so a relative spelling is never trusted by its name.
 func isBareName(program string) bool { return filepath.Base(program) == program }
 
-func inPathDirectory(root, dir string) bool {
-	for _, entry := range filepath.SplitList(FixedHookPath(root)) {
+func inPathDirectory(pathDirs []string, dir string) bool {
+	for _, entry := range pathDirs {
 		if entry != "" && sameDirectory(entry, dir) {
 			return true
 		}

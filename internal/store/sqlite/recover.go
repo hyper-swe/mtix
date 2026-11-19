@@ -209,7 +209,8 @@ func salvageFromDB(ctx context.Context, dbPath string, res *RecoverResult, mirro
 		return nil, err
 	}
 
-	db, err := openSQLite(dbPath, "mode=ro")
+	// Multiple salvage reads share this handle; cancellation must not pin a snapshot.
+	db, err := openShieldedSQLite(dbPath, "mode=ro")
 	if err != nil {
 		return nil, fmt.Errorf("open read-only: %w", err)
 	}

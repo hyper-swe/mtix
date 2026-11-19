@@ -370,7 +370,7 @@ func TestSQLiteDSN_Build_EscapesPathAndAppendsParams(t *testing.T) {
 func TestSQLiteDSN_ReadOnlyCallSites_PassModeRO(t *testing.T) {
 	cases := []struct{ file, want string }{
 		{"backup.go", `openSQLite(path, "mode=ro")`},
-		{"recover.go", `openSQLite(dbPath, "mode=ro")`},
+		{"recover.go", `openShieldedSQLite(dbPath, "mode=ro")`},
 		{"inbox_history.go", `countUnackedRO(ctx, dbPath, "mode=ro")`},
 		{"inbox_history.go", `countUnackedRO(ctx, dbPath, "mode=ro", "immutable=1")`},
 	}

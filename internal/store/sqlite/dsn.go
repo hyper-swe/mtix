@@ -77,7 +77,8 @@ func readOnlyDSNParams() []string {
 	return []string{"mode=ro", "_pragma=query_only(1)"}
 }
 
-// openShieldedSQLite opens either store pool: the same database and DSN as
+// openShieldedSQLite opens store pools and reusable recovery/read-only handles:
+// the same database and DSN as
 // openSQLite, with every connection shielded so a read cancelled mid-query
 // cannot leave a stale snapshot on it (MTIX-250, MTIX-261, read_shield.go). It stays in
 // this file with the other driver opens (sql.OpenDB is allowed only here).

@@ -153,8 +153,13 @@ records locally.
   out of the hash used to detect conflicts, so an upgrade does not look like
   a change to the board.
 - **A running process** follows `mtix config set history.export` without a
-  restart. `mtix recover` labels its output 2.1.0 and keeps the history when
-  the mirror carries it.
+  restart. `mtix recover` keeps every valid history entry the damaged database still
+  yields, and the mirror's entries when the mirror is 2.1.0; whenever it keeps
+  an entry it labels its output 2.1.0, whatever `history.export` says (the
+  recovered file is private; the next write of `tasks.json` follows the switch).
+  An entry that fails validation is dropped and reported in a recover note
+  (`task history entries were dropped as malformed`), and the import skips an
+  entry keyed by a legacy dot id (`history_skipped_legacy_key`, above).
 - **Older readers.** A released mtix (0.5.4 and earlier) drops the fields it
   does not know, so a file with history fails its checksum there: `mtix
   import` fails with `checksum verification failed` and the automatic import

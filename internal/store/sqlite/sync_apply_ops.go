@@ -264,6 +264,10 @@ func (a syncApplier) applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *m
 	if !ok {
 		return nil
 	}
+	before, err := statusBeforeApply(ctx, tx, e)
+	if err != nil {
+		return err
+	}
 	id, err := applyWorkflowWinner(ctx, tx, e, in)
 	if err != nil {
 		return err
@@ -282,6 +286,13 @@ func (a syncApplier) applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *m
 	if isResolvingStatus(in.to) {
 		if err := unblockDependents(ctx, tx, a.store, id, e.AuthorID, a.clock); err != nil {
 			return fmt.Errorf("apply transition_status %s: auto-unblock dependents: %w", format.EventID(e.EventID), err)
+		}
+	}
+	// MTIX-112.17.16.40 / FR-3.8: a synced reopen of a resolved blocker blocks
+	// its open dependents, as the local transition path does.
+	if reopensBlocker(before, in.to) {
+		if err := autoBlockDependents(ctx, tx, a.store, id, a.clock); err != nil {
+			return fmt.Errorf("apply transition_status %s: auto-block dependents: %w", format.EventID(e.EventID), err)
 		}
 	}
 	return nil

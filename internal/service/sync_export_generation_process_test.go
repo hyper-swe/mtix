@@ -33,6 +33,10 @@ func generationProcessRecovery(t *testing.T, killed bool) {
 	pendingProcessNode(t, store, 1)
 	svc := NewSyncService(store, slog.Default(), pendingProcessClock)
 	require.NoError(t, svc.AutoExport(context.Background(), dir))
+	// A changed board makes the holder's pass a real export; an unchanged one
+	// is skipped before the snapshot (MTIX-130.20.2).
+	_, execErr := store.WriteDB().ExecContext(context.Background(), `UPDATE nodes SET title = 'changed after publication'`)
+	require.NoError(t, execErr)
 	require.NoError(t, svc.RequestExport(dir))
 	holder := startExportRequestChild(t, dir, "snapshot-holder")
 	holder.awaitSignal(t, "snapshot-held")

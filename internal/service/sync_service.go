@@ -35,8 +35,20 @@ type SyncService struct {
 	// marshalExport serializes the board for publication; nil uses indented
 	// JSON. Tests count calls to pin when the board is serialized (MTIX-130.20).
 	marshalExport func(*sqlite.ExportData) ([]byte, error)
-	autoSync      AutoSyncConfig // sync.auto_sync; nil reads as the default, on (MTIX-95.31.2)
-	notices       io.Writer      // user-facing auto-import notices, stderr by default (MTIX-95.31.2)
+	// exportBoardData reads the whole board for publication; nil uses
+	// store.Export. readPublished reads the published tasks.json; nil uses
+	// os.ReadFile. Tests count both to pin the unchanged-board skip (MTIX-130.20.2).
+	exportBoardData func(context.Context) (*sqlite.ExportData, error)
+	readPublished   func(string) ([]byte, error)
+	// readPublishedRecord reads the last publication's record; nil uses the
+	// store. A test injects a failing read (MTIX-130.20.2).
+	readPublishedRecord func(context.Context) (sqlite.PublishedExport, bool, error)
+	// fileIdentity reads the change time, inode and device of a stat; nil uses
+	// the platform's. A test injects "no identity" (MTIX-130.20.2).
+	fileIdentity func(os.FileInfo) (int64, uint64, uint64, bool)
+
+	autoSync AutoSyncConfig // sync.auto_sync; nil reads as the default, on (MTIX-95.31.2)
+	notices  io.Writer      // user-facing auto-import notices, stderr by default (MTIX-95.31.2)
 	// binaryVersion is this mtix build's version; the older-writer warning
 	// compares the imported file's last writer with it (MTIX-95.31.19.9).
 	binaryVersion string
@@ -311,16 +323,30 @@ func (s *SyncService) writeHashFile(hashPath, fileHash string) error {
 // same directory and a rename (FR-15.3c), so a crash never leaves a torn
 // file.
 func writeFileAtomically(path string, data []byte) error {
+	_, err := writeFileAtomicallyInfo(path, data)
+	return err
+}
+
+// writeFileAtomicallyInfo is writeFileAtomically that also returns the stat of
+// the temp file taken before the rename. A rename keeps size and mtime, so the
+// stat describes the bytes written, never a file swapped in afterwards
+// (MTIX-130.20.2).
+func writeFileAtomicallyInfo(path string, data []byte) (os.FileInfo, error) {
 	tmpPath := path + ".tmp"
 	// #nosec G703 -- the sole production caller supplies local tasks.json; tmpPath adds a literal .tmp suffix and never uses a path from board content.
 	if err := os.WriteFile(tmpPath, data, 0644); err != nil {
-		return fmt.Errorf("write temp tasks.json: %w", err)
+		return nil, fmt.Errorf("write temp tasks.json: %w", err)
+	}
+	// #nosec G703 -- literal .tmp companion of the local tasks.json.
+	info, statErr := os.Stat(tmpPath)
+	if statErr != nil {
+		info = nil // no stamp: the next pass is a full one
 	}
 	// #nosec G703 -- the sole production caller supplies local tasks.json and its literal .tmp companion, not received path values.
 	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("rename temp to tasks.json: %w", err)
+		return nil, fmt.Errorf("rename temp to tasks.json: %w", err)
 	}
-	return nil
+	return info, nil
 }
 
 // backupDB takes a verified snapshot of the local database before a

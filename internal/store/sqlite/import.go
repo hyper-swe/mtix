@@ -157,6 +157,10 @@ func (s *Store) Import(
 		if err := s.checkImportState(ctx, tx, data, cfg); err != nil {
 			return err
 		}
+		// MTIX-130.20.2: a replaced board invalidates the last-publication record.
+		if err := clearPublishedExportTx(ctx, tx); err != nil {
+			return err
+		}
 		// MTIX-95.31.4: move each local task the file's task takes the id of.
 		if err := applyLocalRenumbers(ctx, tx, cfg.localMoves); err != nil {
 			return err

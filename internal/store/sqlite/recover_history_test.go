@@ -47,11 +47,12 @@ func TestRecover_HistoryMirror_LabelsFormat210AndKeepsOrphans(t *testing.T) {
 	require.True(t, ok)
 }
 
-// TestRecover_PlainMirror_StaysFormat200: a mirror without history recovers
-// as before, 2.0.0 and no history, even when the database holds entries.
-func TestRecover_PlainMirror_StaysFormat200(t *testing.T) {
+// TestRecover_NoHistoryAnywhere_StaysFormat200: with no history in the
+// database or the mirror, the recovered file stays 2.0.0 with no history.
+// A database that holds entries recovers as 2.1.0 whatever the mirror
+// (TestRecover_DatabaseHistory_KeptWhateverTheMirror, MTIX-95.31.19.5.3).
+func TestRecover_NoHistoryAnywhere_StaysFormat200(t *testing.T) {
 	f, raw := goldenStore(t)
-	insertHistory(t, f.db, "01H0000000000000000000R004", goldenRootUID(t, raw), "status")
 	mirrorPath := filepath.Join(t.TempDir(), "tasks.json")
 	require.NoError(t, os.WriteFile(mirrorPath, raw, 0o600))
 	res, err := sqlite.Recover(context.Background(), f.path, mirrorPath, "rv", sqlite.RecoverOptions{Logger: slog.Default()})

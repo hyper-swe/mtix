@@ -154,44 +154,52 @@ func (s *Store) countImportChanges(ctx context.Context, data *ExportData, mode I
 	var changes int64
 	var checksum string
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		var before, after int64
 		var sumErr error
 		if checksum, sumErr = s.storeChecksumTx(ctx, tx); sumErr != nil {
 			return fmt.Errorf("read the store before the import: %w", sumErr)
 		}
 		// Rows this connection has changed so far.
-		if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&before); err != nil {
-			return fmt.Errorf("count the import's changes: %w", err)
-		}
-		if err := checkInboxJournalCollisions(ctx, tx, dry.InboxJournal); err != nil {
+		before, err := readChangeCounters(ctx, tx)
+		if err != nil {
 			return err
 		}
-		if err := applyLocalRenumbers(ctx, tx, moves); err != nil {
-			return err
-		}
-		var applyErr error
-		if mode == ImportModeReplace {
-			_, applyErr = replaceAllData(ctx, tx, &dry, false)
-		} else {
-			_, applyErr = mergeAllData(ctx, tx, &dry, workflowPolicy{workflow, s.clock()})
-		}
-		if applyErr != nil {
+		if applyErr := s.applyDryImport(ctx, tx, &dry, mode, moves, workflow); applyErr != nil {
 			return applyErr
 		}
-		if err := importInboxJournal(ctx, tx, dry.InboxJournal); err != nil {
+		// Rows changed by the import.
+		after, err := readChangeCounters(ctx, tx)
+		if err != nil {
 			return err
 		}
-		// Rows changed by the import.
-		if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&after); err != nil {
-			return fmt.Errorf("count the import's changes: %w", err)
-		}
-		changes = after - before
+		changes = after.rows - before.rows - (after.gen - before.gen)
 		return errDryRun
 	})
 	if !errors.Is(err, errDryRun) {
 		return 0, "", err
 	}
 	return changes, checksum, nil
+}
+
+// applyDryImport applies the import inside the caller's transaction, which the
+// caller rolls back after counting what it changed.
+func (s *Store) applyDryImport(ctx context.Context, tx *sql.Tx, dry *ExportData, mode ImportMode,
+	moves localWrites, workflow WorkflowResolution) error {
+	if err := checkInboxJournalCollisions(ctx, tx, dry.InboxJournal); err != nil {
+		return err
+	}
+	if err := applyLocalRenumbers(ctx, tx, moves); err != nil {
+		return err
+	}
+	var applyErr error
+	if mode == ImportModeReplace {
+		_, applyErr = replaceAllData(ctx, tx, dry, false)
+	} else {
+		_, applyErr = mergeAllData(ctx, tx, dry, workflowPolicy{workflow, s.clock()})
+	}
+	if applyErr != nil {
+		return applyErr
+	}
+	return importInboxJournal(ctx, tx, dry.InboxJournal)
 }
 
 // Check the writer-locked state before renumbering can alter event evidence.
@@ -203,4 +211,22 @@ func (s *Store) checkImportState(ctx context.Context, tx *sql.Tx, data *ExportDa
 		return err
 	}
 	return checkInboxJournalCollisions(ctx, tx, data.InboxJournal)
+}
+
+// changeCounters is a reading of the connection's changed-row total and of the
+// export change counter.
+type changeCounters struct{ rows, gen int64 }
+
+// readChangeCounters reads total_changes() and the export change counter. Each
+// change trigger firing adds one counted row of its own (MTIX-130.20.2), so the
+// counter's movement is subtracted from the import's changed rows.
+func readChangeCounters(ctx context.Context, tx *sql.Tx) (changeCounters, error) {
+	var c changeCounters
+	if err := tx.QueryRowContext(ctx, `SELECT total_changes()`).Scan(&c.rows); err != nil {
+		return changeCounters{}, fmt.Errorf("count the import's changes: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT gen FROM export_generation WHERE id = 1`).Scan(&c.gen); err != nil {
+		return changeCounters{}, fmt.Errorf("read the export change counter: %w", err)
+	}
+	return c, nil
 }

@@ -22,7 +22,9 @@ func newUnblockCmd() *cobra.Command {
 		Short: "Re-derive a blocked node's status from its blockers; clear it if all are resolved",
 		Long: `Re-derive a node's blocked status from its current blockers.
 
-'blocked' is system-managed: mtix auto-blocks a node when a blocker is added and
+'blocked' is system-managed: mtix auto-blocks an open or in-progress node when an
+unresolved blocker is added (a blocks link over a done, cancelled or invalidated
+blocker does not block), blocks it again if a resolved blocker is reopened, and
 auto-restores it when the last blocker resolves. Use 'unblock' to force that
 re-derivation if a node is stuck 'blocked' even though 'mtix dep show <id>' shows the
 blockers resolved. It never overrides a genuine block — if an unresolved blocker

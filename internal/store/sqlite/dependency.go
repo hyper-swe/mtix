@@ -175,7 +175,8 @@ func withStoreClock(h historyToucher, clocks []func() time.Time) []func() time.T
 
 // autoBlockNode auto-sets a node to blocked if it's open or in_progress per FR-3.8.
 // Saves previous_status for auto-restore.
-// Does NOT auto-block deferred, done, canceled, or invalidated nodes.
+// Does NOT auto-block deferred, done, canceled, or invalidated nodes, nor a
+// node whose blocks-blockers are all resolved (MTIX-112.17.16.40).
 func autoBlockNode(ctx context.Context, tx *sql.Tx, h historyToucher, nodeID string, clocks ...func() time.Time) error {
 	clocks = withStoreClock(h, clocks)
 	if err := h.touchHistory(ctx, tx, nodeID); err != nil {
@@ -203,6 +204,15 @@ func autoBlockNode(ctx context.Context, tx *sql.Tx, h historyToucher, nodeID str
 	// FR-3.8: Only auto-block open or in_progress nodes.
 	if status != model.StatusOpen && status != model.StatusInProgress {
 		return nil
+	}
+
+	// MTIX-112.17.16.40: block only while a blocks-blocker is unresolved,
+	// the rule autoUnblockNode and sync repair use. A link over a done,
+	// cancelled or invalidated blocker (local or synced, in any arrival
+	// order) must leave the dependent as it is.
+	unresolved, err := hasUnresolvedBlocker(ctx, tx, nodeID)
+	if err != nil || !unresolved {
+		return err
 	}
 
 	now := clockOrDefault(clocks...)().UTC().Format(time.RFC3339)
@@ -253,22 +263,12 @@ func autoUnblockNode(ctx context.Context, tx *sql.Tx, h historyToucher, nodeID s
 	// FR-3.8a: Invalidated takes precedence — don't auto-unblock.
 	// (If the node somehow got to blocked after invalidation, respect it.)
 
-	// Check if there are remaining unresolved blockers.
-	var blockerCount int
-	err = tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM dependencies d
-		 JOIN nodes n ON d.from_id = n.id
-		 WHERE d.to_id = ? AND d.dep_type = ?
-		   AND n.status NOT IN (?, ?, ?)
-		   AND n.deleted_at IS NULL`,
-		nodeID, string(model.DepTypeBlocks),
-		string(model.StatusDone), string(model.StatusCancelled), string(model.StatusInvalidated),
-	).Scan(&blockerCount)
+	// Check if there are remaining unresolved blockers (the shared rule).
+	unresolved, err := hasUnresolvedBlocker(ctx, tx, nodeID)
 	if err != nil {
-		return fmt.Errorf("count remaining blockers for %s: %w", nodeID, err)
+		return err
 	}
-
-	if blockerCount > 0 {
+	if unresolved {
 		return nil // Still has unresolved blockers.
 	}
 

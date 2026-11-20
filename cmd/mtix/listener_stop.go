@@ -25,6 +25,22 @@ const (
 // listenerStopOpts carries the flags of `mtix daemon stop --listener`.
 type listenerStopOpts struct {
 	timeout time.Duration
+	// errOut receives the progress and failure lines under --json, so stdout
+	// stays exactly one JSON document. Nil discards them (MTIX-276.3.1).
+	errOut io.Writer
+}
+
+// diag returns where stop's progress and failure lines go: the normal output
+// for plain text, and errOut (stderr) under --json so the JSON report on
+// stdout is never preceded or followed by prose.
+func (o listenerStopOpts) diag(out io.Writer, asJSON bool) io.Writer {
+	if !asJSON {
+		return out
+	}
+	if o.errOut == nil {
+		return io.Discard
+	}
+	return o.errOut
 }
 
 // stop ends this project's detached listener and verifies the daemon lock is
@@ -50,15 +66,16 @@ func (c *listenerCtl) stop(out io.Writer, o listenerStopOpts, asJSON bool) error
 	if err := c.writeStop(); err != nil {
 		return fmt.Errorf("write the stop request: %w", err)
 	}
+	diag := o.diag(out, asJSON)
 	if !c.waitFree(o.timeout) {
-		if err := c.escalate(out, rep); err != nil {
+		if err := c.escalate(diag, rep); err != nil {
 			return errors.Join(err, c.clearStop())
 		}
 	}
 	if err := c.clearStop(); err != nil {
 		return fmt.Errorf("remove the stop request: %w", err)
 	}
-	return c.afterStop(out, asJSON)
+	return c.afterStop(out, diag, asJSON)
 }
 
 // waitFree polls the daemon lock until it is free or d has passed. A probe
@@ -85,9 +102,9 @@ func (c *listenerCtl) waitFree(d time.Duration) bool {
 // exit and its pid be reused between the two. An unrelated process that took
 // the pid in that window would receive one SIGTERM. The window is
 // microseconds, and a pidfd is not required (it exists on linux only).
-func (c *listenerCtl) escalate(out io.Writer, before listenerReport) error {
+func (c *listenerCtl) escalate(diag io.Writer, before listenerReport) error {
 	fail := func(why string) error {
-		fmt.Fprintf(out, "listener still running: %s; nothing was signaled\n", why)
+		fmt.Fprintf(diag, "listener still running: %s; nothing was signaled\n", why)
 		return errListenerStillRunning
 	}
 	if c.goos == "windows" {
@@ -103,15 +120,15 @@ func (c *listenerCtl) escalate(out io.Writer, before listenerReport) error {
 	if now.State != listenerStateRunning || now.PID != before.PID || now.StartTime != before.StartTime {
 		return fail("the process changed while waiting")
 	}
-	fmt.Fprintf(out, "listener did not exit on request; sending SIGTERM to the verified listener (pid %d)\n", before.PID)
+	fmt.Fprintf(diag, "listener did not exit on request; sending SIGTERM to the verified listener (pid %d)\n", before.PID)
 	// A failed signal (the listener exited first, or permission denied) is not
 	// read as an error on its own: the lock decides. Free means the listener
 	// ended; held means it is still running (exit 11), never success.
 	if err := c.signal(before.PID); err != nil {
-		fmt.Fprintf(out, "SIGTERM could not be delivered (%v); re-checking the lock\n", err)
+		fmt.Fprintf(diag, "SIGTERM could not be delivered (%v); re-checking the lock\n", err)
 	}
 	if !c.waitFree(listenerTermWait) {
-		fmt.Fprintf(out, "listener still running after SIGTERM (pid %d)\n", before.PID)
+		fmt.Fprintf(diag, "listener still running after SIGTERM (pid %d)\n", before.PID)
 		return errListenerStillRunning
 	}
 	return nil
@@ -119,15 +136,16 @@ func (c *listenerCtl) escalate(out io.Writer, before listenerReport) error {
 
 // afterStop reports the stop. A live waiter restarts a missing listener within
 // one recheck, so when one is live the lock is watched for that long; a
-// restart is a failure that names the waiters.
-func (c *listenerCtl) afterStop(out io.Writer, asJSON bool) error {
+// restart is a failure that names the waiters. The report goes to out; the
+// respawn failure lines go to diag (stderr under --json).
+func (c *listenerCtl) afterStop(out, diag io.Writer, asJSON bool) error {
 	rep, err := c.inspect()
 	if err != nil {
 		return err
 	}
 	if len(rep.Waiters) > 0 && c.respawned(listenerRespawnWatch) {
-		printWaiters(out, rep.Waiters)
-		fmt.Fprintln(out, "a live waiter started a new listener; end those waiters first, then run: mtix daemon stop --listener")
+		printWaiters(diag, rep.Waiters)
+		fmt.Fprintln(diag, "a live waiter started a new listener; end those waiters first, then run: mtix daemon stop --listener")
 		return errListenerRespawned
 	}
 	rep.State, rep.PID, rep.StartTime = listenerStateStopped, 0, ""

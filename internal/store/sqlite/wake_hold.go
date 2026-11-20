@@ -46,7 +46,7 @@ func (s *Store) SetWakeHold(ctx context.Context, key model.WakeKey, advanceTo in
 	if hold {
 		flag = 1
 	}
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		matches, err := wakeEventMatches(ctx, tx, key)
 		if err != nil || !matches {
 			return err

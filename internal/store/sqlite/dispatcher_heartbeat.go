@@ -27,7 +27,7 @@ func (s *Store) RecordDispatcherHeartbeat(ctx context.Context, hb DispatcherHear
 	if hb.HostID == "" || hb.UID == "" || hb.PID <= 0 || hb.Protocol < 0 || hb.SeenAt == "" {
 		return fmt.Errorf("record dispatcher heartbeat: %w", model.ErrInvalidInput)
 	}
-	return s.WithTx(ctx, func(tx *sql.Tx) error {
+	return s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		// One row per (host, uid): the latest heartbeat replaces the previous one.
 		_, err := tx.ExecContext(ctx, `INSERT INTO dispatcher_heartbeat(host_id,uid,pid,protocol,version,seen_at,capabilities)
 			VALUES(?,?,?,?,?,?,?)

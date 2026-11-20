@@ -80,6 +80,9 @@ func TestRelayLateJoiner_Docs_PinProvenSequence(t *testing.T) {
 	for _, path := range paths {
 		t.Run(path, func(t *testing.T) {
 			lateJoinerCommands(t, path)
+			require.Contains(t, lateJoinerSection(t, path), "Every peer must set sync.relay.require_auth=false")
+			require.Contains(t, lateJoinerSection(t, path), "mtix config set sync.relay.require_auth false")
+			require.Contains(t, lateJoinerSection(t, path), "clone-first join")
 			require.Equal(t, canonical, lateJoinerSection(t, path), "late-joiner section must be identical in every copy")
 		})
 	}

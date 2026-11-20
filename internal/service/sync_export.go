@@ -114,7 +114,7 @@ func (s *SyncService) exportBoardPassWith(ctx context.Context, mtixDir string, p
 	}
 	defer s.releaseLock(lockFile)
 	if protect {
-		if blocked, err := s.keepPulledBoardUnderLock(mtixDir); blocked || err != nil {
+		if blocked, err := s.keepPulledBoardUnderLock(ctx, mtixDir); blocked || err != nil {
 			return false, err
 		}
 	}
@@ -163,8 +163,17 @@ func (s *SyncService) marshalBoard(data *sqlite.ExportData) ([]byte, error) {
 func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start time.Time, automatic bool) error {
 	tasksPath := filepath.Join(mtixDir, "tasks.json")
 
+	// MTIX-130.20.2: read the change token BEFORE the export, and skip every
+	// piece of whole-board work when nothing exported changed since the last
+	// publication. Any doubt falls through to the full pass below.
+	token := s.readExportToken(ctx)
+	if automatic && s.unchangedSincePublication(ctx, mtixDir, token) {
+		s.logger.Debug("sync_export_skipped_unchanged", "event", "sync_export_skipped_unchanged")
+		return nil
+	}
+
 	// Step 1: Export current DB state.
-	exportData, err := s.store.Export(ctx, "", "")
+	exportData, err := s.readBoard(ctx)
 	if err != nil {
 		return fmt.Errorf("export for auto-export: %w", err)
 	}
@@ -172,12 +181,15 @@ func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start t
 	// FR-15.3 (MTIX-150): elapsed time alone is not a board change. Keep
 	// exact published bytes while completing the same durability bookkeeping.
 	if automatic {
-		published, matchErr := matchingPublishedExport(tasksPath, exportData)
+		// Stat before the read: the recorded stat then never describes a file newer than its bytes.
+		// #nosec G703 -- fixed tasks.json under the caller-selected local project.
+		statBefore, _ := os.Stat(tasksPath)
+		published, matchErr := matchingPublishedExportWith(s.publishedReader(), tasksPath, exportData)
 		if matchErr != nil {
 			return matchErr
 		}
 		if published != nil {
-			return s.recordUnchangedExport(ctx, mtixDir, published, exportData)
+			return s.recordUnchangedExport(ctx, mtixDir, published, exportData, publicationStamp{token: token, info: statBefore})
 		}
 	}
 
@@ -190,19 +202,23 @@ func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start t
 	}
 
 	// Step 3: Atomic write via temp file + rename per FR-15.3c.
-	if err := writeFileAtomically(tasksPath, jsonBytes); err != nil {
+	info, err := writeFileAtomicallyInfo(tasksPath, jsonBytes)
+	if err != nil {
 		return err
 	}
 
 	// Step 4: Update file hash per FR-15.3d.
 	fileHash := fmt.Sprintf("%x", sha256.Sum256(jsonBytes))
-	if err := s.publishExportHashes(ctx, mtixDir, fileHash, exportData); err != nil {
+	dbHash, err := s.publishExportHashes(ctx, mtixDir, fileHash, exportData)
+	if err != nil {
 		return err
 	}
 
 	if err := syncExportPublicationWithSync(mtixDir, s.syncDirectory); err != nil {
 		return err
 	}
+	// The stat is of the final path, after the rename and the directory sync.
+	s.recordPublication(ctx, publicationStamp{token: token, fileHash: fileHash, dbHash: dbHash, info: finalPublishedStat(tasksPath, info, fileHash)})
 	elapsed := time.Since(start)
 	s.logger.Debug("sync_export_completed",
 		"event", "sync_export_completed",
@@ -216,11 +232,11 @@ func (s *SyncService) publishExport(ctx context.Context, mtixDir string, start t
 
 // publishExportHashes records the baseline from the exact published snapshot,
 // never a second export that could include a later writer commit.
-func (s *SyncService) publishExportHashes(ctx context.Context, mtixDir, fileHash string, data *sqlite.ExportData) error {
+func (s *SyncService) publishExportHashes(ctx context.Context, mtixDir, fileHash string, data *sqlite.ExportData) (string, error) {
 	hashPath := filepath.Join(mtixDir, "data", "sync.sha256")
 	dbHashPath := filepath.Join(mtixDir, "data", "sync-db.sha256")
 	if err := s.writeHashFile(hashPath, fileHash); err != nil {
-		return err
+		return "", err
 	}
 
 	// Step 4b: Store export hash in meta table for redundant import detection.
@@ -229,18 +245,34 @@ func (s *SyncService) publishExportHashes(ctx context.Context, mtixDir, fileHash
 		"INSERT OR REPLACE INTO meta (key, value) VALUES ('last_export_hash', ?)",
 		fileHash,
 	); metaErr != nil {
-		return fmt.Errorf("write last_export_hash to meta: %w", metaErr)
+		return "", fmt.Errorf("write last_export_hash to meta: %w", metaErr)
 	}
 
 	// Step 5: Update DB hash for conflict detection per FR-15.2h.
 	dbHash, hashErr := exportHash(data, formCurrent)
 	if hashErr != nil {
-		return fmt.Errorf("db hash after auto-export: %w", hashErr)
+		return "", fmt.Errorf("db hash after auto-export: %w", hashErr)
 	}
 	// #nosec G703 -- dbHashPath is fixed data/sync-db.sha256 under the caller-selected local project; exported content supplies only hash bytes.
 	if err := os.WriteFile(dbHashPath, []byte(dbHash), 0644); err != nil {
-		return fmt.Errorf("write db hash: %w", err)
+		return "", fmt.Errorf("write db hash: %w", err)
 	}
 
-	return nil
+	return dbHash, nil
+}
+
+// readBoard exports the whole board through the injectable seam.
+func (s *SyncService) readBoard(ctx context.Context) (*sqlite.ExportData, error) {
+	if s.exportBoardData != nil {
+		return s.exportBoardData(ctx)
+	}
+	return s.store.Export(ctx, "", "")
+}
+
+// publishedReader returns the reader of the published tasks.json.
+func (s *SyncService) publishedReader() func(string) ([]byte, error) {
+	if s.readPublished != nil {
+		return s.readPublished
+	}
+	return os.ReadFile
 }

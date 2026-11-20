@@ -39,7 +39,7 @@
 # exactly what make test-race covers: the PostgreSQL packages serially, the
 # other packages with -p 4, internal/store/sqlite and internal/service as hash
 # shards (scripts/ci-go-shards.sh bar-check and test-check,
-# MTIX-112.17.27) and three cmd/mtix shards (scripts/cmd-mtix-shards.sh,
+# MTIX-112.17.27) and five cmd/mtix shards (scripts/cmd-mtix-shards.sh,
 # MTIX-112.17.24). By default it runs on ubuntu-22.04 with PostgreSQL 16 (CI also
 # covers 17). Options (MTIX-203; they take effect once the workflow carrying
 # the matching inputs is on main):

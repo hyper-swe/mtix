@@ -43,7 +43,7 @@ if [ "$f" != runs ] && [ "$pag" = 0 ]; then head -n 3 "$FIX/$f.json"; else cat "
 var healthExpected = []string{
 	"test-go-shard (macos-latest, other)",
 	"test-go-sqlite (macos-latest, shard 1)", "test-go-sqlite (macos-latest, shard 2)", "test-go-sqlite (macos-latest, shard 3)", "test-go-sqlite (macos-latest, shard 4)",
-	"test-go-cmd (macos-latest, shard 1)", "test-go-cmd (macos-latest, shard 2)", "test-go-cmd (macos-latest, shard 3)", "test-go-cmd (macos-latest, shard 4)",
+	"test-go-cmd (macos-latest, shard 1)", "test-go-cmd (macos-latest, shard 2)", "test-go-cmd (macos-latest, shard 3)", "test-go-cmd (macos-latest, shard 4)", "test-go-cmd (macos-latest, shard 5)", "test-go-cmd (macos-latest, shard 6)",
 	"test-go-service (macos-latest, shard 1)", "test-go-service (macos-latest, shard 2)",
 }
 

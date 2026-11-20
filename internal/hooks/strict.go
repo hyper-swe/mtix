@@ -251,7 +251,7 @@ func (a *Approvals) enforceStrict(h Hook, in *hookInputs, plan *ExecPlan) error 
 		a.afterJudge()
 	}
 	if pinErr := pinKnownSlots(j, plan); pinErr != nil {
-		return refuse(pinErr.Error())
+		return fmt.Errorf("exec launch refused for hook %q: strict program mode is on and %w", h.Name, pinErr)
 	}
 	if !needed {
 		return nil
@@ -289,14 +289,22 @@ func pinKnownSlots(j strictJudgement, plan *ExecPlan) error {
 			continue
 		}
 		if filepath.IsAbs(plan.Argv[slot]) && programDirectory(plan.Argv[slot]) != filepath.Dir(pin) {
-			return fmt.Errorf("program %q changed location between the check and the launch", plan.Argv[slot])
+			return knownPinError(plan.Argv[slot], "changed location between the check and the launch")
 		}
 		if filepath.IsAbs(pin) && !physicalDirectory(filepath.Dir(pin)) {
-			return fmt.Errorf("program %q is still reached through a link at the launch", plan.Argv[slot])
+			return knownPinError(plan.Argv[slot], "is no longer in a verified physical directory")
 		}
 		plan.Argv[slot] = pin
 	}
 	return nil
+}
+
+func knownPinError(program, reason string) error {
+	role := "interpreter"
+	if isEnv(program) {
+		role = "env wrapper"
+	}
+	return fmt.Errorf("the %s %q %s; check the link and directory for this %s", role, program, reason, role)
 }
 
 // StrictStatus reports strict mode for the configured exec hooks, with the

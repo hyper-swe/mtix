@@ -39,6 +39,10 @@ func TestStrictProgramModeDocs_NameSwitchApprovalAndCheck(t *testing.T) {
 		t.Run(rel, func(t *testing.T) {
 			body, err := os.ReadFile(filepath.Join("..", "..", filepath.FromSlash(rel))) //nolint:gosec // fixed repo paths
 			require.NoError(t, err)
+			require.True(t, strings.Contains(strings.Join(strings.Fields(string(body)), " "),
+				"check the link and directory for the named env wrapper or interpreter"))
+			require.True(t, strings.Contains(strings.Join(strings.Fields(string(body)), " "),
+				"a link that cannot be read is also not known and is refused"))
 			for _, want := range required {
 				require.Contains(t, string(body), want)
 			}
@@ -67,4 +71,19 @@ func TestChangelog_LinkLimitEntry_MentionsUnreadableLink(t *testing.T) {
 	require.NotEmpty(t, entry, "link-limit changelog entry not found")
 	require.Contains(t, entry, "over-long link chains")
 	require.Contains(t, entry, "a link that cannot be read is refused as well")
+}
+
+func TestChangelog_StrictPinRefusal_NamesLinkRemedy(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
+	require.NoError(t, err)
+	_, rest, found := strings.Cut(string(body), "## [Unreleased]\n")
+	require.True(t, found)
+	unreleased, _, _ := strings.Cut(rest, "\n## ")
+	for _, line := range strings.Split(unreleased, "\n") {
+		if strings.Contains(line, "(MTIX-112.34.2.3.1)") {
+			require.Contains(t, line, "check the link and directory for the named env wrapper or interpreter")
+			return
+		}
+	}
+	t.Fatal("missing strict pin refusal entry under Unreleased")
 }

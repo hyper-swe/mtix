@@ -128,7 +128,7 @@ You never fix either of these by hand; the system converges on its own.
 ## Blocked status is auto-managed — trust it, don't fight it
 
 `blocked` is a **system-managed** state, not one you set. mtix auto-blocks a node
-when a `blocks` dependency is added, and **auto-restores** it to its previous
+when a `blocks` dependency is added over a blocker that is still unresolved (a link over a done, cancelled or invalidated blocker leaves the node as it is; reopening a resolved blocker blocks its open or in-progress dependents again), and **auto-restores** it to its previous
 status (`open`/`in_progress`) the moment its last blocker resolves.
 
 - Do **not** try to transition a node `blocked → done`, and do **not** claim a

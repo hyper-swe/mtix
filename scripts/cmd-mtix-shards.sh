@@ -18,7 +18,7 @@
 set -euo pipefail
 export LC_ALL=C
 
-SHARDS=5
+SHARDS=6
 PINFILE=scripts/cmd-mtix-shard-pins.txt
 
 die() {

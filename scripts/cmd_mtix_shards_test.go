@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const cmdShardCount = 5
+const cmdShardCount = 6
 
 func cmdShardFixture(t *testing.T, listing string, exit string) string {
 	t.Helper()

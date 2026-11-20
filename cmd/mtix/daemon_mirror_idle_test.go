@@ -37,6 +37,7 @@ func TestDaemon_IdleTicksWithWakeScannerAndDeadSessionRecordNoPendingExportReque
 	hostID, uid, err := registrationHostIdentity()
 	require.NoError(t, err)
 	seedWakeScannerBoard(t, hostID, uid)
+	bookkeeping := seedIdleBookkeeping(t, hostID, uid)
 	wireWakeScanner(dir)
 	require.NotNil(t, app.wakeScanner, "the scanner must be wired for this shape")
 	for _, agent := range []string{"waiter-a", "waiter-b", "waiter-c"} {
@@ -44,11 +45,12 @@ func TestDaemon_IdleTicksWithWakeScannerAndDeadSessionRecordNoPendingExportReque
 	}
 	require.NoError(t, app.syncSvc.AutoExport(t.Context(), dir))
 	removeSyncLock(t, dir)
-	runIdleDaemonTicks(t, dir, 5, func() {}, func(int) {})
+	runIdleDaemonTicks(t, dir, 5, func() {}, func(tick int) { bookkeeping.afterTick(t, tick) })
 	var stale string
 	require.NoError(t, app.store.ReadDB().QueryRowContext(t.Context(),
 		"SELECT COALESCE(stale_since,'') FROM agent_registrations WHERE agent_id=?", "dead-agent").Scan(&stale))
 	require.NotEmpty(t, stale, "the scanner must have run its per-pass write on the dead session")
+	requireIdleBookkeepingPersisted(t)
 	requireSyncLockUntouched(t, dir)
 }
 

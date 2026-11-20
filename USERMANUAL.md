@@ -3479,6 +3479,37 @@ messages describe actual automatic publications; routine idle ticks produce no
 export-success lines at the default log level. Direct explicit exports retain
 their timestamp contract.
 
+An automatic export of a board whose exported content has not changed since
+the last publication does no whole-board work: it does not export the store,
+decode or validate `tasks.json`, compute the export hashes, or (on Linux and
+macOS) read and hash `tasks.json` for the pulled-board check, and so holds the
+sync lock only briefly. The store keeps a change counter that every write to
+exported content (tasks, dependencies, agents, sessions, history) moves, and
+each publication records the counter with the hashes and the identity of the
+file it wrote: its size, modification time, change time, inode and device. The
+pass trusts that record only while all of them and the stored hashes still
+equal it. Tools that keep the modification time (rsync -t, cp -p, touch -r, an
+archive restore) cannot restore the change time, and a file renamed into place
+is another inode, so they are noticed. Any doubt (a changed, replaced or
+missing mirror or hash file, a different mtix build, a record that does not
+read back or was written by an earlier build, an import) makes the pass a full
+one, which reads and hashes the mirror as before and records the board again.
+Where the platform gives no change time or file id (Windows), or the recorded
+times have no sub-second part (a filesystem with coarse timestamps), the record
+cannot prove identity: the pass reads and hashes `tasks.json` and compares the
+hash with the recorded one, which still skips the store export for an unchanged
+board but costs that read. Residual, on the identity route: a write that
+restores size, modification time and change time together can escape the
+pulled-board check. That needs a clock change or raw device access, or, on a
+Linux kernel whose change times have the coarse tick of a few milliseconds
+(before multigrain timestamps), an in-place same-size write with the
+modification time put back inside the same tick as the publication, or an
+inode number reused within that tick. An in-place rewrite between the rename
+and the final stat is caught, because the published bytes are hashed before
+the record is written. If a foreign board did escape, the next export pass
+that sees changed local content overwrites that mirror, so its changes are
+lost. Nothing needs configuring and `mtix sync status` is unchanged.
+
 On macOS, launchd captures stdout and stderr in `.mtix/logs/daemon.out.log` and
 `.mtix/logs/daemon.err.log`. This capture is unbounded unless an administrator
 configures retention; mtix does not rotate it. Linux's generated systemd user

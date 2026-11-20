@@ -26,7 +26,9 @@ func raceInventoryCases() []raceInventoryCase {
 	return []raceInventoryCase{
 		{"service", "internal/service", 2},
 		{"sqlite", "internal/store/sqlite", 3},
-		{"cmd", "cmd/mtix", 3},
+		// MTIX-272.1: every cmd/mtix shard, from the same count as the shard
+		// script, so a test hashed to a shard above 3 is still found.
+		{"cmd", "cmd/mtix", cmdShardCount},
 	}
 }
 

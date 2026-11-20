@@ -1,27 +1,49 @@
 # MTIX-272.1: known-heavy cmd/mtix tests pinned to a shard (see
 # scripts/cmd-mtix-shards.sh). Format: <TestName> <shard 1..SHARDS>.
-# Measured seconds are from one remote-bar run on ubuntu with PostgreSQL 16
-# (the 20 slowest tests, about 1000 of 3566 s); every test not listed keeps its
-# hash shard, so a new test needs no edit here. A pin for a test the binary no
-# longer lists fails `check`: rename or drop the line. Re-measure with
-# go test -v when shards drift apart.
-TestProp_BackfillConvergence 1  # 67s
-TestEnrolGuard_RealBinary_LockFixRefusesWhileAnEnrolmentHoldsIt 1  # 49s
-TestHopField_PostgresPushPull_054ReaderIgnores 1  # 40s
-TestUnclaimError_HostileAssignee_NoControlBytes 1  # 29s
-TestRelayClone_VerifyStepCoversEveryTaskInEveryProject 2  # 107s
-TestSyncQuarantineAcknowledge_ActualProcess_NegativeControls 2  # 50s
-TestRelayClone_RecoveryNamedByRefusal_RejoinsAsNewPeer 2  # 42s
-TestRunDaemon_PullFailure_RecordsRealOutcome 2  # 31s
-TestAttachSchema_PostgresPull_PreservesLocalState 3  # 69s
-TestEnrolWorktree_RealHub_PushedRerunAndDelete_Enrols_PG 3  # 54s
-TestSyncPushClone_WorkflowAfterRerun_ReplicatesStatusAndClosedAt 3  # 44s
-TestRelayClone_RecoveryAfterRecreatingTheSkippedTask_Completes 3  # 34s
-TestRenumberCollision_RealHub_NoEventAppliesUnderTheOldNumber 4  # 123s
-TestDoctorSchemaCurrent_CollisionPaths_ReportedWithTheirFix 4  # 44s
-TestDSN_NeverInAnyFR18CommandOutput 4  # 37s
-TestDoctorRecoveryHint_DisplayContract 4  # 33s
-TestDoctorDocs_FreshStaleAndPointers_ReadOnlyJSON 5  # 55s
-TestDaemonOwner_ProcessConcurrentStarts 5  # 46s
-TestEnrolGuard_RealBinary_TornMarkerAndProbeError_PrintedFixWorks 5  # 41s
-TestSyncInit_IndexMigrationOutlivesConnectBudget 5  # 32s
+# Measured seconds are the larger of the PostgreSQL 16 and 17 shard jobs of
+# PR 438 (go test -v; 3476 and 3752 s of test time in all). The forty slowest
+# tests are placed greedily on the lightest shard after the hash split of the
+# rest, so each of six shards carries at most about 631 s. Every test not
+# listed keeps its hash shard, so a new test needs no edit here. A pin for a
+# test the binary no longer lists fails `check`: rename or drop the line.
+# Re-measure with go test -v when shards drift apart.
+TestRenumberCollision_RealHub_NoEventAppliesUnderTheOldNumber 6  # 124s
+TestRelayClone_VerifyStepCoversEveryTaskInEveryProject 4  # 104s
+TestAttachSchema_PostgresPull_PreservesLocalState 1  # 77s
+TestProp_BackfillConvergence 3  # 67s
+TestEnrolWorktree_RealHub_PushedRerunAndDelete_Enrols_PG 2  # 66s
+TestDoctorDocs_FreshStaleAndPointers_ReadOnlyJSON 1  # 55s
+TestEnrolGuard_RealBinary_DecodeTornMarkerFreeLock_KeepsRunnableFix 3  # 51s
+TestEnrolGuard_RealBinary_TornMarkerOneAside_FixRestoresOriginalStore 5  # 51s
+TestEnrolGuard_RealBinary_TornMarkerAndProbeError_PrintedFixWorks 2  # 48s
+TestEnrolGuard_RealBinary_AlertCauseAndFixSurvive 6  # 47s
+TestDoctorSchemaCurrent_CollisionPaths_ReportedWithTheirFix 4  # 45s
+TestSyncPushClone_WorkflowAfterRerun_ReplicatesStatusAndClosedAt 1  # 44s
+TestRelayClone_RecoveryNamedByRefusal_RejoinsAsNewPeer 3  # 42s
+TestHopField_PostgresPushPull_054ReaderIgnores 2  # 42s
+TestDSN_NeverInAnyFR18CommandOutput 5  # 41s
+TestDaemonOwner_ProcessConcurrentStarts 6  # 40s
+TestRelayClone_RecoveryAfterRecreatingTheSkippedTask_Completes 4  # 36s
+TestDoctorRecoveryHint_DisplayContract 1  # 34s
+TestSyncInit_IndexMigrationOutlivesConnectBudget 3  # 32s
+TestUnclaimError_HostileAssignee_NoControlBytes 6  # 31s
+TestRunDaemon_PullFailure_RecordsRealOutcome 5  # 31s
+TestRelayClone_RecoveryWithTaskNumberCollision_StopsAndRetiresNothing 2  # 27s
+TestTitleOutput_HostileTitles_NoControlBytes 4  # 26s
+TestRunSyncDoctor_HostileHolderIDs 2  # 26s
+TestRelayQuarantineCLI_Recreate_MakesTheTaskUnderANewID 3  # 26s
+TestRelayQuarantineCLI_Accept_KeepsContentUnappliedAndClearsDoctor 1  # 25s
+TestWakeAgentScript_DefaultDrainBound_StopsAtTwenty 4  # 25s
+TestWakeSenderIngress_UnrepresentableAuthorDoesNotBlockDispatch 6  # 24s
+TestTitleOutput_JSONPaths_StayByteExact 5  # 24s
+TestRelayQuarantineCLI_Resolve_RejectsBadInput 2  # 23s
+TestRelayQuarantineCLI_Collision_IsListedAndDoctored 3  # 23s
+TestRelayClone_SkipFromEarlierTick_IsStillListedAndStopsStep1 1  # 22s
+TestRunShow_HostileAnnotationID_RendersPrintableASCII 5  # 21s
+TestDepShow_HostileStoredFromID_NoControlBytes 4  # 21s
+TestDepShow_HostileIDs_JSONByteExact 6  # 21s
+TestStale_HostileAgentID_JSONByteExact 4  # 20s
+TestPushLoop_ManyHeldCreationsAndAWriter_PushStillCompletes 6  # 20s
+TestDepShow_HostileIDArgument_NoControlBytes 5  # 20s
+TestDoctorFixLines_AllHostileIDs_TypeableAndResolve 1  # 19s
+TestStale_HostileAgentID_NoControlBytes 3  # 19s

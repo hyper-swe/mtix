@@ -91,7 +91,7 @@ func (s *SyncService) keepPulledBoard(ctx context.Context, mtixDir string) (bool
 	if s.exportBlockedByPendingImport(mtixDir) {
 		return true, nil
 	}
-	diskHash, changed, err := s.boardChangedOnDisk(mtixDir)
+	diskHash, changed, err := s.boardChangedOnDisk(ctx, mtixDir)
 	if err != nil {
 		return true, err
 	}
@@ -99,7 +99,7 @@ func (s *SyncService) keepPulledBoard(ctx context.Context, mtixDir string) (bool
 		return false, nil
 	}
 	importErr := s.autoImport(ctx, mtixDir)
-	_, stillChanged, err := s.boardChangedOnDisk(mtixDir)
+	_, stillChanged, err := s.boardChangedOnDisk(ctx, mtixDir)
 	if err != nil {
 		return true, err
 	}
@@ -127,9 +127,20 @@ func (s *SyncService) keepPulledBoard(ctx context.Context, mtixDir string) (bool
 // import run next recognizes it (isOwnExport) and records its hash. A
 // missing file has nothing to protect. A non-ENOENT read error stops automatic
 // export: an existing board cannot be replaced before it has been read.
-func (s *SyncService) boardChangedOnDisk(mtixDir string) (string, bool, error) {
+//
+// MTIX-130.20.2: when the last publication's record proves tasks.json is the
+// file that publication wrote (publishedBoardIntact: size, modification time,
+// change time, inode, device and sync.sha256 all equal the record), the
+// record's hash is the answer and the 27 MB file is neither read nor hashed.
+// Where the record cannot prove identity (no change time or file id, or a
+// whole-second time) the file is read and hashed once and its hash must equal
+// the recorded one. Any mismatch or error reads and hashes as before.
+func (s *SyncService) boardChangedOnDisk(ctx context.Context, mtixDir string) (string, bool, error) {
+	if recorded := s.publishedBoardHash(ctx, mtixDir); recorded != "" {
+		return recorded, false, nil
+	}
 	// #nosec G703 -- caller selects the local project directory; tasks.json is the fixed board filename, not a path taken from its content.
-	data, err := os.ReadFile(filepath.Join(mtixDir, "tasks.json"))
+	data, err := s.publishedReader()(filepath.Join(mtixDir, "tasks.json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return "", false, nil
 	}
@@ -154,7 +165,7 @@ func (s *SyncService) exportBlockedByPendingImport(mtixDir string) bool {
 		return false
 	}
 	// #nosec G703 -- caller selects the local project directory; tasks.json is the fixed board filename, not a path taken from its content.
-	fileBytes, err := os.ReadFile(filepath.Join(mtixDir, "tasks.json"))
+	fileBytes, err := s.publishedReader()(filepath.Join(mtixDir, "tasks.json"))
 	if err != nil || !s.refusalPending(mtixDir, refusal, fileBytes) {
 		return false
 	}
@@ -222,11 +233,11 @@ func (s *SyncService) resolveRefusal(mtixDir, fileHash string) error {
 
 // keepPulledBoardUnderLock rechecks protection after taking the export lock.
 // It cannot import here: import would acquire the same lock recursively.
-func (s *SyncService) keepPulledBoardUnderLock(mtixDir string) (bool, error) {
+func (s *SyncService) keepPulledBoardUnderLock(ctx context.Context, mtixDir string) (bool, error) {
 	if s.exportBlockedByPendingImport(mtixDir) {
 		return true, nil
 	}
-	hash, changed, err := s.boardChangedOnDisk(mtixDir)
+	hash, changed, err := s.boardChangedOnDisk(ctx, mtixDir)
 	if err != nil {
 		return true, err
 	}

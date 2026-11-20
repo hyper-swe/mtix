@@ -18,8 +18,14 @@ import (
 // baseline (FR-15.3, MTIX-150). Missing, invalid and older-form files still need
 // publication; automatic export's ownership/refusal guard runs before this.
 func matchingPublishedExport(path string, current *sqlite.ExportData) ([]byte, error) {
+	return matchingPublishedExportWith(os.ReadFile, path, current)
+}
+
+// matchingPublishedExportWith is matchingPublishedExport with the file reader
+// injected, so a test can count reads of the published board.
+func matchingPublishedExportWith(read func(string) ([]byte, error), path string, current *sqlite.ExportData) ([]byte, error) {
 	// #nosec G703 -- fixed tasks.json under the caller-selected local project; no received content controls this path.
-	raw, err := os.ReadFile(path)
+	raw, err := read(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -49,10 +55,16 @@ func matchingPublishedExport(path string, current *sqlite.ExportData) ([]byte, e
 
 // recordUnchangedExport retains raw file-hash semantics and repairs metadata
 // before exportBoardPass retires its pending cutoff (FR-15.3d, MTIX-150).
-func (s *SyncService) recordUnchangedExport(ctx context.Context, dir string, raw []byte, current *sqlite.ExportData) error {
+func (s *SyncService) recordUnchangedExport(ctx context.Context, dir string, raw []byte, current *sqlite.ExportData, stamp publicationStamp) error {
 	fileHash := fmt.Sprintf("%x", sha256.Sum256(raw))
-	if err := s.publishExportHashes(ctx, dir, fileHash, current); err != nil {
+	dbHash, err := s.publishExportHashes(ctx, dir, fileHash, current)
+	if err != nil {
 		return err
 	}
-	return syncExportPublicationWithSync(dir, s.syncDirectory)
+	if err := syncExportPublicationWithSync(dir, s.syncDirectory); err != nil {
+		return err
+	}
+	stamp.fileHash, stamp.dbHash = fileHash, dbHash
+	s.recordPublication(ctx, stamp)
+	return nil
 }

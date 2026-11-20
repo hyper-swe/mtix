@@ -74,21 +74,23 @@ func dropMalformedHistory(entries []exportHistoryEntry, res *RecoverResult) []ex
 	return kept
 }
 
-// carryRecoveredHistory applies when the mirror is a format 2.1.0 file, that
-// is, the board exported history: it gathers the history the database still
-// holds, the mirror's per-node entries and its top-level list, drops
-// repeated entry ids, puts each entry on the recovered node it belongs to and
-// keeps the rest as the orphan list (MTIX-95.31.19.5). The recovered export
-// is then labeled 2.1.0 (finishRecover).
+// carryRecoveredHistory gathers the history the database still holds and,
+// when the mirror is a format 2.1.0 file, the mirror's per-node entries and
+// its top-level list; it drops repeated entry ids, puts each entry on the
+// recovered node it belongs to and keeps the rest as the orphan list
+// (MTIX-95.31.19.5). The database's entries are kept whatever the mirror's
+// format, or with no usable mirror at all: history.export governs only what
+// tasks.json carries, and the recovered file is private (MTIX-95.31.19.5.3).
+// The recovered export is labeled 2.1.0 whenever it keeps an entry
+// (finishRecover).
 func carryRecoveredHistory(nodes map[string]exportNode, db *dbSalvage, mirror *ExportData, res *RecoverResult) {
-	if mirror == nil || mirror.SchemaVersion != SchemaVersionHistory {
-		return
-	}
 	all := slices.Clone(db.history)
-	for _, n := range mirror.Nodes {
-		all = append(all, n.History...)
+	if mirror != nil && mirror.SchemaVersion == SchemaVersionHistory {
+		for _, n := range mirror.Nodes {
+			all = append(all, n.History...)
+		}
+		all = append(all, mirror.History...)
 	}
-	all = append(all, mirror.History...)
 	// Validate before dropping repeated ids, so a malformed copy never hides
 	// the intact copy of the same entry.
 	all = dropMalformedHistory(all, res)

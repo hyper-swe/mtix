@@ -165,7 +165,8 @@ different ones. A node's creation time (`created_at`) is compared: a pull
 stores it from the create event's own time, not the pulling machine's clock.
 A node's update time (`updated_at`) stays excluded: a local write stamps it
 from a clock reading taken apart from its event's time, and some local writes
-move it with no event at all (the auto-block when a dependency is added; and
+move it with no event at all (the auto-block when a dependency is added or a resolved blocker is
+reopened; and
 removing a dependency, which moves the source node locally while its unlink_dep
 event does not carry that move), so a clone, which derives it from the latest
 applied event, can differ. A node that a derived auto-block or auto-unblock

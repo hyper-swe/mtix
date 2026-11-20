@@ -10,6 +10,7 @@ import (
 	"io"
 
 	"github.com/hyper-swe/mtix/internal/store/postgres/transport"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 // syncPullInput groups one invocation without changing CLI arguments (MTIX-112.20.7).
@@ -20,6 +21,8 @@ type syncPullInput struct {
 	limit          int
 	onOutcome      func(daemonPullOutcome)
 	onConnect      func(context.Context)
+	// onMoves, when set, receives the local tasks a pull moved (MTIX-112.17.16.39).
+	onMoves func([]sqlite.PullMove)
 }
 
 // pullObserver retains raw causes before hook formatting discards them (MTIX-112.20.7).
@@ -27,6 +30,8 @@ type pullObserver struct {
 	onFinish  func(error)
 	onFailure func(error)
 	onConnect func(context.Context)
+	// phases replaces the hub phases of the pull; nil runs the real ones.
+	phases func(context.Context, syncPullInput, pullIngest, pullObserver) (pullOutcome, bool, error)
 }
 
 // fail preserves existing formatting and hook-mode early-return behavior (MTIX-112.20.7).
@@ -66,10 +71,15 @@ func runSyncPullObserved(ctx context.Context, req syncPullInput, observer pullOb
 			err = errors.Join(err, owner.Incomplete(ctx))
 		}
 	}()
+	moveMark, markOK := pullMoveMark(ctx, req.stderr, app.store)
 	in := newPullIngest(req.stderr)
 	in.receipt = newPullExchangeTracker(svc.MaxImportSize)
 	in.onConnect = observer.onConnect
-	res, stopped, err := daemonObservedPullPhases(ctx, req, in, observer)
+	phases := observer.phases
+	if phases == nil {
+		phases = daemonObservedPullPhases
+	}
+	res, stopped, err := phases(ctx, req, in, observer)
 	if stopped {
 		return err
 	}
@@ -79,6 +89,9 @@ func runSyncPullObserved(ctx context.Context, req syncPullInput, observer pullOb
 	}
 	fmt.Fprintf(req.stdout, "pull complete: %d events applied across %d batches\n", res.pulled, res.batches)
 	printLateEventSweep(req.stdout, res.sweep)
+	if markOK {
+		reportPullMoves(ctx, req, app.store, moveMark)
+	}
 	printQuarantineHeld(ctx, req.stdout, req.stderr, app.store)
 	return nil
 }

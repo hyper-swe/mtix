@@ -108,3 +108,30 @@ func (s *Store) noteRenames(tx *sql.Tx, mapping map[string]string) {
 		tr.renames[newID] = oldID
 	}
 }
+
+// touchHistorySubtree reads the recorded fields of the descendants of root
+// into the transaction's tracker, once, before the caller renumbers them, so
+// each moved task pairs with its earlier state and its move is recorded with
+// the transaction's own origin. Outside a recording transaction, or on a nil
+// Store, it does nothing. MTIX-112.17.16.39.
+func (s *Store) touchHistorySubtree(ctx context.Context, tx *sql.Tx, root string) error {
+	if s == nil || root == "" {
+		return nil
+	}
+	v, ok := s.history.Load(tx)
+	if !ok {
+		return nil
+	}
+	tr := v.(*historyTracker) //nolint:errcheck,forcetypeassert // only withHistoryTx stores a *historyTracker
+	found := map[string]historySnapshot{}
+	if err := readSnapshots(ctx, tx, found, historySubtreeSQL, root+".", root+"/"); err != nil {
+		return err
+	}
+	for id, snap := range found {
+		if !tr.seen[id] {
+			tr.seen[id] = true
+			tr.before[id] = snap
+		}
+	}
+	return nil
+}

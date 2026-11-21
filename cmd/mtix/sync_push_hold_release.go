@@ -49,12 +49,14 @@ func releasePushHolds(ctx context.Context, stderr io.Writer, store *sqlite.Store
 	if err != nil {
 		return nil, err
 	}
-	if err := releaseLoggedHolds(ctx, store, holds, p); err != nil {
+	retired, err := releaseLoggedHolds(ctx, store, holds, p)
+	if err != nil {
 		return nil, err
 	}
 	if err := p.apply(ctx, store); err != nil {
 		return nil, err
 	}
+	reportHolds(stderr, retired)
 	for _, h := range holds {
 		if why, ok := p.released[h.EventID]; ok {
 			reportReleased(stderr, h, why)

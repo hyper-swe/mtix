@@ -52,9 +52,10 @@ func checkUnloggedHolds(ctx context.Context, st *sqlite.Store) DoctorCheck {
 	g := groupUnlogged(ids, states)
 	if len(g.tasks) == 0 && g.released == 0 {
 		return DoctorCheck{Name: unloggedCheckName, Pass: true, Detail: fmt.Sprintf(
-			"ok; %d held events of deleted tasks no peer holds stay held as a record and are never sent: "+
-				"a delete made here before the sync log held the task's creation, and the other changes of "+
-				"such a task while it stays deleted here; a teammate's copy of the task is not deleted by them",
+			"ok; %d held events of deleted tasks no peer holds stay held as a record: a delete made here "+
+				"before the sync log held the task's creation is never sent, and neither is any change of a "+
+				"task mtix gc purged before then; the other changes of such a task are not sent while it stays "+
+				"deleted here, and are sent if it is undeleted; a teammate's copy of the task is not deleted by them",
 			g.retired)}
 	}
 	detail, fix := unloggedReport(g)
@@ -97,12 +98,15 @@ type unloggedGroups struct {
 	retired, released int
 }
 
+// unloggedKey identifies one unlogged task among the held events.
+type unloggedKey struct{ uid, nodeID string }
+
 // groupUnlogged groups the held events ids by what states says of each. An
 // event that depends on no unlogged task any more is retired only when its
 // task is gone from the board; otherwise the next push releases it.
 func groupUnlogged(ids []string, states unloggedHoldStates) unloggedGroups {
 	var g unloggedGroups
-	index := map[string]int{}
+	index := map[unloggedKey]int{}
 	for _, id := range ids {
 		s, ok := states.subjects[id]
 		switch {
@@ -113,7 +117,7 @@ func groupUnlogged(ids []string, states unloggedHoldStates) unloggedGroups {
 			g.released++
 			continue
 		}
-		key := s.UID + "\x00" + s.NodeID
+		key := unloggedKey{uid: s.UID, nodeID: s.NodeID}
 		i, seen := index[key]
 		if !seen {
 			i = len(g.tasks)
@@ -130,7 +134,7 @@ func groupUnlogged(ids []string, states unloggedHoldStates) unloggedGroups {
 // comments, then delete it with its subtree. The held events stay as a
 // record; once the task is deleted the check passes.
 func unloggedFix(s sqlite.UnloggedSubject) string {
-	id := oneLine(s.NodeID)
+	task := oneLine(s.NodeID)
 	under := ""
 	if s.ParentID != "" {
 		under = " --under " + oneLine(s.ParentID)
@@ -138,5 +142,5 @@ func unloggedFix(s sqlite.UnloggedSubject) string {
 	return fmt.Sprintf("for %s: run mtix show %s --json to read its fields, re-create it as a new task with "+
 		"mtix create \"<its title>\"%s --description ... --prompt ... --acceptance ... (then its child tasks under "+
 		"the new task the same way, and its comments with mtix comment), then run mtix delete %s --cascade; "+
-		"the held events stay as a record and are never sent", id, id, under, id)
+		"the held events stay as a record and are never sent", task, task, under, task)
 }

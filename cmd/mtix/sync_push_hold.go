@@ -238,7 +238,7 @@ func pushHoldDecision(e *model.SyncEvent, c *holdCheck, refused error, blocked *
 		}
 	}
 	if unlogged != nil {
-		return unloggedHoldReason(*unlogged), true
+		return unloggedHoldReason(e, *unlogged), true
 	}
 	if refused == nil {
 		return "", false
@@ -324,17 +324,29 @@ func unloggedOrNil(u sqlite.UnloggedSubject, ok bool) *sqlite.UnloggedSubject {
 	return &u
 }
 
-// unloggedHoldReason is the hold reason of an event that depends on u, a
-// task the sync log has no creation for (MTIX-112.17.16.37); for a retired
-// u, a task deleted here before the sync log held its creation, whose
-// events stay local (review r1c). One line, at most maxQuarantineReason
-// runes.
-func unloggedHoldReason(u sqlite.UnloggedSubject) string {
-	if u.Retired {
+// unloggedHoldReason is the hold reason of e, an event that depends on u, a
+// task the sync log has no creation for (MTIX-112.17.16.37). For a retired
+// u (reviews r1c and r1d): a task purged here before the log held its
+// creation, whose events are never sent; the task's own delete made before
+// then, never sent; any other event, not sent while the task stays deleted
+// here and sent once it is undeleted (and its creation is logged). The uid
+// is a creation event id, rendered with format.EventID. One line, at most
+// maxQuarantineReason runes.
+func unloggedHoldReason(e *model.SyncEvent, u sqlite.UnloggedSubject) string {
+	switch {
+	case u.Purged:
+		purged := sqlite.UnloggedPurgedReason(u.NodeID, u.UID)
+		return quarantineReason(errors.New(purged))
+	case u.Retired && e.OpType == model.OpDelete && (e.NodeID == u.NodeID || (e.UID != "" && e.UID == u.UID)):
 		return quarantineReason(fmt.Errorf("%stask %s (uid %s) was deleted here before the sync log held its "+
-			"creation, so this change stays here and is never sent; see mtix sync doctor",
-			holdUnloggedPrefix, oneLine(u.NodeID), oneLine(u.UID)))
+			"creation, so this delete is never sent; see mtix sync doctor",
+			holdUnloggedPrefix, oneLine(u.NodeID), format.EventID(u.UID)))
+	case u.Retired:
+		return quarantineReason(fmt.Errorf("%stask %s (uid %s) was deleted here before the sync log held its "+
+			"creation, so this change is not sent while the task stays deleted here; it is sent if the task is "+
+			"undeleted, once the sync log holds its creation; see mtix sync doctor",
+			holdUnloggedPrefix, oneLine(u.NodeID), format.EventID(u.UID)))
 	}
 	return quarantineReason(fmt.Errorf("%stask %s (uid %s) has no creation in the sync log, so no peer holds it; "+
-		"see mtix sync doctor", holdUnloggedPrefix, oneLine(u.NodeID), oneLine(u.UID)))
+		"see mtix sync doctor", holdUnloggedPrefix, oneLine(u.NodeID), format.EventID(u.UID)))
 }

@@ -126,11 +126,99 @@ func retiredCases() []retiredCase {
 			pullCreation(t, raw, "MTIX-1")
 			return map[string]string{e: "", d: "MTIX-1"}
 		}},
-		{"only a held link from it, deleted, creation pulled: its delete is sent", func(t *testing.T, s *sqlite.Store, raw *sql.DB) map[string]string {
-			holdAsUnlogged(t, s, link(t, s, raw, "MTIX-1", "MTIX-3"))
+		// Lead ruling r2 2: the subject is every task a hold names, whichever
+		// held event put it there.
+		{"only a held link from it, deleted, creation pulled: link and delete stay held", func(t *testing.T, s *sqlite.Store, raw *sql.DB) map[string]string {
+			l := link(t, s, raw, "MTIX-1", "MTIX-3")
+			holdAsUnlogged(t, s, l)
 			d := del(t, s, raw, "MTIX-1", true)
 			pullCreation(t, raw, "MTIX-1")
-			return map[string]string{d: ""}
+			return map[string]string{l: "MTIX-1", d: "MTIX-1"}
+		}},
+		{"only a held link to it, deleted, creation pulled: link and delete stay held", func(t *testing.T, s *sqlite.Store, raw *sql.DB) map[string]string {
+			l := link(t, s, raw, "MTIX-3", "MTIX-1")
+			holdAsUnlogged(t, s, l)
+			d := del(t, s, raw, "MTIX-1", true)
+			pullCreation(t, raw, "MTIX-1")
+			return map[string]string{l: "MTIX-1", d: "MTIX-1"}
+		}},
+		{"only a held child creation under it, cascade-deleted, creation pulled: the creation and both deletes stay held", func(t *testing.T, s *sqlite.Store, raw *sql.DB) map[string]string {
+			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
+			c := lastEventID(t, raw, "MTIX-1.1", model.OpCreateNode)
+			holdAsUnlogged(t, s, c)
+			d := del(t, s, raw, "MTIX-1", true)
+			child := lastEventID(t, raw, "MTIX-1.1", model.OpDelete)
+			pullCreation(t, raw, "MTIX-1")
+			return map[string]string{c: "MTIX-1", d: "MTIX-1", child: "MTIX-1"}
+		}},
+		{"only a held edit of its child, cascade-deleted, creation pulled: the edit and both deletes stay held", func(t *testing.T, s *sqlite.Store, raw *sql.DB) map[string]string {
+			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
+			e := edit(t, s, raw, "MTIX-1.1")
+			holdAsUnlogged(t, s, e)
+			d := del(t, s, raw, "MTIX-1", true)
+			child := lastEventID(t, raw, "MTIX-1.1", model.OpDelete)
+			pullCreation(t, raw, "MTIX-1")
+			return map[string]string{e: "MTIX-1", d: "MTIX-1", child: "MTIX-1"}
+		}},
+		{"only a held child creation, child live, task undeleted, creation pulled: the creation is released, the delete stays", func(t *testing.T, s *sqlite.Store, raw *sql.DB) map[string]string {
+			mustCreateNode(t, s, "MTIX-1.1", "MTIX-1")
+			c := lastEventID(t, raw, "MTIX-1.1", model.OpCreateNode)
+			holdAsUnlogged(t, s, c)
+			d := del(t, s, raw, "MTIX-1", true)
+			_, err := raw.Exec(`UPDATE nodes SET deleted_at = NULL WHERE id IN ('MTIX-1', 'MTIX-1.1')`)
+			require.NoError(t, err)
+			pullCreation(t, raw, "MTIX-1")
+			return map[string]string{c: "", d: "MTIX-1"}
+		}},
+		// X1: the rule reads the task's LATEST delete.
+		{"deleted, undeleted, creation pulled, deleted again: the edit and the later delete are sent", func(t *testing.T, s *sqlite.Store, raw *sql.DB) map[string]string {
+			e := edit(t, s, raw, "MTIX-1")
+			d := del(t, s, raw, "MTIX-1", true)
+			holdAsUnlogged(t, s, e, d)
+			undelete(t, raw)
+			pullCreation(t, raw, "MTIX-1")
+			return map[string]string{e: "", d: "MTIX-1", del(t, s, raw, "MTIX-1", true): ""}
+		}},
+		// X4: a held link to a task live here is released once its creation is
+		// logged; only an own delete can predate the creation.
+		{"held link to it, task live, creation pulled: the link is released", func(t *testing.T, s *sqlite.Store, raw *sql.DB) map[string]string {
+			l := link(t, s, raw, "MTIX-3", "MTIX-1")
+			holdAsUnlogged(t, s, l)
+			pullCreation(t, raw, "MTIX-1")
+			return map[string]string{l: ""}
+		}},
+		// X2, X3, X8: each creation lookup of a held task, by uid, by event
+		// id, and the earliest of them.
+		{"held, deleted, creation (legacy event id, logged by uid only) pulled: retired", func(t *testing.T, s *sqlite.Store, raw *sql.DB) map[string]string {
+			mustCreateNode(t, s, "MTIX-5", "")
+			_, err := raw.Exec(`UPDATE sync_events SET event_id = 'legacy-create-5'
+				WHERE node_id = 'MTIX-5' AND op_type = 'create_node'`)
+			require.NoError(t, err)
+			e := edit(t, s, raw, "MTIX-5")
+			holdAsUnlogged(t, s, e)
+			d := del(t, s, raw, "MTIX-5", true)
+			pullCreation(t, raw, "MTIX-5")
+			return map[string]string{e: "MTIX-5", d: "MTIX-5"}
+		}},
+		{"held, deleted, creation (logged by event id only, no uid) pulled: retired", func(t *testing.T, s *sqlite.Store, raw *sql.DB) map[string]string {
+			e := edit(t, s, raw, "MTIX-4")
+			holdAsUnlogged(t, s, e)
+			d := del(t, s, raw, "MTIX-4", true)
+			pullCreation(t, raw, "MTIX-4")
+			return map[string]string{e: "MTIX-4", d: "MTIX-4"}
+		}},
+		{"held, deleted after its earliest creation, a second creation pulled later: an ordinary delete", func(t *testing.T, s *sqlite.Store, raw *sql.DB) map[string]string {
+			e := edit(t, s, raw, "MTIX-4")
+			holdAsUnlogged(t, s, e)
+			d := del(t, s, raw, "MTIX-4", true)
+			_, err := raw.Exec(`INSERT INTO sync_events (event_id, project_prefix, node_id, op_type, payload,
+				wall_clock_ts, lamport_clock, vector_clock, author_id, author_machine_hash, sync_status, created_at, uid)
+				SELECT 'pulled-create-4', project_prefix, node_id, op_type, payload, wall_clock_ts, lamport_clock,
+				       vector_clock, author_id, author_machine_hash, 'applied', created_at,
+				       (SELECT uid FROM nodes WHERE id = 'MTIX-4')
+				FROM sync_events WHERE node_id = 'MTIX-4' AND op_type = 'create_node'`)
+			require.NoError(t, err)
+			return map[string]string{e: "", d: ""}
 		}},
 		{"held link to it, deleted, creation pulled: the link stays held", func(t *testing.T, s *sqlite.Store, raw *sql.DB) map[string]string {
 			e := edit(t, s, raw, "MTIX-1")

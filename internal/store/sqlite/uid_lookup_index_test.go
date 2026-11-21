@@ -120,6 +120,7 @@ func TestUIDLookupQueries_ExplainQueryPlan_SearchIDXNodesUID(t *testing.T) {
 		{"lines of a push event, its task by uid", "unloggedLinesQuery", "n"},
 		{"gone push subject, its task by uid", "Store.SubjectsGone", "n"},
 		{"retired unlogged hold, its task by uid", "retiredUnloggedQuery", "n"},
+		{"predating deletes named by a released hold, its task by uid", "predatingDeletesQuery", "n"},
 	}
 	s := newInternalTestStore(t)
 	lits := packageSQLLiterals(t)
@@ -398,22 +399,24 @@ func TestSubjectsGone_ExplainQueryPlan_ReadsTheBatchOnly(t *testing.T) {
 }
 
 // TestRetiredUnloggedQuery_ExplainQueryPlan_SearchesIndexes: the query
-// that finds the retired holds of unlogged tasks (review r1b S1, S2), run
-// for every push batch, finds the held events and creations of a task by
-// uid through idx_sync_events_uid and its node through idx_nodes_uid; it
-// never reads sync_events through idx_sync_events_op_type or scans
-// sync_events or nodes.
+// that finds the retired holds of unlogged tasks (review r1b S1, S2; lead
+// ruling r2 2), run for every push batch, finds the creations and deletes of
+// a task by uid through idx_sync_events_uid, its node through idx_nodes_uid
+// and the event of each push hold by its primary key; it reads only
+// sync_quarantine in full (the holds), never sync_events through
+// idx_sync_events_op_type, and never scans sync_events or nodes.
 func TestRetiredUnloggedQuery_ExplainQueryPlan_SearchesIndexes(t *testing.T) {
 	t.Parallel()
 	s := newInternalTestStore(t)
 	query := uidLookupIn(t, packageSQLLiterals(t), "retiredUnloggedQuery", nodesUIDTable)
 	require.Equal(t, retiredUnloggedQuery(), query, "the plan is of the query push runs")
 	plan := queryPlan(t, s, query)
-	for _, alias := range []string{"h", "d", "c"} {
+	for _, alias := range []string{"d", "c"} {
 		assertSearchesIndex(t, plan, alias, "idx_sync_events_uid")
 	}
 	assertSearchesIndex(t, plan, "n", "idx_nodes_uid")
-	scan := regexp.MustCompile(`^SCAN (?:sync_events|nodes|n|c|h|d)\b`)
+	assert.Contains(t, plan, "SEARCH e USING INDEX sqlite_autoindex_sync_events_1 (event_id=?)")
+	scan := regexp.MustCompile(`^SCAN (?:sync_events|nodes|n|c|d|e|p)\b`)
 	for _, line := range plan {
 		assert.NotContains(t, line, "idx_sync_events_op_type", "plan %q", plan)
 		assert.False(t, scan.MatchString(line), "scans a table: %q in plan %q", line, plan)

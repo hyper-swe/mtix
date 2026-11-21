@@ -63,7 +63,11 @@ func (s unloggedHoldStates) releasable(id string) bool {
 // releaseLoggedHolds adds to p the release of every hold among holds of an
 // unlogged task whose task now has a logged creation (releasable). It runs
 // at the start of every push (releasePushHolds), before any event is read.
-func releaseLoggedHolds(ctx context.Context, store *sqlite.Store, holds []sqlite.HeldPushEvent, p *holdPlan) error {
+// Before the releases apply, it holds as retired the pending deletes that
+// the released holds alone kept retired (holdPredatingDeletes), and returns
+// those holds.
+func releaseLoggedHolds(ctx context.Context, store *sqlite.Store, holds []sqlite.HeldPushEvent, p *holdPlan,
+) ([]sqlite.QuarantinedEvent, error) {
 	var ids []string
 	for _, h := range holds {
 		if strings.HasPrefix(h.Reason, holdUnloggedPrefix) {
@@ -71,16 +75,49 @@ func releaseLoggedHolds(ctx context.Context, store *sqlite.Store, holds []sqlite
 		}
 	}
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
 	states, err := readUnloggedHoldStates(ctx, store, ids)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	var released []string
 	for _, id := range ids {
 		if states.releasable(id) {
 			p.released[id] = holdLoggedWhy
+			released = append(released, id)
 		}
 	}
-	return nil
+	return holdPredatingDeletes(ctx, store, released)
+}
+
+// holdPredatingDeletes holds, retired, every pending delete of a task the
+// released holds name that arrived before the task's creation was logged
+// (sqlite.Store.PredatingDeletesNamedBy; lead ruling r2 2). Once those holds
+// are released nothing names the task any more, so such a delete, made
+// before a pull brought a teammate's creation of the task and undone here,
+// would otherwise be sent and delete the teammate's task on the peers. It
+// returns the holds it recorded.
+func holdPredatingDeletes(ctx context.Context, store *sqlite.Store, released []string,
+) ([]sqlite.QuarantinedEvent, error) {
+	ids, err := store.PredatingDeletesNamedBy(ctx, released)
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	events, err := store.ReadPendingEventsByID(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	holds := make([]sqlite.QuarantinedEvent, 0, len(events))
+	for _, e := range events {
+		q, err := pushHold(e, unloggedHoldReason(e, sqlite.UnloggedSubject{NodeID: e.NodeID, UID: e.UID, Retired: true}))
+		if err != nil {
+			return nil, err
+		}
+		holds = append(holds, q)
+	}
+	if err := store.HoldPushEvents(ctx, holds, version); err != nil {
+		return nil, err
+	}
+	return holds, nil
 }

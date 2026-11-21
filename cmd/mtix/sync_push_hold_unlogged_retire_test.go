@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"regexp"
 	"testing"
 	"time"
 
@@ -49,9 +50,16 @@ func requireRetiredNote(t *testing.T) {
 	c := findCheck(t, appendHeldPushCheck(context.Background(), DoctorReport{OverallPass: true}, app.store),
 		unloggedCheckName)
 	require.True(t, c.Pass, c.Detail)
-	require.Contains(t, c.Detail, "held events of deleted tasks")
+	require.Regexp(t, `^ok; [1-9][0-9]* `+regexp.QuoteMeta(retiredNoteRule)+`$`, c.Detail, "the full note (X9)")
 	require.NotContains(t, c.Detail, "the next mtix sync push sends them")
 }
+
+// retiredNoteRule is the doctor's retired note after its count, pinned in
+// full (review r1d X9).
+const retiredNoteRule = "held events of deleted tasks no peer holds stay held as a record: a delete made here " +
+	"before the sync log held the task's creation is never sent, and neither is any change of a task mtix gc " +
+	"purged before then; the other changes of such a task are not sent while it stays deleted here, and are " +
+	"sent if it is undeleted; a teammate's copy of the task is not deleted by them"
 
 // TestPushLoop_UnloggedHold_FixThenPull_OldTaskNeverSent is review r1b S1
 // against a fake hub: A edits TEST-1 (B's task, merge-imported before A
@@ -102,7 +110,8 @@ func TestPushLoop_UnloggedHold_FixThenPull_OldTaskNeverSent(t *testing.T) {
 				require.Contains(t, unloggedHolds(t), id, "it stays held as a record")
 			}
 			require.Contains(t, unloggedHolds(t)[eventIDFor(t, "TEST-1", model.OpDelete)],
-				"was deleted here before the sync log held its creation", "the delete's reason is true")
+				"was deleted here before the sync log held its creation, so this delete is never sent",
+				"the delete's reason is true")
 			require.True(t, hub.sent(eventIDFor(t, "TEST-2", model.OpCreateNode)), "the re-created task is sent")
 			require.NotContains(t, stderr.String(), "released held event")
 			requireRetiredNote(t)
@@ -120,18 +129,28 @@ func TestPushLoop_UnloggedHold_FixThenPull_OldTaskNeverSent(t *testing.T) {
 }
 
 // TestPushLoop_UnloggedTaskPurgedByGC_TeammateTaskStaysLive is review r1b
-// S2: A deletes TEST-1 (B's task, merge-imported, no logged creation) and
-// mtix gc purges it before A pushes. The delete's task has no node and no
-// logged creation, so push holds it as retired and sends nothing of TEST-1,
-// with or without an earlier held edit; doctor passes with the retired
-// note. After A pulls B's creation, A holds TEST-1 live again: the next
-// push never sends the delete (made before the pull) but sends the held
-// edit of the now live task (lead ruling r1d 2); a fresh peer holds TEST-1
-// live and quarantines nothing.
+// S2 and lead ruling r2 3 (gc purge then pull, folds MTIX-112.17.16.37.3):
+// A deletes TEST-1 (B's task, merge-imported, no logged creation) and mtix
+// gc purges it, with an edit held first, an edit not pushed yet, or none. A
+// gc purge counts as a delete made before any later logged creation: push
+// sends nothing of TEST-1 before or after A pulls B's creation, which brings
+// TEST-1 back here live; doctor passes with the retired note; A and a fresh
+// peer both hold B's TEST-1 live with B's title and quarantine nothing.
 func TestPushLoop_UnloggedTaskPurgedByGC_TeammateTaskStaysLive(t *testing.T) {
-	for _, editFirst := range []bool{true, false} {
-		name := map[bool]string{true: "edit held first", false: "no hold before the purge"}[editFirst]
-		t.Run(name, func(t *testing.T) {
+	tests := []struct {
+		name string
+		// edit edits TEST-1 before the delete; pushEdit pushes (holds) it
+		// before the delete; pushAfterPurge pushes between the purge and
+		// the pull.
+		edit, pushEdit, pushAfterPurge bool
+	}{
+		{"edit held first", true, true, true},
+		{"edit held first, pull right after the purge", true, true, false},
+		{"edit not pushed before the purge", true, false, true},
+		{"no edit, no hold before the purge", false, false, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			ctx := context.Background()
 			var stderr bytes.Buffer
 			hub := newFakePushHub()
@@ -140,8 +159,10 @@ func TestPushLoop_UnloggedTaskPurgedByGC_TeammateTaskStaysLive(t *testing.T) {
 				require.NoError(t, err, stderr.String())
 			}
 			importTeammateBoard(t, func() error { push(); return nil })
-			if editFirst {
+			if tt.edit {
 				require.NoError(t, runUpdate("TEST-1", "edited on A", "", "", "", 0, "", ""))
+			}
+			if tt.pushEdit {
 				push()
 			}
 			require.NoError(t, runDelete("TEST-1", true))
@@ -152,35 +173,40 @@ func TestPushLoop_UnloggedTaskPurgedByGC_TeammateTaskStaysLive(t *testing.T) {
 			require.NoError(t, runGC())
 			require.Zero(t, countTestRows(t, `SELECT COUNT(*) FROM nodes WHERE id = 'TEST-1'`), "gc purged the task")
 			own := ownEventsOf(t, "TEST-1")
-			push()
-			for _, id := range own {
-				require.False(t, hub.sent(id), "A's event %s of the purged task is never sent: %s", id, stderr.String())
-				require.Contains(t, unloggedHolds(t), id)
-			}
-			requireRetiredNote(t)
-
-			_, _, err = pullLoop(ctx, testIngest(&stderr), &fakeLateHub{pullEvents: hub.events},
-				app.store, transport.PullCursor{}, 1000)
-			require.NoError(t, err, stderr.String())
-			push()
-			del := eventIDFor(t, "TEST-1", model.OpDelete)
-			require.False(t, hub.sent(del), "the delete made before the pull is never sent: %s", stderr.String())
-			require.Contains(t, unloggedHolds(t), del)
-			for _, id := range own {
-				if id != del {
-					require.True(t, hub.sent(id), "the task is live here again, so its held edit is sent: %s",
-						stderr.String())
+			if tt.pushAfterPurge {
+				push()
+				for _, id := range own {
+					require.False(t, hub.sent(id), "A's event %s of the purged task is never sent: %s", id, stderr.String())
+					require.Contains(t, unloggedHolds(t), id)
 				}
+				requireRetiredNote(t)
+			}
+
+			pullFromHub(t, &stderr, hub)
+			push()
+			push()
+			for _, id := range own {
+				require.False(t, hub.sent(id), "A's event %s of the purged task is never sent, after the pull too: %s",
+					id, stderr.String())
+				require.Contains(t, unloggedHolds(t), id, "it stays held as a record")
+			}
+			require.NotContains(t, stderr.String(), "released held event")
+			if tt.edit {
+				require.Contains(t, unloggedHolds(t)[eventIDFor(t, "TEST-1", model.OpUpdateField)],
+					"was purged from this board before the sync log held its creation, so this change is never sent",
+					"the edit's reason says it is never sent")
 			}
 			requireRetiredNote(t)
 			back, err := app.store.GetNode(ctx, "TEST-1")
 			require.NoError(t, err)
 			require.Nil(t, back.DeletedAt, "A holds the teammate's task live, as every peer does")
+			require.Equal(t, "shared", back.Title, "A holds the teammate's title")
 
 			require.Empty(t, freshPeerPull(t, hub.events), "the fresh peer quarantines nothing")
 			n, err := app.store.GetNode(ctx, "TEST-1")
 			require.NoError(t, err, "the teammate's task stays live on the peer")
 			require.Nil(t, n.DeletedAt)
+			require.Equal(t, "shared", n.Title, "the peer converges on the teammate's title, as A does")
 		})
 	}
 }
@@ -298,7 +324,10 @@ func TestPushLoop_UnloggedHold_UndeletedTask_EditsSentDeleteKept(t *testing.T) {
 			require.NoError(t, push(), stderr.String())
 			edit := eventIDFor(t, "TEST-1", model.OpUpdateField)
 			del := eventIDFor(t, "TEST-1", model.OpDelete)
-			require.Contains(t, unloggedHolds(t), del)
+			require.Contains(t, unloggedHolds(t)[del], "so this delete is never sent", "the delete's reason")
+			require.Contains(t, unloggedHolds(t)[edit], "was deleted here before the sync log held its creation, "+
+				"so this change is not sent while the task stays deleted here; it is sent if the task is undeleted",
+				"the edit's reason is true: it is sent after the undelete (review r1d)")
 			if undeleteFirst {
 				require.NoError(t, runUndelete("TEST-1"))
 				c := findCheck(t, appendHeldPushCheck(ctx, DoctorReport{OverallPass: true}, app.store), unloggedCheckName)

@@ -30,10 +30,13 @@ import (
 // retired. A hold is retired when, on every line of the event that holds an
 // unlogged task, the event's own task and every task up to the topmost
 // unlogged one are deleted locally (or purged): nothing of it is left to
-// send, and peers never held it.
+// send, and peers never held it. A retired subject can also be a task whose
+// creation the log holds now (retiredUnloggedQuery). Purged marks a retired
+// hold of a task this replica purged before the log held its creation: it
+// is never sent.
 type UnloggedSubject struct {
 	NodeID, UID, ParentID string
-	Retired               bool
+	Retired, Purged       bool
 }
 
 // lineTask is one task on one line of an event.
@@ -45,10 +48,10 @@ type lineTask struct {
 
 // UnloggedSubjects returns, keyed by event id, the unlogged task each of
 // eventIDs depends on, and, retired, the task of each event that stays
-// local for good (retiredUnloggedQuery: held as unlogged, then deleted,
-// purged or its delete held, even after its creation reached the log; or
-// purged with no logged creation). An event that depends only on logged
-// tasks otherwise, or has no sync_events row, is left out.
+// local (retiredUnloggedQuery: a task an unlogged push hold names, deleted
+// here before its creation reached the log, even after it did; or purged
+// before then). An event that depends only on logged tasks otherwise, or
+// has no sync_events row, is left out.
 func (s *Store) UnloggedSubjects(ctx context.Context, eventIDs []string) (map[string]UnloggedSubject, error) {
 	return unloggedSubjects(ctx, pushReadAdapter{s}, eventIDs)
 }

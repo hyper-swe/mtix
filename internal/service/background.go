@@ -116,8 +116,23 @@ func (bg *BackgroundService) cleanExpiredNodes(ctx context.Context) (int, error)
 	return len(ids), nil
 }
 
-// permanentlyDelete removes a node from the database permanently per FR-3.3a.
+// nodePurger is a store that purges a soft-deleted node with the sync
+// bookkeeping the purge needs, in one transaction (the SQLite store marks
+// the push holds of a task the sync log has no creation for as purged:
+// MTIX-112.17.16.37, lead ruling r2 3).
+type nodePurger interface {
+	PurgeDeletedNode(ctx context.Context, id string) error
+}
+
+// permanentlyDelete removes a node from the database permanently per FR-3.3a,
+// through the store's own purge when it has one (nodePurger).
 func (bg *BackgroundService) permanentlyDelete(ctx context.Context, id string) error {
+	if p, ok := bg.store.(nodePurger); ok {
+		if err := p.PurgeDeletedNode(ctx, id); err != nil {
+			return fmt.Errorf("permanent delete %s: %w", id, err)
+		}
+		return nil
+	}
 	db := bg.store.WriteDB()
 	_, err := db.ExecContext(ctx,
 		`DELETE FROM nodes WHERE id = ? AND deleted_at IS NOT NULL`,

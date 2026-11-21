@@ -118,6 +118,7 @@ func identityWriters() map[string]string {
 		"sync_apply_ops_more.go:execAppliedCreate":       "a new task from a replayed create: it has no history yet",
 		"node_uid_unique.go:duplicateUIDMessage":         "operator recovery text, never executed",
 		"sync_reconcile.go:DiscardLocal":                 "deletes every task and keeps the history on purpose: the re-pull replays into it, deduped by the event index",
+		"node_purge.go:Store.PurgeDeletedNode":           "mtix gc purge of a soft-deleted task (FR-3.3a): the same delete the background service ran before MTIX-112.17.16.37, moved into the store; a purge never moved history and does not now",
 	}
 }
 

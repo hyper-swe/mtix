@@ -144,7 +144,7 @@ func TestPrintHeldPushEvents_Count_ReportedWhenAny(t *testing.T) {
 				return
 			}
 			require.Equal(t,
-				"held: 2 events not pushed because the hub would refuse them or they depend on a held task creation (see mtix sync doctor)\n",
+				"held: 2 events not pushed because the hub would refuse them, they depend on a held task creation, or the sync log has no creation of their task (see mtix sync doctor)\n",
 				out.String())
 		})
 	}
@@ -243,7 +243,7 @@ func TestPushAndReport_HeldEvents_EndLineCountsThem(t *testing.T) {
 	}{
 		{"one event held", overWireCap(),
 			"push complete: 1 events pushed across 1 batches (1 inserted, 0 already on the hub); 0 renumbered, 0 conflicts surfaced\n" +
-				"held: 1 events not pushed because the hub would refuse them or they depend on a held task creation (see mtix sync doctor)\n"},
+				"held: 1 events not pushed because the hub would refuse them, they depend on a held task creation, or the sync log has no creation of their task (see mtix sync doctor)\n"},
 		{"none held", "",
 			"push complete: 2 events pushed across 1 batches (2 inserted, 0 already on the hub); 0 renumbered, 0 conflicts surfaced\n"},
 	}

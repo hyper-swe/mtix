@@ -3020,8 +3020,8 @@ refuse it.
   prints `push:
   held event <id> ...` for each newly held event and `held: N events
   not pushed ...` at the end. (Before 0.5.4, one such event failed
-  every push.) There are three kinds of hold; the reason starts with its
-  kind:
+  every push.) There are four kinds of hold (a dependent hold has two
+  forms, listed separately); the reason starts with its kind:
   - **Permanent** (`too large: ...`, `refused: ...`): a payload over the
     limit, a broken nesting-depth, id or Lamport/vector-clock cap rule,
     or an event id the hub already holds with other content (see
@@ -3064,6 +3064,66 @@ refuse it.
     one of the held task's old numbers. The reason names the earliest
     held creation, and the link pushes once no creation made before it
     is held.
+  - **No logged creation** (`no logged creation: task <id> (uid
+    "<uid>") has no creation in the sync log, so no peer holds it; see
+    mtix sync doctor`): the task is on this board, but the local sync log
+    holds no creation of it, so no teammate's replica holds it and every
+    one would quarantine its changes. This happens to a task a merge
+    import (`mtix import --mode merge`) added before the project first
+    synced, or a task made before the sync log existed. Push holds every
+    change of the task, every change of a task below it (the creation of
+    a child task included) and every dependency link or unlink to or from
+    it, and never sends them. The reason names the topmost such task.
+    Changes of tasks whose creation is in the log push as before, in the
+    same run. Every push checks these holds again: once the sync log
+    holds the task's creation (a `mtix sync pull` brought a teammate's
+    creation of the same task), push releases the held changes of a task
+    that is live here and sends them. Until then the `mtix sync doctor`
+    check `tasks peers do not hold` fails, names each such task with how
+    many of its changes are held, and gives the fix in `fix` (also with
+    `--json`): read the task with `mtix show <id> --json`, make it again
+    as a new task with `mtix create "<its title>" --under <parent>
+    --description ... --prompt ... --acceptance ...` (then its child
+    tasks under the new task, and its comments with `mtix comment`), then
+    run `mtix delete <id> --cascade`. Push sends the new task like any
+    other.
+
+    Retired holds. A held change names a task: the task in its reason,
+    and every task on its lines (its own task, the task a link points to,
+    and the tasks above each). For every task a held change names,
+    whichever held change put it there (a change of the task itself, a
+    child created under it, any change of a task below it, or a link to
+    or from it):
+    - a delete of the task made here before the sync log held its
+      creation is never sent, even after a later pull brings a
+      teammate's creation of the same task (reason `... was deleted here
+      before the sync log held its creation, so this delete is never
+      sent`), so this replica alone keeps the old task deleted and the
+      teammate's task stays live on every peer;
+    - while the task stays deleted here (its latest delete was made
+      before the creation was logged), its other held changes and those
+      of the tasks below it are not sent either (reason `... so this
+      change is not sent while the task stays deleted here; it is sent if
+      the task is undeleted, once the sync log holds its creation`);
+    - a task `mtix gc` purged before the sync log held its creation
+      counts as deleted before any later logged creation: its held
+      changes, and those of the tasks below it and of links to or from
+      it, are never sent, even after a later pull brings the task back
+      here live with the teammate's content (reason `no logged creation:
+      purged: task <id> (uid "<uid>") was purged from this board before
+      the sync log held its creation, so this change is never sent`);
+    - a delete made after the creation is logged is an ordinary delete
+      of a shared task and is sent after the held changes; the latest
+      delete decides, so a task deleted, undeleted, and deleted again
+      after the pull sends that later delete.
+
+    After the fix the check passes with a note, and the held changes stay
+    held as a record. `mtix undelete <id>` makes the check fail again
+    before the pull; after the pull, an undeleted task's held changes are
+    sent and only its earlier delete stays held. The `held push
+    events` check leaves these holds to `tasks peers do not hold`. Never
+    delete quarantine rows for this, and never run `mtix sync backfill
+    --force`: it re-sends every task's history.
 
   Once a clock hold on a task's creation clears, the creation and the
   changes of its subtree go through the ordinary push, in the same run.

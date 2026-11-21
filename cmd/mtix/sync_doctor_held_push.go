@@ -22,32 +22,35 @@ const heldPushListed = 5
 const heldPushReasonRunes = 200
 
 // appendHeldPushCheck adds the doctor's "held push events" check
-// (MTIX-95.12). It is local only and fails like the other local checks when
-// there is no local store.
+// (MTIX-95.12), then its "tasks peers do not hold" check of the holds of
+// tasks the sync log has no creation for (MTIX-112.17.16.37). It is local
+// only and fails like the other local checks when there is no local store.
 func appendHeldPushCheck(ctx context.Context, r DoctorReport, st *sqlite.Store) DoctorReport {
 	if st == nil {
 		return appendCheck(r, heldPushCheckName, false, "local store not initialized")
 	}
 	ok, detail := checkHeldPushEvents(ctx, st)
 	r = appendCheck(r, heldPushCheckName, ok, detail)
+	r = appendDoctorCheck(r, checkUnloggedHolds(ctx, st))
 	return appendImportRefusalCheck(r, app.syncSvc, app.mtixDir) // also local changes the hub has not seen (MTIX-112.17.16.16)
 }
 
-// checkHeldPushEvents passes when push holds no event. It fails while any
-// is held: those local changes have not reached the hub, so teammates do not
-// see them. The detail gives the count and names the first few held events,
+// checkHeldPushEvents passes when push holds no event other than those of
+// tasks the sync log has no creation for, which checkUnloggedHolds reports
+// (MTIX-112.17.16.37). It fails while any other is held: those local
+// changes have not reached the hub, so teammates do not see them. The detail gives the count and names the first few held events,
 // each with the fix that matches its op and why it is held
 // (heldPushGuidance) and its reason, then the read-only command that lists
 // them all.
 func checkHeldPushEvents(ctx context.Context, st *sqlite.Store) (bool, string) {
-	n, err := st.CountHeldPushEvents(ctx)
+	n, err := st.CountHeldPushEventsExcept(ctx, holdUnloggedPrefix)
 	if err != nil {
 		return false, err.Error()
 	}
 	if n == 0 {
 		return true, "ok"
 	}
-	held, err := st.HeldPushEvents(ctx, heldPushListed)
+	held, err := st.HeldPushEventsExcept(ctx, holdUnloggedPrefix, heldPushListed)
 	if err != nil {
 		return false, err.Error()
 	}

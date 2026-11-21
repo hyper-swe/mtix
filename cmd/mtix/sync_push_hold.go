@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/format"
@@ -31,7 +32,7 @@ import (
 // its sync_events row, still pending, and readPendingBatch leaves it out,
 // so it cannot block the queue.
 //
-// Three kinds of hold, told apart by the reason's prefix:
+// Four kinds of hold, told apart by the reason's prefix:
 //   - permanent ("too large: ...", "refused: ..."): the event breaks a size,
 //     depth, grammar or cap rule, which never changes. It stays held.
 //   - temporary ("temporary: clock: ..."): the event is stamped more than 24h
@@ -42,6 +43,20 @@ import (
 //     rule, sync_push_hold_rule.go). When the creation's hold ends it is
 //     validated and released with the creation, or, if the hub would refuse
 //     it, kept under its own reason; under a permanent hold it stays held.
+//   - unlogged ("no logged creation: <task> ..."; MTIX-112.17.16.37): the
+//     event is about a task, or a task below one, or links to one, whose
+//     creation the sync log does not hold (sqlite.UnloggedSubjects), so no
+//     peer holds that task and each would quarantine the event. Every push
+//     checks it again and releases it once the log holds that creation (a
+//     pull brought it; releaseLoggedHolds); otherwise the fix is to
+//     re-create the task as a new one and delete it (doctor's check tasks
+//     peers do not hold names it). A task deleted here (or purged) before
+//     its creation reached the log keeps that delete, and while it stays
+//     deleted its other events, held for good, a later pulled creation
+//     included (sqlite.UnloggedSubjects, reviews r1b/r1c). Such a held creation
+//     does not join the held creations of the subtree rule, whose holds of
+//     later links would never end; the unlogged rule already holds the
+//     events of its subtree.
 
 const (
 	// holdTooLargePrefix starts the reason of a payload over the wire cap.
@@ -53,6 +68,9 @@ const (
 	// holdDependsPrefix starts the reason of an event held because it
 	// depends on a held task creation.
 	holdDependsPrefix = "depends on held create of "
+	// holdUnloggedPrefix starts the reason of an event held because it
+	// depends on a task the sync log has no creation for.
+	holdUnloggedPrefix = sqlite.UnloggedHoldPrefix
 )
 
 // eventPusher is the hub surface pushLoop sends batches through;
@@ -82,6 +100,10 @@ type batchHolds struct {
 func decideBatch(ctx context.Context, reads pushReads, events []*model.SyncEvent, blocked *blockers,
 ) (batchHolds, error) {
 	now := reads.Now()
+	unlogged, err := reads.UnloggedSubjects(ctx, eventIDsOf(events))
+	if err != nil {
+		return batchHolds{}, err
+	}
 	refusals := make([]error, len(events))
 	rule := !blocked.empty()
 	for i, e := range events {
@@ -94,12 +116,13 @@ func decideBatch(ctx context.Context, reads pushReads, events []*model.SyncEvent
 	}
 	var d batchHolds
 	for i, e := range events {
-		reason, hold := pushHoldDecision(e, checkAt(checks, i), refusals[i], blocked)
+		u, isUnlogged := unlogged[e.EventID]
+		reason, hold := pushHoldDecision(e, checkAt(checks, i), refusals[i], blocked, unloggedOrNil(u, isUnlogged))
 		if !hold {
 			d.valid = append(d.valid, e)
 			continue
 		}
-		if c := checkAt(checks, i); c != nil && e.OpType == model.OpCreateNode {
+		if c := checkAt(checks, i); c != nil && e.OpType == model.OpCreateNode && !strings.HasPrefix(reason, holdUnloggedPrefix) {
 			blocked.add(&blocker{eventID: e.EventID, nodeID: e.NodeID, uid: c.subject.UID, lamport: e.LamportClock},
 				c.subject.TaskNodeID)
 		}
@@ -118,6 +141,7 @@ func decideBatch(ctx context.Context, reads pushReads, events []*model.SyncEvent
 type pushReads interface {
 	Now() time.Time
 	PushSubjects(ctx context.Context, eventIDs []string) (map[string]sqlite.PushSubject, error)
+	UnloggedSubjects(ctx context.Context, eventIDs []string) (map[string]sqlite.UnloggedSubject, error)
 }
 
 // holdWriter is what recording holds needs: *sqlite.Store, or the
@@ -175,14 +199,10 @@ func batchChecks(ctx context.Context, reads pushReads, events []*model.SyncEvent
 	if !rule {
 		return nil, nil
 	}
-	ids := make([]string, len(events))
-	for i, e := range events {
-		ids[i] = e.EventID
-	}
 	if hook, ok := ctx.Value(pushSubjectsHookKey{}).(func()); ok {
 		hook()
 	}
-	subjects, err := reads.PushSubjects(ctx, ids)
+	subjects, err := reads.PushSubjects(ctx, eventIDsOf(events))
 	if err != nil {
 		return nil, err
 	}
@@ -205,13 +225,20 @@ func checkAt(checks []holdCheck, i int) *holdCheck {
 // pushHoldDecision decides whether push holds e (MTIX-95.12). The subtree
 // rule comes first: an event that a held creation in blocked blocks is held
 // with that creation's reason, whatever else is wrong with it (c is nil
-// when no creation can block). Otherwise refused, the hub's refusal of e,
-// holds it with its own reason.
-func pushHoldDecision(e *model.SyncEvent, c *holdCheck, refused error, blocked *blockers) (reason string, hold bool) {
+// when no creation can block). Then unlogged, the task e depends on that
+// the sync log has no creation for (nil when there is none), holds it
+// (MTIX-112.17.16.37). Otherwise refused, the hub's refusal of e, holds it
+// with its own reason.
+func pushHoldDecision(e *model.SyncEvent, c *holdCheck, refused error, blocked *blockers,
+	unlogged *sqlite.UnloggedSubject,
+) (reason string, hold bool) {
 	if c != nil {
 		if _, why, ok := blocked.holdFor(*c); ok {
 			return why, true
 		}
+	}
+	if unlogged != nil {
+		return unloggedHoldReason(e, *unlogged), true
 	}
 	if refused == nil {
 		return "", false
@@ -274,7 +301,52 @@ func printHeldPushEvents(ctx context.Context, stdout, stderr io.Writer, store *s
 	}
 	if held > 0 {
 		fmt.Fprintf(stdout,
-			"held: %d events not pushed because the hub would refuse them or they depend on a held task creation (see mtix sync doctor)\n",
+			"held: %d events not pushed because the hub would refuse them, they depend on a held task creation, "+
+				"or the sync log has no creation of their task (see mtix sync doctor)\n",
 			held)
 	}
+}
+
+// eventIDsOf returns the ids of events, in order.
+func eventIDsOf(events []*model.SyncEvent) []string {
+	ids := make([]string, len(events))
+	for i, e := range events {
+		ids[i] = e.EventID
+	}
+	return ids
+}
+
+// unloggedOrNil returns &u when ok, else nil.
+func unloggedOrNil(u sqlite.UnloggedSubject, ok bool) *sqlite.UnloggedSubject {
+	if !ok {
+		return nil
+	}
+	return &u
+}
+
+// unloggedHoldReason is the hold reason of e, an event that depends on u, a
+// task the sync log has no creation for (MTIX-112.17.16.37). For a retired
+// u (reviews r1c and r1d): a task purged here before the log held its
+// creation, whose events are never sent; the task's own delete made before
+// then, never sent; any other event, not sent while the task stays deleted
+// here and sent once it is undeleted (and its creation is logged). The uid
+// is a creation event id, rendered with format.EventID. One line, at most
+// maxQuarantineReason runes.
+func unloggedHoldReason(e *model.SyncEvent, u sqlite.UnloggedSubject) string {
+	switch {
+	case u.Purged:
+		purged := sqlite.UnloggedPurgedReason(u.NodeID, u.UID)
+		return quarantineReason(errors.New(purged))
+	case u.Retired && e.OpType == model.OpDelete && (e.NodeID == u.NodeID || (e.UID != "" && e.UID == u.UID)):
+		return quarantineReason(fmt.Errorf("%stask %s (uid %s) was deleted here before the sync log held its "+
+			"creation, so this delete is never sent; see mtix sync doctor",
+			holdUnloggedPrefix, oneLine(u.NodeID), format.EventID(u.UID)))
+	case u.Retired:
+		return quarantineReason(fmt.Errorf("%stask %s (uid %s) was deleted here before the sync log held its "+
+			"creation, so this change is not sent while the task stays deleted here; it is sent if the task is "+
+			"undeleted, once the sync log holds its creation; see mtix sync doctor",
+			holdUnloggedPrefix, oneLine(u.NodeID), format.EventID(u.UID)))
+	}
+	return quarantineReason(fmt.Errorf("%stask %s (uid %s) has no creation in the sync log, so no peer holds it; "+
+		"see mtix sync doctor", holdUnloggedPrefix, oneLine(u.NodeID), format.EventID(u.UID)))
 }

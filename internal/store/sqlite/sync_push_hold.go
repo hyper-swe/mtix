@@ -80,6 +80,19 @@ func (s *Store) CountHeldPushEvents(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// CountHeldPushEventsExcept returns how many own events push holds for a
+// reason that does not start with prefix (MTIX-112.17.16.37): doctor's
+// held-push check leaves the holds of unlogged tasks to their own check.
+func (s *Store) CountHeldPushEventsExcept(ctx context.Context, prefix string) (int, error) {
+	var n int
+	// Every held push event whose reason does not start with the prefix.
+	if err := s.QueryRow(ctx, `SELECT COUNT(*) FROM sync_quarantine
+		WHERE source = 'push' AND (?1 = '' OR substr(reason, 1, length(?1)) <> ?1)`, prefix).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count held push events: %w", err)
+	}
+	return n, nil
+}
+
 // HeldPushCreations returns the held push events that are task creations,
 // in queue order, without their payloads (MTIX-95.39): what push needs to
 // rebuild its index of held creations (node, uid, Lamport clock and the task
@@ -134,12 +147,19 @@ func heldPushCreations(ctx context.Context, q pushQuerier) ([]HeldPushEvent, err
 // found as PushSubject says. LEFT JOINs still list a hold whose rows are
 // missing.
 func (s *Store) HeldPushEvents(ctx context.Context, limit int) ([]HeldPushEvent, error) {
+	return s.HeldPushEventsExcept(ctx, "", limit)
+}
+
+// HeldPushEventsExcept is HeldPushEvents leaving out the holds whose reason
+// starts with prefix, when prefix is not empty (MTIX-112.17.16.37).
+func (s *Store) HeldPushEventsExcept(ctx context.Context, prefix string, limit int) ([]HeldPushEvent, error) {
 	// The held push events in queue order, with their event rows and the
 	// current number of the task each is about; for a creation, also the
 	// task it created (n by uid, else s by the event's own id for an event
 	// without a uid, else f by the number the event names). "uid <> ''"
 	// lets the partial idx_nodes_uid serve n and s; without it s is found
-	// through an index built over every node (MTIX-95.47).
+	// through an index built over every node (MTIX-95.47). A non-empty
+	// prefix leaves out the holds whose reason starts with it.
 	rows, err := s.Query(ctx, `
 		SELECT q.event_id, COALESCE(e.node_id, ''), COALESCE(e.op_type, ''), q.reason,
 		       COALESCE(e.payload, ''), COALESCE(e.lamport_clock, 0), COALESCE(e.uid, ''), COALESCE(n.id, ''),
@@ -151,9 +171,9 @@ func (s *Store) HeldPushEvents(ctx context.Context, limit int) ([]HeldPushEvent,
 		     AND COALESCE(e.uid, '') = '' AND s.uid = e.event_id AND s.uid <> ''
 		LEFT JOIN nodes f ON e.op_type = 'create_node' AND n.id IS NULL AND s.id IS NULL
 		     AND f.id = e.node_id
-		WHERE q.source = 'push'
+		WHERE q.source = 'push' AND (?1 = '' OR substr(q.reason, 1, length(?1)) <> ?1)
 		ORDER BY COALESCE(e.lamport_clock, 0), q.event_id
-		LIMIT ?`, limit)
+		LIMIT ?2`, prefix, limit)
 	if err != nil {
 		return nil, fmt.Errorf("read held push events: %w", err)
 	}

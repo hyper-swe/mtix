@@ -285,11 +285,15 @@ func nodeLine(nodeID string) []string {
 
 // buildBlockers returns the held task creations among holds, each filed
 // under the current number of the task it created (sqlite.PushSubject),
-// the uid its event carries and the numbers for events not found by uid.
+// the uid its event carries and the numbers for events not found by uid. A
+// creation held because the sync log has no creation of a task above it is
+// left out (MTIX-112.17.16.37): it never ends, so it would make every later
+// link wait for good, and the unlogged rule already holds its subtree.
 func buildBlockers(holds []sqlite.HeldPushEvent) *blockers {
 	bs := newBlockers()
 	for _, h := range holds {
-		if h.OpType != string(model.OpCreateNode) || h.NodeID == "" {
+		if h.OpType != string(model.OpCreateNode) || h.NodeID == "" ||
+			strings.HasPrefix(h.Reason, holdUnloggedPrefix) {
 			continue
 		}
 		bs.add(&blocker{eventID: h.EventID, nodeID: h.NodeID, uid: h.UID, lamport: h.Lamport}, h.TaskNodeID)

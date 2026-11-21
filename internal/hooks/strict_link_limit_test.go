@@ -85,6 +85,40 @@ func TestPinKnownSlots_RefusesADirectoryThatIsStillALink(t *testing.T) {
 	require.Equal(t, "env", plan.Argv[0], "nothing is pinned when the directory is still a link")
 }
 
+// requireLaunchRefusalPrefix pins the launch-level wording that names the hook
+// and the rule, which the bare pin error does not carry.
+func requireLaunchRefusalPrefix(t *testing.T, err error) {
+	t.Helper()
+	require.ErrorContains(t, err, "exec launch refused for hook")
+	require.ErrorContains(t, err, "strict program mode is on")
+}
+
+func requirePinRemedy(t *testing.T, err error, slot, program string) {
+	t.Helper()
+	require.ErrorContains(t, err, slot)
+	require.ErrorContains(t, err, program)
+	require.ErrorContains(t, err, "check the link")
+	require.ErrorContains(t, err, "directory")
+	require.NotContains(t, err.Error(), "approve")
+	require.NotContains(t, err.Error(), "trust --program")
+}
+
+func TestPinKnownSlots_RefusalNamesSlotAndLinkRemedy(t *testing.T) {
+	for _, tc := range []struct{ name, role string }{{"env", "env wrapper"}, {"sh", "interpreter"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, err := filepath.EvalSymlinks(t.TempDir())
+			require.NoError(t, err)
+			pin := filepath.Join(dir, "missing", tc.name)
+			for _, arg := range []string{filepath.Join(dir, tc.name), tc.name} {
+				plan := &ExecPlan{Argv: []string{arg}}
+				err := pinKnownSlots(strictJudgement{pins: map[int]string{0: pin}}, plan)
+				requirePinRemedy(t, err, tc.role, arg)
+				require.Equal(t, arg, plan.Argv[0])
+			}
+		})
+	}
+}
+
 func TestPhysicalDirectory_FailsClosedWhenItCannotBeResolved(t *testing.T) {
 	base, err := filepath.EvalSymlinks(t.TempDir())
 	require.NoError(t, err)

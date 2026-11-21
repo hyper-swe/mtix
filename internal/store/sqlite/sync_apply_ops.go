@@ -97,7 +97,7 @@ func (a syncApplier) applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.S
 	// (that would wedge the apply pipeline for the whole batch); the
 	// surfacing/renumber is layered on top by 30.7.
 	row := appliedCreateRow{payload: p, uid: uid, labels: labelsJSON, at: now}
-	if err := insertAppliedCreate(ctx, tx, e, row); err != nil {
+	if err := insertAppliedCreate(ctx, tx, a.store, e, row); err != nil {
 		return err
 	}
 

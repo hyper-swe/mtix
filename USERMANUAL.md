@@ -5128,6 +5128,30 @@ the first to arrive and tells the second to renumber. The second node
 becomes `PRJX-1.5` on its own. Both nodes survive; nothing is lost; you
 do not have to do anything. This is normal operation and needs no admin.
 
+The same holds on a pull. A task you wrote locally with no creation in the
+sync log (for example before sync was set up) has never been offered to the
+hub, so when a teammate's task of the same number arrives, the teammate's
+task takes the number and yours moves, with its subtasks, dependencies,
+comments and pending changes, to the next free number, keeping its internal
+id. Both tasks survive and nothing is quarantined; look yours up by title.
+The pull prints one line for each task it moved this way:
+`renumbered: PRJX-1 -> PRJX-3 <title>`. From then on the old number names
+your teammate's task, so look your task up by the new number or by title
+before you read, edit or close anything under the old one. A manual pull
+prints these lines; a daemon pull prints nothing and logs one line per moved
+task (old number, new number, uid) in the daemon's log. To find a move later,
+run `mtix show <new number> --history`: the `display_path` entry with origin
+`hub` holds the old and the new number. A task with a creation the hub already
+knows, or with a subtask that has one, is never moved this way, because its
+number is the same on every replica. Your task keeps the number on this
+replica and the teammate's task is held, not dropped: it waits in the
+quarantine with a reason that names the number and your task's uid, the pull
+prints the `quarantine:` line, `mtix sync quarantine list` shows it and
+`mtix sync doctor` reports `quarantined events`. Until it is settled, that number
+names your task here and the teammate's task elsewhere. A moved task stays
+unknown to the other replicas until its creation is logged
+(MTIX-112.17.16.37), so the changes you push for it are held there.
+
 Everything you did to the renumbered node before the push moves with it:
 its claim, edits, comments, child nodes and dependency links all land under
 `PRJX-1.5` (and `PRJX-1.5.1` for a child), on your clone, on your

@@ -29,7 +29,9 @@ import (
 // kept), and a creation among those keeps blocking its own subtree. A
 // dependent that stays blocked is relabeled when its nearest held creation
 // changed. Every clock hold and dependent that stays has an attempt
-// counted. Permanent holds, and their subtrees, stay. It returns the held
+// counted. Permanent holds, and their subtrees, stay. A hold of a task the
+// sync log had no creation for is released once the log holds that
+// creation (releaseLoggedHolds, MTIX-112.17.16.37). It returns the held
 // creations for the push's batches.
 func releasePushHolds(ctx context.Context, stderr io.Writer, store *sqlite.Store) (*blockers, error) {
 	holds, err := store.HeldPushEvents(ctx, -1)
@@ -45,6 +47,9 @@ func releasePushHolds(ctx context.Context, stderr io.Writer, store *sqlite.Store
 	}
 	p, blocked, err := st.plan(ctx)
 	if err != nil {
+		return nil, err
+	}
+	if err := releaseLoggedHolds(ctx, store, holds, p); err != nil {
 		return nil, err
 	}
 	if err := p.apply(ctx, store); err != nil {

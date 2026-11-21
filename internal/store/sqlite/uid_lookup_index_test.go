@@ -8,6 +8,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -114,8 +115,11 @@ func TestUIDLookupQueries_ExplainQueryPlan_SearchIDXNodesUID(t *testing.T) {
 		{"push subject of a creation without a uid, by its event id", "pushSubjects", "s"},
 		{"held push creation by uid, without payload", "heldPushCreations", "n"},
 		{"held push creation without a uid, by its event id, without payload", "heldPushCreations", "s"},
-		{"held push event by uid", "Store.HeldPushEvents", "n"},
-		{"held push creation without a uid, by its event id", "Store.HeldPushEvents", "s"},
+		{"held push event by uid", "Store.HeldPushEventsExcept", "n"},
+		{"held push creation without a uid, by its event id", "Store.HeldPushEventsExcept", "s"},
+		{"lines of a push event, its task by uid", "unloggedLinesQuery", "n"},
+		{"gone push subject, its task by uid", "Store.SubjectsGone", "n"},
+		{"retired unlogged hold, its task by uid", "retiredUnloggedQuery", "n"},
 	}
 	s := newInternalTestStore(t)
 	lits := packageSQLLiterals(t)
@@ -352,4 +356,113 @@ func TestDetectLWWOutcome_ByUIDOrNumber_SameOutcome(t *testing.T) {
 			assert.Equal(t, got[0], got[1], "by uid and by number find the same prior and outcome")
 		})
 	}
+}
+
+// TestUnloggedLinesQuery_ExplainQueryPlan_SearchesIndexes: the query that
+// reads the lines of every pending push event (MTIX-112.17.16.37, review r1
+// F3) finds whether the log holds a task's creation by index: by the
+// creation's uid through the partial idx_sync_events_uid, by its event id
+// through the primary key, and for a task without a uid by number through
+// idx_sync_events_node. It never reads sync_events through
+// idx_sync_events_op_type (every creation, for each task) or by a scan.
+func TestUnloggedLinesQuery_ExplainQueryPlan_SearchesIndexes(t *testing.T) {
+	t.Parallel()
+	s := newInternalTestStore(t)
+	query := uidLookupIn(t, packageSQLLiterals(t), "unloggedLinesQuery", nodesUIDTable)
+	require.Equal(t, unloggedLinesQuery(), query, "the plan is of the query push runs")
+	plan := queryPlan(t, s, query)
+	assertSearchesIndex(t, plan, "c", "idx_sync_events_uid")
+	byNode := regexp.MustCompile(`^SEARCH c USING (?:COVERING )?INDEX idx_sync_events_node \(node_id=\?\)`)
+	var searchedByNode bool
+	for _, line := range plan {
+		searchedByNode = searchedByNode || byNode.MatchString(line)
+		assert.NotContains(t, line, "idx_sync_events_op_type", "plan %q", plan)
+	}
+	assert.True(t, searchedByNode, "a task without a uid is matched by number through idx_sync_events_node; plan %q", plan)
+}
+
+// TestSubjectsGone_ExplainQueryPlan_ReadsTheBatchOnly: the query that finds
+// the held events whose task is gone (review r1 F1) reads the events by
+// their ids, never every link event of the log through
+// idx_sync_events_op_type, and never scans sync_events or nodes.
+func TestSubjectsGone_ExplainQueryPlan_ReadsTheBatchOnly(t *testing.T) {
+	t.Parallel()
+	s := newInternalTestStore(t)
+	plan := queryPlan(t, s, uidLookupIn(t, packageSQLLiterals(t), "Store.SubjectsGone", nodesUIDTable))
+	scan := regexp.MustCompile(`^SCAN (?:sync_events|n|nodes)\b`)
+	for _, line := range plan {
+		assert.NotContains(t, line, "idx_sync_events_op_type", "plan %q", plan)
+		assert.False(t, scan.MatchString(line), "scans a table: %q in plan %q", line, plan)
+	}
+	assert.Contains(t, plan, "SEARCH sync_events USING INDEX sqlite_autoindex_sync_events_1 (event_id=?)")
+}
+
+// TestRetiredUnloggedQuery_ExplainQueryPlan_SearchesIndexes: the query
+// that finds the retired holds of unlogged tasks (review r1b S1, S2), run
+// for every push batch, finds the held events and creations of a task by
+// uid through idx_sync_events_uid and its node through idx_nodes_uid; it
+// never reads sync_events through idx_sync_events_op_type or scans
+// sync_events or nodes.
+func TestRetiredUnloggedQuery_ExplainQueryPlan_SearchesIndexes(t *testing.T) {
+	t.Parallel()
+	s := newInternalTestStore(t)
+	query := uidLookupIn(t, packageSQLLiterals(t), "retiredUnloggedQuery", nodesUIDTable)
+	require.Equal(t, retiredUnloggedQuery(), query, "the plan is of the query push runs")
+	plan := queryPlan(t, s, query)
+	for _, alias := range []string{"h", "d", "c"} {
+		assertSearchesIndex(t, plan, alias, "idx_sync_events_uid")
+	}
+	assertSearchesIndex(t, plan, "n", "idx_nodes_uid")
+	scan := regexp.MustCompile(`^SCAN (?:sync_events|nodes|n|c|h|d)\b`)
+	for _, line := range plan {
+		assert.NotContains(t, line, "idx_sync_events_op_type", "plan %q", plan)
+		assert.False(t, scan.MatchString(line), "scans a table: %q in plan %q", line, plan)
+	}
+}
+
+// TestUnloggedSubjects_LargeLog_StaysFast: the unlogged lookup runs for every
+// push batch (MTIX-112.17.16.37, review r1 F3), so its time must not grow
+// with the log. A 500-event batch of edits of a task with a uid and of a
+// task without one is read, then read again after 10000 creations of other
+// tasks are added to the log: the second read stays within a small factor
+// of the first (the factor, not a fixed time, so the race detector's
+// slowdown does not matter). A lookup that reads every creation for each
+// task takes over a hundred times longer here.
+func TestUnloggedSubjects_LargeLog_StaysFast(t *testing.T) {
+	f := newUIDFixture(t)
+	ctx := context.Background()
+	// The batch: edits alternating between PROJ-1 (uid f.live) and PROJ-3
+	// (no uid).
+	_, err := f.s.writeDB.ExecContext(ctx, `
+		INSERT INTO sync_events (event_id, project_prefix, node_id, op_type, payload, wall_clock_ts,
+			lamport_clock, vector_clock, author_id, author_machine_hash, sync_status, created_at, uid)
+		WITH RECURSIVE k(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM k WHERE i < ?)
+		SELECT 'edit-' || i, 'PROJ', CASE WHEN i % 2 = 0 THEN 'PROJ-1' ELSE 'PROJ-3' END, 'update_field',
+			'{}', 0, 20000 + i, '{}', 'a', 'm', 'pending', '2026-01-01T00:00:00Z',
+			CASE WHEN i % 2 = 0 THEN ? ELSE NULL END FROM k`, 500, f.live)
+	require.NoError(t, err)
+	ids := make([]string, 500)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("edit-%d", i+1)
+	}
+	read := func() time.Duration {
+		start := time.Now()
+		got, err := f.s.UnloggedSubjects(ctx, ids)
+		elapsed := time.Since(start)
+		require.NoError(t, err)
+		require.Len(t, got, 250, "PROJ-3's creation carries a uid its task does not, so its edits are unlogged")
+		return elapsed
+	}
+	small := read()
+	// Fill the log with creations of other tasks.
+	_, err = f.s.writeDB.ExecContext(ctx, `
+		INSERT INTO sync_events (event_id, project_prefix, node_id, op_type, payload, wall_clock_ts,
+			lamport_clock, vector_clock, author_id, author_machine_hash, sync_status, created_at, uid)
+		WITH RECURSIVE k(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM k WHERE i < ?)
+		SELECT 'filler-' || i, 'PROJ', 'PROJ-' || (i + 100), 'create_node', '{}', 0, 1000 + i, '{}',
+			'a', 'm', 'pushed', '2026-01-01T00:00:00Z', 'filler-uid-' || i FROM k`, 10000)
+	require.NoError(t, err)
+	large := read()
+	require.Less(t, large, 5*small+250*time.Millisecond,
+		"500 events over a 10000-creation log took %s, over the log without them %s", large, small)
 }

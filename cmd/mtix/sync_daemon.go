@@ -161,17 +161,25 @@ type daemonPullControl struct {
 	onOutcome func(daemonPullOutcome)
 }
 
+// daemonPullInput is the input of one daemon pull: its stdout is discarded, so
+// the local tasks it moves are logged (MTIX-112.17.16.39).
+func daemonPullInput(stderr io.Writer, args []string, opts transport.Options, control []daemonPullControl) syncPullInput {
+	req := syncPullInput{stdout: io.Discard, stderr: stderr, args: args, opts: opts, limit: pullDefaultBatchSize,
+		onMoves: logPullMoves(app.logger)}
+	if len(control) > 0 {
+		req.onConnect = control[0].onConnect
+		req.onOutcome = control[0].onOutcome
+	}
+	return req
+}
+
 // runOneDaemonPull retains the existing 60s bound and nonfatal logging (MTIX-112.20.7).
 func runOneDaemonPull(ctx context.Context, stderr io.Writer, args []string, opts transport.Options,
 	control ...daemonPullControl,
 ) daemonPullOutcome {
 	pullCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
-	req := syncPullInput{stdout: io.Discard, stderr: stderr, args: args, opts: opts, limit: pullDefaultBatchSize}
-	if len(control) > 0 {
-		req.onConnect = control[0].onConnect
-		req.onOutcome = control[0].onOutcome
-	}
+	req := daemonPullInput(stderr, args, opts, control)
 	outcome, err := executeSyncPull(pullCtx, req)
 	if err != nil {
 		fmt.Fprintf(stderr, "mtix sync daemon: pull error (will retry): %s\n", scrubSyncText(err.Error()))

@@ -613,6 +613,8 @@ func TestStrict_On_WrapperChangedBetweenTheJudgementAndThePinIsRefused(t *testin
 	_, err = f.approvals.PrepareExec(f.hook(t))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "changed location")
+	requireLaunchRefusalPrefix(t, err)
+	requirePinRemedy(t, err, "env wrapper", filepath.Join(envLink, "env"))
 }
 
 func TestStrict_On_InterpreterChangedBetweenTheJudgementAndThePinIsRefused(t *testing.T) {
@@ -626,4 +628,6 @@ func TestStrict_On_InterpreterChangedBetweenTheJudgementAndThePinIsRefused(t *te
 	_, err = f.approvals.PrepareExec(f.hook(t))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "changed location")
+	requireLaunchRefusalPrefix(t, err)
+	requirePinRemedy(t, err, "interpreter", filepath.Join(shLink, "sh"))
 }

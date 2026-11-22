@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const cmdShardCount = 4
+const cmdShardCount = 6
 
 func cmdShardFixture(t *testing.T, listing string, exit string) string {
 	t.Helper()
@@ -81,6 +81,18 @@ func TestCmdMtixShards_EveryTestInExactlyOneShard(t *testing.T) {
 	}
 	for i := 1; i <= cmdShardCount; i++ {
 		require.Greater(t, sizes[i], len(names)/(cmdShardCount*3), "shard %d is badly unbalanced: %v", i, sizes)
+	}
+	// A pinned test still lands in exactly one shard (its pinned one), and a
+	// stale, duplicate or malformed pin fails the guard instead of dropping it.
+	writePins(t, root, "TestFeature5_Case_Works 4\n")
+	out, err = runCmdShards(root, "check")
+	require.NoError(t, err, out)
+	require.Equal(t, []int{4}, shardOf(t, root, "TestFeature5_Case_Works"))
+	for pins, want := range map[string]string{"TestGone_Case_Works 2\n": "stale pin", "TestFeature5_Case_Works 2\nTestFeature5_Case_Works 3\n": "duplicate pin", "TestFeature5_Case_Works 9\n": "invalid pin"} {
+		writePins(t, root, pins)
+		out, err = runCmdShards(root, "check")
+		require.Error(t, err, out)
+		require.Contains(t, out, want)
 	}
 }
 

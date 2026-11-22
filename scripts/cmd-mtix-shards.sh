@@ -3,7 +3,8 @@
 #
 # cmd/mtix alone approached the 20m per-package go test budget in the
 # PostgreSQL CI jobs and the remote bar. Its tests are split into SHARDS
-# groups by a stable hash of the test name, so a new test is assigned to a
+# groups by a stable hash of the test name (plus a short pin list for the
+# known-heavy tests, MTIX-272.1), so a new test is assigned to a
 # shard automatically and never runs twice or not at all. The listed names
 # come from the compiled test binary (go test -race -list), the same source go test
 # -run selects from.
@@ -17,7 +18,8 @@
 set -euo pipefail
 export LC_ALL=C
 
-SHARDS=4
+SHARDS=6
+PINFILE=scripts/cmd-mtix-shard-pins.txt
 
 die() {
 	printf 'cmd-mtix-shards: %s\n' "$*" >&2
@@ -44,7 +46,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/mtix-cmd-shards.XXXXXX")
 cleanup() {
 	rm -f "$scratch/listing" "$scratch/names" "$scratch/assigned" "$scratch/odd" \
-		"$scratch/selected" "$scratch/twice" "$scratch/never" "$scratch/expected"
+		"$scratch/selected" "$scratch/pins" "$scratch/pins.names" "$scratch/twice" "$scratch/never" "$scratch/expected"
 	rmdir "$scratch"
 }
 trap cleanup EXIT
@@ -67,9 +69,37 @@ grep -E '^(Test|Example|Fuzz)[A-Za-z0-9_]*$' "$scratch/listing" | sort -u >"$scr
 # Independently retain every listed name so a dropped hash input cannot pass.
 awk '/^(Test|Example|Fuzz)/ { print $1 }' "$scratch/listing" | sort -u >"$scratch/expected"
 
+# MTIX-272.1: scripts/cmd-mtix-shard-pins.txt pins known-heavy tests to a shard
+# ("<TestName> <shard>", # comments allowed) so the hash split cannot stack them.
+# Every unpinned test keeps its hash shard. A malformed, duplicate or stale pin
+# (a name the binary no longer lists) is an error, so a pin can never make a
+# test run twice or not at all.
+: >"$scratch/pins"
+: >"$scratch/pins.names"
+if [ -f "$PINFILE" ]; then
+	while IFS= read -r line || [ -n "$line" ]; do
+		line=${line%%#*}
+		read -r -a f <<<"$line" || true
+		[ "${#f[@]}" -eq 0 ] && continue
+		if [ "${#f[@]}" -ne 2 ] || ! [[ "${f[0]}" =~ ^(Test|Example|Fuzz)[A-Za-z0-9_]*$ ]] ||
+			! [[ "${f[1]}" =~ ^[0-9]+$ ]] || [ "${f[1]}" -lt 1 ] || [ "${f[1]}" -gt "$SHARDS" ]; then
+			die "invalid pin in $PINFILE: $line"
+		fi
+		! grep -qxF -- "${f[0]}" "$scratch/pins.names" || die "duplicate pin ${f[0]} in $PINFILE"
+		grep -qxF -- "${f[0]}" "$scratch/names" || die "stale pin ${f[0]} in $PINFILE: the test binary does not list it"
+		printf '%s\n' "${f[0]}" >>"$scratch/pins.names"
+		printf '%s %s\n' "${f[0]}" "${f[1]}" >>"$scratch/pins"
+	done <"$PINFILE"
+fi
+
 # shard = djb2(name) mod SHARDS + 1. awk doubles stay exact: h < 2^32, h*33 < 2^38.
-awk -v n="$SHARDS" '
+awk -v n="$SHARDS" -v pins="$scratch/pins" '
 BEGIN {
+	while ((getline line < pins) > 0) {
+		split(line, pf, " ")
+		pin[pf[1]] = pf[2]
+	}
+	close(pins)
 	chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
 }
 {
@@ -77,7 +107,8 @@ BEGIN {
 	for (i = 1; i <= length($0); i++) {
 		h = (h * 33 + index(chars, substr($0, i, 1))) % 4294967296
 	}
-	print (h % n) + 1, $0
+	if ($0 in pin) print pin[$0], $0
+	else print (h % n) + 1, $0
 }' "$scratch/names" >"$scratch/assigned"
 
 pattern_of() {

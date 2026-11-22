@@ -11,11 +11,13 @@ import (
 	"reflect"
 )
 
-// The reader pool opens its connections through shieldConnector (MTIX-250).
+// Both store pools and reusable read-only/recovery handles open through
+// shieldConnector (MTIX-250, MTIX-261, MTIX-261.1),
+// including writer reads inside transactions and through prepared statements.
 //
 // Why: in modernc.org/sqlite v1.35.0, stmt.query drops the already-stepped rows
 // without closing them when the context is cancelled after the first step. The
-// statement is then never finalized, so the pooled reader connection keeps an
+// statement is then never finalized, so the pooled connection keeps an
 // open WAL read snapshot and a later read on it misses newer commits. Closing
 // or discarding that connection was rejected: the unfinalized statement keeps
 // the connection's snapshot alive, the caller never receives the rows to close,

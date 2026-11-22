@@ -29,6 +29,23 @@ import (
 // (now at newID, was oldID) and re-addresses the pending events of its
 // subtree and the pending links into it, inside tx.
 func requeueRenumberedEvents(ctx context.Context, tx *sql.Tx, uid, oldID, newID string) error {
+	if err := requeueMovedEvents(ctx, tx, oldID, newID); err != nil {
+		return err
+	}
+	// The rejected creation is sent again, under the new number.
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE sync_events SET node_id = ?, sync_status = 'pending'
+		 WHERE event_id = ? AND op_type = 'create_node'`, newID, uid); err != nil {
+		return fmt.Errorf("re-address the rejected creation: %w", err)
+	}
+	return nil
+}
+
+// requeueMovedEvents re-addresses the pending events of a subtree moved from
+// oldID to newID, inside tx: the events of its tasks, its children's creations
+// and the links into it. It requeues no creation (MTIX-112.17.16.39: a task
+// moved aside by a hub create has none in the log).
+func requeueMovedEvents(ctx context.Context, tx *sql.Tx, oldID, newID string) error {
 	oldLike, newLike := escapeLIKEPrefix(oldID)+".%", escapeLIKEPrefix(newID)+".%"
 	steps := []struct {
 		what  string
@@ -74,11 +91,6 @@ func requeueRenumberedEvents(ctx context.Context, tx *sql.Tx, uid, oldID, newID 
 			   AND (json_extract(payload, '$.depends_on_node_id') = ?
 			        OR json_extract(payload, '$.depends_on_node_id') LIKE ? ESCAPE '\')`,
 			[]any{newID, oldID, oldID, oldLike}},
-		// The rejected creation is sent again, under the new number.
-		{"the rejected creation", `
-			UPDATE sync_events SET node_id = ?, sync_status = 'pending'
-			 WHERE event_id = ? AND op_type = 'create_node'`,
-			[]any{newID, uid}},
 	}
 	for _, st := range steps {
 		if _, err := tx.ExecContext(ctx, st.query, st.args...); err != nil {

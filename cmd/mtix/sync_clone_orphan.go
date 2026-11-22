@@ -104,6 +104,9 @@ func isOrphanFailure(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, reject
 	if errors.Is(rejected, model.ErrNotFound) {
 		return true, nil
 	}
+	if e.OpType == model.OpLinkDep {
+		return linkDepEndMissing(ctx, tx, e)
+	}
 	if e.OpType != model.OpCreateNode {
 		return false, nil
 	}
@@ -117,6 +120,35 @@ func isOrphanFailure(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, reject
 		return false, fmt.Errorf("check parent of %s: %w", format.EventID(e.EventID), err)
 	}
 	return n == 0, nil
+}
+
+// linkDepEndMissing reports whether a link_dep e joins a task this clone
+// does not hold, so its insert failed the dependencies foreign key
+// (MTIX-112.17.16.38). Pull quarantines such an edge; the clone does the
+// same, and the edge applies when the task's creation arrives. Each end is
+// checked, as 0 or 1, against the id the apply inserts: the source is the
+// live task holding the event's uid, else the event's own node id
+// (fromIDForDepEdge); the target is the payload's node id. Either absent
+// means orphan. An edge whose payload cannot be read, or whose ends both
+// exist, is not an orphan.
+func linkDepEndMissing(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (bool, error) {
+	var p model.LinkDepPayload
+	if err := json.Unmarshal(e.Payload, &p); err != nil || p.DependsOnNodeID == "" {
+		return false, nil
+	}
+	var from, to int
+	// Whether the resolved source id and the target id exist as nodes. A
+	// soft-deleted row still satisfies the dependencies foreign key. The
+	// source is the live uid holder when the event carries a uid (the
+	// partial idx_nodes_uid serves "uid <> ''"), else the event node id.
+	if err := tx.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM nodes WHERE id = COALESCE(
+		            (SELECT id FROM nodes WHERE uid = ? AND uid <> '' AND deleted_at IS NULL), ?)),
+		        EXISTS(SELECT 1 FROM nodes WHERE id = ?)`,
+		e.UID, e.NodeID, p.DependsOnNodeID).Scan(&from, &to); err != nil {
+		return false, fmt.Errorf("check ends of %s: %w", format.EventID(e.EventID), err)
+	}
+	return from == 0 || to == 0, nil
 }
 
 // reportCloneOrphans names, on w, each event a committed batch quarantined,

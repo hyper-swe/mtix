@@ -31,6 +31,10 @@ const readPoolGuardMinFiles = 100
 // from the pool (a Conn, a transaction, an alias, a ReadPool parameter). It
 // errors when given too few files to mean anything.
 //
+// It also rejects raw openSQLite references throughout the package, including
+// aliases, except the function-scoped, documented rawOpenReasons allowlist
+// (MTIX-261.1).
+//
 // It is a syntax-level check, not a proof. It cannot see closures that hide
 // the pool, embedding, struct fields that hold it, unsafe, reflect, helpers
 // inside read_pool.go, or other packages; the connection-level shield
@@ -47,6 +51,7 @@ func readPoolBypasses(files map[string]string) ([]string, error) {
 			out = append(out, name+": cannot parse, so the read guard cannot judge it")
 			continue
 		}
+		out = append(out, rawOpenBypasses(fset, name, file)...)
 		tainted := poolDerivedNames(file)
 		ast.Inspect(file, func(n ast.Node) bool {
 			out = append(out, readPoolBypassIn(fset, name, n, tainted)...)
@@ -247,6 +252,9 @@ func TestReadPoolBypasses_BypassingSources_AreReported(t *testing.T) {
 	cases := []struct {
 		name, src, want string
 	}{
+		{"writer raw open", "package sqlite\nfunc f() { openSQLite(\"db\") }\n", "unshielded opener"},
+		{"writer opener alias", "package sqlite\nvar open = openSQLite\n", "unshielded opener"},
+		{"shielded writer open", "package sqlite\nfunc f() { openShieldedSQLite(\"db\") }\n", ""},
 		{"unwrap", "package sqlite\nfunc f(s *Store) { _ = s.readDB.rawDB }\n", "rawDB unwraps the reader pool"},
 		{"alias unwrap", "package sqlite\nfunc f(s *Store) { p := s.readDB; _ = p.rawDB }\n", "rawDB unwraps the reader pool"},
 		{"alias chain unwrap", "package sqlite\nfunc f(s *Store) { p := s.readDB; q := p; _ = q.rawDB }\n", "rawDB unwraps the reader pool"},
@@ -271,7 +279,7 @@ func TestReadPoolBypasses_BypassingSources_AreReported(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			files := map[string]string{"bad.go": tc.src}
+			files := map[string]string{"store.go": tc.src}
 			for k, v := range filler {
 				files[k] = v
 			}

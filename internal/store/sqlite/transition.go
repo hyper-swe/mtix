@@ -89,6 +89,14 @@ func (s *Store) executeTransitionTx(ctx context.Context, tx *sql.Tx, req transit
 		}
 	}
 
+	// MTIX-112.17.16.40 / FR-3.8: a blocker that leaves a resolved status
+	// (reopen, restore, rerun) blocks its open dependents again.
+	if reopensBlocker(fromStatus, toStatus) {
+		if err := autoBlockDependents(ctx, tx, s, id); err != nil {
+			return fmt.Errorf("auto-block dependents of %s: %w", id, err)
+		}
+	}
+
 	return nil
 }
 
@@ -149,28 +157,9 @@ func unblockDependents(ctx context.Context, tx *sql.Tx, h historyToucher, resolv
 			clocks = append(clocks, cp.storeClock())
 		}
 	}
-	rows, err := tx.QueryContext(ctx,
-		`SELECT to_id FROM dependencies
-		 WHERE from_id = ? AND dep_type = ?`,
-		resolvedID, string(model.DepTypeBlocks))
+	dependentIDs, err := blocksDependentIDs(ctx, tx, resolvedID)
 	if err != nil {
-		return fmt.Errorf("read forward blocks deps: %w", err)
-	}
-	defer func() { _ = rows.Close() }()
-
-	var dependentIDs []string
-	for rows.Next() {
-		var toID string
-		if scanErr := rows.Scan(&toID); scanErr != nil {
-			return fmt.Errorf("scan forward dep: %w", scanErr)
-		}
-		dependentIDs = append(dependentIDs, toID)
-	}
-	if iterErr := rows.Err(); iterErr != nil {
-		return fmt.Errorf("iter forward deps: %w", iterErr)
-	}
-	if closeErr := rows.Close(); closeErr != nil {
-		return fmt.Errorf("close forward deps: %w", closeErr)
+		return err
 	}
 
 	for _, dependentID := range dependentIDs {

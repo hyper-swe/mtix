@@ -336,8 +336,9 @@ func ExplainsTornSeal(sealed Result, successor Header) bool {
 // or a sequence that jumps is a gap, and the reader stalls rather than
 // stepping over it. A publisher epoch bump is the operator-gated
 // restore of §5.7: it restarts relay sequences at a declared base, so
-// the sequence check is suspended for that transition while segment
-// numbers must still move forward. An epoch moving backwards is a
+// the sequence check is suspended for that transition while the new
+// epoch must start in the very next segment, so a segment deleted just
+// before the bump is a gap too (MTIX-265). An epoch moving backwards is a
 // rollback splice and is refused.
 //
 // A reader with no position expects the beginning of the stream. A peer
@@ -357,9 +358,9 @@ func CheckContinuity(prev Cursor, h Header) error {
 		return fmt.Errorf("%w: publisher epoch %d is behind the reader's epoch %d",
 			ErrGap, h.PubEpoch, prev.PubEpoch)
 	case h.PubEpoch > prev.PubEpoch:
-		if h.SegmentNo <= prev.SegmentNo {
-			return fmt.Errorf("%w: publisher epoch %d must arrive in a later segment than %d, found %d",
-				ErrGap, h.PubEpoch, prev.SegmentNo, h.SegmentNo)
+		if h.SegmentNo != prev.SegmentNo+1 {
+			return fmt.Errorf("%w: publisher epoch %d must arrive in segment %d, the one after %d, found %d",
+				ErrGap, h.PubEpoch, prev.SegmentNo+1, prev.SegmentNo, h.SegmentNo)
 		}
 		return nil
 	}

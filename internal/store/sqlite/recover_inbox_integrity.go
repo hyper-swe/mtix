@@ -17,7 +17,8 @@ const inboxIntegrityTimeout = 5 * time.Second
 var errInboxIntegrityUnfinished = errors.New("journal integrity_check did not finish")
 
 // checkInboxIntegrity detects damage shared by both salvage reads (FR-19.1).
-// A bounded check that cannot prove structural integrity is incomplete, not clean.
+// A check that cannot prove structural integrity is incomplete, not clean.
+// The shield observes the deadline between rows; a long first step can exceed it.
 func checkInboxIntegrity(ctx context.Context, db *sql.DB, limit time.Duration) (err error) {
 	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()

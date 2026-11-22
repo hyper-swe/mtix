@@ -122,6 +122,11 @@ func TestCreateNode_ExplicitAssignment_OverridesParentAutoClaim(t *testing.T) {
 			bc.Reset()
 			req := createClassifiedRequest(t, "task", assignee)
 			req.ParentID = parent.ID
+			wantCreator := "author"
+			if assignee == "" {
+				wantCreator = "parent-worker" // FR-11.2a: only the parent's assignee inherits the claim
+				req.Creator = wantCreator
+			}
 			child, err := svc.CreateNode(context.Background(), req)
 			require.NoError(t, err)
 			got, err := st.GetNode(context.Background(), child.ID)
@@ -131,7 +136,7 @@ func TestCreateNode_ExplicitAssignment_OverridesParentAutoClaim(t *testing.T) {
 				want = "parent-worker"
 			}
 			assert.Equal(t, want, got.Assignee)
-			assert.Equal(t, "author", got.Creator)
+			assert.Equal(t, wantCreator, got.Creator)
 			assert.Equal(t, model.StatusInProgress, got.Status)
 			assert.Equal(t, model.NodeTypeStory, got.NodeType)
 			assert.Equal(t, model.IssueTypeTask, got.IssueType)

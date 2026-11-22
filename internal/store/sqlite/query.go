@@ -23,6 +23,9 @@ func (s *Store) Query(ctx context.Context, query string, args ...any) (*sql.Rows
 // WriteDB returns the write database pool.
 // This is exposed for store operations that need direct write access
 // outside of transactions (e.g., NextSequence which uses RETURNING).
+// Queries and prepared queries use the cancellation shield (MTIX-261),
+// including queries on connections and transactions obtained from this pool.
+// Cancellation is observed between rows, after any running first step finishes.
 func (s *Store) WriteDB() *sql.DB {
 	return s.writeDB
 }

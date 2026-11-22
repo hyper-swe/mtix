@@ -221,7 +221,33 @@ type appliedCreateRow struct {
 }
 
 // insertAppliedCreate preserves the existing number-conflict and UID checks.
-func insertAppliedCreate(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, row appliedCreateRow) error {
+func insertAppliedCreate(ctx context.Context, tx *sql.Tx, store *Store, e *model.SyncEvent, row appliedCreateRow) error {
+	inserted, err := execAppliedCreate(ctx, tx, e, row)
+	if err != nil {
+		return err
+	}
+	if inserted == 0 {
+		// MTIX-112.17.16.39: a holder with no create in the log moves aside
+		// and the creation lands on its number.
+		moved, err := moveUnloggedHolder(ctx, tx, store, e, row.uid)
+		if err != nil {
+			return err
+		}
+		if moved {
+			if inserted, err = execAppliedCreate(ctx, tx, e, row); err != nil {
+				return err
+			}
+		}
+	}
+	if inserted == 0 {
+		return refuseHeldNumber(ctx, tx, e, row.uid)
+	}
+	return nil
+}
+
+// execAppliedCreate inserts the create row, returning the rows inserted: 0
+// when the number is held (ON CONFLICT (id) DO NOTHING).
+func execAppliedCreate(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, row appliedCreateRow) (int64, error) {
 	p, uid, labelsJSON, now := row.payload, row.uid, row.labels, row.at
 	depth := computeDepth(p.ParentID)
 	canonical := model.NodeTypeForDepth(depth)
@@ -253,15 +279,11 @@ func insertAppliedCreate(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, ro
 		1.0,
 	)
 	if err != nil {
-		return fmt.Errorf("apply create_node %s: insert node %s: %w", format.EventID(e.EventID), e.NodeID, err)
+		return 0, fmt.Errorf("apply create_node %s: insert node %s: %w", format.EventID(e.EventID), e.NodeID, err)
 	}
-	if inserted, rowsErr := res.RowsAffected(); rowsErr != nil {
-		return fmt.Errorf("apply create_node %s: rows affected: %w", format.EventID(e.EventID), rowsErr)
-	} else if inserted == 0 {
-		if err := refuseHeldNumber(ctx, tx, e, uid); err != nil {
-			return err
-		}
+	inserted, rowsErr := res.RowsAffected()
+	if rowsErr != nil {
+		return 0, fmt.Errorf("apply create_node %s: rows affected: %w", format.EventID(e.EventID), rowsErr)
 	}
-
-	return nil
+	return inserted, nil
 }

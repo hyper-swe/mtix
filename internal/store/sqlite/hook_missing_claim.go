@@ -15,7 +15,7 @@ import (
 // The absence check and deletion share the writer transaction with replace.
 func (s *Store) discardMissingHookClaim(ctx context.Context, hook string, seq int64, lease time.Duration) (bool, error) {
 	var removed bool
-	err := s.WithTx(ctx, func(tx *sql.Tx) error {
+	err := s.withLocalTx(ctx, func(tx *sql.Tx) error {
 		result, err := tx.ExecContext(ctx, `DELETE FROM hook_dispatch_ledger
    WHERE hook_name=? AND event_seq=? AND outcome=? AND fired_at<?
    AND NOT EXISTS(SELECT 1 FROM sync_events WHERE rowid=?)`,

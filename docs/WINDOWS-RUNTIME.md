@@ -112,8 +112,11 @@ CGO-disabled execution is not an acceptable substitute.
 ## Selected execution and interpretation
 
 The checked-in workflow runs only the explicit anchored native permission/ACL
-selection in internal/oplocal and `^TestHooksStatus_` in cmd/mtix, with race,
-count=1, JSON output and package timeouts. The parsed workflow guard pins the
+selection in internal/oplocal, `^TestHooksStatus_` in cmd/mtix, and two bare-name
+tests in internal/hooks (TestIsBareName_RelativeSpellingsAreNotBare and
+TestKnownWrapperAndInterpreter_RelativeSpellingNamedLikeTheProgramIsNotKnown,
+captured as hooks-launch.json), with race, count=1, JSON output and package
+timeouts. The parsed workflow guard pins the
 commands, required names, package identities, budgets and failure handling.
 
 The live `TestAncestor_StockWindowsAclCapture_AcceptsPolicy` test reads C:\\,

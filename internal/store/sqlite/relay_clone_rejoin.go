@@ -48,10 +48,35 @@ const RelayCloneOnSyncedStop = "STOP, do not continue: keep the old project, do 
 // read can never pass.
 const RelayCloneOnSyncedListCommand = "mtix list --json --all-projects --limit 100000 --fields uid"
 
+// RelayCloneOnSyncedDaemonStopNote follows every daemon-stop mention in the
+// recovery text and its doc copies. Stop ends the running instance and holds
+// it stopped on every OS (MTIX-275: on macOS it unloads the launchd job, so
+// KeepAlive cannot restart it), uninstall removes the service and succeeds
+// when none is installed, and status fails for a stopped or missing service,
+// so the order is stop, uninstall, status. A waiter's
+// detached listener is listed by `mtix daemon status --listener` and ended by
+// `mtix daemon stop --listener` (MTIX-276; cmd/mtix/listener_control.go).
+// MTIX-271.1 deliberately requires operator quiescence of every addressed-send
+// surface too: neither daemon shutdown nor peer retirement disables publishing.
+const RelayCloneOnSyncedDaemonStopNote = "(for a daemon installed as an OS service, run `mtix daemon stop` first, which ends the running instance and keeps it stopped until `mtix daemon start` (on macOS it unloads the launchd job, so KeepAlive cannot restart it), then `mtix daemon uninstall`, which removes the service and succeeds when none is installed, then check that `mtix daemon status` fails, which it does for a stopped or missing service; stop a foreground `mtix daemon` or `mtix sync daemon` where it runs, with Ctrl-C or by closing its terminal; a waiter, `mtix inbox --wait`, starts a detached listener: end every waiter in that project first, then run `mtix daemon stop --listener`, which asks the listener to exit and waits until the daemon lock is free, and check that `mtix daemon status --listener` exits 10, which means the daemon lock is free and nothing runs (exit 1 is an error such as running outside a project and never means none; exit 12 means a daemon, such as a foreground `mtix daemon` or `mtix sync daemon`, still holds the lock: stop it where it runs, then check again; exit 8 means a process that could not be verified holds it); `mtix daemon status --listener` also lists the pid and the live waiters; Addressed sends publish even with every daemon stopped; retiring a peer does not disable these senders. In the project being stopped, do not run `mtix comment --to` or `mtix annotate --to`; stop the MCP server (`mtix mcp`) in its client and disable automatic restart; stop `mtix serve` where it runs (Ctrl-C in its terminal, or stop its supervisor and disable automatic restart). Pause agents, hooks and automation that can send or restart these processes. Wait for in-flight sends to finish before continuing: a send starts a push that can run for up to five minutes, so wait at least five minutes after the last send. Keep these senders stopped in the old project through retirement and never resume them there after retirement. Resume them only in the new project after the recovery checks pass, or in the old project if recovery is abandoned before retirement.)"
+
+// RelayCloneOnSyncedDaemonRestartNote follows every daemon-restart mention.
+const RelayCloneOnSyncedDaemonRestartNote = "(for a service removed with `mtix daemon uninstall`, run `mtix daemon install` again; start a foreground daemon again where it ran)"
+
+// RelayCloneOnSyncedOldProjectSwitchNote is the addressed-send switch for the
+// OLD project only (step 8, MTIX-271.1): it records the current value, turns
+// the switch off, and says how an abandoned recovery restores the recorded
+// value. The new project (step 7) keeps the default and never carries it.
+const RelayCloneOnSyncedOldProjectSwitchNote = "in the old project only, record its current value with `mtix config get sync.push_on_addressed_send`, then run `mtix config set sync.push_on_addressed_send false`, which every addressed send rereads, so it covers the CLI, MCP and serve (a send made with it off still commits locally and is not published, so keep to the stops above); if recovery is abandoned before retirement, restore the recorded value there with `mtix config set sync.push_on_addressed_send <recorded value>`, never an assumed true"
+
+// RelayCloneOnSyncedRestoreSwitchClause is the step 9 STOP clause that puts
+// the old project's recorded switch value back.
+const RelayCloneOnSyncedRestoreSwitchClause = "restore the old project's recorded `sync.push_on_addressed_send` value with `mtix config set sync.push_on_addressed_send <recorded value>`"
+
 // RelayCloneOnSyncedStopHalfJoined is the STOP prose of step 9. Step 8 has
 // already stopped the old daemon and the new project has published under its
 // new id, so the prose says what to do with both. It deletes nothing.
-const RelayCloneOnSyncedStopHalfJoined = "STOP, do not continue: restart the daemon in the old project and keep using the old project, " +
+const RelayCloneOnSyncedStopHalfJoined = "STOP, do not continue: restart the daemon in the old project with `mtix daemon install` " + RelayCloneOnSyncedDaemonRestartNote + ", " + RelayCloneOnSyncedRestoreSwitchClause + ", and keep using the old project, " +
 	"leave the new project unused (delete nothing), do not run `mtix sync relay retire-peer`, and ask the project maintainer, " +
 	"telling them the new project's peer id"
 
@@ -84,16 +109,17 @@ func RelayCloneOnSyncedSteps() []RelayRejoinStep {
 		{true, "copy the relay key epoch files from .mtix/relay/keys here into .mtix/relay/keys there, out of band and never " +
 			"through the relay (directory mode 0700, files mode 0600; never print them)", ""},
 		{true, "run `mtix config set sync.relay.dir <dir>` there", "mtix config set sync.relay.dir <dir>"},
-		{true, "stop any daemon there, then run `mtix sync relay clone` there before any `mtix sync relay attach`, which needs local history and " +
-			"refuses an empty project", "mtix sync relay clone"},
-		{true, "stop the daemon in the old project too, so it stops publishing under the retired id, then run `mtix sync relay tick` " +
-			"there; it publishes under the new id and re-reads the old id's stream from the start (replaying it is harmless)", "mtix sync relay tick"},
+		{true, "stop any daemon there with `mtix daemon stop`, then `mtix daemon uninstall` " + RelayCloneOnSyncedDaemonStopNote + ", then run `mtix sync relay clone` there (attach is not part of joining, before or after clone: it needs local history and " +
+			"refuses an empty project with `RELAY_NO_SHARED_PROJECT`)", "mtix sync relay clone"},
+		{true, "stop the daemon in the old project too with `mtix daemon stop`, then `mtix daemon uninstall` " + RelayCloneOnSyncedDaemonStopNote + ", so it stops publishing under the retired id; " + RelayCloneOnSyncedOldProjectSwitchNote + "; then run `mtix sync relay tick` in the new project; " +
+			"it publishes under the new id and re-reads the old id's stream from the start (replaying it is harmless)", "mtix sync relay tick"},
 		{true, "verify there with `" + RelayCloneOnSyncedListCommand + "`, and run the same command in the old project: in each project " +
 			"the number of `uid` entries read must equal its `total` (otherwise the read was truncated: " + RelayCloneOnSyncedStopHalfJoined + "), " +
 			"and compare by the `uid` field, never by id or title: if the new project lacks any uid the old project holds, " +
 			RelayCloneOnSyncedStopHalfJoined, RelayCloneOnSyncedListCommand},
 		{true, "only when the checks of steps 1 and 9 passed, run `mtix sync relay retire-peer <old-peer-id>` there so the retired id no longer holds the " +
-			"prune window (mtix config get sync.relay.peer_id here shows it; unset means the machine id), then stop using the old project",
+			"prune window (`mtix config get sync.relay.peer_id` in the old project shows it; unset means the machine id: " +
+			"read the `this peer` line of `mtix sync relay status` in the old project), then stop using the old project",
 			"mtix sync relay retire-peer <old-peer-id>"},
 	}
 }

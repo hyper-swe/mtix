@@ -11,6 +11,8 @@ import (
 )
 
 // WithTx executes fn within a database transaction per CODING-STYLE.md §5.2.
+// Reads use the writer connection shield (MTIX-261): cancellation is checked
+// between rows, so a long first step finishes before cancellation is observed.
 // On success: commits the transaction.
 // On error: rolls back the transaction and returns the error.
 // On panic: rolls back the transaction and re-panics.
@@ -24,6 +26,14 @@ import (
 // I/O error latches the store into fail-stop.
 func (s *Store) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) (err error) {
 	return s.withWriteTx(ctx, fn, true)
+}
+
+// withLocalTx runs fn as local bookkeeping (hook ledger, inbox delivery and
+// wake rows): same guards as WithTx, but no on-commit callbacks, because these
+// rows never change exported content and must not record an export request,
+// trigger the exporter, hook dispatch or hub contact (MTIX-130.20.3).
+func (s *Store) withLocalTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	return s.withWriteTx(ctx, fn, false)
 }
 
 // withWriteTx shares all write guards. Local bookkeeping suppresses mutation

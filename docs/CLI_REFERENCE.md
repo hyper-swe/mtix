@@ -531,7 +531,7 @@ Create a new node. Use --under to create a child node.
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--acceptance` |  | Acceptance criteria |  |
-| `--assign` |  | Claim the new node for agent/user atomically (status in_progress; creator stays author); empty means no explicit assignment (parent auto-claim still applies); nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters |  |
+| `--assign` |  | Claim the new node for agent/user atomically (status in_progress; creator stays author); empty means no explicit assignment (parent auto-claim applies only when you are the in_progress parent's assignee; otherwise the child is open and unassigned); nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters |  |
 | `--description` |  | Node description |  |
 | `--labels` |  | Comma-separated labels |  |
 | `--priority` |  | Priority (1=critical, 5=backlog) | 3 |
@@ -583,10 +583,10 @@ Push and dispatch lock files and their data directory must be real and user-owne
 ### Subcommands
 
 - `install` — Register the daemon as an OS service (boot-start, crash-restart)
-- `start` — Start the installed daemon service
-- `status` — Show the installed daemon service's state
-- `stop` — Stop the installed daemon service
-- `uninstall` — Unregister the daemon service and remove its unit file
+- `start` — Start the installed daemon service (re-enables it after stop)
+- `status` — Show the installed daemon service's state; fails when stopped (--listener: show the detached inbox listener)
+- `stop` — Stop the daemon service; it stays stopped until start (--listener: end the detached inbox listener)
+- `uninstall` — End and unregister the daemon service and remove its unit file
 ---
 
 ## install
@@ -606,28 +606,43 @@ Register the daemon as an OS service (boot-start, crash-restart)
 
 **Usage:** `start`
 
-Start the installed daemon service
+Start the installed daemon service (re-enables it after stop)
 ---
 
 ## status
 
 **Usage:** `status`
 
-Show the installed daemon service's state
+Show the installed daemon service's state; fails when stopped (--listener: show the detached inbox listener)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--json` |  | With --listener: print the result as JSON | false |
+| `--listener` |  | Show the detached inbox listener (pid, waiters) instead of the OS service; exits 0 when running, 10 when the lock is free and nothing runs (1 is an error), 12 when a non-listener daemon holds the lock, 8 when the lock holder is not a verified listener | false |
 ---
 
 ## stop
 
 **Usage:** `stop`
 
-Stop the installed daemon service
+Stop the daemon service; it stays stopped until start (--listener: end the detached inbox listener)
+
+### Flags
+
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--json` |  | With --listener: print the result as JSON | false |
+| `--listener` |  | Act on the detached inbox listener (mtix daemon --listen) instead of the OS service; exits 0 stopped, 9 a live waiter started a new listener, 11 still running or not verified, 12 only a non-listener daemon holds the lock | false |
+| `--timeout` |  | With --listener: how long to wait for the listener to exit before escalating | 30s |
 ---
 
 ## uninstall
 
 **Usage:** `uninstall`
 
-Unregister the daemon service and remove its unit file
+End and unregister the daemon service and remove its unit file
 ---
 
 ## decompose
@@ -1383,7 +1398,7 @@ List nodes with filters
 | `--format` |  | Output format: briefing |  |
 | `--issue-type` |  | Filter by work classification (bug, feature, task, chore, refactor, test, doc; comma-separated) |  |
 | `--labels` |  | Filter by label, any-of (comma-separated; exact, case-sensitive, e.g. desk:now,desk:backlog) |  |
-| `--limit` |  | Maximum results | 50 |
+| `--limit` |  | Maximum rows to list, at least 1 (--json carries total, the count before the limit; use mtix stats for counts) | 50 |
 | `--max-field-chars` |  | Truncate field values (briefing format) | 0 |
 | `--priority` |  | Filter by priority (comma-separated for multiple) |  |
 | `--project` |  | Scope to a single project prefix (default: primary) |  |
@@ -3071,7 +3086,9 @@ Re-derive a blocked node's status from its blockers; clear it if all are resolve
 
 Re-derive a node's blocked status from its current blockers.
 
-'blocked' is system-managed: mtix auto-blocks a node when a blocker is added and
+'blocked' is system-managed: mtix auto-blocks an open or in-progress node when an
+unresolved blocker is added (a blocks link over a done, cancelled or invalidated
+blocker does not block), blocks it again if a resolved blocker is reopened, and
 auto-restores it when the last blocker resolves. Use 'unblock' to force that
 re-derivation if a node is stuck 'blocked' even though 'mtix dep show <id>' shows the
 blockers resolved. It never overrides a genuine block — if an unresolved blocker

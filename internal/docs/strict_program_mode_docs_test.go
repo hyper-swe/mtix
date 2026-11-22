@@ -51,3 +51,20 @@ func TestStrictProgramModeDocs_NameSwitchApprovalAndCheck(t *testing.T) {
 	require.True(t, strings.Contains(text, "`mtix hooks strict on|off|status`"))
 	require.Contains(t, text, "default off")
 }
+
+// The link-limit hardening refuses a link that cannot be read as well as an
+// over-long chain; the release notes must say both.
+func TestChangelog_LinkLimitEntry_MentionsUnreadableLink(t *testing.T) {
+	changelog, err := os.ReadFile(filepath.Join("..", "..", "CHANGELOG.md"))
+	require.NoError(t, err)
+	var entry string
+	for _, line := range strings.Split(string(changelog), "\n") {
+		if strings.Contains(line, "(MTIX-112.34.2.3.3)") {
+			entry = line
+			break
+		}
+	}
+	require.NotEmpty(t, entry, "link-limit changelog entry not found")
+	require.Contains(t, entry, "over-long link chains")
+	require.Contains(t, entry, "a link that cannot be read is refused as well")
+}

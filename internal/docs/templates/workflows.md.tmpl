@@ -16,6 +16,8 @@ mtix decompose <parent_id> --file plan.jsonl
 
 Or via MCP: `mtix_decompose`
 
+Each plan line takes `title` (required), `prompt`, `acceptance`, `description`, `priority`, `labels` and `issue_type` (`type` is an alias; bug, feature, task, chore, refactor, test or doc). An unknown key or an invalid issue type is refused naming the line and the key, and nothing is created.
+
 **Important:** After decomposing, populate every child with context:
 
 ```

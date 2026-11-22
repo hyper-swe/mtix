@@ -34,3 +34,18 @@ func TestRunDecomposeDryRun(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, kids, "dry-run must not persist children")
 }
+
+// TestRunDecomposeDryRun_IssueType_PrintedInJSON covers MTIX-279 on the CLI dry run.
+func TestRunDecomposeDryRun_IssueType_PrintedInJSON(t *testing.T) {
+	initTestApp(t)
+	ctx := context.Background()
+	parent, err := app.nodeSvc.CreateNode(ctx, &service.CreateNodeRequest{Project: "TEST", Title: "epic", Creator: "u"})
+	require.NoError(t, err)
+	app.jsonOutput = true
+	t.Cleanup(func() { app.jsonOutput = false })
+
+	out := captureStdout(t, func() {
+		require.NoError(t, runDecomposeDryRun(parent.ID, []service.DecomposeInput{{Title: "c", IssueType: "bug"}}))
+	})
+	assert.Contains(t, out, `"issue_type":"bug"`)
+}

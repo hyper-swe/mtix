@@ -45,6 +45,12 @@ Use --dry-run to preview proposed nodes without creating them:
 JSONL format (one JSON object per line):
   {"title":"Add login endpoint","prompt":"Implement POST /auth/login..."}
   {"title":"Add token refresh","prompt":"...","priority":1,"labels":["auth"]}
+  {"title":"Fix session leak","issue_type":"bug"}
+
+Keys: title (required), prompt, acceptance, description, priority, labels,
+issue_type (alias: type; one of bug, feature, task, chore, refactor, test,
+doc). Any other key, or an invalid issue type, is refused naming the line and
+the key, and nothing is created. A line without issue_type leaves it unset.
 
 JSONL is preferred for LLM plan output:
   - Each line is independently valid (partial output is usable)

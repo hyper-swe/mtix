@@ -17,58 +17,73 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// sqliteTestShards is the number of hash shards CI splits this package into
-// (.github/workflows/ci.yml test-go-sqlite; scripts/ci-go-shards.sh).
-const sqliteTestShards = 4
+// sqliteTestShards is the number of shards CI and the remote bar split this
+// package into (.github/workflows/ci.yml test-go-sqlite, remote-bar.yml
+// bar-shard and bar-macos-shard; scripts/ci-go-shards.sh).
+const sqliteTestShards = 6
+
+// sqliteShardPinFile pins this package's heaviest tests to a shard
+// (MTIX-131.2); scripts/ci-go-shards.sh reads it.
+const sqliteShardPinFile = "../../../scripts/ci-go-shard-pins/internal-store-sqlite.txt"
 
 // readRouteTests maps each route family swept by a top-level
-// TestReadRoutes_* test to the shard scripts/ci-go-shards.sh gives that test
-// (MTIX-264, MTIX-270). Shards are chosen by djb2(test name) mod 4 + 1, and
-// subtests are never split, so each route is its own top-level test and the
-// hash places its cost. MTIX-270 moved the SQLite race run from three shards
-// to four because three shards left one shard within 15 percent of the 20
-// minute package limit (macOS 989/620/1033 s). A route costs about 50 s on
-// Ubuntu and 65 s on macOS, the families test about 20 s, so the eight routes
-// are spread two per shard and the families test sits with shard 3's two
-// routes. Under four shards the unrenamed names put five routes on shard 2, so
-// three tests were renamed (StoreQueryRow, ConnPrepareContext,
-// TxPrepareContext) to names that also keep the remote bar's three-shard split
-// at MTIX-264's 3/0/5 (remoteBarRoutesPerShard). Renaming a test moves it, so
-// TestReadRouteShards_Assignment_FollowsMeasuredShardLoad fails until the
-// table is updated to a name that keeps this placement.
+// TestReadRoutes_* test to the shard its pin gives that test (MTIX-264,
+// MTIX-270, MTIX-131.2). Subtests are never split, so each route is its own
+// top-level test. MTIX-131.2 moved the package to six shards and pinned the
+// sweeps by measured cost (a route costs about 80 to 115 s under -race on a
+// three-core box, the families test about 137 s): at most two routes per
+// shard, none on shard 6, which runs the writer-read sweep alone.
 //
-//	shard 1: StoreQueryRow, InboxAckInfo
-//	shard 2: StoreQuery, ReadDBQuery
-//	shard 3: ReadDBConnPrepareCtx, ConnPrepareContext, and the 12 short families
+//	shard 1: StoreQuery
+//	shard 2: ConnRawPrepareStmt, StoreQueryRowPool
+//	shard 3: InboxAckInfo, ReadDBConnPrepareCtx
+//	shard 4: TxPrepareContextMain, and the short families
 //	         (TestReadFamilies_CancelledMidQuery_LeaveNoStaleSnapshot)
-//	shard 4: ConnRawPrepareStmt, TxPrepareContext
+//	shard 5: ReadDBQuery, ConnPrepareContextRoute
 var readRouteTests = map[string]struct {
 	family     string
 	shard      int
 	iterations int
 }{
-	"TestReadRoutes_StoreQuery_CancelledMidRead_LeaveNoStaleSnapshot":              {"Store.Query", 2, 20000},
-	"TestReadRoutes_InboxAckInfo_CancelledMidRead_LeaveNoStaleSnapshot":            {"InboxAckInfo", 1, 20000},
-	"TestReadRoutes_ReadDBQuery_CancelledMidRead_LeaveNoStaleSnapshot":             {"ReadDB.QueryContext", 2, 20000},
+	"TestReadRoutes_StoreQuery_CancelledMidRead_LeaveNoStaleSnapshot":              {"Store.Query", 1, 20000},
+	"TestReadRoutes_InboxAckInfo_CancelledMidRead_LeaveNoStaleSnapshot":            {"InboxAckInfo", 3, 20000},
+	"TestReadRoutes_ReadDBQuery_CancelledMidRead_LeaveNoStaleSnapshot":             {"ReadDB.QueryContext", 5, 20000},
 	"TestReadRoutes_ReadDBConnPrepareCtx_CancelledMidRead_LeaveNoStaleSnapshot":    {"ReadDB.Conn.PrepareContext", 3, 20000},
-	"TestReadRoutes_ConnRawPrepareStmt_CancelledMidRead_LeaveNoStaleSnapshot":      {"Conn.Raw.Prepare", 4, 20000},
-	"TestReadRoutes_StoreQueryRowPool_CancelledMidRead_LeaveNoStaleSnapshot":       {"Store.QueryRow", 1, 20000},
-	"TestReadRoutes_ConnPrepareContextRoute_CancelledMidRead_LeaveNoStaleSnapshot": {"Conn.PrepareContext", 3, 20000},
+	"TestReadRoutes_ConnRawPrepareStmt_CancelledMidRead_LeaveNoStaleSnapshot":      {"Conn.Raw.Prepare", 2, 20000},
+	"TestReadRoutes_StoreQueryRowPool_CancelledMidRead_LeaveNoStaleSnapshot":       {"Store.QueryRow", 2, 20000},
+	"TestReadRoutes_ConnPrepareContextRoute_CancelledMidRead_LeaveNoStaleSnapshot": {"Conn.PrepareContext", 5, 20000},
 	"TestReadRoutes_TxPrepareContextMain_CancelledMidRead_LeaveNoStaleSnapshot":    {"Tx.PrepareContext", 4, 20000},
 }
 
 // readFamiliesTestName is the test that keeps the short families.
 const readFamiliesTestName = "TestReadFamilies_CancelledMidQuery_LeaveNoStaleSnapshot"
 
-// shardOfTestName mirrors assign_shards in scripts/ci-go-shards.sh: djb2 over
-// the alphabet 0-9A-Z_a-z (1-based index), modulo 2^32, then mod shards + 1.
-func shardOfTestName(name string, shards int) int {
-	const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
-	h := uint64(5381)
-	for _, c := range name {
-		h = (h*33 + uint64(strings.IndexRune(alphabet, c)) + 1) % 4294967296
+// pinnedShards reads the pin file: its shard count and every pinned test's
+// shard ("shards <N> [hash <H>]", then "<TestName> <shard>", # comments).
+func pinnedShards(t *testing.T) (int, map[string]int) {
+	t.Helper()
+	raw, err := os.ReadFile(sqliteShardPinFile)
+	require.NoError(t, err)
+	count := 0
+	pins := map[string]int{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if i := strings.Index(line, "#"); i >= 0 {
+			line = line[:i]
+		}
+		f := strings.Fields(line)
+		if len(f) == 0 {
+			continue
+		}
+		require.GreaterOrEqual(t, len(f), 2, line)
+		n, err := strconv.Atoi(f[1])
+		require.NoError(t, err, line)
+		if f[0] == "shards" {
+			count = n
+			continue
+		}
+		pins[f[0]] = n
 	}
-	return int(h%uint64(shards)) + 1
+	return count, pins
 }
 
 // declaredRouteTests lists the top-level TestReadRoutes_* functions in the
@@ -87,19 +102,22 @@ func declaredRouteTests(t *testing.T) []string {
 	return names
 }
 
-// wantRoutesPerShard is the placement by measured route cost (MTIX-270): two
-// routes on each of the four shards.
-var wantRoutesPerShard = map[int]int{1: 2, 2: 2, 3: 2, 4: 2}
+// wantRoutesPerShard is the placement by measured route cost (MTIX-131.2):
+// at most two routes per shard, none on the writer-read shard 6.
+var wantRoutesPerShard = map[int]int{1: 1, 2: 2, 3: 2, 4: 1, 5: 2, 6: 0}
 
 func TestReadRouteShards_Assignment_FollowsMeasuredShardLoad(t *testing.T) {
-	perShard := map[int]int{1: 0, 2: 0, 3: 0, 4: 0}
+	count, pins := pinnedShards(t)
+	require.Equal(t, sqliteTestShards, count, "the pin file and sqliteTestShards must change together")
+	perShard := map[int]int{1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}
 	for name, want := range readRouteTests {
-		require.Equal(t, want.shard, shardOfTestName(name, sqliteTestShards),
-			"%s moved shard; update the table in this file and pick a name that keeps the placement", name)
+		got, ok := pins[name]
+		require.True(t, ok, "%s must be pinned in the shard pin file", name)
+		require.Equal(t, want.shard, got, "%s moved shard; update the table in this file", name)
 		perShard[want.shard]++
 	}
-	require.Equal(t, wantRoutesPerShard, perShard, "route tests per shard (two on each)")
-	require.Equal(t, 3, shardOfTestName(readFamiliesTestName, sqliteTestShards), "the short families test stays on shard 3")
+	require.Equal(t, wantRoutesPerShard, perShard, "route tests per shard")
+	require.Equal(t, 4, pins[readFamiliesTestName], "the short families test stays on shard 4")
 }
 
 func TestReadRouteShards_RouteTests_MatchTheRouteFamilies(t *testing.T) {
@@ -206,24 +224,8 @@ func workflowShardCounts(t *testing.T) (ci int, bar map[int]bool) {
 	return ci, bar
 }
 
-// remoteBarRoutesPerShard is the read-cancel placement under the remote bar's
-// three SQLite shards (MTIX-264 pinned 3/0/5 there). MTIX-270 moved ci.yml to
-// four shards and chose the route names so that this split is unchanged.
-var remoteBarRoutesPerShard = map[int]int{1: 3, 2: 0, 3: 5}
-
 func TestReadRouteShards_ShardCounts_MatchTheWorkflows(t *testing.T) {
 	ci, bar := workflowShardCounts(t)
 	require.Equal(t, sqliteTestShards, ci, "ci.yml test-go-sqlite shard count and sqliteTestShards must change together")
-	require.Equal(t, map[int]bool{3: true}, bar, "remote-bar.yml SQLite shard count changed: update remoteBarRoutesPerShard and the route names")
-}
-
-func TestReadRouteShards_RemoteBarSplit_KeepsTheMeasuredThreeShardPlacement(t *testing.T) {
-	_, bar := workflowShardCounts(t)
-	require.Len(t, bar, 1)
-	perShard := map[int]int{1: 0, 2: 0, 3: 0}
-	for name := range readRouteTests {
-		perShard[shardOfTestName(name, 3)]++
-	}
-	require.Equal(t, remoteBarRoutesPerShard, perShard, "route tests per remote-bar shard (3 / 0 / 5, shard 2 holds none)")
-	require.Equal(t, 1, shardOfTestName(readFamiliesTestName, 3), "the families test stays on remote-bar shard 1")
+	require.Equal(t, map[int]bool{sqliteTestShards: true}, bar, "remote-bar.yml runs the same SQLite shard count as ci.yml")
 }

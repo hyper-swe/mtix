@@ -47,6 +47,12 @@ func (s *Store) claimNodeTx(ctx context.Context, tx *sql.Tx, id, agentID string)
 		return fmt.Errorf("claim node %s: %w", id, err)
 	}
 
+	// MTIX-294 / FR-5.2, FR-5.7: a claimed leaf has no credit; re-derive it
+	// and every ancestor in this transaction.
+	if progErr := recalculateProgress(ctx, tx, id); progErr != nil {
+		return fmt.Errorf("recalculate progress after claim: %w", progErr)
+	}
+
 	if agentErr := ensureAndSyncAgent(ctx, tx, agentID, id, nowStr); agentErr != nil {
 		return agentErr
 	}

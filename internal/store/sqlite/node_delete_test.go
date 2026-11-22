@@ -141,6 +141,8 @@ func TestDeleteNode_RecalculatesParentProgress(t *testing.T) {
 func TestDeleteNode_CascadeSubtree_RecalculatesSurvivingAncestors(t *testing.T) {
 	t.Parallel()
 	s := newTestStore(t)
+	// MTIX-294: this test pins the FR-5.8 weighted mean, so the switch is on.
+	s.SetProgressWeightedSource(func() bool { return true })
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -461,6 +463,8 @@ func TestDeleteNodeWithRoot_AncestorRoot_RecalculatesParentProgress(t *testing.T
 func TestDeleteNodeWithRoot_GrandparentRoot_RecalculatesDirectParentAndGrandparent(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
+	// MTIX-294: this test pins the FR-5.8 weighted mean, so the switch is on.
+	s.SetProgressWeightedSource(func() bool { return true })
 	now := time.Now().UTC().Truncate(time.Second)
 	require.NoError(t, s.CreateNode(ctx, makeRootNode("PROJ-1", "PROJ", "Grandparent", now)))
 	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1", "PROJ-1", "PROJ", "Parent", 1, 1, now)))

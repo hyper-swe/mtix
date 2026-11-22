@@ -208,7 +208,7 @@ Before marking done, verify ALL of the following:
 - **Independent verification:** For critical tasks, the implementing agent should not be the verifying agent
 
 ### 8. Mark Done
-Call `mtix done <id>` or `mtix_done`. Progress automatically rolls up to parent nodes.
+Call `mtix done <id>` or `mtix_done`. Progress rolls up to parent nodes: a parent reads 100% only when every counted child is done and itself complete, so a parent shown below 100% still has open work (claiming or reopening a node removes its credit and its ancestors' in the same transaction; `progress.weighted` switches to the weighted mean).
 
 ### 9. End Session
 Call `mtix session end` or `mtix_session_end` when all work is complete.

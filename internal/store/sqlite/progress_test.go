@@ -149,6 +149,8 @@ func TestProgress_AllChildrenExcluded_ReturnsZeroWithFlag(t *testing.T) {
 // TestProgress_PropagesToRoot_InSameTransaction verifies FR-5.7.
 func TestProgress_PropagesToRoot_InSameTransaction(t *testing.T) {
 	s := newTestStore(t)
+	// MTIX-294: this test pins the FR-5.8 weighted mean, so the switch is on.
+	s.SetProgressWeightedSource(func() bool { return true })
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 
@@ -253,10 +255,11 @@ func TestProgress_MatchesExampleFR5_9(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0.5, c2Node.Progress)
 
-	// PROJ-42 should be (1.0 + 0.5 + 0.0) / 3 = 0.5.
+	// FR-5.3 (default config): PROJ-42 is count(done children) / 3 = 1/3. The
+	// half-done PROJ-42.2 is not done, so it earns no credit (MTIX-294).
 	parentNode, err := s.GetNode(ctx, "PROJ-42")
 	require.NoError(t, err)
-	assert.Equal(t, 0.5, parentNode.Progress)
+	assert.InDelta(t, 1.0/3.0, parentNode.Progress, 1e-12)
 }
 
 // TestProgress_ConcurrentSiblingCompletion_Correct verifies FR-5.7 scenario.
@@ -318,6 +321,8 @@ func TestWeightedProgress_DefaultWeights_MatchesUnweighted(t *testing.T) {
 // TestWeightedProgress_CustomWeights_CorrectCalculation verifies custom weights.
 func TestWeightedProgress_CustomWeights_CorrectCalculation(t *testing.T) {
 	s := newTestStore(t)
+	// MTIX-294: this test pins the FR-5.8 weighted mean, so the switch is on.
+	s.SetProgressWeightedSource(func() bool { return true })
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 

@@ -11,9 +11,15 @@
 #   bash scripts/ci-go-shards.sh test-pattern <dir> <N> <k>
 #       split one package's tests into N shards by a stable hash of the test
 #       name; test-pattern prints the -run regex of shard k. The shard count is
-#       the caller's: ci.yml runs internal/store/sqlite in 4 (MTIX-270) and
-#       internal/service in 2; the remote bar keeps its own counts in
-#       remote-bar.yml (sqlite 3, service 2)
+#       the caller's: ci.yml and remote-bar.yml run internal/store/sqlite in
+#       6 (MTIX-131.2) and internal/service in 2
+#   A package may pin known-heavy tests to a shard in
+#   scripts/ci-go-shard-pins/<dir with / as ->.txt (MTIX-131.2): first line
+#   "shards <N>" or "shards <N> hash <H>", then "<TestName> <shard>" lines
+#   (# comments allowed). The file holds for that N only; any other count, a
+#   malformed, duplicate or stale pin (a name the binary no longer lists)
+#   fails. Unpinned tests keep their hash shard, over shards 1..H (default N),
+#   so shards above H hold pinned tests only.
 set -euo pipefail
 export LC_ALL=C
 
@@ -69,7 +75,8 @@ cleanup() {
 	rm -f "$scratch/actual" "$scratch/all" "$scratch/listed" \
 		"$scratch/duplicate" "$scratch/unlisted" "$scratch/stale" \
 		"$scratch/listing" "$scratch/odd" "$scratch/names" "$scratch/expected" \
-		"$scratch/assigned" "$scratch/selected" "$scratch/twice" "$scratch/never"
+		"$scratch/assigned" "$scratch/selected" "$scratch/twice" "$scratch/never" \
+		"$scratch/pins" "$scratch/pins.names"
 	rmdir "$scratch"
 }
 trap cleanup EXIT
@@ -143,11 +150,59 @@ test_names() {
 	[ -s "$scratch/names" ] || die "no tests listed for $1"
 }
 
-# assign_shards: shard = djb2(name) mod SHARDS + 1. awk doubles stay exact:
-# h < 2^32, h*33 < 2^38.
+# load_pins <dir>: reads scripts/ci-go-shard-pins/<dir with / as ->.txt, if
+# present, into $scratch/pins ("<name> <shard>"). The first non-comment line
+# must be "shards <N>" or "shards <N> hash <H>" with N equal to the caller's
+# count and 1 <= H <= N (HASH, default N); every later line is one pin. A
+# malformed, duplicate or stale pin fails, so a pin can never make a test run
+# twice or not at all (the exact-split check below still runs).
+load_pins() {
+	local file line first=1
+	local -a f
+	file="scripts/ci-go-shard-pins/${1//\//-}.txt"
+	: >"$scratch/pins"
+	: >"$scratch/pins.names"
+	HASH=$SHARDS
+	[ -f "$file" ] || return 0
+	while IFS= read -r line || [ -n "$line" ]; do
+		line=${line%%#*}
+		read -r -a f <<<"$line" || true
+		[ "${#f[@]}" -eq 0 ] && continue
+		if [ "$first" = 1 ]; then
+			first=0
+			{ [ "${f[0]}" = shards ] && [[ "${f[1]:-}" =~ ^[1-9][0-9]*$ ]] && { [ "${#f[@]}" -eq 2 ] ||
+				{ [ "${#f[@]}" -eq 4 ] && [ "${f[2]}" = hash ] && [[ "${f[3]}" =~ ^[1-9][0-9]*$ ]]; }; }; } ||
+				die "$file: first line must be 'shards <N>' or 'shards <N> hash <H>'"
+			[ "${f[1]}" = "$SHARDS" ] || die "$file: pins are for ${f[1]} shards, not $SHARDS"
+			if [ "${#f[@]}" -eq 4 ]; then
+				[ "${f[3]}" -le "$SHARDS" ] || die "$file: hash ${f[3]} exceeds ${f[1]} shards"
+				HASH=${f[3]}
+			fi
+			continue
+		fi
+		if [ "${#f[@]}" -ne 2 ] || ! [[ "${f[0]}" =~ ^(Test|Example|Fuzz)[A-Za-z0-9_]*$ ]] ||
+			! [[ "${f[1]}" =~ ^[0-9]+$ ]] || [ "${f[1]}" -lt 1 ] || [ "${f[1]}" -gt "$SHARDS" ]; then
+			die "invalid pin in $file: $line"
+		fi
+		! grep -qxF -- "${f[0]}" "$scratch/pins.names" || die "duplicate pin ${f[0]} in $file"
+		grep -qxF -- "${f[0]}" "$scratch/names" || die "stale pin ${f[0]} in $file: the test binary does not list it"
+		printf '%s\n' "${f[0]}" >>"$scratch/pins.names"
+		printf '%s %s\n' "${f[0]}" "${f[1]}" >>"$scratch/pins"
+	done <"$file"
+	[ "$first" = 0 ] || die "$file: first line must be 'shards <N>' or 'shards <N> hash <H>'"
+}
+
+# assign_shards: a pinned name goes to its pin; any other name to
+# djb2(name) mod HASH + 1 (HASH is SHARDS unless the pin file lowers it). awk
+# doubles stay exact: h < 2^32, h*33 < 2^38.
 assign_shards() {
-	awk -v n="$SHARDS" '
+	awk -v n="$HASH" -v pins="$scratch/pins" '
 BEGIN {
+	while ((getline line < pins) > 0) {
+		split(line, pf, " ")
+		pin[pf[1]] = pf[2]
+	}
+	close(pins)
 	chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz"
 }
 {
@@ -155,7 +210,8 @@ BEGIN {
 	for (i = 1; i <= length($0); i++) {
 		h = (h * 33 + index(chars, substr($0, i, 1))) % 4294967296
 	}
-	print (h % n) + 1, $0
+	if ($0 in pin) print pin[$0], $0
+	else print (h % n) + 1, $0
 }' "$scratch/names" >"$scratch/assigned"
 }
 
@@ -184,6 +240,7 @@ bar-check | bar-list)
 test-check | test-pattern)
 	[ -d "$pkgdir" ] || die "no such package directory: $pkgdir"
 	test_names "$pkgdir"
+	load_pins "$pkgdir"
 	assign_shards
 	if [ "$mode" = test-pattern ]; then
 		p=$(pattern_of "$4")

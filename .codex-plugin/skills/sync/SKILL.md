@@ -9,6 +9,8 @@ The hub is a Postgres database that you and your teammates' agents push task cha
 
 ## Replicated annotation and workflow data
 
+Protocol 1 delete events record the display path at deletion and whether the operator requested a cascade at that root. Each event tombstones only its own target on replay. Treat a legacy delete with an empty payload as evidence for that target alone.
+
 New comment events carry the annotation identity, creation time, addressee and
 resolved state. Push then pull (or clone a fresh checkout) preserves these fields;
 resolving or unresolving updates the original annotation and does not deliver a

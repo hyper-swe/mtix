@@ -104,6 +104,7 @@ func TestDeriveDecisionTicket_HeldDelete(t *testing.T) {
 		{"local backfill", "MTIX-1.1", "MOVED-1", "old", marked, false, false, false},
 		{"legacy ancestor", "", "MTIX-1", "", "new", false, true, true},
 		{"uidless delete and missing ancestor", "MTIX-1", "MOVED-1", "", "new", true, true, false},
+		{"uidless ancestor delete without cascade", "MTIX-1", "MOVED-1", "", "new", false, true, true},
 		{"missing ancestor cascade", "MTIX-1", "MOVED-1", "old", "new", true, true, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

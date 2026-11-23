@@ -474,7 +474,7 @@ After `mtix rerun --strategy delete`, undeleting a direct child restores its sub
 
 A cascade delete sends one sync delete event for the node and one for each descendant it removes (not for a descendant that was already deleted), so other replicas delete the same nodes. A cascade delete made by an earlier version sent an event for the named node only: on other replicas its descendants stay live. Undelete is local: it emits no sync event. Other replicas keep the node deleted.
 
-Protocol 1 records the display path at deletion and marks the root of a requested cascade. A v0.5.4-beta cascade supplies only a root tombstone with an empty payload. A decision on a child therefore stays live under the decision deletion rule, even on the machine that deleted the child locally.
+A delete event now records the display path of the deleted node and whether the delete was a requested cascade. A delete from an earlier version carries neither field. No command, flag or output changes.
 
 Soft-deleted nodes are automatically purged after the retention period (default 30 days, configurable via `data.soft_delete_retention`).
 

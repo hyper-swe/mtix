@@ -854,6 +854,8 @@ resolution records are exempt from ordinary change-entry retention. Imports reje
 
 ## File relay (experimental)
 
+After a publisher crash or restart leaves a torn tail in a sealed segment, the reader applies every complete record once, never a partial one, and logs `reconciled torn seal` when the next segment of the same peer and publisher epoch resumes at or before the first missing record and its first record verifies. It then continues with no operator action. A torn tail the successor does not explain, and any damage inside a sealed segment, still stalls that peer with `RELAY_SEGMENT_CORRUPT` (it is never skipped).
+
 The relay is a second sync transport that carries the same events through a shared directory instead of a Postgres hub. It is **experimental and opt-in**: supported for trial use, its behavior and on-disk format may change in 0.6.0, and it is not yet covered by the release gate. Nothing changes for a project unless `sync.relay.dir` is set. Each machine keeps its own local `.mtix`; the directory carries events, never the database.
 
 **Hub contact and cost.** No `mtix sync relay` command connects to a hub, and a relay-only checkout never wakes a database that pauses when idle. A peer that has both a relay and a hub configured bridges the two, and its hub contact is still governed only by `sync.hub_contact`; the relay pass itself runs on the local store and the shared directory.

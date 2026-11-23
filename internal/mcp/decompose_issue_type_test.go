@@ -24,8 +24,14 @@ func TestDecomposeMCP_IssueTypeAndUnknownKeys(t *testing.T) {
 	}
 
 	// Unknown key and bad type are refused and nothing is created.
-	require.ErrorIs(t, call(`[{"title":"a"},{"title":"b","sev":"1"}]`), model.ErrInvalidInput)
-	require.ErrorIs(t, call(`[{"title":"a","issue_type":"epic"}]`), model.ErrInvalidInput)
+	err1 := call(`[{"title":"a"},{"title":"b","sev":"1"}]`)
+	require.ErrorIs(t, err1, model.ErrInvalidInput)
+	assert.Contains(t, err1.Error(), "child 1")
+	assert.Contains(t, err1.Error(), "sev")
+	err2 := call(`[{"title":"a","issue_type":"epic"}]`)
+	require.ErrorIs(t, err2, model.ErrInvalidInput)
+	assert.Contains(t, err2.Error(), "child 0")
+	assert.Contains(t, err2.Error(), "epic")
 	kids, err := st.GetDirectChildren(context.Background(), parentID)
 	require.NoError(t, err)
 	assert.Empty(t, kids)

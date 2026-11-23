@@ -49,3 +49,30 @@ func TestRunDecomposeDryRun_IssueType_PrintedInJSON(t *testing.T) {
 	})
 	assert.Contains(t, out, `"issue_type":"bug"`)
 }
+
+// TestPrintDryRunResult_Text_ShowsIssueType covers MTIX-279 F9: the text
+// preview names each child's issue type.
+func TestPrintDryRunResult_Text_ShowsIssueType(t *testing.T) {
+	initTestApp(t)
+	out := captureStdout(t, func() {
+		require.NoError(t, printDryRunResult("P-1", []service.ProposedNode{
+			{ID: "P-1.1", Title: "typed", IssueType: "bug"},
+			{ID: "P-1.2", Title: "untyped"},
+		}))
+	})
+	assert.Contains(t, out, "P-1.1  [bug]  typed")
+	assert.Contains(t, out, "P-1.2  untyped")
+	assert.NotContains(t, out, "[]")
+}
+
+// TestPrintDecomposeResult_Text_ShowsIssueType covers MTIX-279 F9: the
+// created-children listing shows each child's issue type next to its id.
+func TestPrintDecomposeResult_Text_ShowsIssueType(t *testing.T) {
+	initTestApp(t)
+	out := captureStdout(t, func() {
+		require.NoError(t, printDecomposeResult("P-1", []string{"P-1.1", "P-1.2"},
+			[]service.DecomposeInput{{Title: "a", IssueType: "feature", Description: "d"}, {Title: "b", Description: "d"}}))
+	})
+	assert.Contains(t, out, "  P-1.1  [feature]\n")
+	assert.Contains(t, out, "  P-1.2\n")
+}

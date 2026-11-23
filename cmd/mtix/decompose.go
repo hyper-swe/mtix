@@ -144,14 +144,23 @@ func printDryRunResult(parentID string, proposed []service.ProposedNode) error {
 		fmt.Printf("Dry-run: %d proposed children under %s\n", len(proposed), parentID)
 		for _, p := range proposed {
 			desc := Truncate(format.SafeLine(p.Description), 80)
+			head := p.ID + "  " + issueTypeTag(string(p.IssueType)) + format.SafeLine(p.Title)
 			if desc != "" {
-				fmt.Printf("  %s  %s  (%s)\n", p.ID, format.SafeLine(p.Title), desc)
+				fmt.Printf("  %s  (%s)\n", head, desc)
 			} else {
-				fmt.Printf("  %s  %s\n", p.ID, format.SafeLine(p.Title))
+				fmt.Printf("  %s\n", head)
 			}
 		}
 	}
 	return nil
+}
+
+// issueTypeTag renders "[type]  " for a set issue type, or "" when unset.
+func issueTypeTag(t string) string {
+	if t == "" {
+		return ""
+	}
+	return "[" + format.SafeLine(t) + "]  "
 }
 
 // parseJSONLFile reads and parses a JSONL plan file.
@@ -181,8 +190,12 @@ func printDecomposeResult(parentID string, ids []string, children []service.Deco
 		fmt.Println(string(data))
 	} else {
 		fmt.Printf("Created %d children under %s:\n", len(ids), parentID)
-		for _, id := range ids {
-			fmt.Printf("  %s\n", id)
+		for i, id := range ids {
+			tag := ""
+			if i < len(children) && children[i].IssueType != "" {
+				tag = "  [" + format.SafeLine(string(children[i].IssueType)) + "]"
+			}
+			fmt.Printf("  %s%s\n", id, tag)
 		}
 	}
 

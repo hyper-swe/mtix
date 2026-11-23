@@ -27,6 +27,7 @@ func TestValidateDecomposeChildren_Table(t *testing.T) {
 		{"valid", []service.DecomposeInput{{Title: "a", Priority: 3, IssueType: model.IssueTypeBug}}, ""},
 		{"empty batch", nil, "at least one child"},
 		{"empty title", []service.DecomposeInput{{Title: "a"}, {Title: ""}}, "child 1: title is required"},
+		{"title at maximum length is valid", []service.DecomposeInput{{Title: strings.Repeat("a", model.MaxTitleLength)}}, ""},
 		{"title too long", []service.DecomposeInput{{Title: strings.Repeat("a", model.MaxTitleLength+1)}}, "child 0: title too long"},
 		{"bad issue type", []service.DecomposeInput{{Title: "a", IssueType: "epic"}}, "child 0: issue_type"},
 		{"priority high", []service.DecomposeInput{{Title: "a"}, {Title: "b", Priority: 9}}, "child 1: priority"},

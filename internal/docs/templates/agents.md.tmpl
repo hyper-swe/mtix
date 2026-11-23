@@ -233,6 +233,7 @@ Call `mtix_context` on the parent to understand what the children must collectiv
 
 ### Step 2: Create Structure
 Use `mtix_decompose` to create child nodes.
+Each child may set `issue_type` (or `type`: bug, feature, task, chore, refactor, test, doc); any unknown key is refused and nothing is created.
 
 ### Step 3: Populate Every Child
 **Every leaf node MUST have** `description`, `prompt`, `acceptance`, and `tests` fields populated. A task with only a title is not actionable.

@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // createTestNode is a helper that creates a node and returns its ID.
@@ -758,4 +760,28 @@ func TestDeps_GetDependencies_NonExistentNode_ReturnsEmptyOrError(t *testing.T) 
 
 	// Should return 200 with empty deps, or 404 — either is acceptable.
 	assert.Contains(t, []int{http.StatusOK, http.StatusNotFound}, w.Code)
+}
+
+// TestAPI_DecomposeNode_IssueType_PersistedAndValidated covers MTIX-279.
+func TestAPI_DecomposeNode_IssueType_PersistedAndValidated(t *testing.T) {
+	s := testServer(t)
+	parentID := createTestNode(t, s, "Decompose Parent", "TEST")
+
+	bad := httptest.NewRecorder()
+	s.Router().ServeHTTP(bad, apiRequest(http.MethodPost, "/api/v1/nodes/"+parentID+"/decompose",
+		`{"children":[{"title":"ok","issue_type":"bug"},{"title":"bad","issue_type":"epic"}]}`))
+	assert.Equal(t, http.StatusBadRequest, bad.Code)
+	kids, err := s.nodeSvc.GetDirectChildren(context.Background(), parentID)
+	require.NoError(t, err)
+	assert.Empty(t, kids, "a refused batch creates nothing")
+
+	w := httptest.NewRecorder()
+	s.Router().ServeHTTP(w, apiRequest(http.MethodPost, "/api/v1/nodes/"+parentID+"/decompose",
+		`{"children":[{"title":"a","issue_type":"bug"},{"title":"b"}]}`))
+	require.Equal(t, http.StatusCreated, w.Code)
+	kids, err = s.nodeSvc.GetDirectChildren(context.Background(), parentID)
+	require.NoError(t, err)
+	require.Len(t, kids, 2)
+	assert.Equal(t, model.IssueTypeBug, kids[0].IssueType)
+	assert.Equal(t, model.IssueType(""), kids[1].IssueType)
 }

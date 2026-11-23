@@ -530,6 +530,14 @@ mtix decompose PROJ-1.1 \
 
 This atomically creates `PROJ-1.1.1`, `PROJ-1.1.2`, `PROJ-1.1.3`, and `PROJ-1.1.4`.
 
+To give each child more than a title, use a JSONL plan (one JSON object per line) with `--file plan.jsonl` or `--file -` for stdin; `--dry-run` previews the children without writing them:
+
+```bash
+mtix decompose PROJ-1.1 --file plan.jsonl
+```
+
+A line takes `title` (required), `prompt`, `acceptance`, `description`, `priority`, `labels` and `issue_type`. `issue_type` is one of `bug`, `feature`, `task`, `chore`, `refactor`, `test` or `doc`, the same values as `mtix create --type`, and `type` is accepted as an alias (giving both with different values is refused). A line without it leaves the issue type unset. Any other key (for example a misspelled `acceptence`) and an invalid issue type are refused with an invalid-input error that names the line and the key, and nothing is created. The `mtix_decompose` MCP tool, the REST decompose endpoint and the gRPC Decompose call take the same child keys and apply the same checks (the whole batch is validated before the first child is created, and an MCP or REST refusal names the child number); `--dry-run` and the created-children listing show each child's issue type as `[bug]` next to its id (text output) and in `issue_type` (JSON dry-run); a child with no type shows none.
+
 ### View the Tree
 
 ```bash

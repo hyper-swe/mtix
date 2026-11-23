@@ -162,6 +162,7 @@ message DecomposeChild {
   string description = 2;
   string prompt      = 3;
   string acceptance  = 4;
+  IssueType issue_type = 5;
 }
 
 message DecomposeResponse {

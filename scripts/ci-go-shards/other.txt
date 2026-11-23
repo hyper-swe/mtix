@@ -2,6 +2,7 @@ github.com/hyper-swe/mtix
 github.com/hyper-swe/mtix/api
 github.com/hyper-swe/mtix/benchmarks
 github.com/hyper-swe/mtix/e2e
+github.com/hyper-swe/mtix/e2e/relaygate
 github.com/hyper-swe/mtix/internal/api/grpc
 github.com/hyper-swe/mtix/internal/api/http
 github.com/hyper-swe/mtix/internal/attach

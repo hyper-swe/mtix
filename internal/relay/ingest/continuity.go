@@ -99,16 +99,20 @@ func (c *chain) advance(reached Position) {
 // openSegment reads and parses one segment, refuses it with RELAY_GAP when a
 // hole precedes it (a deleted or never-published predecessor, MTIX-265), and
 // resolves its key.
-func (in *Ingestor) openSegment(peerID string, file segment.File, ch chain) ([]byte, segment.Header, []byte, error) {
-	raw, err := readSegment(file.Path)
+func (in *Ingestor) openSegment(peerID string, t segmentTurn) ([]byte, segment.Header, []byte, error) {
+	raw, err := readSegment(t.file.Path)
 	if err != nil {
 		return nil, segment.Header{}, nil, err
 	}
 	header, err := segment.ParseHeader(raw)
+	if t.sealed && segment.IsIncomplete(err) {
+		return nil, segment.Header{}, nil, fmt.Errorf("%w: sealed segment %d has only %d header bytes",
+			segment.ErrSegmentCorrupt, t.file.No, len(raw))
+	}
 	if err != nil {
 		return nil, segment.Header{}, nil, err
 	}
-	if gapErr := ch.check(peerID, header); gapErr != nil {
+	if gapErr := t.ch.check(peerID, header); gapErr != nil {
 		return nil, segment.Header{}, nil, gapErr
 	}
 	key, err := in.keyFor(header)

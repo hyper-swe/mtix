@@ -98,7 +98,11 @@ func (c *chain) advance(reached Position) {
 
 // openSegment reads and parses one segment, refuses it with RELAY_GAP when a
 // hole precedes it (a deleted or never-published predecessor, MTIX-265), and
-// resolves its key.
+// resolves its key. An incomplete header (empty or short file) in a sealed
+// segment is a corruption verdict, ErrSegmentCorrupt (RELAY_SEGMENT_CORRUPT),
+// because a later segment proves it is final; in the active tail it is
+// returned as incomplete so the caller retries on the next poll (FR-21 5.3,
+// MTIX-288).
 func (in *Ingestor) openSegment(peerID string, t segmentTurn) ([]byte, segment.Header, []byte, error) {
 	raw, err := readSegment(t.file.Path)
 	if err != nil {

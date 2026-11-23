@@ -1,0 +1,43 @@
+{
+  "v": 1,
+  "request_key": "k",
+  "kind": "request",
+  "ticket": {
+    "uid": "u",
+    "ancestors": [
+      ""
+    ],
+    "paths": [
+      "T-1.1",
+      "T-1"
+    ],
+    "path_match": [
+      true,
+      false
+    ],
+    "truncated": false
+  },
+  "question": "Proceed?",
+  "source": {
+    "run": "r"
+  },
+  "options": [
+    {
+      "id": "yes",
+      "label": "Yes",
+      "input": {
+        "type": "text",
+        "required": true
+      },
+      "note_required": true
+    }
+  ],
+  "links": [
+    {
+      "kind": "review",
+      "label": "review",
+      "url": "https://example.com",
+      "open_before_answer": true
+    }
+  ]
+}

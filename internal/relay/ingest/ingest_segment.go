@@ -25,7 +25,7 @@ type segmentTurn struct {
 // reached and whether the peer's stream stops here.
 func (in *Ingestor) ingestSegment(ctx context.Context, peerID string, t segmentTurn, stats *Stats) (Outcome, bool) {
 	prev, file, sealed := t.prev, t.file, t.sealed
-	raw, header, key, err := in.openSegment(peerID, file, t.ch)
+	raw, header, key, err := in.openSegment(peerID, t)
 	if err != nil {
 		in.stall(stats, peerID, file.No, segment.CodeOf(err), err)
 		return Outcome{Verdict: err}, true

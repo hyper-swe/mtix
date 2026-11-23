@@ -127,10 +127,13 @@ type UnlinkDepPayload struct {
 	DepType         string `json:"dep_type,omitempty"`
 }
 
-// DeletePayload is empty — the tombstone op carries no parameters beyond
-// the node_id on the SyncEvent envelope. Tombstones are monotonic per
-// SYNC-DESIGN §8.3.
-type DeletePayload struct{}
+// DeletePayload records the display path at deletion and whether this node
+// was the root of a requested cascade (ADR-008 §3.5). Protocol 1 readers
+// apply the envelope tombstone to one node, including for legacy {} events.
+type DeletePayload struct {
+	Path    string `json:"path"`
+	Cascade bool   `json:"cascade"`
+}
 
 // SetAcceptancePayload carries the new acceptance text. OldValue elided —
 // the LWW resolver compares acceptance via content_hash on apply.

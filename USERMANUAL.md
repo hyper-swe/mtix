@@ -2830,6 +2830,8 @@ pull's position either, so later changes keep arriving.
   or `sweep` (the late-event sweep), `push` (an own event held back) or
   `relay` (a record relay ingest skipped; see below).
 
+  After a publisher crash or restart leaves a torn tail in a sealed segment, the reader applies every complete record once, never a partial one, and logs `reconciled torn seal` when the next segment of the same peer and publisher epoch resumes at or before the first missing record and its first record verifies. It then continues with no operator action. A torn tail the successor does not explain, and any damage inside a sealed segment, still stalls that peer with `RELAY_SEGMENT_CORRUPT` (it is never skipped).
+
   **A missing relay segment stops that peer's stream.** If a segment of a
   peer's stream is missing from the relay (deleted, lost by the medium, or never
   published), this peer does not read past the hole: `mtix sync relay tick`

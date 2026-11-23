@@ -14,9 +14,11 @@ import (
 // A dependent whose blocking creation is relay-held is told the hold is
 // permanent, not that it resolves with the creation.
 func TestHeldPushGuidance_DependentOfRelayHeldCreateIsPermanent(t *testing.T) {
-	relay := map[string]bool{"EVT-1": true}
+	root := sqlite.HeldPushEvent{EventID: "EVT-1", NodeID: "MTIX-1", OpType: "create_node",
+		Reason: holdRefusedPrefix + "x " + holdRelayCarried}
 	dep := sqlite.HeldPushEvent{EventID: "EVT-2", NodeID: "MTIX-1.1", OpType: "create_node",
 		Reason: holdDependsPrefix + "EVT-1 (MTIX-1)"}
+	relay := relayHeldIDs([]sqlite.HeldPushEvent{root, dep})
 	got := heldPushGuidance(dep, relay)
 	for _, want := range []string{"permanent", "never renumbered", "escalate", "only adds held events"} {
 		require.Contains(t, got, want)

@@ -5,6 +5,8 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/format"
@@ -40,8 +42,18 @@ func raiseRelayPublishedHWM(ctx context.Context, db relayExecer, seq int64) erro
 // relay under its current number, so the hub must never move it
 // (relay-carried tasks are never renumbered).
 func (s *Store) IsRelayPublished(ctx context.Context, eventID string) (bool, error) {
+	return relayPublished(ctx, s.readDB, eventID)
+}
+
+// relayRowQuerier is the read slice shared by a connection pool and a transaction.
+type relayRowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// relayPublished is IsRelayPublished on db, which may be a write transaction.
+func relayPublished(ctx context.Context, db relayRowQuerier, eventID string) (bool, error) {
 	var n int
-	if err := s.readDB.QueryRowContext(ctx, `
+	if err := db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM sync_events e
 		WHERE e.event_id = ? AND e.rowid <= MAX(
 		    COALESCE((SELECT CAST(value AS INTEGER) FROM meta WHERE key = ?), 0),
@@ -50,4 +62,17 @@ func (s *Store) IsRelayPublished(ctx context.Context, eventID string) (bool, err
 		return false, fmt.Errorf("read relay publish state of %s: %w", format.EventID(eventID), err)
 	}
 	return n > 0, nil
+}
+
+// ErrRelayPublishedCreate is returned by RenumberUnlessRelayPublished when the
+// relay carries the creation, so it must not be renumbered.
+var ErrRelayPublishedCreate = errors.New("the relay already carries this creation")
+
+// RenumberUnlessRelayPublished is RenumberForHubRejection for a creation that
+// may not be relay-carried: the publish mark is read again inside the write
+// transaction that moves the task, so a publisher that framed the create after
+// the caller's check wins and the task keeps its number
+// (ErrRelayPublishedCreate). The check and the renumber are one step.
+func (s *Store) RenumberUnlessRelayPublished(ctx context.Context, uid string) (string, error) {
+	return s.renumberForHub(ctx, uid, true)
 }

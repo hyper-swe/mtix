@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 
@@ -69,7 +70,13 @@ func resolveOneRenumber(ctx context.Context, store *sqlite.Store, e *model.SyncE
 		return sqlite.QuarantinedEvent{}, false, err
 	}
 	if !relay {
-		return sqlite.QuarantinedEvent{}, false, renumberLocal(ctx, store, eventID, batch)
+		if gap, ok := ctx.Value(renumberGapKey{}).(func()); ok {
+			gap()
+		}
+		if err = renumberLocal(ctx, store, eventID, batch); !errors.Is(err, sqlite.ErrRelayPublishedCreate) {
+			return sqlite.QuarantinedEvent{}, false, err
+		}
+		// A publisher framed the create after the check: hold it instead.
 	}
 	q, err := relayRenumberHold(e, eventID)
 	return q, err == nil, err
@@ -86,8 +93,13 @@ func relayCarried(ctx context.Context, store *sqlite.Store, eventID string) (boo
 	return store.IsRelayPublished(ctx, eventID)
 }
 
+// renumberGapKey is the context key of a test seam: a func() under it runs
+// between the published check and the renumber, where a test frames the
+// create. Push never sets it.
+type renumberGapKey struct{}
+
 func renumberLocal(ctx context.Context, store *sqlite.Store, eventID string, batch int) error {
-	if _, err := store.RenumberForHubRejection(ctx, eventID); err != nil {
+	if _, err := store.RenumberUnlessRelayPublished(ctx, eventID); err != nil {
 		return fmt.Errorf("resolve renumber for %s (batch %d): %w", format.EventID(eventID), batch, err)
 	}
 	return nil

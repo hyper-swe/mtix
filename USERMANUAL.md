@@ -3677,7 +3677,9 @@ Useful to know:
   tasks are never renumbered), and the hub's task holding that number does not
   reach relay-only peers while it stands. No command in this build clears it: do
   not edit the held task or its subtree, because pushing more edits to them only
-  adds held events, and escalate to the operator. Doctor prints this, also under
+  adds held events (so does every dependency link made after the hold, which
+  waits for it and is never pushed while it stands), and escalate to the
+  operator. Doctor prints this, also under
   `--json`.
 - **Latency is not promised.** Worst case is roughly your poll interval,
   plus however long the medium takes to make a file visible on the other

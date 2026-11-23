@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"testing"
 
@@ -150,4 +151,48 @@ func TestIsRelayPublished_ReadForFramingCounts(t *testing.T) {
 	got, err = s.IsRelayPublished(ctx, id)
 	require.NoError(t, err)
 	require.True(t, got)
+}
+
+// The hub renumber and the publisher can interleave: a publisher in another
+// process frames the create between the published check and the renumber. The
+// renumber re-checks inside its own transaction and holds instead.
+func TestPushLoop_CreateFramedBetweenCheckAndRenumberIsHeld(t *testing.T) {
+	ctx := t.Context()
+	s := movesTestStore(t)
+	id := ownCreate(t, s)
+	gapCtx := context.WithValue(ctx, renumberGapKey{}, func() {
+		rows, err := s.ReadRelayJournalSince(ctx, 0, 10)
+		require.NoError(t, err)
+		require.NoError(t, s.MarkRelayFraming(ctx, rows[len(rows)-1].Seq))
+	})
+	hub := newFakePushHub()
+	hub.renumberOnce = map[string]bool{id: true}
+	tot, err := pushLoop(gapCtx, io.Discard, hub, s)
+	require.NoError(t, err)
+	require.Zero(t, tot.renumbered)
+	require.Equal(t, 1, tot.relayHeld)
+	n, err := s.GetNode(ctx, "MTIX-1")
+	require.NoError(t, err)
+	require.Equal(t, id, n.UID, "the task keeps its number")
+}
+
+// The publish mark only rises: a lower mark or a lower cursor advance after a
+// rewind never lowers it.
+func TestIsRelayPublished_MarkOnlyRises(t *testing.T) {
+	ctx := t.Context()
+	s := movesTestStore(t)
+	first := ownCreate(t, s)
+	require.NoError(t, s.CreateNode(ctx, movesNode("MTIX-2", "", "second")))
+	ev, err := s.ReadPendingEvents(ctx, 10)
+	require.NoError(t, err)
+	second := ev[1].EventID
+	seqs, err := s.LookupRelayJournalSeqs(ctx, []string{first, second})
+	require.NoError(t, err)
+	require.NoError(t, s.MarkRelayFraming(ctx, seqs[second]))
+	require.NoError(t, s.RepublishRelayFrom(ctx, 0))
+	require.NoError(t, s.MarkRelayFraming(ctx, seqs[first]))
+	require.NoError(t, s.AdvanceRelayPushCursor(ctx, seqs[first], 2))
+	got, err := s.IsRelayPublished(ctx, second)
+	require.NoError(t, err)
+	require.True(t, got, "a lower mark must not overwrite a higher one")
 }

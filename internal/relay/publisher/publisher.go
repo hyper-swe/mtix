@@ -213,17 +213,9 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 	if verifyErr := p.verifyTail(ctx); verifyErr != nil {
 		return 0, verifyErr
 	}
-	rows, err := p.cfg.Journal.ReadRelayJournalSince(ctx, pos.Seq, p.cfg.BatchLimit)
-	if err != nil {
+	rows, err := p.readAndMark(ctx, pos.Seq)
+	if err != nil || len(rows) == 0 {
 		return 0, err
-	}
-	if len(rows) == 0 {
-		return 0, nil
-	}
-	// Before the first append: from here a renumber must treat these rows as
-	// carried by the relay (relay-carried tasks are never renumbered).
-	if markErr := p.cfg.Journal.MarkRelayFraming(ctx, rows[len(rows)-1].Seq); markErr != nil {
-		return 0, markErr
 	}
 
 	w, err := segment.NewWriter(segment.WriterConfig{
@@ -273,6 +265,35 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 		return appended, err
 	}
 	return appended, nil
+}
+
+// readAndMark returns the rows to frame, after the published mark covers them.
+//
+// A renumber rewrites a pending create in place and re-checks the mark in its
+// own transaction. So the mark is raised first and the rows are read again
+// afterwards: a renumber that committed before the mark is seen in the second
+// read, and one that comes after sees the mark and holds. Reading first and
+// marking after would let a renumber commit between the two while the old
+// number is framed. The second read is cut at the marked seq. A crash after
+// the mark but before the append only holds a later renumber, which is safe.
+func (p *Publisher) readAndMark(ctx context.Context, after int64) ([]sqlite.RelayJournalEvent, error) {
+	peek, err := p.cfg.Journal.ReadRelayJournalSince(ctx, after, p.cfg.BatchLimit)
+	if err != nil || len(peek) == 0 {
+		return nil, err
+	}
+	upTo := peek[len(peek)-1].Seq
+	if markErr := p.cfg.Journal.MarkRelayFraming(ctx, upTo); markErr != nil {
+		return nil, markErr
+	}
+	rows, err := p.cfg.Journal.ReadRelayJournalSince(ctx, after, p.cfg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	n := len(rows)
+	for n > 0 && rows[n-1].Seq > upTo {
+		n--
+	}
+	return rows[:n], nil
 }
 
 // bank advances the cursor over the records that did land before an

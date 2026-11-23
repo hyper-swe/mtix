@@ -116,17 +116,17 @@ func TestCmdMtixShards_ShardCountWording_IsConsistent(t *testing.T) {
 	gates, err := os.ReadFile("../docs/CI-GATES.md")
 	require.NoError(t, err)
 	require.NotContains(t, string(gates), "three shards per OS (four since MTIX-272)")
-	for _, stale := range []string{"Four `cmd/mtix` test shards", "| 8 (PR: 4) | Four `cmd/mtix`", "Five `cmd/mtix` test shards", "**29 CI checks**", "**39 CI checks**", "**32 CI checks**", "**43 CI checks**", "runs 10 macOS jobs", "runs 11 macOS jobs", "All 39 ordinary", "All 43 ordinary"} {
+	for _, stale := range []string{"Four `cmd/mtix` test shards", "| 8 (PR: 4) | Four `cmd/mtix`", "Five `cmd/mtix` test shards", "**29 CI checks**", "**39 CI checks**", "**32 CI checks**", "**43 CI checks**", "runs 10 macOS jobs", "runs 11 macOS jobs", "All 39 ordinary", "All 43 ordinary", "All 47 ordinary", "**35 CI checks**", "**47 CI checks**", "runs 12 macOS jobs", "twenty-six on push and nightly, fourteen on a PR"} {
 		require.NotContains(t, string(gates), stale)
 	}
-	for _, want := range []string{"| 12 (PR: 6) | Six `cmd/mtix` test shards", "**35 CI checks**", "**47 CI checks**", "runs 12 macOS jobs", "twenty-six on push and nightly, fourteen on a PR", "All 47 ordinary"} {
+	for _, want := range []string{"| 12 (PR: 6) | Six `cmd/mtix` test shards", "**37 CI checks**", "**51 CI checks**", "runs 15 macOS jobs", "thirty on push and nightly, sixteen on a PR", "All 51 ordinary"} {
 		require.Contains(t, string(gates), want)
 	}
 	require.Regexp(t, regexp.MustCompile(`It now runs as .test-go-cmd.: six shards per\s+OS`), string(gates))
 	contrib, err := os.ReadFile("../CONTRIBUTING.md")
 	require.NoError(t, err)
-	require.Contains(t, string(contrib), "all 35 of its checks")
-	require.Contains(t, string(contrib), "all 47 (twenty-six Go race")
+	require.Contains(t, string(contrib), "all 37 of its checks")
+	require.Contains(t, string(contrib), "all 51 (thirty Go race")
 	quality, err := os.ReadFile("../QUALITY-STANDARDS.md")
 	require.NoError(t, err)
 	for _, stale := range []string{"four deterministic shards of `./cmd/mtix/`", "five deterministic shards of `./cmd/mtix/`"} {

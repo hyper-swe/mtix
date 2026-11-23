@@ -1,0 +1,33 @@
+# MTIX-131.2: known-heavy internal/store/sqlite tests pinned to a shard (see
+# scripts/ci-go-shards.sh). First line: the shard count every caller passes
+# (ci.yml and remote-bar.yml run six) and the hash range: tests not listed
+# here keep djb2(name) mod 5 + 1, so shard 6 holds only its pins.
+# Then "<TestName> <shard>". Measured seconds are top-level elapsed times of
+# one go test -race -json run of the whole package on a three-core Linux box
+# (4851 s in all; hosted Ubuntu runs about half that). The writer-read sweep
+# (861 s) runs alone on shard 6; the next nineteen, every read-cancel sweep
+# among them, are placed greedily on the lightest of shards 1..5 after the
+# hash split of the rest, which models each of them at 783 to 815 s. A pin
+# for a test the binary no longer lists fails test-check: rename or drop the
+# line. Re-measure with go test -json when shards drift apart.
+shards 6 hash 5
+TestWriterReads_CancelledMidQuery_LeaveNoStaleSnapshot 6  # 861s
+TestReadFamilies_CancelledMidQuery_LeaveNoStaleSnapshot 4  # 137s
+TestReadRoutes_InboxAckInfo_CancelledMidRead_LeaveNoStaleSnapshot 3  # 114s
+TestReadRoutes_ReadDBQuery_CancelledMidRead_LeaveNoStaleSnapshot 5  # 95s
+TestReadRoutes_StoreQuery_CancelledMidRead_LeaveNoStaleSnapshot 1  # 95s
+TestReadRoutes_ConnRawPrepareStmt_CancelledMidRead_LeaveNoStaleSnapshot 2  # 89s
+TestReadRoutes_ReadDBConnPrepareCtx_CancelledMidRead_LeaveNoStaleSnapshot 3  # 89s
+TestReadRoutes_TxPrepareContextMain_CancelledMidRead_LeaveNoStaleSnapshot 4  # 87s
+TestReadRoutes_ConnPrepareContextRoute_CancelledMidRead_LeaveNoStaleSnapshot 5  # 85s
+TestRestoreInvalidated_ConcurrentReinvalidation_TargetMatchesItsInvalidation 1  # 82s
+TestReadRoutes_StoreQueryRowPool_CancelledMidRead_LeaveNoStaleSnapshot 2  # 81s
+TestTaskHistory_LargeBoard_WritesStayWithinBudget 3  # 66s
+TestHistoryResolution_ImportValidatesValueFreeSelector 4  # 56s
+TestNew_DanglingLinkShapes_RefuseAndPreserveWAL 5  # 53s
+TestTaskHistory_RandomImports_NeverMoveHistoryOntoAnUnpairedTask 1  # 50s
+TestNew_ConcurrentFirstOpenNoWALPrestep_AllSucceedWithOneIdentity 2  # 50s
+TestRecover_WALReplayLoss_IsIncomplete 4  # 49s
+TestHistorySize_LargeBoard_FinishesInBoundedTime 3  # 45s
+TestRecover_DuplicateRowsChooseMirror 1  # 38s
+TestRetention_LimitSet_TrimsToFloorOfNinetyPercentWithOneMarker 5  # 35s

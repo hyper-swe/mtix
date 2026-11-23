@@ -325,8 +325,16 @@ func (a syncApplier) applyUnclaim(ctx context.Context, tx *sql.Tx, e *model.Sync
 	if !ok {
 		return nil
 	}
-	_, err := applyWorkflowWinner(ctx, tx, e, in)
-	return err
+	id, err := applyWorkflowWinner(ctx, tx, e, in)
+	if err != nil {
+		return err
+	}
+	// MTIX-294 / FR-5.2, FR-5.7: the unclaim reopens the node; re-derive it
+	// and every ancestor, as the local unclaim path does.
+	if err := recalculateProgress(ctx, tx, a.weighted(), id); err != nil {
+		return fmt.Errorf("apply unclaim %s: recalc progress: %w", format.EventID(e.EventID), err)
+	}
+	return nil
 }
 
 // applyDefer applies a winning defer (MTIX-95.10). A defer whose payload cannot

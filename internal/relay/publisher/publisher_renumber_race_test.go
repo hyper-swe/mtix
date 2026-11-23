@@ -14,20 +14,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// afterReadJournal runs hook once, right after the publisher's first journal
-// read: the point where a hub renumber from another process can commit.
+// afterReadJournal runs hook once, right after the publisher's first look at
+// the journal (the batch bound, or a read): the point where a hub renumber from
+// another process can commit before the published mark is raised.
 type afterReadJournal struct {
 	*sqlite.Store
 	hook func()
 }
 
-func (j *afterReadJournal) ReadRelayJournalSince(ctx context.Context, seq int64, limit int) ([]sqlite.RelayJournalEvent, error) {
-	rows, err := j.Store.ReadRelayJournalSince(ctx, seq, limit)
-	if h := j.hook; h != nil && err == nil && len(rows) > 0 {
+func (j *afterReadJournal) RelayBatchBound(ctx context.Context, seq int64, limit int) (int64, error) {
+	b, err := j.Store.RelayBatchBound(ctx, seq, limit)
+	j.fire(err == nil && b > 0)
+	return b, err
+}
+
+func (j *afterReadJournal) fire(ok bool) {
+	if h := j.hook; h != nil && ok {
 		j.hook = nil
 		h()
 	}
-	return rows, err
 }
 
 // framedNodeIDs returns the node id of every framed event, by event id.

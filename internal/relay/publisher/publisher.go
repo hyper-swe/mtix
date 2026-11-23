@@ -78,6 +78,7 @@ type Journal interface {
 	ResetRelayPublisher(ctx context.Context, floorSeq int64, baseRS uint64) error
 	ReadRelayJournalSince(ctx context.Context, seq int64, limit int) ([]sqlite.RelayJournalEvent, error)
 	MarkRelayFraming(ctx context.Context, seq int64) error
+	RelayBatchBound(ctx context.Context, seq int64, limit int) (int64, error)
 	LookupRelayJournalSeqs(ctx context.Context, eventIDs []string) (map[string]int64, error)
 	RepublishRelayFrom(ctx context.Context, floorSeq int64) error
 
@@ -270,18 +271,18 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 // readAndMark returns the rows to frame, after the published mark covers them.
 //
 // A renumber rewrites a pending create in place and re-checks the mark in its
-// own transaction. So the mark is raised first and the rows are read again
-// afterwards: a renumber that committed before the mark is seen in the second
-// read, and one that comes after sees the mark and holds. Reading first and
-// marking after would let a renumber commit between the two while the old
-// number is framed. The second read is cut at the marked seq. A crash after
+// own transaction. So the batch's upper bound is taken first (one indexed
+// query), the mark is raised to it, and only then is the batch read, once: a
+// renumber that committed before the mark is seen by the read, and one that
+// comes after sees the mark and holds. Reading first and marking after would
+// let a renumber commit between the two while the old number is framed. Rows
+// inserted after the bound are cut and wait for the next tick. A crash after
 // the mark but before the append only holds a later renumber, which is safe.
 func (p *Publisher) readAndMark(ctx context.Context, after int64) ([]sqlite.RelayJournalEvent, error) {
-	peek, err := p.cfg.Journal.ReadRelayJournalSince(ctx, after, p.cfg.BatchLimit)
-	if err != nil || len(peek) == 0 {
+	upTo, err := p.cfg.Journal.RelayBatchBound(ctx, after, p.cfg.BatchLimit)
+	if err != nil || upTo <= after {
 		return nil, err
 	}
-	upTo := peek[len(peek)-1].Seq
 	if markErr := p.cfg.Journal.MarkRelayFraming(ctx, upTo); markErr != nil {
 		return nil, markErr
 	}

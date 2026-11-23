@@ -702,6 +702,20 @@ func (f *fakeJournal) MarkRelayFraming(_ context.Context, seq int64) error {
 	return nil
 }
 
+func (f *fakeJournal) RelayBatchBound(_ context.Context, seq int64, limit int) (int64, error) {
+	if f.errRead != nil {
+		return 0, f.errRead
+	}
+	var bound int64
+	n := 0
+	for _, r := range f.rows {
+		if r.Seq > seq && n < limit {
+			bound, n = r.Seq, n+1
+		}
+	}
+	return bound, nil
+}
+
 func (f *fakeJournal) ReadRelayJournalSince(_ context.Context, seq int64, limit int) ([]sqlite.RelayJournalEvent, error) {
 	if f.errRead != nil {
 		return nil, f.errRead

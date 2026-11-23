@@ -305,6 +305,27 @@ func (s *Store) ReadRelayJournalSince(ctx context.Context, seq int64, limit int)
 	return out, nil
 }
 
+// RelayBatchBound returns the rowid of the last row ReadRelayJournalSince would
+// return for (seq, limit), or 0 when no row is pending. It is one indexed
+// range scan over the rowid, so the publisher can raise the published mark
+// before it reads the batch (MTIX-289) without reading the journal twice.
+func (s *Store) RelayBatchBound(ctx context.Context, seq int64, limit int) (int64, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	var bound sql.NullInt64
+	// Upper rowid of the next batch: the first `limit` rows past seq in
+	// rowid order, the same range the batch read walks.
+	err := s.readDB.QueryRowContext(ctx, `
+		SELECT MAX(rowid) FROM (
+			SELECT rowid FROM sync_events WHERE rowid > ? ORDER BY rowid ASC LIMIT ?)`,
+		seq, limit).Scan(&bound)
+	if err != nil {
+		return 0, fmt.Errorf("relay batch bound: %w", err)
+	}
+	return bound.Int64, nil
+}
+
 // MarkRelayFraming records that the rows through seq are about to be framed
 // and appended. The publisher calls it after ReadRelayJournalSince and before
 // the first append, so a hub renumber cannot slip between the append and the

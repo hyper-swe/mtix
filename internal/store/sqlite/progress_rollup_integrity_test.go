@@ -65,22 +65,20 @@ func TestRollup_DefaultConfig_ClaimedChildNotCreditedByGrandchild(t *testing.T) 
 	assert.Equal(t, 0.0, rollupProgress(t, s, "PROJ-1"), "root: child is in_progress, FR-5.3 gives 0/1")
 }
 
-// Hazard 1 (weighted on): the root is complete only when the child is
-// settled too; with every leaf done the weighted mean is 1 and honest.
-func TestRollup_Weighted_NeverOneWhileLeafOpen(t *testing.T) {
+// Hazard 1 (weighted on, F1/F9): root -> claimed child -> done grandchild.
+// The child is in_progress, so the root must stay below 1.0 although the
+// child's own progress (its only grandchild is done) is 1.0.
+func TestRollup_Weighted_ClaimedChildNotCreditedByGrandchild(t *testing.T) {
 	s := rollupStore(t, true)
 	ctx := context.Background()
-	rollupChain(t, s, "PROJ-1", "PROJ-1.1")
-	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1.1", "PROJ-1.1", "PROJ", "a", 2, 1, time.Now().UTC())))
-	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.1.2", "PROJ-1.1", "PROJ", "b", 2, 2, time.Now().UTC())))
+	rollupChain(t, s, "PROJ-1", "PROJ-1.1", "PROJ-1.1.1")
+	require.NoError(t, s.ClaimNode(ctx, "PROJ-1.1", "agent-1"))
 	claimAndDone(t, s, "PROJ-1.1.1")
-	require.NoError(t, s.ClaimNode(ctx, "PROJ-1.1.2", "agent-1"))
 
-	assert.Equal(t, 0.5, rollupProgress(t, s, "PROJ-1.1"))
-	assert.Equal(t, 0.5, rollupProgress(t, s, "PROJ-1"))
-	claimDone := s.TransitionStatus(ctx, "PROJ-1.1.2", model.StatusDone, "d", "agent-1")
-	require.NoError(t, claimDone)
-	assert.Equal(t, 1.0, rollupProgress(t, s, "PROJ-1"), "every leaf done")
+	assert.Equal(t, 1.0, rollupProgress(t, s, "PROJ-1.1"), "child: its only grandchild is done")
+	assert.Less(t, rollupProgress(t, s, "PROJ-1"), 1.0, "root: the child is in_progress")
+	require.NoError(t, s.TransitionStatus(ctx, "PROJ-1.1", model.StatusDone, "d", "agent-1"))
+	assert.Equal(t, 1.0, rollupProgress(t, s, "PROJ-1"), "settles once the child is done")
 }
 
 // Hazard 2: complete the only leaf, reopen it, claim it: credit is gone at
@@ -209,4 +207,53 @@ func TestRollup_ConcurrentSiblingCompletionBehindBarrier(t *testing.T) {
 	}
 	assert.Equal(t, 1.0, rollupProgress(t, s, "PROJ-1.1"))
 	assert.Equal(t, 0.0, rollupProgress(t, s, "PROJ-1"), "child still in_progress: FR-5.3 root is 0/1")
+}
+
+// F5: a done node whose children are all cancelled (FR-5.6b reads 0.0 for it)
+// still counts as done for its parent (FR-5.3), in both modes.
+func TestRollup_DoneOverOnlyCancelledChildren_CreditsParent(t *testing.T) {
+	for _, weighted := range []bool{false, true} {
+		s := rollupStore(t, weighted)
+		ctx := context.Background()
+		rollupChain(t, s, "PROJ-1", "PROJ-1.1", "PROJ-1.1.1")
+		require.NoError(t, s.TransitionStatus(ctx, "PROJ-1.1.1", model.StatusCancelled, "n/a", "agent-1"))
+		claimAndDone(t, s, "PROJ-1.1")
+
+		assert.Equal(t, 0.0, rollupProgress(t, s, "PROJ-1.1"), "FR-5.6b: all children excluded, weighted=%v", weighted)
+		assert.Equal(t, 1.0, rollupProgress(t, s, "PROJ-1"), "all work resolved, weighted=%v", weighted)
+	}
+}
+
+// F7: every included child at weight 0 gives 0.0, never NaN or 1.0.
+func TestRollup_Weighted_AllIncludedChildrenZeroWeight_IsZero(t *testing.T) {
+	s := rollupStore(t, true)
+	ctx := context.Background()
+	rollupChain(t, s, "PROJ-1")
+	for i, id := range []string{"PROJ-1.1", "PROJ-1.2"} {
+		n := makeChildNode(id, "PROJ-1", "PROJ", id, 1, i+1, time.Now().UTC())
+		n.Weight = 0
+		require.NoError(t, s.CreateNode(ctx, n))
+	}
+	claimAndDone(t, s, "PROJ-1.1")
+	assert.Equal(t, 0.0, rollupProgress(t, s, "PROJ-1"))
+}
+
+// F8: a partially complete child at small weight beside a huge done weight
+// rounds to 1.0 in float math; the parent must stay below 1.0.
+func TestRollup_Weighted_PartialChildNeverReadsComplete(t *testing.T) {
+	s := rollupStore(t, true)
+	ctx := context.Background()
+	rollupChain(t, s, "PROJ-1")
+	now := time.Now().UTC()
+	big := makeChildNode("PROJ-1.1", "PROJ-1", "PROJ", "big", 1, 1, now)
+	big.Weight = math.Pow(2, 60)
+	require.NoError(t, s.CreateNode(ctx, big))
+	partial := makeChildNode("PROJ-1.2", "PROJ-1", "PROJ", "partial", 1, 2, now)
+	require.NoError(t, s.CreateNode(ctx, partial))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.2.1", "PROJ-1.2", "PROJ", "a", 2, 1, now)))
+	require.NoError(t, s.CreateNode(ctx, makeChildNode("PROJ-1.2.2", "PROJ-1.2", "PROJ", "b", 2, 2, now)))
+	claimAndDone(t, s, "PROJ-1.1")
+	claimAndDone(t, s, "PROJ-1.2.1") // PROJ-1.2 reads 0.5: partial
+	assert.Equal(t, 0.5, rollupProgress(t, s, "PROJ-1.2"))
+	assert.Less(t, rollupProgress(t, s, "PROJ-1"), 1.0)
 }

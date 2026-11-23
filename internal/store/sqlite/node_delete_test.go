@@ -176,12 +176,15 @@ func TestDeleteNode_CascadeSubtree_RecalculatesSurvivingAncestors(t *testing.T) 
 		require.ErrorIs(t, err, model.ErrNotFound, "%s is soft-deleted by the cascade", id)
 	}
 
-	// Only the done leaf is left under the parent, so both ancestors are at 1.0.
-	for _, id := range []string{"PROJ-1.1", "PROJ-1"} {
-		after, err := s.GetNode(ctx, id)
-		require.NoError(t, err)
-		assert.Equal(t, 1.0, after.Progress, "%s rolls up to 1.0 after the cascade delete", id)
-	}
+	// Only the done leaf is left under the parent, so the parent is 1.0.
+	// MTIX-294: the parent is open but unclaimed and every descendant is done,
+	// so it counts as complete for the root (a claimed child would not).
+	parent, err := s.GetNode(ctx, "PROJ-1.1")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, parent.Progress, "PROJ-1.1 rolls up to 1.0 after the cascade delete")
+	root, err := s.GetNode(ctx, "PROJ-1")
+	require.NoError(t, err)
+	assert.InDelta(t, 1.0, root.Progress, 1e-9)
 }
 
 // TestDeleteNode_CreatesActivityEntry is a placeholder — activity recording
@@ -481,11 +484,14 @@ func TestDeleteNodeWithRoot_GrandparentRoot_RecalculatesDirectParentAndGrandpare
 
 	require.NoError(t, s.DeleteNodeWithRoot(ctx, "PROJ-1.1.2", "PROJ-1", "admin"))
 
-	for _, id := range []string{"PROJ-1.1", "PROJ-1"} {
-		after, err := s.GetNode(ctx, id)
-		require.NoError(t, err)
-		assert.Equal(t, 1.0, after.Progress, "%s rolls up to 1.0 once the open leaf is deleted", id)
-	}
+	parent, err := s.GetNode(ctx, "PROJ-1.1")
+	require.NoError(t, err)
+	assert.Equal(t, 1.0, parent.Progress, "PROJ-1.1 rolls up to 1.0 once the open leaf is deleted")
+	// MTIX-294: PROJ-1.1 is open but unclaimed with every descendant done, so
+	// it counts as complete for the root.
+	root, err := s.GetNode(ctx, "PROJ-1")
+	require.NoError(t, err)
+	assert.InDelta(t, 1.0, root.Progress, 1e-9)
 }
 
 // TestDeleteNodeWithRoot_SharedRoot_OneUndeleteRestoresTheGroup pins the

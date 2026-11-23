@@ -96,7 +96,7 @@ func (s *Store) deleteNode(ctx context.Context, id string, opts deleteOptions) e
 
 		// FR-5.7: Recalculate parent progress.
 		if parentID.Valid && parentID.String != "" {
-			if err := recalculateProgress(ctx, tx, parentID.String); err != nil {
+			if err := recalculateProgress(ctx, tx, s.progressWeightedOn(), parentID.String); err != nil {
 				return fmt.Errorf("recalculate progress after delete: %w", err)
 			}
 		}
@@ -311,7 +311,7 @@ func (s *Store) UndeleteNode(ctx context.Context, id string) error {
 
 		// FR-5.7: recompute the parent of every restored node, id's parent
 		// included.
-		return recalculateRestoredParents(ctx, tx, restored)
+		return recalculateRestoredParents(ctx, tx, s.progressWeightedOn(), restored)
 	})
 }
 
@@ -466,14 +466,14 @@ func restoreNodes(ctx context.Context, tx *sql.Tx, nodes []restoredNode, now str
 // recomputation always follows its children's. A parent that is still
 // deleted keeps its stored progress (recalculateProgress skips it), and
 // restored leaves are never recomputed, so they keep their own progress.
-func recalculateRestoredParents(ctx context.Context, tx *sql.Tx, nodes []restoredNode) error {
+func recalculateRestoredParents(ctx context.Context, tx *sql.Tx, weighted bool, nodes []restoredNode) error {
 	seen := make(map[string]bool, len(nodes))
 	for _, n := range nodes {
 		if n.parentID == "" || seen[n.parentID] {
 			continue
 		}
 		seen[n.parentID] = true
-		if err := recalculateProgress(ctx, tx, n.parentID); err != nil {
+		if err := recalculateProgress(ctx, tx, weighted, n.parentID); err != nil {
 			return fmt.Errorf("recalculate progress of %s after undelete: %w", n.parentID, err)
 		}
 	}

@@ -175,7 +175,9 @@ func TestProgress_PropagesToRoot_InSameTransaction(t *testing.T) {
 
 	rootNode, err := s.GetNode(ctx, "PROJ-1")
 	require.NoError(t, err)
-	assert.Equal(t, 1.0, rootNode.Progress, "root should be 1.0 (propagated)")
+	// MTIX-294: the epic is open but unclaimed with every descendant done, so
+	// it counts as complete for the root.
+	assert.InDelta(t, 1.0, rootNode.Progress, 1e-9, "root propagated")
 }
 
 // TestProgress_IncludesInvalidatedCount verifies FR-5.6a.

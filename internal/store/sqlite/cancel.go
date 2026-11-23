@@ -79,13 +79,13 @@ func (s *Store) executeCancelTx(ctx context.Context, tx *sql.Tx, req transitionR
 		}
 		// MTIX-95.21: the subtree's own ancestors first (the root's parent
 		// chain follows below), so each is recomputed after its children.
-		if err := recomputeCascadeProgress(ctx, tx, id, cancelled); err != nil {
+		if err := recomputeCascadeProgress(ctx, tx, s.progressWeightedOn(), id, cancelled); err != nil {
 			return fmt.Errorf("recalculate progress after cascade cancel from %s: %w", id, err)
 		}
 	}
 
 	if parentID != "" {
-		if err := recalculateProgress(ctx, tx, parentID); err != nil {
+		if err := recalculateProgress(ctx, tx, s.progressWeightedOn(), parentID); err != nil {
 			return fmt.Errorf("recalculate progress after cancel: %w", err)
 		}
 	}
@@ -300,9 +300,9 @@ func cancelDescendants(ctx context.Context, tx *sql.Tx, rootID, nowStr string) (
 // FR-5.7, MTIX-95.21). recalculateProgress walks to the top on every call,
 // so calling it per descendant would recompute shared ancestors repeatedly;
 // the caller runs it once from the root's parent afterwards.
-func recomputeCascadeProgress(ctx context.Context, tx *sql.Tx, rootID string, cancelled []cancelledNode) error {
+func recomputeCascadeProgress(ctx context.Context, tx *sql.Tx, weighted bool, rootID string, cancelled []cancelledNode) error {
 	for _, id := range cascadeProgressTargets(rootID, cancelled) {
-		if err := recomputeNodeProgress(ctx, tx, id); err != nil {
+		if err := recomputeNodeProgress(ctx, tx, weighted, id); err != nil {
 			return fmt.Errorf("recompute progress of %s: %w", id, err)
 		}
 	}

@@ -24,12 +24,12 @@ import (
 //   - Invalidated children are EXCLUDED from the denominator (FR-5.6)
 //   - Deferred children ARE included (they represent pending work) (FR-5.5)
 //   - If ALL children are excluded, progress is 0.0 (FR-5.6b)
-func recalculateProgress(ctx context.Context, tx *sql.Tx, nodeID string) error {
+func recalculateProgress(ctx context.Context, tx *sql.Tx, weighted bool, nodeID string) error {
 	if nodeID == "" {
 		return nil
 	}
 
-	if err := recomputeNodeProgress(ctx, tx, nodeID); err != nil {
+	if err := recomputeNodeProgress(ctx, tx, weighted, nodeID); err != nil {
 		return err
 	}
 
@@ -53,7 +53,7 @@ func recalculateProgress(ctx context.Context, tx *sql.Tx, nodeID string) error {
 	}
 
 	if parentID.Valid && parentID.String != "" {
-		return recalculateProgress(ctx, tx, parentID.String)
+		return recalculateProgress(ctx, tx, weighted, parentID.String)
 	}
 
 	return nil
@@ -63,8 +63,8 @@ func recalculateProgress(ctx context.Context, tx *sql.Tx, nodeID string) error {
 // walk up. recalculateProgress calls it once per level of its walk to the
 // root; a cascade cancel calls it once per ancestor inside the cancelled
 // subtree, deepest first (MTIX-95.21). A soft-deleted node is left unchanged.
-func recomputeNodeProgress(ctx context.Context, tx *sql.Tx, nodeID string) error {
-	progress, err := computeNodeProgress(ctx, tx, nodeID)
+func recomputeNodeProgress(ctx context.Context, tx *sql.Tx, weighted bool, nodeID string) error {
+	progress, err := computeNodeProgress(ctx, tx, weighted, nodeID)
 	if err != nil {
 		return err
 	}
@@ -78,10 +78,18 @@ func recomputeNodeProgress(ctx context.Context, tx *sql.Tx, nodeID string) error
 	return nil
 }
 
+// progressQuerier is the read surface shared by the write rollup (a
+// transaction) and the verify check (the read pool), so both compute progress
+// with one definition.
+type progressQuerier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // progressChild is one included (not cancelled, not invalidated) direct child.
 type progressChild struct {
-	status   string
-	progress float64
+	done     bool    // status done and settled: progress 1.0, or no included child of its own (FR-5.6b)
+	progress float64 // effective progress: 1.0 for a settled done child
 	weight   float64
 }
 
@@ -89,12 +97,14 @@ type progressChild struct {
 // (MTIX-294). A node with no live child is a leaf: 1.0 when done, else 0.0
 // (FR-5.2), so reopening or claiming a leaf drops its credit. Otherwise the
 // default is count(done) / count(included) (FR-5.3), where a child counts as
-// done only when its own progress is also 1.0, so a done node with active
-// descendants earns no credit for its ancestors; progress.weighted switches to
+// done only when its own progress is also 1.0 (or all its own children are
+// excluded, FR-5.6b), so a done node with active
+// descendants earns no credit for its ancestors; an open (unclaimed) node whose
+// own progress is 1.0 (every descendant done) also counts, a claimed one does not; progress.weighted switches to
 // the weighted mean (FR-5.8). A weighted result never reads 1.0 while an
 // included child is below 1.0 (zero weight, float rounding). All children
 // excluded gives 0.0 (FR-5.6b).
-func computeNodeProgress(ctx context.Context, tx *sql.Tx, nodeID string) (float64, error) {
+func computeNodeProgress(ctx context.Context, tx progressQuerier, weighted bool, nodeID string) (float64, error) {
 	var live int
 	var status sql.NullString
 	err := tx.QueryRowContext(ctx,
@@ -115,17 +125,25 @@ func computeNodeProgress(ctx context.Context, tx *sql.Tx, nodeID string) (float6
 	if err != nil {
 		return 0, err
 	}
-	if weightedFor(tx) {
+	if weighted {
 		return weightedProgress(children), nil
 	}
 	return countProgress(children), nil
 }
 
 // includedChildren reads the direct children that count toward progress.
-func includedChildren(ctx context.Context, tx *sql.Tx, nodeID string) ([]progressChild, error) {
+func includedChildren(ctx context.Context, tx progressQuerier, nodeID string) ([]progressChild, error) {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT status, progress, weight FROM nodes
+		`SELECT (status = ? AND (progress >= 1.0 OR NOT EXISTS (
+		            SELECT 1 FROM nodes g WHERE g.parent_id = c.id AND g.deleted_at IS NULL
+		              AND g.status NOT IN (?, ?))))
+		        OR (status = ? AND progress >= 1.0 AND EXISTS (
+		            SELECT 1 FROM nodes g WHERE g.parent_id = c.id AND g.deleted_at IS NULL
+		              AND g.status NOT IN (?, ?))),
+		        progress, weight FROM nodes c
 		 WHERE parent_id = ? AND deleted_at IS NULL AND status NOT IN (?, ?)`,
+		string(model.StatusDone), string(model.StatusCancelled), string(model.StatusInvalidated),
+		string(model.StatusOpen), string(model.StatusCancelled), string(model.StatusInvalidated),
 		nodeID, string(model.StatusCancelled), string(model.StatusInvalidated),
 	)
 	if err != nil {
@@ -135,8 +153,11 @@ func includedChildren(ctx context.Context, tx *sql.Tx, nodeID string) ([]progres
 	var out []progressChild
 	for rows.Next() {
 		var c progressChild
-		if scanErr := rows.Scan(&c.status, &c.progress, &c.weight); scanErr != nil {
+		if scanErr := rows.Scan(&c.done, &c.progress, &c.weight); scanErr != nil {
 			return nil, fmt.Errorf("scan children progress for %s: %w", nodeID, scanErr)
+		}
+		if c.done {
+			c.progress = 1.0
 		}
 		out = append(out, c)
 	}
@@ -152,7 +173,7 @@ func countProgress(children []progressChild) float64 {
 	}
 	done := 0
 	for _, c := range children {
-		if c.status == string(model.StatusDone) && c.progress >= 1.0 {
+		if c.done {
 			done++
 		}
 	}
@@ -165,7 +186,7 @@ func weightedProgress(children []progressChild) float64 {
 	for _, c := range children {
 		total += c.weight
 		sum += c.progress * c.weight
-		if c.progress < 1.0 {
+		if !c.done {
 			unfinished = true
 		}
 	}

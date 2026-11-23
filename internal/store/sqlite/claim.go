@@ -49,7 +49,7 @@ func (s *Store) claimNodeTx(ctx context.Context, tx *sql.Tx, id, agentID string)
 
 	// MTIX-294 / FR-5.2, FR-5.7: a claimed leaf has no credit; re-derive it
 	// and every ancestor in this transaction.
-	if progErr := recalculateProgress(ctx, tx, id); progErr != nil {
+	if progErr := recalculateProgress(ctx, tx, s.progressWeightedOn(), id); progErr != nil {
 		return fmt.Errorf("recalculate progress after claim: %w", progErr)
 	}
 

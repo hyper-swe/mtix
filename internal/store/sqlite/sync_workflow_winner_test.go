@@ -488,7 +488,7 @@ func TestApply_WinningWorkflowEvent_WritesExactlyItsTableRow(t *testing.T) {
 			map[string]string{"status": "deferred", "defer_until": nullColumn, "closed_at": nullColumn}},
 		{"transition to done", model.StatusInProgress, model.OpTransitionStatus,
 			transition(model.StatusInProgress, model.StatusDone),
-			map[string]string{"status": "done", "closed_at": foreignClosedAt, "progress": "1", "defer_until": nullColumn}},
+			map[string]string{"status": "done", "closed_at": foreignClosedAt, "defer_until": nullColumn}},
 		{"transition to cancelled", model.StatusOpen, model.OpTransitionStatus,
 			transition(model.StatusOpen, model.StatusCancelled),
 			map[string]string{"status": "cancelled", "closed_at": foreignClosedAt, "defer_until": nullColumn}},
@@ -536,6 +536,14 @@ func TestApply_WinningWorkflowEvent_WritesExactlyItsTableRow(t *testing.T) {
 			for col, v := range before {
 				want, written := tt.want[col]
 				switch {
+				case col == "progress" && (tt.op == model.OpClaim || tt.op == model.OpTransitionStatus):
+					// MTIX-294: no table row writes progress; the apply re-derives it
+					// from the node's status and children (FR-5.2), a leaf here.
+					derived := "0"
+					if tt.want["status"] == string(model.StatusDone) {
+						derived = "1"
+					}
+					require.Equal(t, derived, after[col], "progress is derived, not written by the table")
 				case written:
 					require.Equal(t, want, after[col], "column %s is written", col)
 				case col != "updated_at":

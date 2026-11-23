@@ -73,7 +73,7 @@ func (s *Store) executeTransitionTx(ctx context.Context, tx *sql.Tx, req transit
 	// MTIX-294 / FR-5.2, FR-5.7: re-derive the node's own progress (a leaf
 	// drops its credit on reopen, a done node with active children earns
 	// none) and then every ancestor, in this transaction.
-	if err := recalculateProgress(ctx, tx, id); err != nil {
+	if err := recalculateProgress(ctx, tx, s.progressWeightedOn(), id); err != nil {
 		return fmt.Errorf("recalculate progress after transition: %w", err)
 	}
 

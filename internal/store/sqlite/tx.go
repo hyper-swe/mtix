@@ -49,7 +49,6 @@ func (s *Store) withWriteTx(ctx context.Context, fn func(tx *sql.Tx) error, noti
 	}
 	defer wtx.Release(ctx)
 	tx := wtx.Tx
-	defer s.markProgressMode(tx)()
 
 	defer func() {
 		if p := recover(); p != nil {

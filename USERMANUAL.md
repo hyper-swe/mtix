@@ -3617,6 +3617,8 @@ host's daemon fires the wake locally.
 > `sync.relay.dir` is set; leave it unset to stay on the hub transport or
 > on git alone.
 
+If relay metadata reports `RELAY_META_CORRUPT` at `key_epochs[i]`, entry `i` (counting from zero) repeats or precedes the previous epoch. Report the position to the operator and preserve the original `relay.json`. Sorting the entries would change the recorded rotation history.
+
 Some machines cannot open a database connection at all. A sandboxed
 agent runtime may share a folder with its host and have no network. An
 isolated network may forbid a database reachable from every zone while

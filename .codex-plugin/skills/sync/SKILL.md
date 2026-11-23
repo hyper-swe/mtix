@@ -899,6 +899,8 @@ mtix sync relay tick
 | `relay snapshots` fails | A bootstrap snapshot is a full plaintext copy of a store left in the directory | Ask the user to remove it once every joiner has imported it |
 | `relay poll cadence` fails | `sync.relay.poll_interval` exceeds the silence threshold | Lower `sync.relay.poll_interval` or raise `sync.relay.silent_peer_days` |
 
+If relay metadata reports `RELAY_META_CORRUPT` at `key_epochs[i]`, entry `i` (counting from zero) repeats or precedes the previous epoch. Report the position to the operator and preserve the original `relay.json`. Sorting the entries would change the recorded rotation history.
+
 **Recover.** These are operator actions: surface the situation, then run one only when the user asks. `mtix sync relay reset-peer` (after a restore; `--base-rs` and `--floor` are optional), `mtix sync relay retire-peer <peer-id>` (drops a vanished peer from the prune quorum; check `mtix sync doctor` first, because retiring a peer that returns prunes history it still needs), `mtix sync relay rotate-key` (installs the next key epoch) and `mtix sync relay republish --from <rs>` (re-emits into fresh segments and is safe to repeat).
 
 **Never.** Read, print, paste or commit a relay key. Copy a key through the relay directory. Edit or delete files in the relay directory by hand. Put one `.mtix` on a shared mount. Treat the relay as encrypted: records are authenticated but not encrypted, and the key authenticates the fleet rather than one peer (see `docs/SECURITY-MODEL.md`).

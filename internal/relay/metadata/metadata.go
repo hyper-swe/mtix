@@ -25,7 +25,7 @@
 // nothing else — peers already attached verified a copy into their own
 // configuration and do not consult it to move data.
 //
-// The package is pure: standard library only, no store imports, no
+// The package has no store imports and starts no
 // goroutines. It mints neither identity nor timestamps — a caller
 // supplies the relay id, the creation time, and the project set, which
 // keeps the record reproducible and this layer free of a clock.
@@ -35,11 +35,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"time"
+
+	"github.com/hyper-swe/mtix/internal/model"
 )
 
 // FileName is the relay identity record's name inside the relay
@@ -140,7 +142,7 @@ type KeyEpochBoundary struct {
 
 	// FromRSByPeer maps peer id to the relay sequence at which that
 	// peer began publishing under this epoch.
-	FromRSByPeer map[string]uint64 `json:"from_rs_by_peer,omitempty"`
+	FromRSByPeer map[string]uint64 `json:"from_rs_by_peer,omitzero"`
 }
 
 // Relay is the identity record itself.
@@ -230,6 +232,16 @@ func (r *Relay) validate() error {
 		}
 		seen[p.Prefix] = true
 	}
+	return r.validateEpochOrder()
+}
+
+func (r *Relay) validateEpochOrder() error {
+	for i := 1; i < len(r.KeyEpochs); i++ {
+		prev, epoch := r.KeyEpochs[i-1].Epoch, r.KeyEpochs[i].Epoch
+		if epoch <= prev {
+			return fmt.Errorf("%w: key_epochs[%d]: epoch %d must exceed %d", model.ErrInvalidInput, i, epoch, prev)
+		}
+	}
 	return nil
 }
 
@@ -298,7 +310,7 @@ func Read(dir string) (*Relay, error) {
 		return nil, fmt.Errorf("%w: %s: %v", ErrRelayCorrupt, path, err)
 	}
 	if err := doc.validate(); err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrRelayCorrupt, path, err)
+		return nil, fmt.Errorf("%w: %s: %w", ErrRelayCorrupt, path, err)
 	}
 	return &doc, nil
 }
@@ -330,13 +342,8 @@ func Write(dir string, doc *Relay) error {
 	return nil
 }
 
-// Rewrite persists an append-only change to an existing record.
-//
-// It re-reads what is on the medium and refuses unless every field
-// fixed at init still matches and the two append-permitted arrays have
-// only grown. This is where §5.6's immutability is actually enforced —
-// an in-memory struct can be edited freely, so the check belongs at the
-// boundary where the edit would become durable.
+// Rewrite persists an operator change after checking the fixed fields,
+// the existing history prefix, and the order of the proposed history.
 func Rewrite(dir string, doc *Relay) error {
 	existing, err := Read(dir)
 	if err != nil {
@@ -347,10 +354,6 @@ func Rewrite(dir string, doc *Relay) error {
 	// field fixed at init, and reporting it as an unsupported format
 	// would send the reader looking for a version problem that is not
 	// there.
-	// checkAppendOnly compares every field validate would check against
-	// a record Read already validated, so a document that passes it is
-	// valid by construction — there is no second validation to run here
-	// that could ever fire.
 	if appendErr := existing.checkAppendOnly(doc); appendErr != nil {
 		return appendErr
 	}
@@ -404,20 +407,12 @@ func (r *Relay) checkAppendOnly(next *Relay) error {
 			return fmt.Errorf("%w: retired_peers names %q", ErrRelayImmutable, p)
 		}
 	}
-	return nil
+	return next.validateEpochOrder()
 }
 
 // sameBoundary compares two recorded boundaries.
 func sameBoundary(a, b KeyEpochBoundary) bool {
-	if a.Epoch != b.Epoch || len(a.FromRSByPeer) != len(b.FromRSByPeer) {
-		return false
-	}
-	for peer, rs := range b.FromRSByPeer {
-		if a.FromRSByPeer[peer] != rs {
-			return false
-		}
-	}
-	return true
+	return a.Epoch == b.Epoch && maps.Equal(a.FromRSByPeer, b.FromRSByPeer)
 }
 
 // marshal renders the record deterministically.
@@ -427,12 +422,7 @@ func sameBoundary(a, b KeyEpochBoundary) bool {
 // file stays diffable, and two peers writing it never disagree over
 // formatting alone.
 func marshal(doc *Relay) ([]byte, error) {
-	sorted := *doc
-	sorted.KeyEpochs = append([]KeyEpochBoundary(nil), doc.KeyEpochs...)
-	sort.Slice(sorted.KeyEpochs, func(i, j int) bool {
-		return sorted.KeyEpochs[i].Epoch < sorted.KeyEpochs[j].Epoch
-	})
-	body, err := json.MarshalIndent(&sorted, "", "  ")
+	body, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode relay record: %w", err)
 	}

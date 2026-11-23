@@ -822,6 +822,8 @@ mtix config set sync.relay.dir <dir>
 mtix sync relay clone
 mtix sync relay tick
 ```
+
+If clone reports an invalid peer id in `exported_by`, `positions` or `pub_epochs`, it refuses the whole snapshot before importing any rows. The error identifies the field and the id. Ask a current peer to run `mtix sync relay clone --export`, then retry `mtix sync relay clone` on the joiner. If clone still names the same snapshot, stop and give the filename and error to the relay maintainer. Clone selects the filename that sorts last.
 <!-- END RELAY LATE JOINER -->
 
 **Use.** `mtix daemon` carries the relay on every pass. A peer with no resident daemon (a turn-driven agent, a scheduled job) runs `mtix sync relay tick` at session start, whenever it wants to exchange work, and once at session end; it converges on its next tick and is not degraded. `mtix sync relay clone --export` writes a bootstrap snapshot for a late joiner. `clone` imports only into a project that holds no tasks or one that does not sync. A peer that holds tasks and already syncs (it has published or ingested through a relay, or a hub is configured) is refused before anything is written, because a merge would keep its local values with no sync event and skip the events that correct them; see the `mtix sync relay clone` refused row of the troubleshooting table. When a clone into a project that does not sync lists conflicts it writes nothing; rerun it with `--prefer theirs|ours`, or `--theirs ID,ID` and `--ours ID,ID`, after the user decides.

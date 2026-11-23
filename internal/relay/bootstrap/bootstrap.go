@@ -33,6 +33,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -53,11 +55,8 @@ const DefaultMaxBytes int64 = 256 << 20
 // store copy, so it is owner-only.
 const snapshotFileMode os.FileMode = 0o600
 
-// peerIDPattern is the FR-21 §5.2 identity grammar.
-var peerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
-
 // snapshotNamePattern matches a snapshot file name.
-var snapshotNamePattern = regexp.MustCompile(`^snap-[0-9]{14}-[0-9a-f]{16}(-[a-z0-9_-]{1,32})?\.mrsnap$`)
+var snapshotNamePattern = regexp.MustCompile(`^snap-[0-9]{14}-(.+)\.mrsnap$`)
 
 // Refusals.
 var (
@@ -187,20 +186,25 @@ func (r ExportRequest) validate() error {
 	if r.Store == nil {
 		return errors.New("relay bootstrap: store is required")
 	}
-	if !peerIDPattern.MatchString(r.ExportedBy) {
-		return fmt.Errorf("relay bootstrap: exporting peer %q is malformed", r.ExportedBy)
-	}
 	if r.CreatedAt.IsZero() {
 		return errors.New("relay bootstrap: creation time is required")
 	}
-	for peer := range r.Positions {
-		if !peerIDPattern.MatchString(peer) {
-			return fmt.Errorf("relay bootstrap: stamped position names peer %q", peer)
+	return validateSnapshotPeers(r.ExportedBy, r.Positions, r.Epochs)
+}
+
+// validateSnapshotPeers checks every peer stamped in a snapshot against FR-21 §5.2.
+func validateSnapshotPeers(exportedBy string, positions map[string]uint64, epochs map[string]uint16) error {
+	if !peerid.Valid(exportedBy) {
+		return fmt.Errorf("%w: relay bootstrap: exported_by has invalid peer id %q", model.ErrInvalidInput, exportedBy)
+	}
+	for peer := range positions {
+		if !peerid.Valid(peer) {
+			return fmt.Errorf("%w: relay bootstrap: positions has invalid peer id %q", model.ErrInvalidInput, peer)
 		}
 	}
-	for peer := range r.Epochs {
-		if !peerIDPattern.MatchString(peer) {
-			return fmt.Errorf("relay bootstrap: stamped epoch names peer %q", peer)
+	for peer := range epochs {
+		if !peerid.Valid(peer) {
+			return fmt.Errorf("%w: relay bootstrap: pub_epochs has invalid peer id %q", model.ErrInvalidInput, peer)
 		}
 	}
 	return nil
@@ -283,8 +287,8 @@ func readSnapshot(path string) (*Snapshot, error) {
 	if err := json.Unmarshal(body, &snap); err != nil {
 		return nil, fmt.Errorf("%w: %s: %v", ErrSnapshotUnusable, path, err)
 	}
-	if !peerIDPattern.MatchString(snap.ExportedBy) {
-		return nil, fmt.Errorf("%w: %s names exporting peer %q", ErrSnapshotUnusable, path, snap.ExportedBy)
+	if err := validateSnapshotPeers(snap.ExportedBy, snap.Positions, snap.PubEpochs); err != nil {
+		return nil, fmt.Errorf("%w: %s: %w", ErrSnapshotUnusable, path, err)
 	}
 	if snap.Export == nil {
 		return nil, fmt.Errorf("%w: %s carries no export", ErrSnapshotUnusable, path)
@@ -407,7 +411,8 @@ func listSnapshots(relayDir string) ([]snapshotFile, error) {
 	}
 	var out []snapshotFile
 	for _, e := range entries {
-		if !snapshotNamePattern.MatchString(e.Name()) || !e.Type().IsRegular() {
+		match := snapshotNamePattern.FindStringSubmatch(e.Name())
+		if len(match) != 2 || !peerid.Valid(match[1]) || !e.Type().IsRegular() {
 			// Anything that is not a snapshot is left entirely alone —
 			// never parsed, never removed.
 			continue

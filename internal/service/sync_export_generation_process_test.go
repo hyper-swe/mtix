@@ -76,6 +76,8 @@ func generationProcessHelper(t *testing.T, store *sqlite.Store, dir, mode string
 	t.Helper()
 	svc := NewSyncService(store, slog.Default(), pendingProcessClock)
 	switch mode {
+	case "tick-debounce", "tick-force", "tick-force-crash", "explicit-tick", "explicit-postrun-late", "tick-debounce-crash":
+		serialExportChild(t, svc, store, dir, mode)
 	case "snapshot-holder":
 		generationSnapshotHolder(t, store, svc, dir)
 	case "clean-force-holder":

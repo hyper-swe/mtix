@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,15 @@ func pendingProcessStore(t *testing.T, dir string) *sqlite.Store {
 	require.NoError(t, os.MkdirAll(filepath.Join(dir, "data"), 0755))
 	store, err := sqlite.New(filepath.Join(dir, "data", "mtix.db"), slog.Default())
 	require.NoError(t, err)
+	// Export fixtures share one host identity across their child processes.
+	require.NoError(t, store.WithTx(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "UPDATE meta SET value = ? WHERE key = ? AND value = ?",
+			"0123456789abcdef", "meta.sync.machine_hash", "")
+		if err != nil {
+			return fmt.Errorf("seed export fixture identity: %w", err)
+		}
+		return nil
+	}))
 	store.SetClock(pendingProcessClock)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	return store

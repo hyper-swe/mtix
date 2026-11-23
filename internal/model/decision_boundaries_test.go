@@ -61,10 +61,10 @@ func TestSingleLine_UnicodeLineBreaks_Rejected(t *testing.T) {
 		{"lf", "a\nb", false},
 		{"cr", "a\rb", false},
 		{"nel U+0085", "a\u0085b", false},
-		{"line separator U+2028", "a b", false},
-		{"paragraph separator U+2029", "a b", false},
-		{"U+2027 neighbour", "a‧b", true},
-		{"U+202A neighbour", "a‪b", true},
+		{"line separator U+2028", "a\u2028b", false},
+		{"paragraph separator U+2029", "a\u2029b", false},
+		{"U+2027 neighbour", "a\u2027b", true},
+		{"U+202A neighbour", "a\u202ab", true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -77,7 +77,7 @@ func TestSingleLine_UnicodeLineBreaks_Rejected(t *testing.T) {
 
 func TestDecisionFallback_BudgetBoundary_ExactPassesOneOverCut(t *testing.T) {
 	const prefix = "DECISION NEEDED (d-12345678): "
-	suffix := "\nAnswer with `mtix decisions answer d-12345678` (needs mtix 0.7.0 or later), or reply with `mtix comment T-1 --to asker \"…\"`."
+	suffix := "\nAnswer with `mtix decisions answer d-12345678` (needs mtix 0.7.0 or later), or reply with `mtix comment T-1 --to asker \"\u2026\"`."
 	budget := 2048 - len(prefix) - len(suffix)
 	tests := []struct {
 		name    string

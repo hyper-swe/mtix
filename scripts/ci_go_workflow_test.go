@@ -159,17 +159,18 @@ func TestGoWorkflow_Aggregate_RejectsEveryNonSuccessResult(t *testing.T) {
 	}
 }
 
-func TestGoWorkflow_CheckCount_MatchesFortySevenChecks(t *testing.T) {
+func TestGoWorkflow_CheckCount_MatchesFiftyOneChecks(t *testing.T) {
 	// MTIX-112.17.22.1: 25 - 2 (cli shard) + 6 (test-go-cmd) = 29.
 	// MTIX-112.51: plus two service shards on each OS = 33.
 	// MTIX-270: a fourth SQLite shard on each OS = 35.
 	// MTIX-272: a fourth cmd/mtix shard on each OS and per PostgreSQL version = 39.
 	// MTIX-272.1: a fifth and a sixth cmd/mtix shard on each OS and per PostgreSQL version = 47.
+	// MTIX-131.2: a fifth and a sixth SQLite shard on each OS = 51.
 	// MTIX-112.17.42: that is the push and schedule count; pull_request runs
-	// omit the twelve macOS SQLite, cmd/mtix and service legs (see
+	// omit the fourteen macOS SQLite, cmd/mtix and service legs (see
 	// ci_pr_macos_capacity_test.go).
-	require.Equal(t, 47, countCIChecks(t, "push"))
-	require.Equal(t, 47, countCIChecks(t, "schedule"))
+	require.Equal(t, 51, countCIChecks(t, "push"))
+	require.Equal(t, 51, countCIChecks(t, "schedule"))
 }
 
 // MTIX-112.17.24: cmd/mtix runs as six shards per PostgreSQL version.

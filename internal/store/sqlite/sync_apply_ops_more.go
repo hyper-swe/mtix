@@ -218,6 +218,7 @@ func mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, event *model.SyncEvent
 type appliedCreateRow struct {
 	payload         model.CreateNodePayload
 	uid, labels, at string
+	fromRelay       bool
 }
 
 // insertAppliedCreate preserves the existing number-conflict and UID checks.
@@ -240,7 +241,7 @@ func insertAppliedCreate(ctx context.Context, tx *sql.Tx, store *Store, e *model
 		}
 	}
 	if inserted == 0 {
-		return refuseHeldNumber(ctx, tx, e, row.uid)
+		return refuseHeldNumber(ctx, tx, e, row.uid, row.fromRelay)
 	}
 	return nil
 }

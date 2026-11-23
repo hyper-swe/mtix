@@ -392,12 +392,11 @@ func pushBatch(ctx context.Context, stderr io.Writer, pool eventPusher, store *s
 	if err != nil {
 		return transport.PushResult{}, 0, fmt.Errorf("hold mismatched events of batch %d: %w", batch, err)
 	}
-	for _, r := range res.Renumbers {
-		if _, err := store.RenumberForHubRejection(ctx, r.EventID); err != nil {
-			return transport.PushResult{}, 0, fmt.Errorf("resolve renumber for %s (batch %d): %w", format.EventID(r.EventID), batch, err)
-		}
+	relayHeld, err := resolveRenumbers(ctx, stderr, store, events, res.Renumbers, batch)
+	if err != nil {
+		return transport.PushResult{}, 0, err
 	}
-	return res, mismatched, nil
+	return res, mismatched + relayHeld, nil
 }
 
 // markPushedFailKey is the context key of a test seam (MTIX-95.3): a

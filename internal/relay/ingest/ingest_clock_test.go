@@ -40,6 +40,6 @@ func TestIngestAll_StoreClock_StampsAppliedRows(t *testing.T) {
 	require.Equal(t, eventAt.Format(time.RFC3339), updated)
 }
 
-func (f *fakeStore) IdempotentApply(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	return f.inner.IdempotentApply(ctx, tx, e)
+func (f *fakeStore) ApplyRelayEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+	return f.inner.ApplyRelayEvent(ctx, tx, e)
 }

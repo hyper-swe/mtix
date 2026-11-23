@@ -83,6 +83,8 @@ func heldPushGuidance(h sqlite.HeldPushEvent) string {
 		return "resolves with the held creation it depends on"
 	case strings.HasPrefix(h.Reason, holdClockPrefix):
 		return "check this machine's clock; the event pushes once its stamp is within 24 h of the clock"
+	case strings.Contains(h.Reason, holdRelayCarried):
+		return relayHeldGuidance(h.NodeID)
 	case h.OpType == string(model.OpCreateNode):
 		return "stop editing this task and escalate: its creation cannot be sent, and there is no automatic re-send"
 	case strings.HasPrefix(h.Reason, holdTooLargePrefix):
@@ -90,4 +92,16 @@ func heldPushGuidance(h sqlite.HeldPushEvent) string {
 	default:
 		return "the hub refuses this event; show the reason to the operator"
 	}
+}
+
+// relayHeldGuidance is the fix for a relay-carried creation the hub would
+// renumber. The hold is permanent: relay-carried tasks are never renumbered,
+// and the hub's task holding that number does not reach relay-only peers until
+// this one is resolved. Only commands this build ships are named.
+func relayHeldGuidance(nodeID string) string {
+	id := oneLine(nodeID)
+	return "relay-carried tasks are never renumbered, so this hold is permanent, and the hub's task holding that number " +
+		"does not reach relay-only peers until it is resolved. Recreate the task under the hub's next number: run " +
+		"mtix create \"<same title>\" --under <same parent> (omit --under for a root task), then run " +
+		"mtix cancel " + id + " --reason \"duplicate of <new id>\""
 }

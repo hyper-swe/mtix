@@ -62,7 +62,7 @@ type KeySelector interface {
 // behind the shipped apply path, and this package's job is to feed that
 // path rather than to reimplement any of it.
 type Store interface {
-	IdempotentApply(context.Context, *sql.Tx, *model.SyncEvent) error
+	ApplyRelayEvent(context.Context, *sql.Tx, *model.SyncEvent) error
 	RelayIngestCursor(ctx context.Context, peerID string) (sqlite.RelayIngestPosition, error)
 	AdvanceRelayIngestCursor(ctx context.Context, peerID string, pos sqlite.RelayIngestPosition) error
 	// RelayCloneStampEpoch is the epoch a snapshot stamped for a peer, read
@@ -322,7 +322,7 @@ func (in *Ingestor) applyRecord(ctx context.Context, peerID string, header segme
 	// derived-state recomputes. Bypassing this path would mean
 	// reimplementing all of it, differently.
 	if err := in.cfg.Store.WithTx(ctx, func(tx *sql.Tx) error {
-		return in.cfg.Store.IdempotentApply(ctx, tx, &e)
+		return in.cfg.Store.ApplyRelayEvent(ctx, tx, &e)
 	}); err != nil {
 		return in.refuse(ctx, stats, peerID, header, rec, &e, err)
 	}

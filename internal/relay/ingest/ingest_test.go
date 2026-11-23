@@ -375,6 +375,11 @@ func TestRelayIngest_HubAndRelayDoubleArrivalAppliesOnce(t *testing.T) {
 	require.Equal(t, 1, r.journalCount(t), "the second arrival must not double the journal")
 	require.Equal(t, 1, stats.Applied, "the record was consumed, and applying it was a no-op")
 
+	// A hub event republished by a relay peer must never enter the hub push.
+	out, err := r.store.ReadPendingEvents(ctx, 10)
+	require.NoError(t, err)
+	require.Empty(t, out)
+
 	// And the cursor still advanced, so the relay does not re-read it.
 	require.Equal(t, uint64(1), r.cursor(t).RS)
 }

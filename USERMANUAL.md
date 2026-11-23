@@ -3664,6 +3664,8 @@ mtix config set sync.relay.dir <dir>
 mtix sync relay clone
 mtix sync relay tick
 ```
+
+If clone reports an invalid peer id in `exported_by`, `positions` or `pub_epochs`, it refuses the whole snapshot before importing any rows. The error identifies the field and the id. Ask a current peer to run `mtix sync relay clone --export`, then retry `mtix sync relay clone` on the joiner. If clone still names the same snapshot, stop and give the filename and error to the relay maintainer. Clone selects the filename that sorts last.
 <!-- END RELAY LATE JOINER -->
 
 Each machine still keeps its **own local `.mtix`**. The shared directory

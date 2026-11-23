@@ -38,8 +38,12 @@ func TestPushLoop_HubRenumberOfPublishedOwnCreateIsHeld(t *testing.T) {
 	publish(t, s, id)
 	hub := newFakePushHub()
 	hub.renumberOnce = map[string]bool{id: true}
-	_, err := pushLoop(ctx, io.Discard, hub, s)
+	tot, err := pushLoop(ctx, io.Discard, hub, s)
 	require.NoError(t, err)
+	require.Zero(t, tot.renumbered, "a relay hold is not a renumber")
+	require.Equal(t, 1, tot.relayHeld)
+	require.Equal(t, "", relayHeldClause(0))
+	require.Equal(t, ", 1 relay-carried held (never renumbered)", relayHeldClause(tot.relayHeld))
 	require.Empty(t, hub.events)
 	n, err := s.GetNode(ctx, "MTIX-1")
 	require.NoError(t, err)
@@ -47,10 +51,12 @@ func TestPushLoop_HubRenumberOfPublishedOwnCreateIsHeld(t *testing.T) {
 	ok, detail := checkHeldPushEvents(ctx, s)
 	require.False(t, ok)
 	for _, want := range []string{"permanent", "never renumbered", "relay-only peers",
-		`mtix create "<same title>" --under <same parent>`, `mtix cancel MTIX-1 --reason "duplicate of <new id>"`} {
+		"only adds held events", "escalate"} {
 		require.Contains(t, detail, want)
 	}
-	require.NotContains(t, detail, "escalate")
+	for _, banned := range []string{"mtix create", "mtix cancel", "resolved"} {
+		require.NotContains(t, detail, banned)
+	}
 }
 
 // A creation never published to the relay is renumbered locally, as before.
@@ -60,8 +66,10 @@ func TestPushLoop_HubRenumberOfUnpublishedOwnCreateIsRenumbered(t *testing.T) {
 	id := ownCreate(t, s)
 	hub := newFakePushHub()
 	hub.renumberOnce = map[string]bool{id: true}
-	_, err := pushLoop(ctx, io.Discard, hub, s)
+	tot, err := pushLoop(ctx, io.Discard, hub, s)
 	require.NoError(t, err)
+	require.Equal(t, 1, tot.renumbered)
+	require.Zero(t, tot.relayHeld)
 	require.True(t, hub.accepted[id])
 	require.NotEqual(t, "MTIX-1", hub.events[len(hub.events)-1].NodeID)
 	held, err := s.CountHeldPushEvents(ctx)
@@ -85,4 +93,61 @@ func TestIsRelayPublished_FollowsPublishCursor(t *testing.T) {
 	got, err = s.IsRelayPublished(ctx, "no-such-event")
 	require.NoError(t, err)
 	require.False(t, got)
+}
+
+// An earlier event is published and then this create is journaled after the
+// cursor: only the earlier row is published (a rowid-at-or-after compare would
+// call both published).
+func TestIsRelayPublished_PublishEarlierThenCreate(t *testing.T) {
+	ctx := t.Context()
+	s := movesTestStore(t)
+	first := ownCreate(t, s)
+	publish(t, s, first)
+	require.NoError(t, s.CreateNode(ctx, movesNode("MTIX-2", "", "later task")))
+	ev, err := s.ReadPendingEvents(ctx, 10)
+	require.NoError(t, err)
+	require.Len(t, ev, 2)
+	later := ev[1].EventID
+	got, err := s.IsRelayPublished(ctx, later)
+	require.NoError(t, err)
+	require.False(t, got)
+	got, err = s.IsRelayPublished(ctx, first)
+	require.NoError(t, err)
+	require.True(t, got)
+}
+
+// A rewound cursor (gap repair or an operator reset) never un-publishes: the
+// relay still carries the task under its number.
+func TestIsRelayPublished_SurvivesCursorRewind(t *testing.T) {
+	ctx := t.Context()
+	s := movesTestStore(t)
+	id := ownCreate(t, s)
+	publish(t, s, id)
+	require.NoError(t, s.RepublishRelayFrom(ctx, 0))
+	got, err := s.IsRelayPublished(ctx, id)
+	require.NoError(t, err)
+	require.True(t, got, "RepublishRelayFrom must not un-publish")
+	require.NoError(t, s.ResetRelayPublisher(ctx, 0, 1))
+	got, err = s.IsRelayPublished(ctx, id)
+	require.NoError(t, err)
+	require.True(t, got, "ResetRelayPublisher must not un-publish")
+}
+
+// A row the publisher marks for framing counts as published before the
+// cursor advances, so a renumber cannot slip between the append and the
+// advance.
+func TestIsRelayPublished_ReadForFramingCounts(t *testing.T) {
+	ctx := t.Context()
+	s := movesTestStore(t)
+	id := ownCreate(t, s)
+	rows, err := s.ReadRelayJournalSince(ctx, 0, 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	got, err := s.IsRelayPublished(ctx, id)
+	require.NoError(t, err)
+	require.False(t, got, "a plain read is not publication")
+	require.NoError(t, s.MarkRelayFraming(ctx, rows[0].Seq))
+	got, err = s.IsRelayPublished(ctx, id)
+	require.NoError(t, err)
+	require.True(t, got)
 }

@@ -77,6 +77,7 @@ type Journal interface {
 	AdvanceRelayPushCursor(ctx context.Context, seq int64, nextRS uint64) error
 	ResetRelayPublisher(ctx context.Context, floorSeq int64, baseRS uint64) error
 	ReadRelayJournalSince(ctx context.Context, seq int64, limit int) ([]sqlite.RelayJournalEvent, error)
+	MarkRelayFraming(ctx context.Context, seq int64) error
 	LookupRelayJournalSeqs(ctx context.Context, eventIDs []string) (map[string]int64, error)
 	RepublishRelayFrom(ctx context.Context, floorSeq int64) error
 
@@ -218,6 +219,11 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 	}
 	if len(rows) == 0 {
 		return 0, nil
+	}
+	// Before the first append: from here a renumber must treat these rows as
+	// carried by the relay (relay-carried tasks are never renumbered).
+	if markErr := p.cfg.Journal.MarkRelayFraming(ctx, rows[len(rows)-1].Seq); markErr != nil {
+		return 0, markErr
 	}
 
 	w, err := segment.NewWriter(segment.WriterConfig{

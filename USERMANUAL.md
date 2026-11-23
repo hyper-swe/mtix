@@ -3675,10 +3675,10 @@ Useful to know:
   (doctor fails `held push events`), not renumbered, because the relay cannot
   move its author to the hub's number. The hold is permanent (relay-carried
   tasks are never renumbered), and the hub's task holding that number does not
-  reach relay-only peers until the held one is resolved. Recreate the task under
-  the hub's next number with `mtix create "<same title>" --under <same parent>`
-  (a root task has no parent, so leave the under flag out), then `mtix cancel <held id> --reason
-  "duplicate of <new id>"`. Doctor prints these steps, also under `--json`.
+  reach relay-only peers while it stands. No command in this build clears it: do
+  not edit the held task or its subtree, because pushing more edits to them only
+  adds held events, and escalate to the operator. Doctor prints this, also under
+  `--json`.
 - **Latency is not promised.** Worst case is roughly your poll interval,
   plus however long the medium takes to make a file visible on the other
   side — seconds for a mounted folder, a manual walk for removable media.

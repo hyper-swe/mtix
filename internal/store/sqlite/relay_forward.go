@@ -73,19 +73,3 @@ func acknowledgeRelayForward(ctx context.Context, tx *sql.Tx, e *model.SyncEvent
 	}
 	return nil
 }
-
-// IsRelayPublished reports whether the relay publish pass has already framed
-// eventID: its journal row sits at or before the publish cursor, the same
-// position ReadRelayJournalSince resumes from. A task whose creation is
-// published is carried by the relay under its current number, so the hub must
-// never move it (relay-carried tasks are never renumbered). A store with no
-// cursor row has published nothing.
-func (s *Store) IsRelayPublished(ctx context.Context, eventID string) (bool, error) {
-	var n int
-	if err := s.readDB.QueryRowContext(ctx, `
-		SELECT COUNT(*) FROM sync_events e JOIN relay_push_cursor c ON c.id = 1
-		WHERE e.event_id = ? AND e.rowid <= c.cursor`, eventID).Scan(&n); err != nil {
-		return false, fmt.Errorf("read relay publish state of %s: %w", format.EventID(eventID), err)
-	}
-	return n > 0, nil
-}

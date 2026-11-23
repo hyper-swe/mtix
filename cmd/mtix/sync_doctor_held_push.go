@@ -47,10 +47,12 @@ func checkHeldPushEvents(ctx context.Context, st *sqlite.Store) (bool, string) {
 	if n == 0 {
 		return true, "ok"
 	}
-	held, err := st.HeldPushEvents(ctx, heldPushListed)
+	all, err := st.HeldPushEvents(ctx, n)
 	if err != nil {
 		return false, err.Error()
 	}
+	relayHeld := relayHeldIDs(all)
+	held := all[:min(len(all), heldPushListed)]
 	items := make([]string, 0, len(held)+1)
 	for _, h := range held {
 		reason := []rune(displayHoldReason(h.Reason))
@@ -58,7 +60,7 @@ func checkHeldPushEvents(ctx context.Context, st *sqlite.Store) (bool, string) {
 			reason = append(reason[:heldPushReasonRunes], []rune("...")...)
 		}
 		items = append(items, fmt.Sprintf("%s %s: %s (reason: %s)",
-			oneLine(h.NodeID), oneLine(h.OpType), heldPushGuidance(h), string(reason)))
+			oneLine(h.NodeID), oneLine(h.OpType), heldPushGuidance(h, relayHeld), string(reason)))
 	}
 	if n > len(held) {
 		items = append(items, fmt.Sprintf("and %d more", n-len(held)))
@@ -67,24 +69,45 @@ func checkHeldPushEvents(ctx context.Context, st *sqlite.Store) (bool, string) {
 		n, strings.Join(items, "; "), quarantineInspectCmd)
 }
 
+// dependsOnRelayHeld reports whether reason names a held relay-carried creation.
+func dependsOnRelayHeld(reason string, relayHeld map[string]bool) bool {
+	id, ok := heldDependencyID(reason)
+	return ok && relayHeld[id]
+}
+
+// relayHeldIDs returns the event ids of the held relay-carried creations.
+func relayHeldIDs(held []sqlite.HeldPushEvent) map[string]bool {
+	ids := make(map[string]bool)
+	for _, h := range held {
+		if strings.Contains(h.Reason, holdRelayCarried) {
+			ids[h.EventID] = true
+		}
+	}
+	return ids
+}
+
 // heldPushGuidance is the fix doctor gives for one held push event, from
 // its op and the kind of its reason (MTIX-95.12): a link or unlink made
 // while a creation is held waits until no creation made before it is held;
 // any other dependent resolves with the creation it waits for; a clock hold waits for its stamp to be
 // within 24 h of this machine's clock; a held task creation cannot be fixed
 // by an edit, so the task must be escalated; a field over the limit is
-// shortened or split, and the next edit pushes.
-func heldPushGuidance(h sqlite.HeldPushEvent) string {
+// shortened or split, and the next edit pushes. A relay-carried creation, and
+// whatever depends on it (relayHeld holds the event ids of the held relay
+// creations), is held for good and is escalated.
+func heldPushGuidance(h sqlite.HeldPushEvent, relayHeld map[string]bool) string {
 	switch {
 	case strings.HasPrefix(h.Reason, holdDependsPrefix) && strings.Contains(h.Reason, holdLinkWait):
 		return "a link made while a task creation is held; it pushes once no creation made before it is held " +
 			"(this version names a link's target by number)"
+	case dependsOnRelayHeld(h.Reason, relayHeld):
+		return relayHeldGuidance
 	case strings.HasPrefix(h.Reason, holdDependsPrefix):
 		return "resolves with the held creation it depends on"
 	case strings.HasPrefix(h.Reason, holdClockPrefix):
 		return "check this machine's clock; the event pushes once its stamp is within 24 h of the clock"
 	case strings.Contains(h.Reason, holdRelayCarried):
-		return relayHeldGuidance(h.NodeID)
+		return relayHeldGuidance
 	case h.OpType == string(model.OpCreateNode):
 		return "stop editing this task and escalate: its creation cannot be sent, and there is no automatic re-send"
 	case strings.HasPrefix(h.Reason, holdTooLargePrefix):
@@ -94,14 +117,11 @@ func heldPushGuidance(h sqlite.HeldPushEvent) string {
 	}
 }
 
-// relayHeldGuidance is the fix for a relay-carried creation the hub would
-// renumber. The hold is permanent: relay-carried tasks are never renumbered,
-// and the hub's task holding that number does not reach relay-only peers until
-// this one is resolved. Only commands this build ships are named.
-func relayHeldGuidance(nodeID string) string {
-	id := oneLine(nodeID)
-	return "relay-carried tasks are never renumbered, so this hold is permanent, and the hub's task holding that number " +
-		"does not reach relay-only peers until it is resolved. Recreate the task under the hub's next number: run " +
-		"mtix create \"<same title>\" --under <same parent> (omit --under for a root task), then run " +
-		"mtix cancel " + id + " --reason \"duplicate of <new id>\""
-}
+// relayHeldGuidance is the text for a relay-carried creation the hub would
+// renumber, and for what depends on it. The hold is permanent: relay-carried
+// tasks are never renumbered, and no command in this build clears it, so the
+// operator escalates. The hub's task holding that number does not reach
+// relay-only peers while it stands.
+const relayHeldGuidance = "stop editing this task and its subtree and escalate: relay-carried tasks are never renumbered, " +
+	"so this hold is permanent, pushing more edits to it or its subtree only adds held events, " +
+	"and the hub's task holding that number does not reach relay-only peers"

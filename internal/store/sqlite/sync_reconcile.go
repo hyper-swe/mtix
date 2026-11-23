@@ -132,6 +132,9 @@ func DiscardLocal(ctx context.Context, s *Store, mtixDir string) (err error) {
 			// §6.8 republish shape — the same events re-emitted under
 			// FRESH relay sequences, deduped downstream.
 			`UPDATE relay_push_cursor SET cursor = 0 WHERE id = 1`,
+			// The journal's rowids restart, so the published mark (rowids)
+			// restarts with them; it rises again as the publisher reads.
+			`DELETE FROM meta WHERE key = 'meta.relay.published_hwm'`,
 			// Witness that the journal's rowid space restarted
 			// (MTIX-79, FR-21 §5.7 v1.3.6). Cursors above can be
 			// rewound because this function knows about them; a

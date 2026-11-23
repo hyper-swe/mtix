@@ -18,8 +18,12 @@ import (
 // doctor can give its fix (heldPushGuidance).
 const holdRelayCarried = "carried by the relay"
 
+// renumberOutcome is what resolveRenumbers did: creations renumbered locally,
+// relay-carried creations held instead (relay), and the holds that were new.
+type renumberOutcome struct{ local, relay, newlyHeld int }
+
 // resolveRenumbers answers the hub's renumber-required outcomes of one batch
-// and returns how many events it held. A creation of this replica the relay never
+// and returns what it renumbered and held. A creation of this replica the relay never
 // carried is renumbered (RenumberForHubRejection). A creation the relay carries,
 // ingested from a relay peer or already published by this replica, is held
 // instead (FR-21 §11.7): the relay has no durable change that moves its author
@@ -29,7 +33,8 @@ const holdRelayCarried = "carried by the relay"
 // reports it as a held push event.
 func resolveRenumbers(ctx context.Context, stderr io.Writer, store *sqlite.Store,
 	events []*model.SyncEvent, renumbers []transport.RenumberRequired, batch int,
-) (int, error) {
+) (renumberOutcome, error) {
+	var out renumberOutcome
 	byID := make(map[string]*model.SyncEvent, len(events))
 	for _, e := range events {
 		byID[e.EventID] = e
@@ -38,17 +43,21 @@ func resolveRenumbers(ctx context.Context, stderr io.Writer, store *sqlite.Store
 	for _, r := range renumbers {
 		q, hold, err := resolveOneRenumber(ctx, store, byID[r.EventID], r.EventID, batch)
 		if err != nil {
-			return 0, err
+			return renumberOutcome{}, err
 		}
 		if hold {
 			d.holds = append(d.holds, q)
+		} else {
+			out.local++
 		}
 	}
-	if len(d.holds) == 0 {
-		return 0, nil
+	out.relay = len(d.holds)
+	if out.relay == 0 {
+		return out, nil
 	}
 	_, held, err := recordBatch(ctx, stderr, store, d)
-	return held, err
+	out.newlyHeld = held
+	return out, err
 }
 
 // resolveOneRenumber renumbers a creation of this replica, or returns the hold

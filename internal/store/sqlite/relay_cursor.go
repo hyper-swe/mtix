@@ -109,14 +109,25 @@ func (s *Store) RelayPushCursor(ctx context.Context) (RelayPushPosition, error) 
 // that were already published. Moving the cursor backwards is reserved
 // for ResetRelayPublisher, which may only do it while bumping the epoch.
 func (s *Store) AdvanceRelayPushCursor(ctx context.Context, seq int64, nextRS uint64) error {
+	tx, err := s.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("advance relay push cursor: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	// #nosec G115 -- nextRS is a relay sequence bounded by the journal.
-	_, err := s.writeDB.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO relay_push_cursor (id, cursor, next_rs) VALUES (1, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			cursor  = MAX(cursor, excluded.cursor),
 			next_rs = CASE WHEN excluded.cursor > cursor THEN excluded.next_rs ELSE next_rs END`,
 		seq, int64(nextRS))
 	if err != nil {
+		return fmt.Errorf("advance relay push cursor: %w", err)
+	}
+	if hwmErr := raiseRelayPublishedHWM(ctx, tx, seq); hwmErr != nil {
+		return hwmErr
+	}
+	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("advance relay push cursor: %w", err)
 	}
 	return nil
@@ -292,6 +303,15 @@ func (s *Store) ReadRelayJournalSince(ctx context.Context, seq int64, limit int)
 		return nil, fmt.Errorf("read relay journal: %w", err)
 	}
 	return out, nil
+}
+
+// MarkRelayFraming records that the rows through seq are about to be framed
+// and appended. The publisher calls it after ReadRelayJournalSince and before
+// the first append, so a hub renumber cannot slip between the append and the
+// cursor advance and move a task the relay is already carrying
+// (IsRelayPublished). The mark only rises.
+func (s *Store) MarkRelayFraming(ctx context.Context, seq int64) error {
+	return raiseRelayPublishedHWM(ctx, s.writeDB, seq)
 }
 
 // LookupRelayJournalSeqs maps event ids to their local journal sequence,

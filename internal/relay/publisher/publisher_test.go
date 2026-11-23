@@ -643,6 +643,8 @@ type fakeJournal struct {
 	errReset     error
 	errLookup    error
 	errRepublish error
+	errMark      error
+	marked       []int64
 	advances     int
 
 	// gen/errGen and errTail drive the §5.7 v1.3.6 attestation
@@ -689,6 +691,14 @@ func (f *fakeJournal) RepublishRelayFrom(_ context.Context, floorSeq int64) erro
 		return f.errRepublish
 	}
 	f.pos.Seq = floorSeq
+	return nil
+}
+
+func (f *fakeJournal) MarkRelayFraming(_ context.Context, seq int64) error {
+	if f.errMark != nil {
+		return f.errMark
+	}
+	f.marked = append(f.marked, seq)
 	return nil
 }
 
@@ -756,6 +766,11 @@ func TestPublishPending_StoreFailuresAreReportedNotSwallowed(t *testing.T) {
 	}{
 		{"reading the cursor", &fakeJournal{errCursor: boom}},
 		{"reading the journal", &fakeJournal{pos: sqlite.RelayPushPosition{PubEpoch: 1, NextRS: 1}, errRead: boom}},
+		{"marking the framing", &fakeJournal{
+			pos:     sqlite.RelayPushPosition{PubEpoch: 1, NextRS: 1},
+			rows:    []sqlite.RelayJournalEvent{fakeRow(1, "e1")},
+			errMark: boom,
+		}},
 		{"advancing the cursor", &fakeJournal{
 			pos:        sqlite.RelayPushPosition{PubEpoch: 1, NextRS: 1},
 			rows:       []sqlite.RelayJournalEvent{fakeRow(1, "e1")},
@@ -1062,4 +1077,32 @@ func TestVerifyTail_RefusesAnUnreadableTail(t *testing.T) {
 	_, err = p.PublishPending(context.Background())
 	require.Error(t, err)
 	require.NotErrorIs(t, err, publisher.ErrPublisherDiverged)
+}
+
+// The publisher marks the rows it read as being framed before it appends the
+// first one, and a failed mark appends nothing (a renumber must never miss a
+// row the relay may already carry).
+func TestPublishPending_MarksFramingBeforeAppend(t *testing.T) {
+	fake := &fakeJournal{
+		pos:  sqlite.RelayPushPosition{PubEpoch: 1, NextRS: 1},
+		rows: []sqlite.RelayJournalEvent{fakeRow(1, "e1"), fakeRow(2, "e2")},
+	}
+	p, err := publisher.New(fakeConfig(t, fake))
+	require.NoError(t, err)
+	n, err := p.PublishPending(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	require.Equal(t, []int64{2}, fake.marked)
+
+	failing := &fakeJournal{
+		pos:     sqlite.RelayPushPosition{PubEpoch: 1, NextRS: 1},
+		rows:    []sqlite.RelayJournalEvent{fakeRow(1, "e1")},
+		errMark: errors.New("database is unavailable"),
+	}
+	p2, err := publisher.New(fakeConfig(t, failing))
+	require.NoError(t, err)
+	n, err = p2.PublishPending(context.Background())
+	require.Error(t, err)
+	require.Zero(t, n)
+	require.Zero(t, failing.advances)
 }

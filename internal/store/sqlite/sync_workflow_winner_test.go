@@ -536,8 +536,8 @@ func TestApply_WinningWorkflowEvent_WritesExactlyItsTableRow(t *testing.T) {
 			for col, v := range before {
 				want, written := tt.want[col]
 				switch {
-				case col == "progress" && (tt.op == model.OpClaim || tt.op == model.OpTransitionStatus):
-					// MTIX-294: no table row writes progress; the apply re-derives it
+				case col == "progress" && (tt.op == model.OpClaim || tt.op == model.OpUnclaim || tt.op == model.OpTransitionStatus):
+					// MTIX-294: no table row writes progress; claim, unclaim and transition re-derive it
 					// from the node's status and children (FR-5.2), a leaf here.
 					derived := "0"
 					if tt.want["status"] == string(model.StatusDone) {

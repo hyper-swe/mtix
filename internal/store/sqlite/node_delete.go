@@ -90,7 +90,7 @@ func (s *Store) deleteNode(ctx context.Context, id string, opts deleteOptions) e
 
 		// MTIX-112.17.16.12: the root's delete event, then one for each
 		// descendant the cascade removed.
-		if err := s.emitDeleteEvents(ctx, tx, append([]string{id}, cascaded...), deletedBy); err != nil {
+		if err := s.emitDeleteEvents(ctx, tx, append([]string{id}, cascaded...), opts); err != nil {
 			return err
 		}
 
@@ -145,14 +145,14 @@ func recordCascadeRoot(ctx context.Context, tx *sql.Tx, id string, opts deleteOp
 // delete passes the root and every descendant it removed, because the applier
 // never cascades (SYNC-DESIGN section 8.3: each descendant carries its own
 // delete event) (MTIX-112.17.16.12).
-func (s *Store) emitDeleteEvents(ctx context.Context, tx *sql.Tx, ids []string, deletedBy string) error {
-	for _, id := range ids {
+func (s *Store) emitDeleteEvents(ctx context.Context, tx *sql.Tx, ids []string, opts deleteOptions) error {
+	for i, id := range ids {
 		if err := s.emitPayload(ctx, tx, emitParams{
 			NodeID:      id,
 			ProjectCode: projectPrefixFromNodeID(id),
 			OpType:      model.OpDelete,
-			Author:      deletedBy,
-		}, &model.DeletePayload{}); err != nil {
+			Author:      opts.deletedBy,
+		}, &model.DeletePayload{Path: id, Cascade: i == 0 && opts.cascade}); err != nil {
 			return err
 		}
 	}

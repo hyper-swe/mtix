@@ -1,0 +1,235 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "decision-wire-v1.json",
+  "title": "Decision comment payload v1",
+  "allOf": [{"$ref": "#/$defs/Header"}],
+  "oneOf": [
+    {"properties": {"kind": {"const": "request"}}, "$ref": "#/$defs/Request"},
+    {"properties": {"kind": {"const": "answer"}}, "$ref": "#/$defs/Answer"},
+    {"properties": {"kind": {"const": "outcome"}}, "$ref": "#/$defs/Outcome"},
+    {"properties": {"kind": {"const": "withdraw"}}, "$ref": "#/$defs/Withdraw"}
+  ],
+  "$defs": {
+    "Header": {
+      "type": "object",
+      "properties": {
+        "v": {"type": "integer", "minimum": 0, "const": 1},
+        "kind": {"type": "string", "enum": ["request", "answer", "outcome", "withdraw"]},
+        "request_key": {"type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$"}
+      },
+      "required": ["v", "kind", "request_key"]
+    },
+    "Request": {
+      "type": "object",
+      "properties": {
+        "question": {"type": "string", "maxLength": 300, "pattern": "^[^\r\n\u0085\u2028\u2029]*$", "minLength": 1},
+        "context": {"type": "string", "maxLength": 32768, "x-maxUtf8Bytes": 32768},
+        "options": {"type": "array", "items": {"$ref": "#/$defs/Option"}, "maxItems": 9},
+        "recommend": {"$ref": "#/$defs/Recommendation"},
+        "links": {"type": "array", "items": {"$ref": "#/$defs/Link"}, "maxItems": 10},
+        "deadline": {"type": "string", "format": "date-time", "pattern": "(Z|\\+00:00)$"},
+        "answerable_by": {"type": "string", "enum": ["user", "any"], "default": "user"},
+        "answerers": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"}, "maxItems": 8},
+        "requires_outcome": {"type": "boolean", "default": true},
+        "key": {"type": "string", "pattern": "^[A-Za-z0-9:._/-]{1,128}$"},
+        "supersedes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+          },
+          "maxItems": 4
+        },
+        "category": {"type": "string", "pattern": "^[a-z0-9-]{1,32}$"},
+        "source": {
+          "type": "object",
+          "maxProperties": 8,
+          "propertyNames": {"pattern": "^[a-z_]{1,24}$"},
+          "additionalProperties": {"type": "string", "maxLength": 120}
+        },
+        "ticket": {"$ref": "#/$defs/Ticket"},
+        "asker": {"$ref": "#/$defs/Actor"}
+      },
+      "required": ["question", "ticket"]
+    },
+    "Option": {
+      "type": "object",
+      "properties": {
+        "id": {"type": "string", "pattern": "^[a-z0-9_-]{1,32}$"},
+        "label": {"type": "string", "maxLength": 80},
+        "consequence": {"type": "string", "maxLength": 160, "pattern": "^[^\r\n\u0085\u2028\u2029]*$"},
+        "input": {"$ref": "#/$defs/Input"},
+        "note_required": {"type": "boolean"}
+      },
+      "required": ["id", "label"]
+    },
+    "Input": {
+      "type": "object",
+      "properties": {
+        "type": {"type": "string", "enum": ["text", "finding_id", "story_ref", "url"]},
+        "required": {"type": "boolean"}
+      },
+      "required": ["type", "required"]
+    },
+    "Recommendation": {
+      "type": "object",
+      "properties": {
+        "option": {"type": "string", "pattern": "^[a-z0-9_-]{1,32}$"},
+        "reason": {"type": "string", "maxLength": 300}
+      },
+      "required": ["option"]
+    },
+    "Link": {
+      "type": "object",
+      "properties": {
+        "kind": {"type": "string", "minLength": 1},
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^[Hh][Tt][Tt][Pp]([Ss]://|://([^/?#@]*@)?(127\\.0\\.0\\.1|\\[::1\\]|[Ll][Oo][Cc][Aa][Ll][Hh][Oo][Ss][Tt])(:[0-9]+)?([/?#]|$))"
+        },
+        "label": {"type": "string", "maxLength": 80},
+        "required": {"type": "boolean"},
+        "open_before_answer": {"type": "boolean"}
+      },
+      "required": ["kind", "url"]
+    },
+    "Ticket": {
+      "type": "object",
+      "properties": {
+        "uid": {"type": "string", "minLength": 1},
+        "ancestors": {"type": "array", "items": {"type": "string"}, "maxItems": 64},
+        "paths": {"type": "array", "items": {"type": "string", "minLength": 1}, "maxItems": 65},
+        "path_match": {"type": "array", "items": {"type": "boolean"}, "maxItems": 65},
+        "truncated": {"type": "boolean"}
+      },
+      "required": ["uid", "ancestors", "paths", "path_match", "truncated"]
+    },
+    "Actor": {
+      "type": "object",
+      "properties": {
+        "kind": {"type": "string", "enum": ["user", "agent"]},
+        "model": {"type": "string", "maxLength": 80}
+      },
+      "required": ["kind"]
+    },
+    "Answer": {
+      "type": "object",
+      "properties": {
+        "option": {"type": "string", "pattern": "^[a-z0-9_-]{1,32}$"},
+        "input_value": {"type": "string", "$comment": "Validated against the selected request option."},
+        "note": {"type": "string", "maxLength": 16384, "x-maxUtf8Bytes": 16384},
+        "decider": {"$ref": "#/$defs/Actor"},
+        "channel": {"type": "string", "minLength": 1},
+        "evidence": {"$ref": "#/$defs/Evidence"},
+        "attestation": {"$ref": "#/$defs/Attestation"},
+        "opened_links": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 9}},
+        "target": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+        }
+      },
+      "required": ["decider", "channel", "target"],
+      "allOf": [
+        {
+          "if": {"properties": {"channel": {"pattern": "^frontend:"}}},
+          "then": {"required": ["attestation"]}
+        }
+      ]
+    },
+    "Evidence": {
+      "type": "object",
+      "properties": {
+        "ancestors": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
+        "tty_session": {"type": "integer", "minimum": 0, "maximum": 9007199254740991},
+        "markers_unset": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "Attestation": {
+      "type": "object",
+      "properties": {
+        "frontend": {"type": "string", "minLength": 1},
+        "user": {"type": "string", "maxLength": 120},
+        "clicked_at": {"type": "string", "format": "date-time"}
+      },
+      "required": ["frontend", "user", "clicked_at"]
+    },
+    "Outcome": {
+      "type": "object",
+      "properties": {
+        "answer": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+        },
+        "seen_answers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+          },
+          "maxItems": 32
+        },
+        "result": {"type": "string", "enum": ["applied", "refused"]},
+        "receipt": {"$ref": "#/$defs/Receipt"},
+        "refusal": {"$ref": "#/$defs/Refusal"},
+        "target": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+        }
+      },
+      "required": ["answer", "result", "target"],
+      "allOf": [
+        {
+          "if": {"properties": {"result": {"const": "refused"}}},
+          "then": {"required": ["refusal"], "not": {"required": ["receipt"]}},
+          "else": {"not": {"anyOf": [{"required": ["refusal"]}, {"required": ["seen_answers"]}]}}
+        }
+      ]
+    },
+    "Receipt": {
+      "type": "object",
+      "properties": {
+        "ledger": {"type": "string", "maxLength": 64},
+        "run": {"type": "string", "maxLength": 128},
+        "seq": {"type": "integer", "minimum": 0},
+        "hash": {"type": "string", "pattern": "^[0-9a-fA-F]{0,128}$"},
+        "kind": {"type": "string", "maxLength": 32},
+        "at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "Refusal": {
+      "type": "object",
+      "properties": {
+        "text": {"type": "string", "maxLength": 16384, "x-maxUtf8Bytes": 16384},
+        "code": {"type": "string", "maxLength": 64}
+      },
+      "required": ["text"]
+    },
+    "Withdraw": {
+      "type": "object",
+      "properties": {
+        "reason_code": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "maxLength": 2048, "x-maxUtf8Bytes": 2048},
+        "elsewhere": {"$ref": "#/$defs/Elsewhere"},
+        "target": {
+          "type": "string",
+          "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+        }
+      },
+      "required": ["target"],
+      "dependentSchemas": {
+        "elsewhere": {"required": ["reason_code"], "properties": {"reason_code": {"const": "answered_elsewhere"}}}
+      }
+    },
+    "Elsewhere": {
+      "type": "object",
+      "properties": {
+        "channel": {"type": "string", "maxLength": 64},
+        "decider": {"$ref": "#/$defs/Actor"},
+        "receipt": {"$ref": "#/$defs/Receipt"}
+      },
+      "required": ["channel", "decider"]
+    }
+  },
+  "$comment": "Validate decoded canonical objects. Duplicate member detection, byte/depth limits, parallel arrays, option references and actor-dependent checks are enforced by the wire validator."
+}

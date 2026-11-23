@@ -1,0 +1,11 @@
+{
+  "v": 1,
+  "request_key": "k",
+  "kind": "outcome",
+  "target": "01912345-6789-7abc-8123-123456789abc",
+  "answer": "01912345-6790-7abc-8123-123456789abc",
+  "result": "refused",
+  "refusal": {
+    "text": "Please rerun."
+  }
+}

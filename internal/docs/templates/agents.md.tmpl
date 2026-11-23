@@ -361,7 +361,7 @@ Hub contact by the daemon follows `sync.hub_contact` (`activity` default, `inter
 
 On relay-configured boards, `mtix doctor` includes the read-only `daemon.detached-listener` row: a running detached listener is INFO with the fix `mtix daemon stop --listener && mtix daemon status --listener`, and doctor never stops anything. The sync skill has the full runbook, including exit 10 and why stop does not release waiter leases.
 
-Mirror exports retain one durable local generation across restart; read count and oldest age with `mtix sync status` or `mtix sync doctor`, retry safely with the doctor's `mtix list` command, and follow the sync skill for pulled-board refusals and migration limits.
+The daemon's tick and debounced mirror exports run one at a time. Mirror exports retain one durable local generation across restart; read count and oldest age with `mtix sync status` or `mtix sync doctor`, retry safely with the doctor's `mtix list` command, and follow the sync skill for pulled-board refusals and migration limits.
 
 ## File relay (experimental, opt-in)
 

@@ -99,6 +99,7 @@ mtix exposes tools via MCP (Model Context Protocol). Use the `mcp__mtix__` prefi
 
 - **Prefer MCP tools over CLI** when both are available — MCP tools return structured data
 - **Batch operations** — use `mcp__mtix__mtix_decompose` instead of multiple `mcp__mtix__mtix_create` calls
+  Each child may set `issue_type` (or `type`: bug, feature, task, chore, refactor, test, doc); any unknown key is refused and nothing is created.
 - **Search before creating** — use `mcp__mtix__mtix_search` with `query` to check for existing similar tasks. An empty result means nothing matched: do not retry with a different tool believing the search was skipped
 - **Use briefing format for analysis** — call `mcp__mtix__mtix_briefing` with multi-value filters instead of writing Python/jq post-processing code. Example: `mtix_briefing(under="PROJ-1,PROJ-2", status="done", type="issue", fields="id,title,prompt")`
 - **Progress checks** — use `mcp__mtix__mtix_progress` to verify rollup before reporting completion

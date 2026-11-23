@@ -119,6 +119,7 @@ func (s *Server) HandleDecompose(ctx context.Context, parentID, creator string, 
 			Title:      c.Title,
 			Prompt:     c.Prompt,
 			Acceptance: c.Acceptance,
+			IssueType:  c.IssueType,
 		})
 	}
 	ids, err := s.nodeSvc.Decompose(ctx, parentID, items, creator)
@@ -439,9 +440,10 @@ type UpdateNodeReq struct {
 
 // DecomposeChildReq maps to DecomposeChild proto message.
 type DecomposeChildReq struct {
-	Title      string `json:"title"`
-	Prompt     string `json:"prompt"`
-	Acceptance string `json:"acceptance"`
+	Title      string          `json:"title"`
+	Prompt     string          `json:"prompt"`
+	Acceptance string          `json:"acceptance"`
+	IssueType  model.IssueType `json:"issue_type,omitempty"`
 }
 
 // BulkNodeUpdateReq maps to BulkNodeUpdate proto message.

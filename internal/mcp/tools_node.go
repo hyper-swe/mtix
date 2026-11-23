@@ -284,23 +284,27 @@ func registerDecomposeTool(reg *ToolRegistry, svc *service.NodeService, author s
 			Type: "object",
 			Properties: map[string]SchemaProp{
 				"parent_id": {Type: "string", Description: "Parent node ID"},
-				"children":  {Type: "string", Description: "JSON array of {title, prompt, acceptance}"},
+				"children":  {Type: "string", Description: "JSON array of children; keys: title (required), prompt, acceptance, description, priority, labels, issue_type (alias type; bug, feature, task, chore, refactor, test, doc). Unknown keys are refused and nothing is created"},
 				"creator":   {Type: "string", Description: "Author of the children; defaults to the server's MTIX_AUTHOR_ID or author_id, then mcp. Children are claimed only when this equals the parent's assignee"},
 			},
 			Required: []string{"parent_id", "children"},
 		},
 	}, func(ctx context.Context, args json.RawMessage) (*ToolsCallResult, error) {
 		var p struct {
-			ParentID string                   `json:"parent_id"`
-			Children []service.DecomposeInput `json:"children"`
-			Creator  string                   `json:"creator"`
+			ParentID string            `json:"parent_id"`
+			Children []json.RawMessage `json:"children"`
+			Creator  string            `json:"creator"`
 		}
 		if err := json.Unmarshal(args, &p); err != nil {
 			return nil, fmt.Errorf("parse decompose args: %w", err)
 		}
 
+		children, err := service.DecodeDecomposeChildren(p.Children)
+		if err != nil {
+			return nil, err
+		}
 		creator := resolveMCPCreator(p.Creator, author)
-		ids, err := svc.Decompose(ctx, p.ParentID, p.Children, creator)
+		ids, err := svc.Decompose(ctx, p.ParentID, children, creator)
 		if err != nil {
 			return nil, err
 		}

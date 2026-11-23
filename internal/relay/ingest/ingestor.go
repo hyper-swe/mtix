@@ -254,10 +254,15 @@ func (in *Ingestor) ingestPeer(ctx context.Context, peer segment.PeerDir, stats 
 		position.PubEpoch = 0
 	}
 
-	for _, file := range Unread(segs, position) {
-		outcome, stop := in.ingestSegment(ctx, peer.PeerID, segmentTurn{file: file, sealed: file.No < newest, prev: position, ch: walk}, stats)
+	unread := Unread(segs, position)
+	for i, file := range unread {
+		turn := segmentTurn{file: file, sealed: file.No < newest, prev: position, ch: walk}
+		if i+1 < len(unread) {
+			turn.next = &unread[i+1]
+		}
+		outcome, stop := in.ingestSegment(ctx, peer.PeerID, turn, stats)
 		if !stop && outcome.Verdict == nil {
-			walk.advance(Position{SegmentNo: outcome.Reached.SegmentNo, RS: outcome.Reached.RS, PubEpoch: outcome.Reached.PubEpoch})
+			walk.step(outcome)
 		}
 		next, err := in.advance(ctx, peer.PeerID, position, outcome)
 		if err != nil {

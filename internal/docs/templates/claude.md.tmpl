@@ -130,6 +130,8 @@ The daemon's tick and debounced mirror exports run one at a time. Mirror exports
 
 ## File relay (experimental, opt-in)
 
+After a publisher crash or restart leaves a torn tail in a sealed segment, the reader applies every complete record once, never a partial one, and logs `reconciled torn seal` when the next segment of the same peer and publisher epoch resumes at or before the first missing record and its first record verifies. It then continues with no operator action. A torn tail the successor does not explain, and any damage inside a sealed segment, still stalls that peer with `RELAY_SEGMENT_CORRUPT` (it is never skipped).
+
 The file relay carries sync events through a shared directory (a mounted folder, a network filer, removable media) for machines that cannot reach a database. It is **experimental**: supported for trial use, its behavior and on-disk format may change in 0.6.0, and it is not yet covered by the release gate. It is **opt-in**: nothing changes unless `sync.relay.dir` is set, and no relay command contacts a hub. The full runbook is the `mtix-sync` skill.
 
 - **Use it** only when the user has asked for a shared-directory transport. Never turn it on to fix an unrelated problem.

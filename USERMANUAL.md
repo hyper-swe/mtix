@@ -474,6 +474,8 @@ After `mtix rerun --strategy delete`, undeleting a direct child restores its sub
 
 A cascade delete sends one sync delete event for the node and one for each descendant it removes (not for a descendant that was already deleted), so other replicas delete the same nodes. A cascade delete made by an earlier version sent an event for the named node only: on other replicas its descendants stay live. Undelete is local: it emits no sync event. Other replicas keep the node deleted.
 
+A delete event now records the display path of the deleted node and whether the delete was a requested cascade. A delete from an earlier version carries neither field. No command, flag or output changes.
+
 Soft-deleted nodes are automatically purged after the retention period (default 30 days, configurable via `data.soft_delete_retention`).
 
 ---
@@ -2827,6 +2829,8 @@ pull's position either, so later changes keep arriving.
   the failed tries; `source` (in `--json`) is `pull` (the regular fetch)
   or `sweep` (the late-event sweep), `push` (an own event held back) or
   `relay` (a record relay ingest skipped; see below).
+
+  After a publisher crash or restart leaves a torn tail in a sealed segment, the reader applies every complete record once, never a partial one, and logs `reconciled torn seal` when the next segment of the same peer and publisher epoch resumes at or before the first missing record and its first record verifies. It then continues with no operator action. A torn tail the successor does not explain, and any damage inside a sealed segment, still stalls that peer with `RELAY_SEGMENT_CORRUPT` (it is never skipped).
 
   **A missing relay segment stops that peer's stream.** If a segment of a
   peer's stream is missing from the relay (deleted, lost by the medium, or never

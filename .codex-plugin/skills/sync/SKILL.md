@@ -9,6 +9,8 @@ The hub is a Postgres database that you and your teammates' agents push task cha
 
 ## Replicated annotation and workflow data
 
+Protocol 1 delete events record the display path at deletion and whether the operator requested a cascade at that root. Each event tombstones only its own target on replay. Treat a legacy delete with an empty payload as evidence for that target alone.
+
 New comment events carry the annotation identity, creation time, addressee and
 resolved state. Push then pull (or clone a fresh checkout) preserves these fields;
 resolving or unresolving updates the original annotation and does not deliver a
@@ -854,6 +856,8 @@ resolution receipt. Ordinary field changes are still recorded separately;
 resolution records are exempt from ordinary change-entry retention. Imports reject valued or malformed resolution records before any write; the refusal names the task and entry, never the values. Ask the source writer to regenerate a valid board; do not hand-edit history or bypass its checksum.
 
 ## File relay (experimental)
+
+After a publisher crash or restart leaves a torn tail in a sealed segment, the reader applies every complete record once, never a partial one, and logs `reconciled torn seal` when the next segment of the same peer and publisher epoch resumes at or before the first missing record and its first record verifies. It then continues with no operator action. A torn tail the successor does not explain, and any damage inside a sealed segment, still stalls that peer with `RELAY_SEGMENT_CORRUPT` (it is never skipped).
 
 The relay is a second sync transport that carries the same events through a shared directory instead of a Postgres hub. It is **experimental and opt-in**: supported for trial use, its behavior and on-disk format may change in 0.6.0, and it is not yet covered by the release gate. Nothing changes for a project unless `sync.relay.dir` is set. Each machine keeps its own local `.mtix`; the directory carries events, never the database.
 

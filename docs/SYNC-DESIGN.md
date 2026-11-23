@@ -92,7 +92,7 @@ Events are the unit of replication. Schema lives in `sync_events` (local mirror)
 7. `comment` — payload: `{author_id, body}`.
 8. `link_dep` — payload: `{depends_on_node_id, dep_type}`.
 9. `unlink_dep` — payload: `{depends_on_node_id}`.
-10. `delete` — payload: `{}` (tombstone). Monotonic — once deleted, stays deleted; see §8.3.
+10. `delete` — payload: `{"path":"PROJ-1","cascade":true}` for a cascade root. Each descendant event records its own path and `cascade: false`, as does a single-node delete. The path records the display ID at deletion and survives a reconcile rename. Readers apply each tombstone to its envelope target. Legacy `{}` carries only a self delete. Monotonic — once deleted, stays deleted; see §8.3.
 11. `set_acceptance` — payload: `{acceptance_text}`.
 12. `set_prompt` — payload: `{prompt_text}`.
 

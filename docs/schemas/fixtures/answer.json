@@ -1,0 +1,16 @@
+{
+  "v": 1,
+  "request_key": "k",
+  "kind": "answer",
+  "target": "01912345-6789-7abc-8123-123456789abc",
+  "decider": {
+    "kind": "user"
+  },
+  "channel": "web",
+  "note": "why",
+  "option": "yes",
+  "input_value": "Release",
+  "opened_links": [
+    0
+  ]
+}

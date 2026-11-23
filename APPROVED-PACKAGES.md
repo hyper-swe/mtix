@@ -177,6 +177,19 @@
 | CVE Status | Historical CVEs addressed in current versions. Always use latest. |
 | Notes | For SHA-256, prefer `crypto/sha256` from stdlib. Only use `x/crypto` if additional algorithms are needed. |
 
+### 11a. Unicode Normalization
+
+| Package | `golang.org/x/text` (`unicode/norm` only) |
+|---------|-------------------------------------------|
+| Version | v0.42.0 (already pinned indirectly; now a direct dependency) |
+| License | BSD-3-Clause |
+| Purpose | Unicode NFC normalization of decision answer text for comparison (ADR-008 section 3.2, MTIX-219.4) |
+| Status | **APPROVED** (founder ruling DESK-1.381, 2026-11-21) |
+| CVE Status | No known CVEs in `unicode/norm`; `govulncheck` runs in CI. |
+| Conditions | Import from `internal/service` only. `internal/model` stays dependency-free. Use exact trim plus NFC; the library's stream-safe processing inserts U+034F into runs of more than 30 combining marks, so `NormalizeDecisionText` refuses such text instead of rewriting it. |
+| Alternatives Rejected | Hand-written NFC tables (correctness risk), plain `strings.TrimSpace` (two canonically equal answers would conflict) |
+| Approval record | Founder approval 2026-11-18 (DESK-1.142) and placement ruling 2026-11-21 (DESK-1.381), recorded on MTIX-219.4. The approval process (Step 6) is satisfied by this entry. |
+
 ---
 
 ## Logging

@@ -25,7 +25,7 @@
 // nothing else — peers already attached verified a copy into their own
 // configuration and do not consult it to move data.
 //
-// The package is pure: standard library only, no store imports, no
+// The package is pure: no store imports, no
 // goroutines. It mints neither identity nor timestamps — a caller
 // supplies the relay id, the creation time, and the project set, which
 // keeps the record reproducible and this layer free of a clock.
@@ -37,9 +37,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"time"
+
+	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 )
 
 // FileName is the relay identity record's name inside the relay
@@ -60,11 +62,6 @@ const FirstKeyEpoch uint16 = 1
 // the key material lives elsewhere — but it is authoritative, so it is
 // written owner-writable rather than group-writable.
 const fileMode os.FileMode = 0o644
-
-// peerIDPattern is the FR-21 §5.2 identity grammar. It is restated here
-// rather than imported: this package carries no dependency on the frame
-// layer, and the grammar is part of the record's own validity.
-var peerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
 
 // Verdict codes surfaced to operators.
 const (
@@ -212,8 +209,8 @@ func (r *Relay) validate() error {
 	if r.RelayID == "" {
 		return errors.New("relay id is required")
 	}
-	if !peerIDPattern.MatchString(r.CreatedBy) {
-		return fmt.Errorf("creating peer %q is not a valid peer id", r.CreatedBy)
+	if !peerid.Valid(r.CreatedBy) {
+		return fmt.Errorf("%w: created_by has invalid peer id %q", model.ErrInvalidInput, r.CreatedBy)
 	}
 	if len(r.Projects) == 0 {
 		return errors.New("at least one project is required")
@@ -229,6 +226,29 @@ func (r *Relay) validate() error {
 			return fmt.Errorf("project %q appears twice", p.Prefix)
 		}
 		seen[p.Prefix] = true
+	}
+	for _, boundary := range r.KeyEpochs {
+		if err := validateBoundaryPeers(boundary.FromRSByPeer); err != nil {
+			return err
+		}
+	}
+	return validateRetiredPeers(r.RetiredPeers)
+}
+
+func validateBoundaryPeers(peers map[string]uint64) error {
+	for id := range peers {
+		if !peerid.Valid(id) {
+			return fmt.Errorf("%w: key_epochs.from_rs_by_peer has invalid peer id %q", model.ErrInvalidInput, id)
+		}
+	}
+	return nil
+}
+
+func validateRetiredPeers(peers []string) error {
+	for _, id := range peers {
+		if !peerid.Valid(id) {
+			return fmt.Errorf("%w: retired_peers has invalid peer id %q", model.ErrInvalidInput, id)
+		}
 	}
 	return nil
 }
@@ -256,10 +276,8 @@ func (r *Relay) AppendKeyEpoch(epoch uint16, fromRSByPeer map[string]uint64) err
 	if !ok || epoch <= current {
 		return fmt.Errorf("%w: epoch %d does not follow %d", ErrEpochNotForward, epoch, current)
 	}
-	for peer := range fromRSByPeer {
-		if !peerIDPattern.MatchString(peer) {
-			return fmt.Errorf("append key epoch: peer %q is not a valid peer id", peer)
-		}
+	if err := validateBoundaryPeers(fromRSByPeer); err != nil {
+		return fmt.Errorf("append key epoch: %w", err)
 	}
 	boundary := KeyEpochBoundary{Epoch: epoch}
 	if len(fromRSByPeer) > 0 {
@@ -298,7 +316,7 @@ func Read(dir string) (*Relay, error) {
 		return nil, fmt.Errorf("%w: %s: %v", ErrRelayCorrupt, path, err)
 	}
 	if err := doc.validate(); err != nil {
-		return nil, fmt.Errorf("%w: %s: %v", ErrRelayCorrupt, path, err)
+		return nil, fmt.Errorf("%w: %s: %w", ErrRelayCorrupt, path, err)
 	}
 	return &doc, nil
 }
@@ -347,10 +365,6 @@ func Rewrite(dir string, doc *Relay) error {
 	// field fixed at init, and reporting it as an unsupported format
 	// would send the reader looking for a version problem that is not
 	// there.
-	// checkAppendOnly compares every field validate would check against
-	// a record Read already validated, so a document that passes it is
-	// valid by construction — there is no second validation to run here
-	// that could ever fire.
 	if appendErr := existing.checkAppendOnly(doc); appendErr != nil {
 		return appendErr
 	}
@@ -394,15 +408,18 @@ func (r *Relay) checkAppendOnly(next *Relay) error {
 			return fmt.Errorf("%w: key_epochs entry %d", ErrRelayImmutable, i)
 		}
 	}
+	for _, boundary := range next.KeyEpochs[len(r.KeyEpochs):] {
+		if err := validateBoundaryPeers(boundary.FromRSByPeer); err != nil {
+			return fmt.Errorf("rewrite relay record: %w", err)
+		}
+	}
 	// retired_peers is a live ROSTER, not history: retire-peer adds to
 	// it and a peer rejoining through bootstrap clears its own entry
 	// (FR-21 §6.7), so both directions are permitted. key_epochs above
 	// is the opposite — it records where a rotation boundary fell, and
 	// moving one would relocate a line readers have already crossed.
-	for _, p := range next.RetiredPeers {
-		if !peerIDPattern.MatchString(p) {
-			return fmt.Errorf("%w: retired_peers names %q", ErrRelayImmutable, p)
-		}
+	if err := validateRetiredPeers(next.RetiredPeers); err != nil {
+		return fmt.Errorf("%w: %w", ErrRelayImmutable, err)
 	}
 	return nil
 }

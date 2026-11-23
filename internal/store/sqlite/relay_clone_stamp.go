@@ -11,6 +11,7 @@ import (
 	"strconv"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 )
 
 // relayCloneStampPrefix keys the publisher epoch a snapshot stamped for one
@@ -27,7 +28,7 @@ const relayCloneStampPrefix = "meta.relay.clone_stamp_epoch."
 // relay sequence; a re-clone onto a cursor already further along keeps the stamp
 // that belongs to that cursor.
 func (s *Store) SeedRelayCloneCursor(ctx context.Context, peerID string, rs uint64, epoch uint16) error {
-	if !relayPeerIDPattern.MatchString(peerID) {
+	if !peerid.Valid(peerID) {
 		return fmt.Errorf("seed relay clone cursor: peer id %q is malformed: %w", peerID, model.ErrInvalidInput)
 	}
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
@@ -62,7 +63,7 @@ func (s *Store) SeedRelayCloneCursor(ctx context.Context, peerID string, rs uint
 // zero when none was stamped. A stored value outside the frame's range is
 // refused rather than read as zero.
 func (s *Store) RelayCloneStampEpoch(ctx context.Context, peerID string) (uint16, error) {
-	if !relayPeerIDPattern.MatchString(peerID) {
+	if !peerid.Valid(peerID) {
 		return 0, fmt.Errorf("relay clone stamp: peer id %q is malformed: %w", peerID, model.ErrInvalidInput)
 	}
 	var raw string

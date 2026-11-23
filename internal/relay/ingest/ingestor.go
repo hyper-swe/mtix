@@ -13,11 +13,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 	"github.com/hyper-swe/mtix/internal/relay/segment"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
@@ -43,9 +43,6 @@ const segmentsSubdir = "segments"
 // software, and a reader must not size an allocation from a file whose
 // length it did not choose.
 const maxSegmentRead = 64 << 20
-
-// peerIDPattern is the FR-21 §5.2 identity grammar.
-var peerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
 
 // KeySelector resolves the key for a frame's declared epoch. It is an
 // interface so ingest carries no opinion about where keys live; the
@@ -156,7 +153,7 @@ func New(cfg Config) (*Ingestor, error) {
 	if cfg.Store == nil {
 		return nil, errors.New("relay ingest: store is required")
 	}
-	if !peerIDPattern.MatchString(cfg.SelfPeerID) {
+	if !peerid.Valid(cfg.SelfPeerID) {
 		return nil, fmt.Errorf("relay ingest: peer id %q is malformed", cfg.SelfPeerID)
 	}
 	if cfg.Unauthenticated == (cfg.Keys != nil) {

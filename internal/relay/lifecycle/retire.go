@@ -5,14 +5,10 @@ package lifecycle
 
 import (
 	"fmt"
-	"regexp"
 
 	"github.com/hyper-swe/mtix/internal/relay/metadata"
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 )
-
-// peerIDPattern is the FR-21 §5.2 identity grammar, restated here
-// because this package carries no dependency on the frame layer.
-var peerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
 
 // RetirePeer drops a peer from every prune quorum (FR-21 §6.7).
 //
@@ -27,7 +23,7 @@ var peerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
 // than an error, so an operator re-running the command after an
 // interrupted session is not punished for it.
 func RetirePeer(relayDir, peerID string) error {
-	if !peerIDPattern.MatchString(peerID) {
+	if !peerid.Valid(peerID) {
 		return fmt.Errorf("retire peer: peer id %q is malformed", peerID)
 	}
 	doc, err := metadata.Read(relayDir)
@@ -53,7 +49,7 @@ func RetirePeer(relayDir, peerID string) error {
 //
 // Idempotent: rejoining a peer that was never retired is a no-op.
 func RejoinPeer(relayDir, peerID string) error {
-	if !peerIDPattern.MatchString(peerID) {
+	if !peerid.Valid(peerID) {
 		return fmt.Errorf("rejoin peer: peer id %q is malformed", peerID)
 	}
 	doc, err := metadata.Read(relayDir)

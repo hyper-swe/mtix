@@ -2854,6 +2854,15 @@ pull's position either, so later changes keep arriving.
   a hole beyond it is not ruled out. Run `mtix sync relay tick` for the stall and
   its recovery, then `mtix sync doctor` again.
 
+  **A store error is not a skipped record.** If the local database is busy,
+  the disk is full, an I/O error occurs or the poll is cancelled while a record
+  is being applied, the poll fails with `apply relay record <peer> rs <n>: ...`.
+  The record is not quarantined and the ingest cursor stays before it, so the
+  next successful poll applies it exactly once; records after it in that peer's
+  stream wait. Free the disk or the lock and run `mtix sync relay tick` again
+  (after a `fail-stop` error, restart mtix first). Only a record the apply path
+  itself rejects as invalid is skipped as described next.
+
   **Records the file relay skipped.** When relay ingest cannot apply a record
   from an authenticated peer (for example two peers took the same next task
   number), the record is stored in the local relay quarantine before the ingest

@@ -20,6 +20,9 @@ type DecomposeInput struct {
 	Description string         `json:"description,omitempty"`
 	Priority    model.Priority `json:"priority,omitempty"`
 	Labels      []string       `json:"labels,omitempty"`
+	// IssueType is the optional work classification (FR-3.1), JSON key
+	// issue_type with type accepted as an alias (MTIX-279).
+	IssueType model.IssueType `json:"issue_type,omitempty"`
 }
 
 // Decompose creates multiple child nodes under a parent in a single atomic operation
@@ -32,18 +35,9 @@ type DecomposeInput struct {
 func (svc *NodeService) Decompose(
 	ctx context.Context, parentID string, children []DecomposeInput, creator string,
 ) ([]string, error) {
-	if len(children) == 0 {
-		return nil, fmt.Errorf("at least one child is required: %w", model.ErrInvalidInput)
-	}
-
-	// Validate all children upfront before any writes.
-	for i, child := range children {
-		if child.Title == "" {
-			return nil, fmt.Errorf("child %d: title is required: %w", i, model.ErrInvalidInput)
-		}
-		if len(child.Title) > model.MaxTitleLength {
-			return nil, fmt.Errorf("child %d: title too long: %w", i, model.ErrInvalidInput)
-		}
+	// Validate all children upfront before any writes (shared rule, MTIX-279).
+	if err := ValidateDecomposeChildren(children); err != nil {
+		return nil, err
 	}
 
 	// This parent check is an early, advisory one: CreateNodesAllocated checks
@@ -99,6 +93,7 @@ func (svc *NodeService) prepareDecomposeChildren(
 		req.Acceptance = child.Acceptance
 		req.Priority = child.Priority
 		req.Labels = child.Labels
+		req.IssueType = child.IssueType
 		node, err := svc.buildNode(ctx, &req, now)
 		if err != nil {
 			return nil, fmt.Errorf("create child %q: %w", child.Title, err)

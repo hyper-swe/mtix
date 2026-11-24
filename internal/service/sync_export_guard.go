@@ -183,12 +183,6 @@ func (s *SyncService) exportBlockedByPendingImport(mtixDir string) bool {
 // that differs from the last export is first kept in data/refused-boards
 // (MTIX-112.17.16.16).
 func (s *SyncService) ForceExport(ctx context.Context, mtixDir string) error {
-	if _, err := s.keepRefusedBoard(mtixDir); err != nil {
-		return err
-	}
-	if err := s.resolveRefusal(mtixDir, ""); err != nil {
-		return err
-	}
 	return s.exportBoard(ctx, mtixDir)
 }
 

@@ -98,17 +98,25 @@ func (c *chain) advance(reached Position) {
 
 // openSegment reads and parses one segment, refuses it with RELAY_GAP when a
 // hole precedes it (a deleted or never-published predecessor, MTIX-265), and
-// resolves its key.
-func (in *Ingestor) openSegment(peerID string, file segment.File, ch chain) ([]byte, segment.Header, []byte, error) {
-	raw, err := readSegment(file.Path)
+// resolves its key. An incomplete header (empty or short file) in a sealed
+// segment is a corruption verdict, ErrSegmentCorrupt (RELAY_SEGMENT_CORRUPT),
+// because a later segment proves it is final; in the active tail it is
+// returned as incomplete so the caller retries on the next poll (FR-21 5.3,
+// MTIX-288).
+func (in *Ingestor) openSegment(peerID string, t segmentTurn) ([]byte, segment.Header, []byte, error) {
+	raw, err := readSegment(t.file.Path)
 	if err != nil {
 		return nil, segment.Header{}, nil, err
 	}
 	header, err := segment.ParseHeader(raw)
+	if t.sealed && segment.IsIncomplete(err) {
+		return nil, segment.Header{}, nil, fmt.Errorf("%w: sealed segment %d has only %d header bytes",
+			segment.ErrSegmentCorrupt, t.file.No, len(raw))
+	}
 	if err != nil {
 		return nil, segment.Header{}, nil, err
 	}
-	if gapErr := ch.check(peerID, header); gapErr != nil {
+	if gapErr := t.ch.check(peerID, header); gapErr != nil {
 		return nil, segment.Header{}, nil, gapErr
 	}
 	key, err := in.keyFor(header)
@@ -197,7 +205,8 @@ func peerGap(ctx context.Context, peer segment.PeerDir, pos Position, keys KeySe
 	}
 	newest := segs[len(segs)-1].No
 	ch := newChain(pos)
-	for _, f := range Unread(segs, pos) {
+	unread := Unread(segs, pos)
+	for i, f := range unread {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, nil, fmt.Errorf("continuity walk of peer %s: %w", peer.PeerID, ctxErr)
 		}
@@ -212,12 +221,20 @@ func peerGap(ctx context.Context, peer segment.PeerDir, pos Position, keys KeySe
 		if cErr := ch.check(peer.PeerID, h); cErr != nil {
 			return &Gap{PeerID: peer.PeerID, Reason: cErr.Error()}, nil, nil
 		}
-		reached, scanErr := scanReached(scanInput{raw: raw, header: h, prev: ch.pos,
-			sealed: f.No < newest, peerID: peer.PeerID, keys: keys})
+		in := scanInput{raw: raw, header: h, prev: ch.pos,
+			sealed: f.No < newest, peerID: peer.PeerID, keys: keys}
+		if i+1 < len(unread) {
+			in.next = &unread[i+1]
+		}
+		reached, scanErr := scanReached(in)
 		if scanErr != nil {
 			return nil, stoppedAt(peer.PeerID, f.No, scanErr.Error()), nil
 		}
-		ch.advance(reached)
+		if reached.torn {
+			ch.advanceTorn(reached.pos, reached.resumeRS)
+		} else {
+			ch.advance(reached.pos)
+		}
 	}
 	return nil, nil, nil
 }
@@ -235,27 +252,45 @@ type scanInput struct {
 	sealed bool
 	peerID string
 	keys   KeySelector
+	next   *segment.File
+}
+
+// keyFor resolves the key a segment's records are authenticated with.
+func (in scanInput) keyFor(h segment.Header) ([]byte, error) {
+	if !h.Authenticated() {
+		return nil, nil
+	}
+	if in.keys == nil {
+		return nil, errors.New("authenticated segment but no relay keys are available")
+	}
+	k, err := in.keys.For(h.KeyEpoch)
+	if err != nil {
+		return nil, fmt.Errorf("key epoch %d unavailable: %w", h.KeyEpoch, err)
+	}
+	return k, nil
+}
+
+// reachedScan is where a read-only scan ended. torn marks a sealed segment
+// whose torn tail the successor explains (FR-21 5.5), with resumeRS the
+// relay sequence just before the successor's first record.
+type reachedScan struct {
+	pos      Position
+	torn     bool
+	resumeRS uint64
 }
 
 // scanReached reads a segment without applying it and returns where it ends,
 // by the same rule ingestSegment uses. The error says why it cannot be read.
-func scanReached(in scanInput) (Position, error) {
-	var key []byte
-	if in.header.Authenticated() {
-		if in.keys == nil {
-			return Position{}, errors.New("authenticated segment but no relay keys are available")
-		}
-		k, err := in.keys.For(in.header.KeyEpoch)
-		if err != nil {
-			return Position{}, fmt.Errorf("key epoch %d unavailable: %w", in.header.KeyEpoch, err)
-		}
-		key = k
+func scanReached(in scanInput) (reachedScan, error) {
+	key, err := in.keyFor(in.header)
+	if err != nil {
+		return reachedScan{}, err
 	}
 	sc, err := segment.NewScanner(bytes.NewReader(in.raw), segment.ScanOptions{
 		Sealed: in.sealed, Key: key, ExpectPeerID: in.peerID,
 	})
 	if err != nil {
-		return Position{}, fmt.Errorf("segment cannot be scanned: %w", err)
+		return reachedScan{}, fmt.Errorf("segment cannot be scanned: %w", err)
 	}
 	reached := Position{SegmentNo: in.header.SegmentNo, RS: in.prev.RS, PubEpoch: in.header.PubEpoch}
 	if in.header.PubEpoch != in.prev.PubEpoch {
@@ -267,10 +302,17 @@ func scanReached(in scanInput) (Position, error) {
 			reached.RS = rs
 		}
 	}
-	if scErr := sc.Err(); scErr != nil {
-		return Position{}, fmt.Errorf("records cannot be read: %w", scErr)
+	scErr := sc.Err()
+	if scErr != nil && in.sealed && segment.IsIncomplete(scErr) {
+		ts := newTornSeal(in.peerID, in.raw, sc, in.next, in.keyFor)
+		if succ, ok := ts.explain(); ok {
+			return reachedScan{pos: reached, torn: true, resumeRS: succ.FirstRS - 1}, nil
+		}
 	}
-	return reached, nil
+	if scErr != nil {
+		return reachedScan{}, fmt.Errorf("records cannot be read: %w", scErr)
+	}
+	return reachedScan{pos: reached}, nil
 }
 
 // StampedPosition adds the publisher epoch a snapshot stamped to a cursor that

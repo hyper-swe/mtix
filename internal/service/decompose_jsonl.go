@@ -20,14 +20,11 @@ import (
 // - No bracket matching or trailing comma issues
 // - Streaming-friendly (process lines as they arrive)
 // - Append-friendly (add more tasks by appending lines)
-type JSONLInput struct {
-	Title       string         `json:"title"`
-	Prompt      string         `json:"prompt,omitempty"`
-	Acceptance  string         `json:"acceptance,omitempty"`
-	Description string         `json:"description,omitempty"`
-	Priority    model.Priority `json:"priority,omitempty"`
-	Labels      []string       `json:"labels,omitempty"`
-}
+//
+// It is the same type as DecomposeInput, so a line accepts exactly the keys
+// title, prompt, acceptance, description, priority, labels, issue_type and its
+// alias type, and refuses any other key (MTIX-279).
+type JSONLInput = DecomposeInput
 
 // ParseJSONL reads JSONL-formatted task definitions from the given reader.
 // Each non-empty line must be a valid JSON object with at least a "title" field.
@@ -49,7 +46,7 @@ func ParseJSONL(r io.Reader) ([]JSONLInput, error) {
 
 		var entry JSONLInput
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			return nil, fmt.Errorf("line %d: invalid JSON: %w", lineNum, err)
+			return nil, fmt.Errorf("line %d: %w", lineNum, err)
 		}
 
 		if entry.Title == "" {
@@ -61,6 +58,10 @@ func ParseJSONL(r io.Reader) ([]JSONLInput, error) {
 			return nil, fmt.Errorf(
 				"line %d: title too long (max %d): %w",
 				lineNum, model.MaxTitleLength, model.ErrInvalidInput)
+		}
+
+		if err := model.ValidateIssueType(entry.IssueType); err != nil {
+			return nil, fmt.Errorf("line %d: issue_type: %w", lineNum, err)
 		}
 
 		results = append(results, entry)
@@ -81,8 +82,6 @@ func ParseJSONL(r io.Reader) ([]JSONLInput, error) {
 // for use with NodeService.Decompose.
 func ToDecomposeInputs(entries []JSONLInput) []DecomposeInput {
 	inputs := make([]DecomposeInput, len(entries))
-	for i, e := range entries {
-		inputs[i] = DecomposeInput(e)
-	}
+	copy(inputs, entries)
 	return inputs
 }

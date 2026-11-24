@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "decision-resource-v1.json",
+  "title": "Decision card resource v1",
+  "type": "object",
+  "properties": {
+    "schema": {"const": "mtix.decision/1"},
+    "id": {
+      "type": "string",
+      "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+    },
+    "short_id": {"type": "string", "pattern": "^d-[0-9a-f]{8}$"},
+    "state": {"enum": ["open", "conflicted", "answered", "applied", "withdrawn", "superseded", "invalid"]},
+    "flags": {"type": "array", "items": {"type": "string"}},
+    "view_flags": {"type": "array", "items": {"type": "string"}},
+    "node_id": {"type": "string"},
+    "asker": {
+      "allOf": [
+        {"$ref": "decision-wire-v1.json#/$defs/Actor"},
+        {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}
+      ]
+    },
+    "to": {"type": "string"},
+    "answerers": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9_-]{1,64}$"}, "maxItems": 8},
+    "answerable_by": {"type": "string", "enum": ["user", "any"], "default": "user"},
+    "question": {"type": "string", "maxLength": 300, "pattern": "^[^\r\n\u0085\u2028\u2029]*$", "minLength": 1},
+    "context": {"type": "string", "maxLength": 32768, "x-maxUtf8Bytes": 32768},
+    "options": {"type": "array", "items": {"$ref": "decision-wire-v1.json#/$defs/Option"}, "maxItems": 9},
+    "recommend": {"anyOf": [{"$ref": "decision-wire-v1.json#/$defs/Recommendation"}, {"type": "null"}]},
+    "links": {"type": "array", "items": {"$ref": "decision-wire-v1.json#/$defs/Link"}, "maxItems": 10},
+    "deadline": {"anyOf": [{"type": "string", "format": "date-time", "pattern": "(Z|\\+00:00)$"}, {"type": "null"}]},
+    "key": {"anyOf": [{"type": "string", "pattern": "^[A-Za-z0-9:._/-]{1,128}$"}, {"type": "null"}]},
+    "category": {"anyOf": [{"type": "string", "pattern": "^[a-z0-9-]{1,32}$"}, {"type": "null"}]},
+    "source": {
+      "type": "object",
+      "maxProperties": 8,
+      "propertyNames": {"pattern": "^[a-z_]{1,24}$"},
+      "additionalProperties": {"type": "string", "maxLength": 120}
+    },
+    "requires_outcome": {"type": "boolean", "default": true},
+    "missing_required_links": {"type": "array", "items": {"type": "string"}},
+    "raised_at": {"anyOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]},
+    "effective_answer": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+            },
+            "option": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "input_value": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "note": {"type": "string"},
+            "decider": {
+              "allOf": [
+                {"$ref": "decision-wire-v1.json#/$defs/Actor"},
+                {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}
+              ]
+            },
+            "channel": {"type": "string"},
+            "at": {"type": "string", "format": "date-time"}
+          },
+          "required": ["id", "decider", "channel", "at"]
+        },
+        {"type": "null"}
+      ]
+    },
+    "agreeing_answers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+      }
+    },
+    "conflicting_answers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+      }
+    },
+    "refused_answers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+      }
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "result": {"type": "string", "enum": ["applied", "refused"]},
+            "receipt": {"$ref": "decision-wire-v1.json#/$defs/Receipt"},
+            "refusal": {"$ref": "decision-wire-v1.json#/$defs/Refusal"}
+          },
+          "required": ["result"]
+        },
+        {"type": "null"}
+      ]
+    },
+    "withdrawn": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "reason": {"type": "string"},
+            "reason_code": {"type": "string"},
+            "elsewhere": {"$ref": "decision-wire-v1.json#/$defs/Elsewhere"}
+          },
+          "required": ["reason_code"]
+        },
+        {"type": "null"}
+      ]
+    },
+    "superseded_by": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+      }
+    },
+    "invalid_reason": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+    "now": {"type": "string", "format": "date-time"},
+    "timeline": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "event_id": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-7[a-fA-F0-9]{3}-[89abAB][a-fA-F0-9]{3}-[a-fA-F0-9]{12}$"
+          },
+          "kind": {"type": "string"},
+          "author": {"type": "string"},
+          "at": {"type": "string", "format": "date-time"}
+        },
+        "required": ["event_id", "kind", "author", "at"]
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "id",
+    "short_id",
+    "state",
+    "flags",
+    "view_flags",
+    "node_id",
+    "asker",
+    "to",
+    "raised_at",
+    "now",
+    "timeline"
+  ],
+  "allOf": [
+    {
+      "if": {"properties": {"state": {"not": {"const": "invalid"}}}, "required": ["state"]},
+      "then": {"required": ["question", "answerable_by", "requires_outcome"]}
+    },
+    {
+      "if": {"properties": {"state": {"enum": ["answered", "applied"]}}, "required": ["state"]},
+      "then": {"properties": {"effective_answer": {"type": "object"}}, "required": ["effective_answer"]}
+    },
+    {
+      "if": {"properties": {"state": {"const": "applied"}}, "required": ["state"]},
+      "then": {"properties": {"outcome": {"type": "object"}}, "required": ["outcome"]}
+    },
+    {
+      "if": {"properties": {"state": {"const": "withdrawn"}}, "required": ["state"]},
+      "then": {"properties": {"withdrawn": {"type": "object"}}, "required": ["withdrawn"]}
+    },
+    {
+      "if": {"properties": {"state": {"const": "superseded"}}, "required": ["state"]},
+      "then": {"properties": {"superseded_by": {"minItems": 1}}, "required": ["superseded_by"]}
+    },
+    {
+      "if": {"properties": {"state": {"const": "invalid"}}, "required": ["state"]},
+      "then": {"properties": {"invalid_reason": {"type": "string"}}, "required": ["invalid_reason"]}
+    }
+  ]
+}

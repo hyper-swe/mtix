@@ -474,6 +474,8 @@ After `mtix rerun --strategy delete`, undeleting a direct child restores its sub
 
 A cascade delete sends one sync delete event for the node and one for each descendant it removes (not for a descendant that was already deleted), so other replicas delete the same nodes. A cascade delete made by an earlier version sent an event for the named node only: on other replicas its descendants stay live. Undelete is local: it emits no sync event. Other replicas keep the node deleted.
 
+A delete event now records the display path of the deleted node and whether the delete was a requested cascade. A delete from an earlier version carries neither field. No command, flag or output changes.
+
 Soft-deleted nodes are automatically purged after the retention period (default 30 days, configurable via `data.soft_delete_retention`).
 
 ---
@@ -529,6 +531,14 @@ mtix decompose PROJ-1.1 \
 ```
 
 This atomically creates `PROJ-1.1.1`, `PROJ-1.1.2`, `PROJ-1.1.3`, and `PROJ-1.1.4`.
+
+To give each child more than a title, use a JSONL plan (one JSON object per line) with `--file plan.jsonl` or `--file -` for stdin; `--dry-run` previews the children without writing them:
+
+```bash
+mtix decompose PROJ-1.1 --file plan.jsonl
+```
+
+A line takes `title` (required), `prompt`, `acceptance`, `description`, `priority`, `labels` and `issue_type`. `issue_type` is one of `bug`, `feature`, `task`, `chore`, `refactor`, `test` or `doc`, the same values as `mtix create --type`, and `type` is accepted as an alias (giving both with different values is refused). A line without it leaves the issue type unset. Any other key (for example a misspelled `acceptence`) and an invalid issue type are refused with an invalid-input error that names the line and the key, and nothing is created. The `mtix_decompose` MCP tool, the REST decompose endpoint and the gRPC Decompose call take the same child keys and apply the same checks (the whole batch is validated before the first child is created, and an MCP or REST refusal names the child number); `--dry-run` and the created-children listing show each child's issue type as `[bug]` next to its id (text output) and in `issue_type` (JSON dry-run); a child with no type shows none.
 
 ### View the Tree
 
@@ -2261,7 +2271,7 @@ A board created before `sync.hub_contact` existed keeps contacting the hub at th
 
 Mirror exports read nodes, dependencies, agents and sessions from one read-only WAL snapshot, allowing writers to commit while the export reads. The mirror file and its conflict baseline describe that same snapshot; publication writes the file before its hashes. A write committed after the snapshot is handled by a later export.
 
-A writing command that encounters the mirror sync lock saves its database change and returns without waiting. New clients keep one coalesced pending-export record in the local database metadata, advancing a monotonic generation on every mark, including when already pending. The cutoff is committed before the board snapshot; only a fully published snapshot is retired, and later requests keep their own oldest age. The record survives process exit and restart. Its fixed size does not bound SQLite WAL size, and marking still requires one guarded FULL-WAL transaction: it adds no request file or directory fsync per commit. Long-running interfaces mark before debounce and still trigger if marking fails; the small commit-to-hook and CLI commit-to-post-run windows remain.
+The daemon's tick and debounced mirror exports take turns. A waiting export picks up changes committed after the previous snapshot. A writing command that finds the mirror sync lock held by another process saves its database change and defers export without waiting for that process. New clients keep one coalesced pending-export record in the local database metadata, advancing a monotonic generation on every mark, including when already pending. The cutoff is committed before the board snapshot; only a fully published snapshot is retired, and later requests keep their own oldest age. The record survives process exit and restart. Its fixed size does not bound SQLite WAL size, and marking still requires one guarded FULL-WAL transaction: it adds no request file or directory fsync per commit. Long-running interfaces mark before debounce and still trigger if marking fails; the small commit-to-hook and CLI commit-to-post-run windows remain.
 
 `mtix sync status` and `mtix sync doctor`, including `--json`, read pending mirror exports without draining or importing. They show count, oldest timestamp and age in seconds (`pending_exports.count`, `oldest_at`, `oldest_age_seconds`). With new clients the logical count is zero or one, not the number of mutations; unmigrated legacy `.mtix/data/export-pending/request-*` files temporarily add to that count. Future timestamps show age zero. Doctor warns when the oldest is more than one hour old and prints the exact safe recovery command `mtix list`. This invokes protected import-first recovery; follow any pulled-board refusal it prints, then check `mtix sync status` again. `mtix sync push` drains hub events, not this mirror work. Never delete pending files or edit database metadata, and never use `mtix sync --fix` as an unconditional retry: it discards the pulled board.
 
@@ -2819,6 +2829,8 @@ pull's position either, so later changes keep arriving.
   the failed tries; `source` (in `--json`) is `pull` (the regular fetch)
   or `sweep` (the late-event sweep), `push` (an own event held back) or
   `relay` (a record relay ingest skipped; see below).
+
+  After a publisher crash or restart leaves a torn tail in a sealed segment, the reader applies every complete record once, never a partial one, and logs `reconciled torn seal` when the next segment of the same peer and publisher epoch resumes at or before the first missing record and its first record verifies. It then continues with no operator action. A torn tail the successor does not explain, and any damage inside a sealed segment, still stalls that peer with `RELAY_SEGMENT_CORRUPT` (it is never skipped).
 
   **A missing relay segment stops that peer's stream.** If a segment of a
   peer's stream is missing from the relay (deleted, lost by the medium, or never
@@ -3642,6 +3654,8 @@ mtix sync relay attach /mnt/shared/team-relay
 mtix daemon
 ```
 
+If a peer's newest segment is empty or has a partial header, the reader retries it on the next poll. Once a later segment from that peer is visible, the earlier segment is sealed. An incomplete header there stalls ingest for that peer with `RELAY_SEGMENT_CORRUPT`, even if the later segment is complete. If the complete header of that sealed segment arrives later, it clears on the next tick without a republish or a clone.
+
 **Fresh late joiner (no local tasks).** On an existing peer, run `mtix sync relay tick` and `mtix sync relay clone --export` to publish a current bootstrap snapshot. In a fresh empty directory on the joining peer, use the same project prefix and a NEW peer id (never reuse an id whose store was lost). Ask the user to copy every relay key epoch file from the existing project's `.mtix/relay/keys/` to the new project's `.mtix/relay/keys/` out of band, after `init`: directory mode 0700, files mode 0600; never print keys or copy them through the relay. Before cloning, stop any daemon in the new project. Reusing the id of a lost store makes publishing stop with `RELAY_PUBLISHER_DIVERGED`. A relay made with `--no-auth` has no key files to copy, so skip the key step for it.
 
 Do not run `mtix sync relay attach` in this sequence, before or after clone. It checks local history against the relay's recorded history, refuses an empty project with `RELAY_NO_SHARED_PROJECT`, and importing a snapshot does not establish that history anchor. Clone and tick work without attach. The `RELAY_NO_SHARED_PROJECT` hint points to this clone-first join; preserve any existing project and use a fresh empty directory. For a relay initialized with `--no-auth`, the warning says “Every peer must set sync.relay.require_auth=false”: on every peer run `mtix config set sync.relay.require_auth false` before clone or tick. This setting does not require attach.
@@ -3654,6 +3668,8 @@ mtix config set sync.relay.dir <dir>
 mtix sync relay clone
 mtix sync relay tick
 ```
+
+If clone reports an invalid peer id in `exported_by`, `positions` or `pub_epochs`, it refuses the whole snapshot before importing any rows. The error identifies the field and the id. Ask a current peer to run `mtix sync relay clone --export`, then retry `mtix sync relay clone` on the joiner. If clone still names the same snapshot, stop and give the filename and error to the relay maintainer. Clone selects the filename that sorts last.
 <!-- END RELAY LATE JOINER -->
 
 Each machine still keeps its **own local `.mtix`**. The shared directory

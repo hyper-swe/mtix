@@ -277,9 +277,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {pkg: internal/store/sqlite, shards: "3", shard: "1"}
-          - {pkg: internal/store/sqlite, shards: "3", shard: "2"}
-          - {pkg: internal/store/sqlite, shards: "3", shard: "3"}
+          - {pkg: internal/store/sqlite, shards: "6", shard: "1"}
+          - {pkg: internal/store/sqlite, shards: "6", shard: "2"}
+          - {pkg: internal/store/sqlite, shards: "6", shard: "3"}
+          - {pkg: internal/store/sqlite, shards: "6", shard: "4"}
+          - {pkg: internal/store/sqlite, shards: "6", shard: "5"}
+          - {pkg: internal/store/sqlite, shards: "6", shard: "6"}
           - {pkg: internal/service, shards: "2", shard: "1"}
           - {pkg: internal/service, shards: "2", shard: "2"}
     env:
@@ -506,9 +509,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - {pkg: internal/store/sqlite, shards: "3", shard: "1"}
-          - {pkg: internal/store/sqlite, shards: "3", shard: "2"}
-          - {pkg: internal/store/sqlite, shards: "3", shard: "3"}
+          - {pkg: internal/store/sqlite, shards: "6", shard: "1"}
+          - {pkg: internal/store/sqlite, shards: "6", shard: "2"}
+          - {pkg: internal/store/sqlite, shards: "6", shard: "3"}
+          - {pkg: internal/store/sqlite, shards: "6", shard: "4"}
+          - {pkg: internal/store/sqlite, shards: "6", shard: "5"}
+          - {pkg: internal/store/sqlite, shards: "6", shard: "6"}
           - {pkg: internal/service, shards: "2", shard: "1"}
           - {pkg: internal/service, shards: "2", shard: "2"}
     env:

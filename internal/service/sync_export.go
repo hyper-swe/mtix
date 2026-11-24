@@ -46,9 +46,6 @@ func (s *SyncService) runAutoExport(ctx context.Context, mtixDir string, passes 
 // recorded before the first pass still backs its warning.
 func (s *SyncService) runAutoExportMode(ctx context.Context, mtixDir string, passes int, mode contendedMode) error {
 	for pass := 0; pass < passes; pass++ {
-		if blocked, err := s.keepPulledBoard(ctx, mtixDir); blocked || err != nil {
-			return err
-		}
 		completed, err := s.exportBoardPassWith(ctx, mtixDir, true, mode)
 		if err != nil || !completed {
 			return err
@@ -100,6 +97,66 @@ func (s *SyncService) exportBoardPass(ctx context.Context, mtixDir string, prote
 // nothing and returns false; mode decides whether a pending export request
 // is recorded first and which warning is logged (MTIX-130.19).
 func (s *SyncService) exportBoardPassWith(ctx context.Context, mtixDir string, protect bool, mode contendedMode) (bool, error) {
+	// A concurrent guard must see the published board and its matching hash,
+	// so the pulled-board preflight runs inside the pass gate too.
+	if err := s.acquirePass(ctx, mtixDir, protect); err != nil {
+		return false, err
+	}
+	defer s.releasePass()
+	if protect {
+		if blocked, err := s.keepPulledBoard(ctx, mtixDir); blocked || err != nil {
+			return false, err
+		}
+	} else {
+		if _, err := s.keepRefusedBoard(mtixDir); err != nil {
+			return false, err
+		}
+		if err := s.resolveRefusal(mtixDir, ""); err != nil {
+			return false, err
+		}
+	}
+	return s.exportWithFileLock(ctx, mtixDir, protect, mode)
+}
+
+// passGate returns the one-slot gate that serializes this service's export
+// passes (MTIX-130.20.4).
+func (s *SyncService) passGate() chan struct{} {
+	s.exportGateOnce.Do(func() { s.exportGate = make(chan struct{}, 1) })
+	return s.exportGate
+}
+
+// acquirePass takes the pass gate. A pass that has to queue first records
+// durable intent when it is an explicit rewrite (automatic callers already
+// recorded intent or are draining it), then waits for the holder or for ctx:
+// on cancellation it returns the wrapped context error without starting a
+// pass, and the pending request stays for a later retry (MTIX-130.20.4).
+func (s *SyncService) acquirePass(ctx context.Context, mtixDir string, protect bool) error {
+	gate := s.passGate()
+	select {
+	case gate <- struct{}{}:
+		return nil
+	default:
+	}
+	if !protect {
+		if err := s.RequestExport(mtixDir); err != nil {
+			return fmt.Errorf("record waiting explicit export: %w", err)
+		}
+	}
+	if s.passQueued != nil {
+		s.passQueued()
+	}
+	select {
+	case gate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("wait for the running export pass: %w", ctx.Err())
+	}
+}
+
+// releasePass frees the pass gate taken by acquirePass.
+func (s *SyncService) releasePass() { <-s.passGate() }
+
+func (s *SyncService) exportWithFileLock(ctx context.Context, mtixDir string, protect bool, mode contendedMode) (bool, error) {
 	start := s.clock()
 	lockFile, lockErr := s.acquireLock(mtixDir, lockExclusive)
 	if lockErr != nil {

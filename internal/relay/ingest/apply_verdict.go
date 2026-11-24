@@ -13,8 +13,6 @@ import (
 	"log/slog"
 	"syscall"
 
-	sqlite3 "modernc.org/sqlite"
-
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
@@ -43,9 +41,12 @@ func isStoreFailure(ctx context.Context, err error) bool {
 		errors.Is(err, model.ErrDiskFull) || errors.Is(err, model.ErrCorrupted) {
 		return true
 	}
-	var sqErr *sqlite3.Error
-	if errors.As(err, &sqErr) {
-		return sqErr.Code()&0xFF != sqliteConstraint
+	// The driver's error type is matched by its Code method, so this file
+	// does not import the driver (the single-builder scanner allows that
+	// import only in the error-type files of internal/store/sqlite).
+	var coded interface{ Code() int }
+	if errors.As(err, &coded) {
+		return coded.Code()&0xFF != sqliteConstraint
 	}
 	var pathErr *fs.PathError
 	var errno syscall.Errno

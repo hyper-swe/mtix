@@ -220,6 +220,7 @@ func TestWaiterGuard_StaleLocks_ConcurrentArmsTakeOverExactlyOnce(t *testing.T) 
 		{"holder pid is dead", "pid:" + strconv.Itoa(dead.Process.Pid)},
 		{"lock target is garbage", "pid:not-a-number"},
 		{"lock target has no pid prefix", "12345"},
+		{"lock target is a directory", t.TempDir()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -227,11 +228,8 @@ func TestWaiterGuard_StaleLocks_ConcurrentArmsTakeOverExactlyOnce(t *testing.T) 
 			require.NoError(t, os.Symlink(tt.target, e.lock))
 			cmds := armConcurrently(t, e)
 			ev := e.events(t)
-			// A late arm can win the freed lock before the taker links it, so
-			// "took over" may be logged by zero or one arm; the invariant is
-			// exactly one holder.
 			require.Equal(t, 1, count(ev, "armed"), "events: %v", ev)
-			require.LessOrEqual(t, count(ev, "stale-takeover"), 1, "events: %v", ev)
+			require.Equal(t, 1, count(ev, "stale-takeover"), "events: %v", ev)
 			require.Equal(t, waiterArmCount-1, count(ev, "guard-skip"), "events: %v", ev)
 			releaseAndWait(t, e, cmds)
 		})
@@ -325,13 +323,13 @@ func TestWaiterGuard_LiveHolderPlantedUnderSerialiser_IsNeverStolen(t *testing.T
 }
 
 // TestWaiterGuard_StuckSerialiser_LogsDistinctTakeoverBusy covers a taker
-// killed between mkdir and rmdir: the stuck serialiser must not look like a
+// killed while holding the serialiser: a stuck acquisition must not look like a
 // live holder in the evidence.
 func TestWaiterGuard_StuckSerialiser_LogsDistinctTakeoverBusy(t *testing.T) {
 	e := newWaiterEnv(t)
 	stale := "pid:" + strconv.Itoa(deadPID(t))
 	require.NoError(t, os.Symlink(stale, e.lock))
-	require.NoError(t, os.Mkdir(e.lock+".t", 0o700))
+	require.NoError(t, os.WriteFile(e.lock+".t", nil, 0o600))
 	cmd := e.arm(t, "late", 0)
 	require.NoError(t, cmd.Wait())
 	require.Equal(t, []string{"guard-skip-takeover-busy"}, e.events(t))
@@ -359,6 +357,51 @@ func TestParseWaiterDeadline_Override_IsDefaultedOrClamped(t *testing.T) {
 			got := parseWaiterDeadline(tt.in)
 			require.Equal(t, tt.want, got)
 			require.Positive(t, 3*got, "three times the deadline must not overflow")
+		})
+	}
+}
+
+// TestWaiterGuard_SequentialArms_SerialiserIsReleasedAfterAcquisition pins
+// that a successful acquisition removes the serialiser file when it returns,
+// so a later arm is not wedged into takeover-busy.
+func TestWaiterGuard_SequentialArms_SerialiserIsReleasedAfterAcquisition(t *testing.T) {
+	e := newWaiterEnv(t)
+	require.NoError(t, os.WriteFile(e.release, nil, 0o600))
+	first := e.arm(t, "first", 0)
+	require.NoError(t, first.Wait())
+	_, err := os.Stat(e.lock + ".t")
+	require.ErrorIs(t, err, os.ErrNotExist, "the serialiser must be gone after the first arm")
+	_, err = os.Lstat(e.lock)
+	require.ErrorIs(t, err, os.ErrNotExist, "the first arm released the lock")
+	second := e.arm(t, "second", 0)
+	require.NoError(t, second.Wait())
+	require.Equal(t, []string{"armed", "exit-0", "armed", "exit-0"}, e.events(t))
+}
+
+// TestWaiterGuard_NonSymlinkLockPath_IsRefusedAndLeftAsFound covers a real
+// directory or a regular file at the lock path: neither is taken over, and
+// the evidence names the refusal.
+func TestWaiterGuard_NonSymlinkLockPath_IsRefusedAndLeftAsFound(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, path string)
+	}{
+		{"real directory", func(t *testing.T, p string) { require.NoError(t, os.Mkdir(p, 0o700)) }},
+		{"regular file", func(t *testing.T, p string) { require.NoError(t, os.WriteFile(p, []byte("x"), 0o600)) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newWaiterEnv(t)
+			tt.setup(t, e.lock)
+			// A wrongly armed waiter must exit rather than hang the suite.
+			require.NoError(t, os.WriteFile(e.release, nil, 0o600))
+			require.NoError(t, e.arm(t, "w", 0).Wait())
+			require.Equal(t, []string{"guard-skip-lock-not-symlink"}, e.events(t))
+			info, err := os.Lstat(e.lock)
+			require.NoError(t, err)
+			require.Zero(t, info.Mode()&os.ModeSymlink, "the path is left as found")
+			_, err = os.Stat(e.lock + ".t")
+			require.ErrorIs(t, err, os.ErrNotExist, "the serialiser is released")
 		})
 	}
 }

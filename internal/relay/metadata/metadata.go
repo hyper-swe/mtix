@@ -235,11 +235,18 @@ func (r *Relay) validate() error {
 	return r.validateEpochOrder()
 }
 
+// validateEpochOrder refuses a key_epochs history whose epochs do not
+// strictly increase (FR-21 section 5.6, MTIX-291). The history is
+// append-only rotation evidence: a repeated or regressed epoch means a
+// boundary readers have already crossed was moved or duplicated, so the
+// record is refused rather than sorted. The message names the cause and
+// the offending epochs so an operator can act on it.
 func (r *Relay) validateEpochOrder() error {
 	for i := 1; i < len(r.KeyEpochs); i++ {
 		prev, epoch := r.KeyEpochs[i-1].Epoch, r.KeyEpochs[i].Epoch
 		if epoch <= prev {
-			return fmt.Errorf("%w: key_epochs[%d]: epoch %d must exceed %d", model.ErrInvalidInput, i, epoch, prev)
+			return fmt.Errorf("%w: key_epochs not strictly increasing: key_epochs[%d] has epoch %d after epoch %d",
+				model.ErrInvalidInput, i, epoch, prev)
 		}
 	}
 	return nil
@@ -344,6 +351,13 @@ func Write(dir string, doc *Relay) error {
 
 // Rewrite persists an operator change after checking the fixed fields,
 // the existing history prefix, and the order of the proposed history.
+//
+// FR-21 section 5.6 (MTIX-291): key_epochs is append-only. Rotation
+// boundaries are recorded where they fell and are never moved, removed
+// or reordered, because readers have already crossed them; the existing
+// entries must be kept exactly and a new entry must carry a greater
+// epoch than the last. Anything else is refused before the file is
+// touched.
 func Rewrite(dir string, doc *Relay) error {
 	existing, err := Read(dir)
 	if err != nil {

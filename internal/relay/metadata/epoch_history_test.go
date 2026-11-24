@@ -54,7 +54,7 @@ func FuzzRelayEpochHistory(f *testing.F) {
 	})
 }
 
-func TestEpochHistory_InvalidSuffixRefusedBeforeWrite(t *testing.T) {
+func TestRewrite_InvalidEpochSuffix_RefusedFileUnchanged(t *testing.T) {
 	for _, epoch := range []uint16{1, 3} {
 		t.Run(fmt.Sprint(epoch), func(t *testing.T) {
 			doc, err := metadata.Init(initConfig())
@@ -95,7 +95,7 @@ func TestRewrite_RefusesReplacingPeerAtZeroSequence(t *testing.T) {
 	require.ErrorIs(t, metadata.Rewrite(dir, doc), metadata.ErrRelayImmutable)
 }
 
-func TestEpochHistory_RoundTripPreservesEmptyPeerPositions(t *testing.T) {
+func TestWrite_EmptyPeerMap_RoundTripsIdentity(t *testing.T) {
 	dir := t.TempDir()
 	body := []byte(`{"format_version":1,"relay_id":"relay","created_by":"0123456789abcdef","projects":[{"project_prefix":"MTIX","first_event_hash":"aaaa1111"}],"authenticated":true,"key_epochs":[{"epoch":1,"from_rs_by_peer":{}}]}`)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, metadata.FileName), body, 0o600))
@@ -106,4 +106,18 @@ func TestEpochHistory_RoundTripPreservesEmptyPeerPositions(t *testing.T) {
 	second, err := metadata.Read(out)
 	require.NoError(t, err)
 	require.Equal(t, first, second)
+}
+
+func TestRead_RegressingEpochHistory_NamesCauseAndOffendingEpochs(t *testing.T) {
+	doc, err := metadata.Init(initConfig())
+	require.NoError(t, err)
+	doc.KeyEpochs = []metadata.KeyEpochBoundary{{Epoch: 1}, {Epoch: 3}, {Epoch: 2}}
+	body, err := json.Marshal(doc)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, metadata.FileName), body, 0o600))
+	_, err = metadata.Read(dir)
+	require.ErrorIs(t, err, metadata.ErrRelayCorrupt)
+	require.ErrorContains(t, err, "key_epochs not strictly increasing")
+	require.ErrorContains(t, err, "key_epochs[2] has epoch 2 after epoch 3")
 }

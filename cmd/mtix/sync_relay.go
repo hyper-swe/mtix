@@ -240,6 +240,16 @@ const relayGapRecovery = "restore the missing segment file from a backup of the 
 	"A snapshot from the stalled project stalls again; if no such project exists only restoring the file recovers it. " +
 	"`mtix sync relay republish` does not clear a gap"
 
+// relayMetaCorruptRecovery is the operator recovery for a refused
+// relay.json (FR-21 section 5.6, MTIX-291). mtix never repairs the
+// record itself: sorting key_epochs would rewrite rotation history that
+// readers have already crossed, so the only safe recovery is a known-good
+// copy with the history intact.
+const relayMetaCorruptRecovery = "relay data flow stops on every attached peer until relay.json is repaired (each store keeps its events); " +
+	"restore relay.json in the relay directory from a known-good copy of the relay medium (a backup, or the copy another peer holds) " +
+	"with its key_epochs history intact; never sort, delete or edit key_epochs entries, because that rewrites rotation history readers have crossed. " +
+	"Then run `mtix sync doctor` to verify and `mtix sync relay tick` to resume"
+
 // relayStallRecovery names the command that clears each stall.
 func relayStallRecovery(code string) string {
 	switch code {
@@ -247,6 +257,8 @@ func relayStallRecovery(code string) string {
 		return "ask that peer to run `mtix sync relay republish --from <rs>`, or re-bootstrap with `mtix sync relay clone`"
 	case "RELAY_GAP":
 		return relayGapRecovery
+	case "RELAY_META_CORRUPT":
+		return relayMetaCorruptRecovery
 	case "RELAY_KEY_ABSENT":
 		return "install the missing key epoch under the relay keys directory (mode 0600)"
 	case "RELAY_SYMLINK", "RELAY_FOREIGN_ENTRY":

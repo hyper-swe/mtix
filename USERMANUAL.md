@@ -3617,7 +3617,7 @@ host's daemon fires the wake locally.
 > `sync.relay.dir` is set; leave it unset to stay on the hub transport or
 > on git alone.
 
-If relay metadata reports `RELAY_META_CORRUPT` at `key_epochs[i]`, entry `i` (counting from zero) repeats or precedes the previous epoch. Report the position to the operator and preserve the original `relay.json`. Sorting the entries would change the recorded rotation history.
+If relay metadata reports `RELAY_META_CORRUPT` at `key_epochs[i]`, entry `i` (counting from zero) repeats or precedes the previous epoch. The error names the cause (`key_epochs not strictly increasing`) and the two epochs. While `relay.json` is refused, relay data flow stops on every attached peer (tick, attach, rotate-key and `mtix sync doctor` all report it); each store keeps its events. `mtix` never repairs the file. Ask the user, then restore `relay.json` in the relay directory from a known-good copy of the relay medium (a backup, or the copy another peer holds) with its `key_epochs` history intact. Never sort, delete or edit `key_epochs` entries: that rewrites rotation history readers have already crossed. Then run `mtix sync doctor` to verify and `mtix sync relay tick` to resume.
 
 Some machines cannot open a database connection at all. A sandboxed
 agent runtime may share a folder with its host and have no network. An

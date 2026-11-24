@@ -432,6 +432,16 @@ Its JSON `data` carries `state`, `pid` and `waiters`; an inspection error is
 WARN, without `data`, and prints `mtix daemon status --listener`.
 
 
+### Relay record refused: `RELAY_META_CORRUPT` with `key_epochs not strictly increasing`
+
+**Symptom.** `mtix sync relay tick`, `attach`, `rotate-key` or `mtix sync doctor` (row `relay record`) fails with `RELAY_META_CORRUPT: ... key_epochs not strictly increasing: key_epochs[i] has epoch E after epoch P`.
+
+**Cause.** The relay's `relay.json` records key rotations in `key_epochs`, and the epochs must strictly increase. An entry that repeats or regresses is refused rather than sorted, because the history is append-only.
+
+**Effect.** While the file is refused, relay data flow stops on every attached peer. Each store keeps its events and nothing is lost.
+
+**Recovery.** `mtix` does not repair the file. Restore `relay.json` in the relay directory from a known-good copy of the relay medium (a backup, or the copy another peer holds) with its `key_epochs` history intact. Never sort, delete or edit `key_epochs` entries. Then run `mtix sync doctor` until the `relay record` row passes, and `mtix sync relay tick` to resume.
+
 ## Configuration Keys
 
 <!-- AUTO-GENERATED: CONFIG_KEYS -->

@@ -25,7 +25,7 @@ import (
 // test sweeps many offsets rather than relying on one.
 const readCancelIterations = 1500
 
-// readCancelRouteIterations is the sweep for the routes callers outside the
+// readCancelStressIterations is the opt-in sweep for the routes callers outside the
 // store use (Query, QueryRow, ReadDB), the prepared-statement routes and the
 // ack-info read. The window is a few microseconds wide, so a sweep that is
 // merely long is flaky; with the shield removed these routes first fail
@@ -34,7 +34,7 @@ const readCancelIterations = 1500
 // cannot be hit deterministically from outside the driver, so this is
 // statistical, not a guarantee; the fake-driver tests in
 // read_shield_forwarding_test.go are the deterministic proof.
-const readCancelRouteIterations = 20000
+const readCancelStressIterations = 20000
 
 // readCancelSlowIterations bounds the families whose single read is slow (the
 // full integrity check), so the test stays fast under the race detector.
@@ -198,6 +198,8 @@ func cancelReadFamilies(st *Store) map[string]func(context.Context) {
 // (read_cancel_routes_test.go) so the CI shard hash spreads their cost
 // (MTIX-264; table in read_cancel_routes_shard_test.go).
 func TestReadFamilies_CancelledMidQuery_LeaveNoStaleSnapshot(t *testing.T) {
+	// No parent-level deadline: sweepCancelledFamily arms one per family, so
+	// a slow but progressing run of all families is never killed as a stall.
 	for _, name := range shortReadFamilyNames() {
 		t.Run(name, func(t *testing.T) {
 			iterations := readCancelIterations
@@ -223,8 +225,15 @@ func shortReadFamilyNames() []string {
 }
 
 // sweepCancelledFamily runs the cancel sweep for one family on a fresh Store.
+//
+// MTIX-319 timeout cause: the box goroutine dumps showed this loop RUNNABLE
+// on CPU in _columnMem via shieldRows.Next (read_shield.go:218), never
+// blocked on a mutex, sql.Conn, channel or WaitGroup. The package timeouts
+// were cost (iterations x -race x box load), not a deadlock. The per-test
+// deadline below fails a genuine stall fast with an all-goroutine dump.
 func sweepCancelledFamily(t *testing.T, name string, iterations int) {
 	t.Helper()
+	armReadCancelDeadline(t, readCancelBudget)
 	st, err := New(t.TempDir(), slog.Default())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })

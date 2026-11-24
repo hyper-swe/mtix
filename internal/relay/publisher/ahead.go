@@ -71,23 +71,22 @@ func decodeExact(b []byte) (any, error) {
 // builds is not mistaken for a different event. The event id is
 // rendered with format.EventID, never raw.
 func sameEvent(rec segment.Record, row sqlite.RelayJournalEvent) error {
-	id := format.EventID(row.Event.EventID)
 	want, err := json.Marshal(row.Event)
 	if err != nil {
-		return fmt.Errorf("encode the journal event %s (journal seq %d): %w", id, row.Seq, err)
+		return fmt.Errorf("encode the journal event %s (journal seq %d): %w", format.EventID(row.Event.EventID), row.Seq, err)
 	}
 	got, err := decodeExact(rec.Payload)
 	if err != nil {
 		return fmt.Errorf("%w: record at rs %d is not an event (expected journal seq %d, event %s): %w",
-			segment.ErrAheadMismatch, rec.RS, row.Seq, id, err)
+			segment.ErrAheadMismatch, rec.RS, row.Seq, format.EventID(row.Event.EventID), err)
 	}
 	exp, err := decodeExact(want)
 	if err != nil {
-		return fmt.Errorf("decode the journal event %s (journal seq %d): %w", id, row.Seq, err)
+		return fmt.Errorf("decode the journal event %s (journal seq %d): %w", format.EventID(row.Event.EventID), row.Seq, err)
 	}
 	if !reflect.DeepEqual(got, exp) {
 		return fmt.Errorf("%w: record at rs %d differs from the journal event at that position (journal seq %d, event %s)",
-			segment.ErrAheadMismatch, rec.RS, row.Seq, id)
+			segment.ErrAheadMismatch, rec.RS, row.Seq, format.EventID(row.Event.EventID))
 	}
 	return nil
 }

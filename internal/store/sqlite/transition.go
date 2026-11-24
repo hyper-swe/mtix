@@ -38,7 +38,7 @@ func (s *Store) TransitionStatus(ctx context.Context, id string, toStatus model.
 // executeTransitionTx performs the status transition within a transaction.
 func (s *Store) executeTransitionTx(ctx context.Context, tx *sql.Tx, req transitionRequest) error {
 	id, toStatus, reason, author := req.id, req.toStatus, req.reason, req.author
-	fromStatus, parentID, err := readNodeStatus(ctx, tx, id)
+	fromStatus, _, err := readNodeStatus(ctx, tx, id)
 	if err != nil {
 		return err
 	}
@@ -70,10 +70,11 @@ func (s *Store) executeTransitionTx(ctx context.Context, tx *sql.Tx, req transit
 		return err
 	}
 
-	if parentID != "" {
-		if err := recalculateProgress(ctx, tx, parentID); err != nil {
-			return fmt.Errorf("recalculate progress after transition: %w", err)
-		}
+	// MTIX-294 / FR-5.2, FR-5.7: re-derive the node's own progress (a leaf
+	// drops its credit on reopen, a done node with active children earns
+	// none) and then every ancestor, in this transaction.
+	if err := recalculateProgress(ctx, tx, s.progressWeightedOn(), id); err != nil {
+		return fmt.Errorf("recalculate progress after transition: %w", err)
 	}
 
 	// MTIX-17 / FR-3.8: when a node is marked done / cancelled /
@@ -210,10 +211,6 @@ func buildTransitionClauses(fromStatus, toStatus model.Status, nowStr string) (s
 	if toStatus == model.StatusBlocked || toStatus == model.StatusInvalidated {
 		setClauses += ", previous_status = ?"
 		args = append(args, string(fromStatus))
-	}
-
-	if toStatus == model.StatusDone {
-		setClauses += ", progress = 1.0"
 	}
 
 	return setClauses, args

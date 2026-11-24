@@ -172,7 +172,7 @@ func (s *Store) Import(
 				applyErr = insertExportHistory(ctx, tx, data, &result, s.clock())
 			}
 		} else {
-			result, applyErr = mergeAllData(ctx, tx, data, workflowPolicy{cfg.workflow, s.clock()})
+			result, applyErr = mergeAllData(ctx, tx, data, workflowPolicy{cfg.workflow, s.clock(), s.progressWeightedOn()})
 		}
 		if applyErr != nil {
 			return applyErr

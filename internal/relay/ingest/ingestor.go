@@ -59,7 +59,7 @@ type KeySelector interface {
 // behind the shipped apply path, and this package's job is to feed that
 // path rather than to reimplement any of it.
 type Store interface {
-	IdempotentApply(context.Context, *sql.Tx, *model.SyncEvent) error
+	ApplyRelayEvent(context.Context, *sql.Tx, *model.SyncEvent) error
 	RelayIngestCursor(ctx context.Context, peerID string) (sqlite.RelayIngestPosition, error)
 	AdvanceRelayIngestCursor(ctx context.Context, peerID string, pos sqlite.RelayIngestPosition) error
 	// RelayCloneStampEpoch is the epoch a snapshot stamped for a peer, read

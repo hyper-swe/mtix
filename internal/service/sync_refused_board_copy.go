@@ -48,6 +48,7 @@ func (s *SyncService) keepRefusedBoard(mtixDir string) (string, error) {
 		return "", nil // the file is what mtix last wrote or imported: nothing to lose
 	}
 	dir := filepath.Join(mtixDir, "data", refusedBoardsDir)
+	// #nosec G703 -- dir is the local project data directory chosen by the caller plus a fixed subdirectory name.
 	if mkErr := os.MkdirAll(dir, 0o750); mkErr != nil {
 		return "", fmt.Errorf("create %s: %w", dir, mkErr)
 	}
@@ -70,7 +71,7 @@ func writeNewFile(dir, stem, ext string, data []byte) (string, error) {
 			name = fmt.Sprintf("%s-%d%s", stem, n, ext)
 		}
 		path := filepath.Join(dir, name)
-		// #nosec G304 -- dir is the local data directory and name is built here, not received.
+		// #nosec G304 G703 -- dir is the local data directory and name is built here, not received.
 		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 		if errors.Is(err, os.ErrExist) {
 			continue

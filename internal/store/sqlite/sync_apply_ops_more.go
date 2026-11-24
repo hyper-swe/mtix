@@ -69,7 +69,7 @@ func (a syncApplier) applyDelete(ctx context.Context, tx *sql.Tx, e *model.SyncE
 	// renumber is honored. Sync deletes do NOT cascade (each descendant
 	// carries its own delete event), matching applyDelete's contract.
 	if parentID := model.ParseIDParent(id); parentID != "" {
-		if err := recalculateProgress(ctx, tx, parentID); err != nil {
+		if err := recalculateProgress(ctx, tx, a.weighted(), parentID); err != nil {
 			return fmt.Errorf("apply delete %s: recalc progress: %w", format.EventID(e.EventID), err)
 		}
 	}
@@ -218,6 +218,7 @@ func mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, event *model.SyncEvent
 type appliedCreateRow struct {
 	payload         model.CreateNodePayload
 	uid, labels, at string
+	fromRelay       bool
 }
 
 // insertAppliedCreate preserves the existing number-conflict and UID checks.
@@ -240,7 +241,7 @@ func insertAppliedCreate(ctx context.Context, tx *sql.Tx, store *Store, e *model
 		}
 	}
 	if inserted == 0 {
-		return refuseHeldNumber(ctx, tx, e, row.uid)
+		return refuseHeldNumber(ctx, tx, e, row.uid, row.fromRelay)
 	}
 	return nil
 }

@@ -338,6 +338,9 @@ func TestCreateAndRead_WithClosedAt_RoundTrips(t *testing.T) {
 // This indirectly exercises the QueryRow helper in query.go.
 func TestUpdateProgress_ValidProgress_Updates(t *testing.T) {
 	s := newTestStore(t)
+	// MTIX-294: this test pins the FR-5.8 weighted mean (default FR-5.3 counts
+	// done children instead), so the progress.weighted switch is on.
+	s.SetProgressWeightedSource(func() bool { return true })
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Second)
 

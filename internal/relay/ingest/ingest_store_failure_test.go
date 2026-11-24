@@ -25,16 +25,16 @@ import (
 // applyFaultStore fails the apply of one chosen event, failures times, and
 // then behaves like the real store. It is how a transient store error (busy,
 // full disk, cancelled context) is injected at the exact point MTIX-303
-// describes: inside Store.WithTx / IdempotentApply for a valid record.
+// describes: inside Store.WithTx / ApplyRelayEvent for a valid record.
 type applyFaultStore struct {
 	*fakeStore
 	target   string // event id whose apply fails
-	err      error  // returned from IdempotentApply
+	err      error  // returned from ApplyRelayEvent
 	failures int    // how many applies of target fail; <0 means always
 	cancel   func() // when set, called before err is returned (cancelled context)
 }
 
-func (f *applyFaultStore) IdempotentApply(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
+func (f *applyFaultStore) ApplyRelayEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
 	if e.EventID == f.target && f.failures != 0 {
 		if f.failures > 0 {
 			f.failures--
@@ -44,7 +44,7 @@ func (f *applyFaultStore) IdempotentApply(ctx context.Context, tx *sql.Tx, e *mo
 		}
 		return f.err
 	}
-	return f.fakeStore.IdempotentApply(ctx, tx, e)
+	return f.fakeStore.ApplyRelayEvent(ctx, tx, e)
 }
 
 // realSQLiteError returns an error the driver itself produced: a constraint

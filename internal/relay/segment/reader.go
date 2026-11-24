@@ -410,3 +410,31 @@ func CheckContinuity(prev Cursor, h Header) error {
 			ErrGap, h.SegmentNo, prev.SegmentNo)
 	}
 }
+
+// IsCrashedHeader reports whether the file at path is the leftover of a
+// segment creation killed before its header was whole: fewer than
+// HeaderSize bytes, every one of them a prefix of the segment magic or
+// (once past the magic) anything a header may carry. Such a file holds no
+// record. Short content that does not begin like a segment header is
+// foreign data under a segment name and is not a crash leftover.
+func IsCrashedHeader(path string) (bool, error) {
+	fi, err := os.Lstat(path)
+	if err != nil {
+		return false, fmt.Errorf("lstat %s: %w", path, err)
+	}
+	if !fi.Mode().IsRegular() {
+		return false, nil
+	}
+	f, err := os.Open(path) // #nosec G304 -- path comes from the Lstat-verified relay walker
+	if err != nil {
+		return false, fmt.Errorf("open %s: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+	raw := make([]byte, HeaderSize)
+	n, err := io.ReadFull(f, raw)
+	if err == nil || !isShortRead(err) {
+		return false, err // a whole header (or an I/O fault) is not a crash leftover
+	}
+	head := min(n, len(MagicSegment))
+	return string(raw[:head]) == MagicSegment[:head], nil
+}

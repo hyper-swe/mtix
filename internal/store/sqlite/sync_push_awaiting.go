@@ -54,7 +54,7 @@ func (s *Store) EventsAwaitingCreation(ctx context.Context, events []*model.Sync
 			}
 		}
 	}
-	pending, err := pendingCreationIDs(ctx, s.readDB, all)
+	pending, err := pendingCreationIDs(ctx, s.readDB, all, "")
 	if err != nil {
 		return nil, err
 	}
@@ -164,14 +164,22 @@ func (s *Store) currentNumbersByUID(ctx context.Context, events []*model.SyncEve
 // cost is that of the numbers asked about, not of the log; the unary plus
 // keeps the planner from starting at idx_sync_events_op_type, which would read
 // every create_node row. The plan is pinned by a test.
+// During relay apply, two relay-origin rows may refer to each other before
+// hub settlement. A local pending creation still guards its number. Push
+// supplies an empty incoming id and waits for every pending ancestor.
 const pendingCreationSQL = `
-	SELECT n.id FROM nodes n JOIN sync_events c ON c.event_id = n.uid
-	 WHERE n.id IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?)) AND n.uid <> ''
+	SELECT candidates.id FROM (
+	SELECT n.id, c.event_id FROM nodes n JOIN sync_events c ON c.event_id = n.uid
+	 WHERE n.id IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?1)) AND n.uid <> ''
 	   AND +c.op_type = 'create_node' AND +c.sync_status = 'pending'
-	UNION
-	SELECT n.id FROM nodes n JOIN sync_events c ON c.uid = n.uid AND c.uid <> ''
-	 WHERE n.id IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?)) AND n.uid <> ''
-	   AND +c.op_type = 'create_node' AND +c.sync_status = 'pending'`
+	UNION ALL
+	SELECT n.id, c.event_id FROM nodes n JOIN sync_events c ON c.uid = n.uid AND c.uid <> ''
+	 WHERE n.id IN (SELECT CAST(unhex(value) AS TEXT) FROM json_each(?1)) AND n.uid <> ''
+	   AND +c.op_type = 'create_node' AND +c.sync_status = 'pending'
+	) AS candidates
+	WHERE ?2 = '' OR NOT EXISTS (
+		SELECT 1 FROM relay_forward_pending AS creation, relay_forward_pending AS incoming
+		WHERE creation.event_id=candidates.event_id AND incoming.event_id=?2)`
 
 // pendingCreationQuerier is what pendingCreationIDs reads through: the store
 // (push) or a transaction (pull apply).
@@ -181,7 +189,7 @@ type pendingCreationQuerier interface {
 
 // pendingCreationIDs returns which of the numbers ids belong to a task whose
 // create_node event is pending, in one query (pendingCreationSQL).
-func pendingCreationIDs(ctx context.Context, q pendingCreationQuerier, ids []string) (map[string]struct{}, error) {
+func pendingCreationIDs(ctx context.Context, q pendingCreationQuerier, ids []string, incomingID string) (map[string]struct{}, error) {
 	out := make(map[string]struct{})
 	if len(ids) == 0 {
 		return out, nil
@@ -190,7 +198,7 @@ func pendingCreationIDs(ctx context.Context, q pendingCreationQuerier, ids []str
 	if err != nil {
 		return nil, fmt.Errorf("read pending creations: %w", err)
 	}
-	rows, err := q.QueryContext(ctx, pendingCreationSQL, arg, arg)
+	rows, err := q.QueryContext(ctx, pendingCreationSQL, arg, incomingID)
 	if err != nil {
 		return nil, fmt.Errorf("read pending creations: %w", err)
 	}

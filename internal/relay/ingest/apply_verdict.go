@@ -62,7 +62,7 @@ func isStoreFailure(ctx context.Context, err error) bool {
 func (in *Ingestor) applyEvent(ctx context.Context, e *model.SyncEvent) (verdict, failure error) {
 	var applyErr error
 	txErr := in.cfg.Store.WithTx(ctx, func(tx *sql.Tx) error {
-		applyErr = in.cfg.Store.IdempotentApply(ctx, tx, e)
+		applyErr = in.cfg.Store.ApplyRelayEvent(ctx, tx, e)
 		return applyErr
 	})
 	switch {

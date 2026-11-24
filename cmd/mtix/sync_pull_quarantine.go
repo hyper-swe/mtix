@@ -380,7 +380,7 @@ func retryQuarantined(ctx context.Context, tx *sql.Tx, in pullIngest,
 		return retryHeld, err
 	}
 	if applied {
-		return retryDropped, sqlite.RemoveQuarantined(ctx, tx, q.EventID)
+		return retryDropped, dropAppliedQuarantined(ctx, tx, q)
 	}
 	var e model.SyncEvent
 	var refused error
@@ -403,6 +403,21 @@ func retryQuarantined(ctx context.Context, tx *sql.Tx, in pullIngest,
 		return retryApplied, nil
 	}
 	return retryHeld, recordQuarantine(ctx, tx, in, q, refused)
+}
+
+// dropAppliedQuarantined removes the row of a quarantined hub event that is
+// already applied. Relay ingest may have applied it and queued it for the hub
+// meanwhile (FR-21 §11.7): the hub copy acknowledges that forward first, so the
+// event is never pushed back. A raw event that does not decode has no forward
+// to match and is dropped as before.
+func dropAppliedQuarantined(ctx context.Context, tx *sql.Tx, q sqlite.QuarantinedEvent) error {
+	var e model.SyncEvent
+	if json.Unmarshal([]byte(q.RawEvent), &e) == nil && e.EventID == q.EventID {
+		if err := sqlite.AcknowledgeRelayForward(ctx, tx, &e); err != nil {
+			return fmt.Errorf("acknowledge relay forward of quarantined %s: %w", format.EventID(q.EventID), err)
+		}
+	}
+	return sqlite.RemoveQuarantined(ctx, tx, q.EventID)
 }
 
 // resetPullState clears what `mtix sync clone` rebuilds from the hub: the

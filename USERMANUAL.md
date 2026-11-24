@@ -649,7 +649,7 @@ mtix unclaim PROJ-1.1.1 --agent agent-lead --force --reason "agent-claude stoppe
 mtix done PROJ-1.1.1
 ```
 
-Marks the node as `done`. Progress automatically rolls up to parent nodes.
+Marks the node as `done`. Progress rolls up to parent nodes: a parent reads 100% only when every counted child is done and itself complete, so a parent shown below 100% still has open work (claiming or reopening a node removes its credit and its ancestors' in the same transaction; `progress.weighted` switches to the weighted mean).
 
 ### Defer (Postpone)
 
@@ -1783,7 +1783,7 @@ runs this program for you. Whether a Stop hook re-arms the waiter after a wake-d
 | `sync.listen_max_idle` | `8h` | The hold ends this long after the last real activity (at most 72h). |
 | `history.export` | `false` | EXPERIMENTAL. `true` writes `.mtix/tasks.json` in export format 2.1.0 with each task's change history (see "Task history in tasks.json"); mtix 0.5.4 and earlier cannot read such a file, so turn it on only when every machine and daemon that touches the board runs 0.6.0 or later; `mtix config set` refuses to turn it on while the guard detects an older build (see "Task history in tasks.json"). A running process follows a change without a restart. `mtix config set` accepts only true or false. |
 | `history.max_entries_per_task` | unset | EXPERIMENTAL. A positive whole number keeps at most that many change entries per task: when a task goes over, its next change trims the oldest down to 90% of the limit (at least one stays) and records one `retention_drop` marker. Unset keeps everything; `mtix config set history.max_entries_per_task ""` unsets it; 0, negative and non-integer values are refused. A running process (daemon, MCP server) picks up a changed limit when it restarts. See "Task history in tasks.json". |
-| `progress.weighted` | `false` | Use weight field in progress calculation |
+| `progress.weighted` | `false` | Off: a parent is count(done children) / count(counted children) (FR-5.3). On: weighted mean of child progress (FR-5.8); it still never reads 100% while a counted child is below 100% |
 | `sync.auto_sync` | `true` | Automatic import of a changed `.mtix/tasks.json` (after `git pull`); `false` turns it off, except for a store that holds no tasks. `mtix config set` accepts only true or false. Tracked in git with `.mtix/config.yaml`, so it applies to every clone. Writes keep exporting, in this binary's export schema, but never over a pulled board that was not imported; this switch does not stop that re-export (see the `export.schema` doctor check). See "Automatic import of `.mtix/tasks.json`" |
 
 
@@ -2271,7 +2271,7 @@ A board created before `sync.hub_contact` existed keeps contacting the hub at th
 
 Mirror exports read nodes, dependencies, agents and sessions from one read-only WAL snapshot, allowing writers to commit while the export reads. The mirror file and its conflict baseline describe that same snapshot; publication writes the file before its hashes. A write committed after the snapshot is handled by a later export.
 
-A writing command that encounters the mirror sync lock saves its database change and returns without waiting. New clients keep one coalesced pending-export record in the local database metadata, advancing a monotonic generation on every mark, including when already pending. The cutoff is committed before the board snapshot; only a fully published snapshot is retired, and later requests keep their own oldest age. The record survives process exit and restart. Its fixed size does not bound SQLite WAL size, and marking still requires one guarded FULL-WAL transaction: it adds no request file or directory fsync per commit. Long-running interfaces mark before debounce and still trigger if marking fails; the small commit-to-hook and CLI commit-to-post-run windows remain.
+The daemon's tick and debounced mirror exports take turns. A waiting export picks up changes committed after the previous snapshot. A writing command that finds the mirror sync lock held by another process saves its database change and defers export without waiting for that process. New clients keep one coalesced pending-export record in the local database metadata, advancing a monotonic generation on every mark, including when already pending. The cutoff is committed before the board snapshot; only a fully published snapshot is retired, and later requests keep their own oldest age. The record survives process exit and restart. Its fixed size does not bound SQLite WAL size, and marking still requires one guarded FULL-WAL transaction: it adds no request file or directory fsync per commit. Long-running interfaces mark before debounce and still trigger if marking fails; the small commit-to-hook and CLI commit-to-post-run windows remain.
 
 `mtix sync status` and `mtix sync doctor`, including `--json`, read pending mirror exports without draining or importing. They show count, oldest timestamp and age in seconds (`pending_exports.count`, `oldest_at`, `oldest_age_seconds`). With new clients the logical count is zero or one, not the number of mutations; unmigrated legacy `.mtix/data/export-pending/request-*` files temporarily add to that count. Future timestamps show age zero. Doctor warns when the oldest is more than one hour old and prints the exact safe recovery command `mtix list`. This invokes protected import-first recovery; follow any pulled-board refusal it prints, then check `mtix sync status` again. `mtix sync push` drains hub events, not this mirror work. Never delete pending files or edit database metadata, and never use `mtix sync --fix` as an unconditional retry: it discards the pulled board.
 
@@ -3663,7 +3663,7 @@ mtix sync relay attach /mnt/shared/team-relay
 mtix daemon
 ```
 
-If a peer's newest segment is empty or has a partial header, the reader retries it on the next poll. Once a later segment from that peer is visible, the earlier segment is sealed. An incomplete header there stalls ingest for that peer with `RELAY_SEGMENT_CORRUPT`, even if the later segment is complete. If the complete header of that sealed segment arrives later, it clears on the next tick without a republish or a clone.
+If a peer's newest segment is empty or has a partial header, the reader retries it on the next poll. Once a later segment from that peer is visible, the earlier segment is sealed. An incomplete header there stalls ingest for that peer with `RELAY_SEGMENT_CORRUPT`, even if the later segment is complete. If the complete header of that sealed segment arrives later, it clears on the next tick without a republish or a clone. A publisher killed while it was creating a segment file leaves a newest segment with an incomplete header and no record; on restart the publisher replaces that file itself under the same segment number (a segment holding records is never touched), so no operator step is needed and a reader that already saw the short file retries it and converges once. Short content that does not begin like a segment header is not replaced and still stops the publisher with an error naming the file.
 
 **Fresh late joiner (no local tasks).** On an existing peer, run `mtix sync relay tick` and `mtix sync relay clone --export` to publish a current bootstrap snapshot. In a fresh empty directory on the joining peer, use the same project prefix and a NEW peer id (never reuse an id whose store was lost). Ask the user to copy every relay key epoch file from the existing project's `.mtix/relay/keys/` to the new project's `.mtix/relay/keys/` out of band, after `init`: directory mode 0700, files mode 0600; never print keys or copy them through the relay. Before cloning, stop any daemon in the new project. Reusing the id of a lost store makes publishing stop with `RELAY_PUBLISHER_DIVERGED`. A relay made with `--no-auth` has no key files to copy, so skip the key step for it.
 
@@ -3688,9 +3688,24 @@ mtix refuses such filesystems at open regardless.
 
 Useful to know:
 
-- **A relay and a hub can both be configured.** A peer with both becomes
-  a gateway between them at no extra cost: events cross in each
-  direction and arriving twice is harmless.
+- **A relay and a hub can both be configured.** The gateway publishes events
+  it pulled from the hub on its next relay pass. Its next hub push sends
+  newly ingested relay events with their original IDs. If that push fails,
+  retry it. The hub accepts each event once, and relay duplicates never
+  put an event the gateway pulled from the hub back on its push queue.
+  A relay peer that took a task number the gateway already holds is refused
+  at ingest and kept in the relay quarantine, never queued for the hub. If the
+  hub holds the number of a relay-carried task (ingested from a relay peer, or
+  already published by this peer) for another task, the creation is held
+  (doctor fails `held push events`), not renumbered, because the relay cannot
+  move its author to the hub's number. The hold is permanent (relay-carried
+  tasks are never renumbered), and the hub's task holding that number does not
+  reach relay-only peers while it stands. No command in this build clears it: do
+  not edit the held task or its subtree, because pushing more edits to them only
+  adds held events (so does every dependency link made after the hold, which
+  waits for it and is never pushed while it stands), and escalate to the
+  operator. Doctor prints this, also under
+  `--json`.
 - **Latency is not promised.** Worst case is roughly your poll interval,
   plus however long the medium takes to make a file visible on the other
   side — seconds for a mounted folder, a manual walk for removable media.
@@ -5391,7 +5406,7 @@ Check what's blocking it with `mtix dep show <id>`. Resolve the blocking node or
 The agent hasn't sent a heartbeat within the threshold. Check if the agent process is running. Adjust the threshold with `mtix config set agent.stale_threshold <duration>`.
 
 **Progress not updating**
-Progress rolls up automatically when child states change. Check that child nodes have the expected status with `mtix tree <parent-id>`. Cancelled and invalidated children are excluded from calculations.
+Progress rolls up automatically when child states change. Check that child nodes have the expected status with `mtix tree <parent-id>`. Cancelled and invalidated children are excluded from calculations. A child counts as done only when it is `done` and its own progress is 100%, so a `done` node with open descendants does not credit its parent. Reopening or claiming a node resets its credit.
 
 **Cannot create child under done/cancelled node**
 Terminal states (`done`, `cancelled`, `invalidated`) block child creation. Reopen the parent first with `mtix reopen <id>`.

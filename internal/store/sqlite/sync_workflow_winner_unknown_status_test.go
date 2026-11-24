@@ -106,9 +106,11 @@ func TestApply_TransitionToUnknownStatus_InBatch_WritesStatusOnlyAndPullContinue
 
 	after := workflowColumns(t, raw, "MTIX-1")
 	require.Equal(t, "archived", after["status"], "the unknown status is written")
-	for _, col := range []string{"assignee", "agent_state", "previous_status", "closed_at", "progress", "defer_until"} {
+	for _, col := range []string{"assignee", "agent_state", "previous_status", "closed_at", "defer_until"} {
 		require.Equal(t, before[col], after[col], "column %s is not written", col)
 	}
+	// MTIX-294: the apply re-derives progress; a leaf that is not done reads 0 (FR-5.2).
+	require.Equal(t, "0", after["progress"], "progress is derived, not carried")
 	require.Equal(t, string(model.StatusInProgress), readNodeColumn(t, raw, "MTIX-2", "status"),
 		"the event after it still applies")
 	require.Equal(t, 4, countApplied(t, raw), "two creates and both transitions are recorded")

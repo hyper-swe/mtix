@@ -3,9 +3,9 @@
 Pull requests run **37 CI checks**: the full Linux matrix plus exactly one
 macOS job (`test-go-shard (macos-latest, other)`). Every push to `main` and the
 nightly schedule (03:17 UTC, default branch) run **51 CI checks**, which adds
-the twelve macOS SQLite, `cmd/mtix` and service shard legs. Merge only the reviewed commit
-with every check successful; a skipped or cancelled check is not a passing
-check. `test-go` is the required status check on `main` and keeps that exact
+the fourteen macOS SQLite, `cmd/mtix` and service shard legs. Merge only the
+reviewed commit with every check successful; a skipped or cancelled check is
+not a passing check. `test-go` is the required status check on `main` and keeps that exact
 name; it is the only required check.
 
 | Checks | Count | Purpose |
@@ -25,10 +25,10 @@ name; it is the only required check.
 ## Per-event macOS coverage and the red-main rule (MTIX-112.17.42)
 
 Hosted macOS capacity is limited, so a pull request runs one macOS job and the
-rest of the macOS matrix runs on `main`. The `os` axis of `test-go-sqlite` and
-`test-go-cmd` is chosen by event; on a PR the macOS legs are never generated,
-so the `test-go` aggregate stays strict: a skipped, cancelled or failed need
-still fails it on every event.
+rest of the macOS matrix runs on `main`. The `os` axis of `test-go-sqlite`,
+`test-go-cmd` and `test-go-service` is chosen by event; on a PR those macOS legs
+are never generated, so the `test-go` aggregate stays strict: a skipped,
+cancelled or failed need still fails it on every event.
 
 To keep macOS regressions from slipping past PRs, `scripts/main-macos-health.sh`
 judges the newest informative `ci.yml` run on `main` (event push or schedule).
@@ -161,11 +161,11 @@ running `go test ./internal/service/ -race -count=1 -timeout 20m -run "$pattern"
 No test is skipped and no deadline is raised. `scripts/ci_service_workflow_test.go`
 checks the compiled inventory and executes the workflow's guard/run commands,
 including failure propagation. Package-ownership tests execute the real job
-commands so service cannot silently remain in `other` or go untested. All four
-service jobs are required by the strict `test-go` aggregate, bringing ordinary
-CI to 33 checks (35 after MTIX-270 added a fourth SQLite shard, 39 after MTIX-272 added a fourth `cmd/mtix` shard, 47 after MTIX-272.1 added a fifth and a sixth `cmd/mtix` shard, 51 after MTIX-131.2 added a fifth and a sixth SQLite shard). Record actual per-shard hosted durations in the PR evidence;
-the full remote bar runs the code and guards, but does not execute changed
-`ci.yml` jobs.
+commands so service cannot silently remain in `other` or go untested. The strict
+`test-go` aggregate requires both Linux service jobs on PRs and all four service
+jobs on main pushes and nightly runs. Record actual per-shard hosted durations
+in the PR evidence; the full remote bar runs the code and guards, but does not
+execute changed `ci.yml` jobs.
 
 The native export child helper drains stdout in bounded chunks even when a line
 exceeds 64 KiB. It retains a head and tail totaling up to 32 KiB per stream,
@@ -218,10 +218,6 @@ malformed, duplicate or stale pin, so a pin can never drop or repeat a test;
 `ci.yml`, both remote-bar matrices and the pin file equal. Re-measure with
 `go test -race -json` when shards drift apart.
 
-The two old SQLite job names are replaced by six `test-go-sqlite` checks.
-Together with the four CLI/other jobs, the aggregate and the remaining checks,
-this changes the merge requirement from 21 successful checks to **25 of 25**; the `cmd/mtix` split below makes it **29 of 29**, and the service split above makes it **33 of 33** on a push; from MTIX-112.17.42 a PR needs **25 of 25**; MTIX-270 adds a fourth SQLite shard on each OS, so a PR needs **26 of 26** and a push **35 of 35**; MTIX-272 adds a fourth `cmd/mtix` shard on each OS and for each PostgreSQL version, so a PR needs **29 of 29** and a push **39 of 39**; MTIX-272.1 adds a fifth and a sixth, so a PR needs **35 of 35** and a push **47 of 47**; MTIX-131.2 adds a fifth and a sixth SQLite shard on each OS, so a PR needs **37 of 37** and a push **51 of 51** (the macOS SQLite, `cmd/mtix` and service legs run on main only).
-
 Before the split, the last five completed main CI runs measured these SQLite
 package times (seconds from the original Go output; setup is excluded):
 
@@ -271,10 +267,9 @@ bash scripts/cmd-mtix-shards.sh pattern 2   # the -run regex of shard 2
 ```
 
 Each shard keeps `-race -count=1 -p 1 -timeout 20m` with nothing skipped, and
-has its own database service. The branch-protection required checks change
-from the single `pg-16 ./cmd/mtix/` and `pg-17 ./cmd/mtix/` names to the six
-`cmd/mtix shard N` names. That raised the count from 17 to 21; the SQLite
-PR split above raises it to 25. The remote bar's Linux run covers exactly what `make test-race` covers,
+has its own database service. The two whole-package PostgreSQL checks were
+replaced by six `cmd/mtix shard N` checks per PostgreSQL version. The remote
+bar's Linux run covers exactly what `make test-race` covers,
 split into parallel jobs (see "Remote bar package sets" below). The `--os macos-latest` run
 covers the same set in sharded macOS jobs (see "macOS remote bar" below).
 

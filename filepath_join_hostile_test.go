@@ -30,9 +30,8 @@ import (
 // tests in the writer packages cover those paths for the writers they drive.
 func TestFilepathJoin_NoIDOrTitleOperands(t *testing.T) {
 	// Peer IDs are protocol identities, not opaque event IDs or ticket titles.
-	// tick.New validates the grammar before joining; doctor only renders paths.
+	// tick.Open passes the validated peer id to segment.EnsureDir, never to Join; doctor only renders paths.
 	allow := map[string]string{
-		"internal/relay/tick/stack.go:cfg.PeerID":   "validated FR-21 peer grammar before mkdir",
 		"cmd/mtix/sync_doctor_relay.go:peer.PeerID": "validated relay peer inventory; diagnostic path only",
 	}
 	violations, stale, err := scanJoinOperands(".", allow)

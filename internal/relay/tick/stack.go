@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"time"
 
@@ -17,6 +16,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/relay/metadata"
 	"github.com/hyper-swe/mtix/internal/relay/peerid"
 	"github.com/hyper-swe/mtix/internal/relay/publisher"
+	"github.com/hyper-swe/mtix/internal/relay/segment"
 )
 
 // PeersDirName is the relay subdirectory holding one directory per peer.
@@ -117,9 +117,11 @@ func Open(cfg StackConfig) (*Stack, error) {
 		}
 	}
 
-	segDir := filepath.Join(cfg.RelayDir, PeersDirName, cfg.PeerID, SegmentsDirName)
-	if mkErr := os.MkdirAll(segDir, 0o700); mkErr != nil {
-		return nil, fmt.Errorf("create %s: %w", segDir, mkErr)
+	// Lstat each component before creating anything: a link planted at
+	// peers/, peers/<id>/ or segments/ is RELAY_SYMLINK, never followed.
+	segDir, err := segment.EnsureDir(cfg.RelayDir, PeersDirName, cfg.PeerID, SegmentsDirName)
+	if err != nil {
+		return nil, fmt.Errorf("relay stack: %w", err)
 	}
 
 	pub, err := publisher.New(publisher.Config{

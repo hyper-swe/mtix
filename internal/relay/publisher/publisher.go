@@ -216,6 +216,7 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
+	adopted := &adoption{}
 	w, err := segment.NewWriter(segment.WriterConfig{
 		Dir:             p.cfg.SegmentsDir,
 		PeerID:          p.cfg.PeerID,
@@ -225,6 +226,7 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 		PubEpoch:        pos.PubEpoch,
 		NextRS:          pos.NextRS,
 		MaxSegmentBytes: p.cfg.MaxSegmentBytes,
+		AdoptAhead:      adopted.verifier(ctx, p.cfg.Journal, pos.Seq),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("open relay segment writer: %w", err)
@@ -245,6 +247,18 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 			slog.String("peer", p.cfg.PeerID), slog.Uint64("segment", w.SegmentNo()))
 	}
 
+	// §6.2: records already on the medium past the cursor are the crash
+	// window; they were verified against the journal, so the cursor moves
+	// over them and only what follows is appended.
+	rows, err = p.fastForward(ctx, adopted, rows, w)
+	if err != nil || len(rows) == 0 {
+		return 0, err
+	}
+	return p.appendRows(ctx, rows, w)
+}
+
+// appendRows frames each row and advances the cursor behind the batch.
+func (p *Publisher) appendRows(ctx context.Context, rows []sqlite.RelayJournalEvent, w *segment.Writer) (int, error) {
 	appended := 0
 	for _, row := range rows {
 		payload, marshalErr := json.Marshal(row.Event)

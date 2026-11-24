@@ -109,7 +109,7 @@ func (a syncApplier) applyCreateNode(ctx context.Context, tx *sql.Tx, e *model.S
 	// recalculateProgress tolerates a parent whose own create_node has not
 	// yet applied (causal order).
 	if p.ParentID != "" {
-		if err := recalculateProgress(ctx, tx, p.ParentID); err != nil {
+		if err := recalculateProgress(ctx, tx, a.weighted(), p.ParentID); err != nil {
 			return fmt.Errorf("apply create_node %s: recalc progress: %w", format.EventID(e.EventID), err)
 		}
 	}
@@ -278,10 +278,11 @@ func (a syncApplier) applyTransitionStatus(ctx context.Context, tx *sql.Tx, e *m
 	// without this, a blocker resolved on another client and synced in leaves
 	// local dependents sticky-blocked and parent progress stale. Runs in the
 	// same tx so the applied status and the recompute are atomic.
-	if parentID := model.ParseIDParent(id); parentID != "" {
-		if err := recalculateProgress(ctx, tx, parentID); err != nil {
-			return fmt.Errorf("apply transition_status %s: recalc progress: %w", format.EventID(e.EventID), err)
-		}
+	// MTIX-294 / FR-5.2, FR-5.7: re-derive the node itself (a done node with
+	// open children earns no credit, a reopened leaf drops it) and then every
+	// ancestor, as the local transition path does.
+	if err := recalculateProgress(ctx, tx, a.weighted(), id); err != nil {
+		return fmt.Errorf("apply transition_status %s: recalc progress: %w", format.EventID(e.EventID), err)
 	}
 	if isResolvingStatus(in.to) {
 		if err := unblockDependents(ctx, tx, a.store, id, e.AuthorID, a.clock); err != nil {
@@ -305,8 +306,16 @@ func (a syncApplier) applyClaim(ctx context.Context, tx *sql.Tx, e *model.SyncEv
 	if !ok {
 		return nil
 	}
-	_, err := applyWorkflowWinner(ctx, tx, e, in)
-	return err
+	id, err := applyWorkflowWinner(ctx, tx, e, in)
+	if err != nil {
+		return err
+	}
+	// MTIX-294 / FR-5.2, FR-5.7: a claimed leaf has no credit; re-derive it
+	// and every ancestor, as the local claim path does.
+	if err := recalculateProgress(ctx, tx, a.weighted(), id); err != nil {
+		return fmt.Errorf("apply claim %s: recalc progress: %w", format.EventID(e.EventID), err)
+	}
+	return nil
 }
 
 // applyUnclaim applies a winning unclaim (MTIX-95.10). The workflow payload
@@ -316,8 +325,16 @@ func (a syncApplier) applyUnclaim(ctx context.Context, tx *sql.Tx, e *model.Sync
 	if !ok {
 		return nil
 	}
-	_, err := applyWorkflowWinner(ctx, tx, e, in)
-	return err
+	id, err := applyWorkflowWinner(ctx, tx, e, in)
+	if err != nil {
+		return err
+	}
+	// MTIX-294 / FR-5.2, FR-5.7: the unclaim reopens the node; re-derive it
+	// and every ancestor, as the local unclaim path does.
+	if err := recalculateProgress(ctx, tx, a.weighted(), id); err != nil {
+		return fmt.Errorf("apply unclaim %s: recalc progress: %w", format.EventID(e.EventID), err)
+	}
+	return nil
 }
 
 // applyDefer applies a winning defer (MTIX-95.10). A defer whose payload cannot

@@ -76,6 +76,10 @@ type syncApplier struct {
 	store     *Store // records the history of tasks the replay reaches; nil outside a Store
 }
 
+// weighted reports the progress.weighted switch for this replay (FR-5.8); a
+// replay outside a Store uses the default count mode (FR-5.3).
+func (a syncApplier) weighted() bool { return a.store != nil && a.store.progressWeightedOn() }
+
 func (a syncApplier) IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
 	if event == nil {
 		return fmt.Errorf("apply: event nil: %w", model.ErrInvalidInput)

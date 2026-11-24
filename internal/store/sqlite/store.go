@@ -85,6 +85,9 @@ type Store struct {
 	// per write that records history.
 	historyLimit func() int
 
+	// progressWeighted reports the progress.weighted switch (FR-5.8). Nil means off.
+	progressWeighted func() bool
+
 	// writerVersion is the mtix version recorded as the last writer of an
 	// export that carries history.
 	writerVersion string

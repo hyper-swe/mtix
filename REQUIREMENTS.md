@@ -780,7 +780,7 @@ ui:
 When you create a task under a parent task that's in progress and assigned to an agent, mtix decides who owns the new task:
 
 - If you're the parent's assignee, mtix assigns the new task to you and marks it in progress. The claim happens in the same transaction as the create.
-- If you're not the parent's assignee, mtix creates the new task as open and unassigned. The task appears in `mtix ready`.
+- If your author identity is unset or differs from the parent's assignee, mtix creates the new task as open and unassigned. A fallback creator label (`cli` or `mcp`) records attribution only. The task appears in `mtix ready`.
 - If you set an assignee with `--assign`, mtix uses that assignee in every case.
 
 This rule applies to `mtix create --under`, `mtix decompose`, and the matching API, gRPC, and MCP calls. The `agent.auto_claim` setting turns the rule on and off. It's on by default.

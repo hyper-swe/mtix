@@ -4,6 +4,7 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"time"
@@ -35,6 +36,16 @@ type DecomposeInput struct {
 func (svc *NodeService) Decompose(
 	ctx context.Context, parentID string, children []DecomposeInput, creator string,
 ) ([]string, error) {
+	// No fallback label: only a supplied creator is recorded, and only an exact
+	// match with the parent assignee inherits its claim (FR-11.2a).
+	return svc.DecomposeWithCreatorFallback(ctx, parentID, children, creator, "")
+}
+
+// DecomposeWithCreatorFallback records fallback as the author when creator is unset.
+// Only a supplied creator may inherit the parent claim (FR-11.2a).
+func (svc *NodeService) DecomposeWithCreatorFallback(ctx context.Context, parentID string,
+	children []DecomposeInput, creator, fallback string,
+) ([]string, error) {
 	// Validate all children upfront before any writes (shared rule, MTIX-279).
 	if err := ValidateDecomposeChildren(children); err != nil {
 		return nil, err
@@ -56,13 +67,13 @@ func (svc *NodeService) Decompose(
 		)
 	}
 
-	base := &CreateNodeRequest{ParentID: parentID, Project: parent.Project, Creator: creator}
+	base := &CreateNodeRequest{ParentID: parentID, Project: parent.Project, Creator: creator, CreatorFallback: fallback}
 	nodes, err := svc.prepareDecomposeChildren(ctx, base, children, svc.clock())
 	if err != nil {
 		return nil, err
 	}
 	if err := svc.store.CreateNodesAllocated(ctx, nodes, store.CreateNodeOptions{
-		ClaimParentAssignee: svc.config.AutoClaim(),
+		ClaimParentAssignee: svc.canInheritClaim(creator),
 		Provisional:         svc.settlement.Enabled() && !svc.settlement.Reachable(),
 	}); err != nil {
 		return nil, fmt.Errorf("create children under %s: %w", parentID, err)
@@ -70,11 +81,11 @@ func (svc *NodeService) Decompose(
 	createdIDs := make([]string, 0, len(nodes))
 	for _, node := range nodes {
 		createdIDs = append(createdIDs, node.ID)
-		svc.broadcastCreatedNode(ctx, node, creator)
+		svc.broadcastCreatedNode(ctx, node)
 	}
 
 	// Broadcast progress.changed for the parent since children were added.
-	svc.broadcastEvent(ctx, EventProgressChanged, parentID, creator, nil)
+	svc.broadcastEvent(ctx, EventProgressChanged, parentID, cmp.Or(creator, fallback), nil)
 
 	return createdIDs, nil
 }

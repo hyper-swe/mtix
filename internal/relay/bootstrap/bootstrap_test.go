@@ -18,6 +18,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/relay/lifecycle"
 	"github.com/hyper-swe/mtix/internal/relay/metadata"
 	"github.com/hyper-swe/mtix/internal/relay/retention"
+	"github.com/hyper-swe/mtix/internal/relay/segment"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/stretchr/testify/require"
 )
@@ -524,4 +525,20 @@ func TestSnapshotNames_ReportsAnUnreadableDirectory(t *testing.T) {
 
 	_, err := bootstrap.SnapshotNames(relayDir)
 	require.Error(t, err)
+}
+
+// TestExportSnapshot_SymlinkedBootstrapDir_RefusesBeforeWriting verifies
+// FR-21 §5.1: the snapshot directory is never followed through a link,
+// and nothing is written into the link's destination (MTIX-305).
+func TestExportSnapshot_SymlinkedBootstrapDir_RefusesBeforeWriting(t *testing.T) {
+	relayDir, outside := t.TempDir(), t.TempDir()
+	require.NoError(t, os.Symlink(outside, filepath.Join(relayDir, bootstrap.DirName)))
+	st := newStore(t)
+	seedNodes(t, st, 1)
+
+	_, err := bootstrap.ExportSnapshot(context.Background(), exportReq(relayDir, st))
+	require.ErrorIs(t, err, segment.ErrSymlink)
+	entries, rerr := os.ReadDir(outside)
+	require.NoError(t, rerr)
+	require.Empty(t, entries)
 }

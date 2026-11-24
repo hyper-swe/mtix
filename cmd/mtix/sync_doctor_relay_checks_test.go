@@ -7,6 +7,7 @@ package main
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -118,7 +119,7 @@ func TestAppendRelayChecks_InvalidMedium_StopsWithRecovery(t *testing.T) {
 		{"peers symlink", "RELAY_SYMLINK", "remove the offending entry", false},
 		{"peers file", "RELAY_FOREIGN_ENTRY", "remove the offending entry", false},
 		{"missing record", "RELAY_META_ABSENT", "check that the relay directory is reachable", true},
-		{"malformed record", "RELAY_META_CORRUPT", "check that the relay directory is reachable", true},
+		{"malformed record", "RELAY_META_CORRUPT", "restore relay.json in the relay directory from a known-good copy", true},
 		{"record symlink", "RELAY_META_SYMLINK", "check that the relay directory is reachable", true},
 	}
 	for _, tt := range tests {
@@ -388,5 +389,34 @@ func TestCheckRelayPrivacy_Advisories_ExplainOperatorChoices(t *testing.T) {
 				require.NotContains(t, detail, "ordinary-notes.txt")
 			}
 		})
+	}
+}
+
+func TestAppendRelayChecks_RegressingKeyEpochs_NamesCauseAndRecovery(t *testing.T) {
+	dir, doc := initDiagnosticRelay(t, true)
+	doc.KeyEpochs = []metadata.KeyEpochBoundary{{Epoch: 1}, {Epoch: 3}, {Epoch: 2}}
+	body, err := json.Marshal(doc)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, metadata.FileName), body, 0o600))
+
+	got := appendRelayChecks(t.Context(), DoctorReport{OverallPass: true})
+	require.False(t, got.OverallPass)
+	require.Len(t, got.Checks, 2)
+	row := got.Checks[1]
+	require.Equal(t, "relay record", row.Name)
+	require.False(t, row.Pass)
+	out, err := json.Marshal(got)
+	require.NoError(t, err)
+	for _, text := range []string{
+		row.Detail,
+		string(out),
+	} {
+		for _, want := range []string{
+			"RELAY_META_CORRUPT", "key_epochs not strictly increasing", "epoch 2 after epoch 3",
+			"restore relay.json", "known-good copy", "never sort", "relay data flow stops",
+			"mtix sync doctor", "mtix sync relay tick",
+		} {
+			require.Contains(t, text, want)
+		}
 	}
 }

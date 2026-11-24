@@ -51,6 +51,9 @@ func newClaimedParent(t *testing.T, autoClaim bool) (*service.NodeService, *sqli
 	svc := service.NewNodeService(s, newRecordingBroadcaster(),
 		&service.StaticConfig{AutoClaimEnabled: autoClaim}, slog.Default(), clock)
 	ctx := context.Background()
+	// Use a fixed sync identity so claim tests need no host network interfaces.
+	_, seedErr := s.WriteDB().ExecContext(t.Context(), "UPDATE meta SET value = ? WHERE key = ?", "0123456789abcdef", "meta.sync.machine_hash")
+	require.NoError(t, seedErr)
 	parent, err := svc.CreateNode(ctx, &service.CreateNodeRequest{Project: "PROJ", Title: "Parent", Creator: "planner"})
 	require.NoError(t, err)
 	require.NoError(t, s.ClaimNode(ctx, parent.ID, "owner"))

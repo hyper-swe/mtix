@@ -4,7 +4,7 @@
 
 SQLite reads on both reader and writer connections (including reads inside write transactions) protect against stale snapshots after cancellation. Cancellation takes effect between rows: a long first step must finish before it is observed, and lock waits remain bounded by the busy timeout. This protection is automatic; no configuration is needed. Let the operation return before retrying, and check the task state before retrying a mutation whose result is uncertain. Recovery and reusable read-only handles have the same protection. Recovery’s five-second inbox integrity-check deadline is observed between rows; a long first step can exceed five seconds. An unfinished check still discards acknowledgement coverage; let recovery return before retrying.
 
-Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled: the child is claimed for the parent's assignee only when the creator is that assignee, otherwise it is created open and unassigned. The creator is your author identity (MTIX_AUTHOR_ID, else the author_id config key, else cli), and it must equal the --agent you used to claim the parent; set MTIX_AUTHOR_ID to that agent id. If you claim with --agent X while MTIX_AUTHOR_ID is unset, your creator is cli, so the children come out open and unassigned; set MTIX_AUTHOR_ID to the same id you pass to --agent. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
+Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled: the child is claimed for the parent's assignee only when the creator is that assignee, otherwise it is created open and unassigned. Set `MTIX_AUTHOR_ID` or the `author_id` config key to the agent that claimed the parent to inherit its claim on create or decompose. With no supplied or configured author, the child stays open and unassigned even if the recorded creator (`cli` on the CLI or `mcp` on MCP) matches the parent’s assignee. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
 A complete guide to using mtix for hierarchical task management.
 
@@ -1769,7 +1769,7 @@ runs this program for you. Whether a Stop hook re-arms the waiter after a wake-d
 | Key | Default | Description |
 |-----|---------|-------------|
 | `prefix` | `PROJ` | Project ID prefix |
-| `agent.auto_claim` | `true` | Claim a child for you when you create it under an in-progress parent you are assigned to. A child created by anyone else is open and unassigned. "You" is your author identity (`MTIX_AUTHOR_ID`, else `author_id`, else `cli`; `X-Agent-ID` on REST, `creator` on gRPC and MCP), and it must equal the `--agent` you used to claim the parent: set `MTIX_AUTHOR_ID` to that agent id. If you claim with `--agent X` while `MTIX_AUTHOR_ID` is unset, your creator is `cli`, so the children come out open and unassigned; set `MTIX_AUTHOR_ID` to the same id you pass to `--agent`. `--assign` always wins. Applies to `mtix create --under`, `mtix decompose` and the API, gRPC and MCP calls. To hand off, create with `--assign <agent>` or release with `mtix unclaim <id> --reason <text>`. |
+| `agent.auto_claim` | `true` | Claim a child for you when you create it under an in-progress parent you are assigned to. A child created by anyone else is open and unassigned. "You" is your author identity (`MTIX_AUTHOR_ID`, else `author_id`; `X-Agent-ID` on REST, `creator` on gRPC and MCP), and it must equal the `--agent` you used to claim the parent: set `MTIX_AUTHOR_ID` to that agent id. With no supplied or configured author, the child stays open and unassigned even when the recorded creator (`cli` or `mcp`) matches the parent’s assignee. `--assign` always wins. Applies to `mtix create --under`, `mtix decompose` and the API, gRPC and MCP calls. To hand off, create with `--assign <agent>` or release with `mtix unclaim <id> --reason <text>`. |
 | `max_depth` | `50` | Advisory depth warning (does not reject) |
 | `agent.stale_threshold` | `24h` | Duration before agent is considered stale |
 | `agent.stuck_timeout` | `0` (disabled) | Auto-unclaim stuck agents after this duration |
@@ -2854,6 +2854,15 @@ pull's position either, so later changes keep arriving.
   a hole beyond it is not ruled out. Run `mtix sync relay tick` for the stall and
   its recovery, then `mtix sync doctor` again.
 
+  **A store error is not a skipped record.** If the local database is busy,
+  the disk is full, an I/O error occurs or the poll is cancelled while a record
+  is being applied, the poll fails with `apply relay record <peer> rs <n>: ...`.
+  The record is not quarantined and the ingest cursor stays before it, so the
+  next successful poll applies it exactly once; records after it in that peer's
+  stream wait. Free the disk or the lock and run `mtix sync relay tick` again
+  (after a `fail-stop` error, restart mtix first). Only a record the apply path
+  itself rejects as invalid is skipped as described next.
+
   **Records the file relay skipped.** When relay ingest cannot apply a record
   from an authenticated peer (for example two peers took the same next task
   number), the record is stored in the local relay quarantine before the ingest
@@ -3629,6 +3638,8 @@ host's daemon fires the wake locally.
 > `sync.relay.dir` is set; leave it unset to stay on the hub transport or
 > on git alone.
 
+If relay metadata reports `RELAY_META_CORRUPT` at `key_epochs[i]`, entry `i` (counting from zero) repeats or precedes the previous epoch. The error names the cause (`key_epochs not strictly increasing`) and the two epochs. While `relay.json` is refused, relay data flow stops on every attached peer (tick, attach, rotate-key and `mtix sync doctor` all report it); each store keeps its events. `mtix` never repairs the file. Ask the user, then restore `relay.json` in the relay directory from a known-good copy of the relay medium (a backup, or the copy another peer holds) with its `key_epochs` history intact. Never sort, delete or edit `key_epochs` entries: that rewrites rotation history readers have already crossed. Then run `mtix sync doctor` to verify and `mtix sync relay tick` to resume.
+
 Some machines cannot open a database connection at all. A sandboxed
 agent runtime may share a folder with its host and have no network. An
 isolated network may forbid a database reachable from every zone while
@@ -3654,7 +3665,7 @@ mtix sync relay attach /mnt/shared/team-relay
 mtix daemon
 ```
 
-If a peer's newest segment is empty or has a partial header, the reader retries it on the next poll. Once a later segment from that peer is visible, the earlier segment is sealed. An incomplete header there stalls ingest for that peer with `RELAY_SEGMENT_CORRUPT`, even if the later segment is complete. If the complete header of that sealed segment arrives later, it clears on the next tick without a republish or a clone.
+If a peer's newest segment is empty or has a partial header, the reader retries it on the next poll. Once a later segment from that peer is visible, the earlier segment is sealed. An incomplete header there stalls ingest for that peer with `RELAY_SEGMENT_CORRUPT`, even if the later segment is complete. If the complete header of that sealed segment arrives later, it clears on the next tick without a republish or a clone. A publisher killed while it was creating a segment file leaves a newest segment with an incomplete header and no record; on restart the publisher replaces that file itself under the same segment number (a segment holding records is never touched), so no operator step is needed and a reader that already saw the short file retries it and converges once. Short content that does not begin like a segment header is not replaced and still stops the publisher with an error naming the file.
 
 **Fresh late joiner (no local tasks).** On an existing peer, run `mtix sync relay tick` and `mtix sync relay clone --export` to publish a current bootstrap snapshot. In a fresh empty directory on the joining peer, use the same project prefix and a NEW peer id (never reuse an id whose store was lost). Ask the user to copy every relay key epoch file from the existing project's `.mtix/relay/keys/` to the new project's `.mtix/relay/keys/` out of band, after `init`: directory mode 0700, files mode 0600; never print keys or copy them through the relay. Before cloning, stop any daemon in the new project. Reusing the id of a lost store makes publishing stop with `RELAY_PUBLISHER_DIVERGED`. A relay made with `--no-auth` has no key files to copy, so skip the key step for it.
 

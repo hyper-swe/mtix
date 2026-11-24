@@ -852,38 +852,6 @@ func TestRelayIngest_JournalTailFailureSkipsTheBootstrapDecision(t *testing.T) {
 	require.False(t, stats.BootstrapFloorInitialized)
 }
 
-// TestRelayIngest_ApplyFailureIsQuarantinedOnAnAuthenticatedRelay keeps
-// the §6.4 policy consistent for a record the apply path itself rejects.
-func TestRelayIngest_ApplyFailureIsQuarantinedOnAnAuthenticatedRelay(t *testing.T) {
-	r := newPeerRig(t)
-	e := event(t, model.OpCreateNode, "PROJ-1", 1, &model.CreateNodePayload{Title: "x"})
-	r.publish(t, fleetKey, marshalEvents(t, e)...)
-
-	in, err := ingest.New(r.withFake(&fakeStore{errTx: errors.New("apply failed")}))
-	require.NoError(t, err)
-	stats, err := in.IngestAll(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, 1, stats.Quarantined)
-	require.Zero(t, stats.Applied)
-}
-
-// TestRelayIngest_UIDLookupFailureIsNotAConflict separates "cannot check"
-// from "conflicts" — the second rejects a peer's work, the first is a
-// local database problem.
-func TestRelayIngest_UIDLookupFailureIsNotAConflict(t *testing.T) {
-	r := newPeerRig(t)
-	e := event(t, model.OpCreateNode, "PROJ-1", 1, &model.CreateNodePayload{Title: "x"})
-	e.UID = clock.MustNewEventID()
-	r.publish(t, fleetKey, marshalEvents(t, e)...)
-
-	in, err := ingest.New(r.withFake(&fakeStore{errResolveBy: errors.New("unavailable")}))
-	require.NoError(t, err)
-	stats, err := in.IngestAll(context.Background())
-	require.NoError(t, err)
-	require.Equal(t, 1, stats.Quarantined)
-	require.Contains(t, stats.Quarantines[0].Reason, "unavailable")
-}
-
 // TestRelayIngest_MalformedPayloadIsQuarantined covers a record whose
 // bytes are authentic but are not a sync event at all.
 func TestRelayIngest_MalformedPayloadIsQuarantined(t *testing.T) {

@@ -194,7 +194,7 @@ func (s *Store) applyDryImport(ctx context.Context, tx *sql.Tx, dry *ExportData,
 	if mode == ImportModeReplace {
 		_, applyErr = replaceAllData(ctx, tx, dry, false)
 	} else {
-		_, applyErr = mergeAllData(ctx, tx, dry, workflowPolicy{workflow, s.clock()})
+		_, applyErr = mergeAllData(ctx, tx, dry, workflowPolicy{workflow, s.clock(), s.progressWeightedOn()})
 	}
 	if applyErr != nil {
 		return applyErr

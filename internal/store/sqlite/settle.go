@@ -143,6 +143,12 @@ func sequenceKey(project, parentID string) string {
 // of the registry's retry-on-taken (ADR-003 §6, §12 sc.9), bounded so a
 // corrupt counter can never spin forever.
 func (s *Store) RenumberForHubRejection(ctx context.Context, uid string) (string, error) {
+	return s.renumberForHub(ctx, uid, false)
+}
+
+// renumberForHub is the body of RenumberForHubRejection; unlessPublished makes
+// each attempt's transaction refuse a creation the relay carries.
+func (s *Store) renumberForHub(ctx context.Context, uid string, unlessPublished bool) (string, error) {
 	target, err := s.loadRenumberTarget(ctx, uid)
 	if err != nil {
 		return "", err
@@ -156,9 +162,18 @@ func (s *Store) RenumberForHubRejection(ctx context.Context, uid string) (string
 		}
 		newID := model.BuildID(target.project, target.parentID, seq)
 		renErr := s.WithTx(ctx, func(tx *sql.Tx) error {
+			if unlessPublished {
+				if pub, err := relayPublished(ctx, tx, uid); err != nil {
+					return err
+				} else if pub {
+					return ErrRelayPublishedCreate
+				}
+			}
 			return s.renumberAndRequeue(ctx, tx, target, seq, newID)
 		})
 		switch {
+		case errors.Is(renErr, ErrRelayPublishedCreate):
+			return "", renErr
 		case renErr == nil:
 			return newID, nil
 		case errors.Is(renErr, model.ErrAlreadyExists):

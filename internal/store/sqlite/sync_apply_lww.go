@@ -156,13 +156,26 @@ func incomingBeats(e *model.SyncEvent, priorLamp, priorTS int64, priorHash strin
 }
 
 // mirrorIncomingEvent records a pulled event into the local
-// sync_events table with sync_status='applied'. INSERT OR IGNORE is
+// sync_events table with its transport's local status. INSERT OR IGNORE is
 // defensive idempotency only: an event already in sync_events (any
 // sync_status, including this replica's own emitted events) never
 // reaches this call, because the own-event rule in acknowledgeHeldEvent
 // returns first (MTIX-95.2).
 func (a syncApplier) mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) error {
-	if upgraded, err := upgradeRestoredInboxEvent(ctx, tx, e); err != nil || upgraded {
+	status := model.SyncStatusApplied
+	if a.fromRelay {
+		status = model.SyncStatusPending
+	}
+	if err := a.writeIncomingEvent(ctx, tx, e, status); err != nil || !a.fromRelay {
+		return err
+	}
+	// Only a first foreign relay arrival reaches the mirror (FR-21 §11.7).
+	_, err := tx.ExecContext(ctx, `INSERT INTO relay_forward_pending(event_id) VALUES (?)`, e.EventID)
+	return err
+}
+
+func (a syncApplier) writeIncomingEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, status model.SyncStatus) error {
+	if upgraded, err := upgradeRestoredInboxEvent(ctx, tx, e, status); err != nil || upgraded {
 		return err
 	}
 	vcJSON, err := json.Marshal(e.VectorClock)
@@ -177,7 +190,7 @@ func (a syncApplier) mirrorIncomingEvent(ctx context.Context, tx *sql.Tx, e *mod
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		e.EventID, e.ProjectPrefix, e.NodeID, nullableString(e.UID), string(e.OpType), string(e.Payload),
 		e.WallClockTS, e.LamportClock, string(vcJSON),
-		e.AuthorID, e.AuthorMachineHash, string(model.SyncStatusApplied),
+		e.AuthorID, e.AuthorMachineHash, string(status),
 		a.clock().UTC().Format(time.RFC3339Nano),
 	)
 	return err

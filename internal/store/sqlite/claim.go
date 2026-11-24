@@ -47,6 +47,12 @@ func (s *Store) claimNodeTx(ctx context.Context, tx *sql.Tx, id, agentID string)
 		return fmt.Errorf("claim node %s: %w", id, err)
 	}
 
+	// MTIX-294 / FR-5.2, FR-5.7: a claimed leaf has no credit; re-derive it
+	// and every ancestor in this transaction.
+	if progErr := recalculateProgress(ctx, tx, s.progressWeightedOn(), id); progErr != nil {
+		return fmt.Errorf("recalculate progress after claim: %w", progErr)
+	}
+
 	if agentErr := ensureAndSyncAgent(ctx, tx, agentID, id, nowStr); agentErr != nil {
 		return agentErr
 	}
@@ -155,6 +161,13 @@ func (s *Store) UnclaimNode(ctx context.Context, id, reason, author string) erro
 		)
 		if err != nil {
 			return fmt.Errorf("unclaim node %s: %w", id, err)
+		}
+
+		// MTIX-294 / FR-5.2, FR-5.7: the status changed from in_progress to
+		// open, so re-derive this node and every ancestor in the same
+		// transaction, as the claim and transition paths do.
+		if err := recalculateProgress(ctx, tx, s.progressWeightedOn(), id); err != nil {
+			return fmt.Errorf("recalculate progress after unclaim of %s: %w", id, err)
 		}
 
 		// FR-10.1b: Reset agent state on unclaim.

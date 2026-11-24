@@ -56,7 +56,7 @@ func mergeAllData(ctx context.Context, tx *sql.Tx, data *ExportData, policy work
 		}
 		result.DepsImported++
 	}
-	if err := rollUpMerged(ctx, tx, touched); err != nil {
+	if err := rollUpMerged(ctx, tx, policy.weighted, touched); err != nil {
 		return result, err
 	}
 	// MTIX-95.31.19.9: task history unions by entry id, never dropping a local entry.
@@ -179,7 +179,7 @@ func mergeChoiceAndStreams(merged, local, file *exportNode, fileCarriesAll bool,
 // contradict, so a node with live children is recomputed from them and then
 // its ancestors; a leaf's ancestors are recomputed from its parent. Deepest
 // first, each start once, so an ancestor is settled after everything below.
-func rollUpMerged(ctx context.Context, tx *sql.Tx, touched []*exportNode) error {
+func rollUpMerged(ctx context.Context, tx *sql.Tx, weighted bool, touched []*exportNode) error {
 	sorted := append([]*exportNode(nil), touched...)
 	sort.SliceStable(sorted, func(a, b int) bool { return sorted[a].Depth > sorted[b].Depth })
 	started := make(map[string]bool, len(sorted))
@@ -198,7 +198,7 @@ func rollUpMerged(ctx context.Context, tx *sql.Tx, touched []*exportNode) error 
 			continue
 		}
 		started[start] = true
-		if err := recalculateProgress(ctx, tx, start); err != nil {
+		if err := recalculateProgress(ctx, tx, weighted, start); err != nil {
 			return fmt.Errorf("recalculate progress of %s: %w", start, err)
 		}
 	}

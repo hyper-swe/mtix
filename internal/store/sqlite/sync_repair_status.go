@@ -226,7 +226,7 @@ func (s *Store) RepairNodeStatus(ctx context.Context, id, author string, force b
 			return nil
 		}
 		applied = true
-		return applyStatusRepair(ctx, tx, s, plan, author, now)
+		return applyStatusRepair(ctx, tx, s.progressWeightedOn(), s, plan, author, now)
 	})
 	if err != nil {
 		return nil, false, fmt.Errorf("status repair %s: %w", id, err)
@@ -239,8 +239,8 @@ func (s *Store) RepairNodeStatus(ctx context.Context, id, author string, force b
 // one: a status_change activity entry, a transition_status event (with the
 // winner's wall clock, repairEventWallClock) and the dependents unblocked. A repair that leaves
 // the status alone records a system activity entry and emits nothing. The
-// parent's progress is recomputed either way.
-func applyStatusRepair(ctx context.Context, tx *sql.Tx, h historyToucher, plan statusPlan, author string, now time.Time) error {
+// node's own progress and every ancestor's are re-derived either way (MTIX-294).
+func applyStatusRepair(ctx context.Context, tx *sql.Tx, weighted bool, h historyToucher, plan statusPlan, author string, now time.Time) error {
 	id, from, to := plan.row.id, plan.row.status, plan.write.status
 	if err := writeWorkflowColumns(ctx, tx, id, plan.write); err != nil {
 		return err
@@ -261,7 +261,7 @@ func applyStatusRepair(ctx context.Context, tx *sql.Tx, h historyToucher, plan s
 			return err
 		}
 	}
-	if err := recalculateProgress(ctx, tx, plan.row.parentID); err != nil {
+	if err := recalculateProgress(ctx, tx, weighted, id); err != nil {
 		return fmt.Errorf("recalculate progress after repair: %w", err)
 	}
 	if from != to && isResolvingStatus(to) {

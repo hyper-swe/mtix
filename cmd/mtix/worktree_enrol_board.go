@@ -34,6 +34,7 @@ func withBoardStore(logger *slog.Logger, root, dataDir string, fn func(*sqlite.S
 	}
 	return withStoreAt(logger, dataDir, func(st *sqlite.Store) error {
 		st.SetHistoryExportSource(cfg.HistoryExport)
+		st.SetProgressWeightedSource(cfg.ProgressWeighted)
 		st.SetWriterVersion(version)
 		return fn(st)
 	})

@@ -260,6 +260,7 @@ func initApp(cmd *cobra.Command, logLevel string) error {
 	app.store.SetHistoryExportSource(app.configSvc.HistoryExport)
 	app.store.SetHistoryLimitSource(app.configSvc.HistoryMaxEntries) // MTIX-95.31.19.4: unset by default
 	app.store.SetWriterVersion(version)
+	app.store.SetProgressWeightedSource(app.configSvc.ProgressWeighted) // MTIX-294, FR-5.8
 	// MTIX-95.31.19.6: turning history.export on is refused while an older mtix is detected.
 	app.historyGuard = service.NewHistoryExportGuardService(app.store, guardClock)
 	app.configSvc.SetHistoryExportGuard(func() (service.HistoryGuardReport, error) {

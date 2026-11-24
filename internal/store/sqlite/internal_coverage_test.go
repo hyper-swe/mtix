@@ -611,7 +611,7 @@ func TestRecalculateProgress_EmptyNodeID_NoOp(t *testing.T) {
 	ctx := context.Background()
 
 	err := s.WithTx(ctx, func(tx *sql.Tx) error {
-		return recalculateProgress(ctx, tx, "")
+		return recalculateProgress(ctx, tx, false, "")
 	})
 	require.NoError(t, err)
 }

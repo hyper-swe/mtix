@@ -649,7 +649,7 @@ mtix unclaim PROJ-1.1.1 --agent agent-lead --force --reason "agent-claude stoppe
 mtix done PROJ-1.1.1
 ```
 
-Marks the node as `done`. Progress automatically rolls up to parent nodes.
+Marks the node as `done`. Progress rolls up to parent nodes: a parent reads 100% only when every counted child is done and itself complete, so a parent shown below 100% still has open work (claiming or reopening a node removes its credit and its ancestors' in the same transaction; `progress.weighted` switches to the weighted mean).
 
 ### Defer (Postpone)
 
@@ -1783,7 +1783,7 @@ runs this program for you. Whether a Stop hook re-arms the waiter after a wake-d
 | `sync.listen_max_idle` | `8h` | The hold ends this long after the last real activity (at most 72h). |
 | `history.export` | `false` | EXPERIMENTAL. `true` writes `.mtix/tasks.json` in export format 2.1.0 with each task's change history (see "Task history in tasks.json"); mtix 0.5.4 and earlier cannot read such a file, so turn it on only when every machine and daemon that touches the board runs 0.6.0 or later; `mtix config set` refuses to turn it on while the guard detects an older build (see "Task history in tasks.json"). A running process follows a change without a restart. `mtix config set` accepts only true or false. |
 | `history.max_entries_per_task` | unset | EXPERIMENTAL. A positive whole number keeps at most that many change entries per task: when a task goes over, its next change trims the oldest down to 90% of the limit (at least one stays) and records one `retention_drop` marker. Unset keeps everything; `mtix config set history.max_entries_per_task ""` unsets it; 0, negative and non-integer values are refused. A running process (daemon, MCP server) picks up a changed limit when it restarts. See "Task history in tasks.json". |
-| `progress.weighted` | `false` | Use weight field in progress calculation |
+| `progress.weighted` | `false` | Off: a parent is count(done children) / count(counted children) (FR-5.3). On: weighted mean of child progress (FR-5.8); it still never reads 100% while a counted child is below 100% |
 | `sync.auto_sync` | `true` | Automatic import of a changed `.mtix/tasks.json` (after `git pull`); `false` turns it off, except for a store that holds no tasks. `mtix config set` accepts only true or false. Tracked in git with `.mtix/config.yaml`, so it applies to every clone. Writes keep exporting, in this binary's export schema, but never over a pulled board that was not imported; this switch does not stop that re-export (see the `export.schema` doctor check). See "Automatic import of `.mtix/tasks.json`" |
 
 
@@ -5382,7 +5382,7 @@ Check what's blocking it with `mtix dep show <id>`. Resolve the blocking node or
 The agent hasn't sent a heartbeat within the threshold. Check if the agent process is running. Adjust the threshold with `mtix config set agent.stale_threshold <duration>`.
 
 **Progress not updating**
-Progress rolls up automatically when child states change. Check that child nodes have the expected status with `mtix tree <parent-id>`. Cancelled and invalidated children are excluded from calculations.
+Progress rolls up automatically when child states change. Check that child nodes have the expected status with `mtix tree <parent-id>`. Cancelled and invalidated children are excluded from calculations. A child counts as done only when it is `done` and its own progress is 100%, so a `done` node with open descendants does not credit its parent. Reopening or claiming a node resets its credit.
 
 **Cannot create child under done/cancelled node**
 Terminal states (`done`, `cancelled`, `invalidated`) block child creation. Reopen the parent first with `mtix reopen <id>`.

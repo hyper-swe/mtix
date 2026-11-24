@@ -105,6 +105,7 @@ func (e *WorkflowConflictError) Unwrap() []error {
 type workflowPolicy struct {
 	resolution WorkflowResolution
 	now        time.Time
+	weighted   bool // progress.weighted at merge start (FR-5.8)
 }
 
 // withWorkflowResolution makes the import settle workflow conflicts with r

@@ -95,7 +95,7 @@ Before calling `mcp__mtix__mtix_done`:
 - **No stub implementations** — functions must perform their documented purpose end-to-end. A compiling stub is not an implementation
 
 ### 8. Mark Done
-Call `mcp__mtix__mtix_done` with the node ID. Progress automatically rolls up to parent nodes.
+Call `mcp__mtix__mtix_done` with the node ID. Progress rolls up to parent nodes: a parent reads 100% only when every counted child is done and itself complete, so a parent shown below 100% still has open work (claiming or reopening a node removes its credit and its ancestors' in the same transaction; `progress.weighted` switches to the weighted mean).
 
 ### 9. End Session
 When all work is complete, call `mcp__mtix__mtix_session_end`.

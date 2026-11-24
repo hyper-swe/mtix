@@ -199,7 +199,7 @@ func (s *Store) insertAndClaimNode(ctx context.Context, tx *sql.Tx, node *model.
 	}
 
 	if node.ParentID != "" {
-		if err := recalculateProgress(ctx, tx, node.ParentID); err != nil {
+		if err := recalculateProgress(ctx, tx, s.progressWeightedOn(), node.ParentID); err != nil {
 			return fmt.Errorf("recalculate progress after create: %w", err)
 		}
 	}

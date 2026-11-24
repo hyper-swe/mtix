@@ -246,6 +246,8 @@ func TestUndelete_CascadeDeletedChildrenRestored(t *testing.T) {
 	)
 	ctx := context.Background()
 	require.NoError(t, s.DeleteNode(ctx, "PROJ-1.1.3", false, undelAuthor))
+	// MTIX-294: this test pins the FR-5.8 weighted mean, so the switch is on.
+	s.SetProgressWeightedSource(func() bool { return true })
 	require.NoError(t, s.DeleteNode(ctx, "PROJ-1.1", true, undelAuthor))
 	require.InDelta(t, 0.0, progressOf(t, s, "PROJ-1"), 1e-9,
 		"precondition: the parent has no live child with progress")

@@ -204,6 +204,17 @@ func StatusIcon(status string) string {
 	}
 }
 
+// ProgressPercent renders a 0..1 progress as a whole percent. A value below 1.0
+// never renders as 100%: rounding would show a parent complete while work
+// remains (MTIX-294, FR-5.8), so it is shown as 99%.
+func ProgressPercent(progress float64) string {
+	pct := fmt.Sprintf("%.0f", progress*100)
+	if progress < 1.0 && pct == "100" {
+		pct = "99"
+	}
+	return pct + "%"
+}
+
 // ProgressBar returns a Unicode progress bar string.
 func ProgressBar(progress float64, width int) string {
 	filled := int(progress * float64(width))
@@ -216,7 +227,7 @@ func ProgressBar(progress float64, width int) string {
 	empty := width - filled
 
 	bar := strings.Repeat("█", filled) + strings.Repeat("░", empty)
-	return fmt.Sprintf("[%s] %.0f%%", bar, progress*100)
+	return fmt.Sprintf("[%s] %s", bar, ProgressPercent(progress))
 }
 
 // StatusColor returns the ANSI color code for a status.
@@ -272,7 +283,7 @@ func FormatNodeRow(id, status string, priority int, title string, progress float
 		clr := StatusColor(status)
 		statusStr = colorize(statusStr, clr, true)
 	}
-	progressStr := fmt.Sprintf("%.0f%%", progress*100)
+	progressStr := ProgressPercent(progress)
 	return []string{format.AnnotateID(id), statusStr, fmt.Sprintf("%d", priority), progressStr, Truncate(format.SafeLine(title), 50)}
 }
 

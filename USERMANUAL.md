@@ -3679,9 +3679,24 @@ mtix refuses such filesystems at open regardless.
 
 Useful to know:
 
-- **A relay and a hub can both be configured.** A peer with both becomes
-  a gateway between them at no extra cost: events cross in each
-  direction and arriving twice is harmless.
+- **A relay and a hub can both be configured.** The gateway publishes events
+  it pulled from the hub on its next relay pass. Its next hub push sends
+  newly ingested relay events with their original IDs. If that push fails,
+  retry it. The hub accepts each event once, and relay duplicates never
+  put an event the gateway pulled from the hub back on its push queue.
+  A relay peer that took a task number the gateway already holds is refused
+  at ingest and kept in the relay quarantine, never queued for the hub. If the
+  hub holds the number of a relay-carried task (ingested from a relay peer, or
+  already published by this peer) for another task, the creation is held
+  (doctor fails `held push events`), not renumbered, because the relay cannot
+  move its author to the hub's number. The hold is permanent (relay-carried
+  tasks are never renumbered), and the hub's task holding that number does not
+  reach relay-only peers while it stands. No command in this build clears it: do
+  not edit the held task or its subtree, because pushing more edits to them only
+  adds held events (so does every dependency link made after the hold, which
+  waits for it and is never pushed while it stands), and escalate to the
+  operator. Doctor prints this, also under
+  `--json`.
 - **Latency is not promised.** Worst case is roughly your poll interval,
   plus however long the medium takes to make a file visible on the other
   side — seconds for a mounted folder, a manual walk for removable media.

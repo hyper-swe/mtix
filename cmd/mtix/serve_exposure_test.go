@@ -266,3 +266,47 @@ func malformedStore(t *testing.T, state *oplocal.State, content string) *oplocal
 	require.NoError(t, state.WriteJSON(serveTokenRecord, serveTokenFile{Token: content}))
 	return state
 }
+
+// TestPrepareServe_AllowOrigin_ValidatedAndPassedOn verifies that
+// --allow-origin values reach the server configuration, that the default
+// is an empty allow-list, and that an entry no browser could send is
+// refused before the server starts.
+func TestPrepareServe_AllowOrigin_ValidatedAndPassedOn(t *testing.T) {
+	alertDoctorFixture(t)
+	tests := []struct {
+		name    string
+		origins []string
+		wantErr bool
+	}{
+		{"no flag means an empty allow-list", nil, false},
+		{"one exact origin", []string{"http://localhost:5173"}, false},
+		{"two exact origins", []string{"http://localhost:5173", "https://app.example"}, false},
+		{"trailing slash", []string{"http://localhost:5173/"}, true},
+		{"wildcard", []string{"*"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := prepareServe(serveRequest{Addr: "127.0.0.1", AddrChanged: true, Port: 8377, AllowedOrigins: tt.origins})
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), "--allow-origin")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.origins, cfg.AllowedOrigins)
+		})
+	}
+}
+
+// TestServeCmd_AllowOriginFlag_RepeatableAndEmptyByDefault verifies the
+// --allow-origin flag: repeatable, no comma splitting, empty by default.
+func TestServeCmd_AllowOriginFlag_RepeatableAndEmptyByDefault(t *testing.T) {
+	cmd := newServeCmd()
+	flag := cmd.Flags().Lookup("allow-origin")
+	require.NotNil(t, flag)
+	assert.Equal(t, "[]", flag.DefValue)
+	require.NoError(t, cmd.Flags().Parse([]string{"--allow-origin", "http://localhost:5173", "--allow-origin", "https://a.example,https://b.example"}))
+	got, err := cmd.Flags().GetStringArray("allow-origin")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"http://localhost:5173", "https://a.example,https://b.example"}, got)
+}

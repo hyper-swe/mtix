@@ -27,6 +27,14 @@ const DefaultMaxImportSize = 50 * 1024 * 1024
 // It reads the export file exactly once into memory, computes its SHA-256 hash,
 // and compares against a stored hash to detect changes from git operations.
 type SyncService struct {
+	// exportGate is a one-slot gate that serializes local export passes,
+	// including the pulled-board check; a waiter selects it against its
+	// context (MTIX-130.20.4). Created by passGate on first use.
+	exportGate     chan struct{}
+	exportGateOnce sync.Once
+	// passQueued is a test-only hook, called once a pass has to queue behind
+	// another one, right before it blocks; nil in production.
+	passQueued func()
 	store      *sqlite.Store
 	logger     *slog.Logger
 	clock      func() time.Time

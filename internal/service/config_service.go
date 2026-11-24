@@ -33,14 +33,18 @@ type ConfigService struct {
 	// sync.hub_contact and the operator has not set it since (MTIX-112.20.1).
 	legacyHubContact bool
 	seenInFile       map[string]bool
+
+	// progressWeighted caches the progress.weighted read per file stamp (MTIX-294).
+	progressWeighted *progressWeightedCache
 }
 
 // NewConfigService creates a ConfigService, loading from the given path.
 // If the file doesn't exist, returns a service with defaults only.
 func NewConfigService(configPath string) (*ConfigService, error) {
 	cs := &ConfigService{
-		values: make(map[string]string),
-		path:   configPath,
+		progressWeighted: &progressWeightedCache{},
+		values:           make(map[string]string),
+		path:             configPath,
 	}
 
 	// Start with defaults.

@@ -10,9 +10,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -23,9 +23,6 @@ const AcksFileName = "acks.json"
 // it says only how far this peer has read — but it is authoritative for
 // pruning, so it stays owner-writable.
 const acksFileMode os.FileMode = 0o644
-
-// peerIDPattern is the FR-21 §5.2 identity grammar.
-var peerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
 
 // ErrAcksUnusable marks an ack file that cannot be read as one.
 //
@@ -79,7 +76,7 @@ func ReadAcks(dir string) (Acks, error) {
 		return nil, fmt.Errorf("%w: %s: %v", ErrAcksUnusable, path, err)
 	}
 	for peer := range acks {
-		if !peerIDPattern.MatchString(peer) {
+		if !peerid.Valid(peer) {
 			return nil, fmt.Errorf("%w: %s names peer %q", ErrAcksUnusable, path, peer)
 		}
 	}
@@ -95,7 +92,7 @@ func ReadAcks(dir string) (Acks, error) {
 // could have.
 func WriteAcks(dir string, acks Acks) error {
 	for peer := range acks {
-		if !peerIDPattern.MatchString(peer) {
+		if !peerid.Valid(peer) {
 			return fmt.Errorf("write relay acks: peer %q is malformed", peer)
 		}
 	}

@@ -16,6 +16,8 @@ mtix decompose <parent_id> --file plan.jsonl
 
 Or via MCP: `mtix_decompose`
 
+Each plan line takes `title` (required), `prompt`, `acceptance`, `description`, `priority`, `labels` and `issue_type` (`type` is an alias; bug, feature, task, chore, refactor, test or doc). An unknown key or an invalid issue type is refused naming the line and the key, and nothing is created.
+
 **Important:** After decomposing, populate every child with context:
 
 ```
@@ -44,7 +46,7 @@ Read the node's prompt and acceptance criteria. Do the work.
 mtix done <id>
 ```
 
-Progress automatically rolls up to parent nodes.
+Progress rolls up to parent nodes: a parent reads 100% only when every counted child is done and itself complete, so a parent shown below 100% still has open work (claiming or reopening a node removes its credit and its ancestors' in the same transaction; `progress.weighted` switches to the weighted mean).
 
 ### 5. Unclaim (if needed)
 

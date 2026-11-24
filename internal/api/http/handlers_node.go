@@ -4,6 +4,7 @@
 package http
 
 import (
+	"encoding/json"
 	"net/http"
 	"strconv"
 
@@ -183,24 +184,14 @@ func (s *Server) getChildren(c *gin.Context) {
 }
 
 // decomposeNode handles POST /api/v1/nodes/:id/decompose per FR-7.2.
-// Creates multiple child nodes under the specified parent.
+// Creates multiple child nodes under the specified parent. The whole batch is
+// validated (service.ValidateDecomposeChildren) before the first create, so a
+// refused batch creates nothing (MTIX-279).
 func (s *Server) decomposeNode(c *gin.Context) {
 	parentID := c.Param("id")
 
-	var req struct {
-		Children []struct {
-			Title      string `json:"title" binding:"required"`
-			Prompt     string `json:"prompt"`
-			Acceptance string `json:"acceptance"`
-		} `json:"children" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		HandleValidationError(c, "invalid request body: "+err.Error())
-		return
-	}
-
-	if len(req.Children) == 0 {
-		HandleValidationError(c, "at least one child is required")
+	children, ok := bindDecomposeChildren(c)
+	if !ok {
 		return
 	}
 
@@ -212,15 +203,19 @@ func (s *Server) decomposeNode(c *gin.Context) {
 	}
 
 	creator := c.GetHeader("X-Agent-ID")
-	created := make([]*model.Node, 0, len(req.Children))
-	for _, child := range req.Children {
+	created := make([]*model.Node, 0, len(children))
+	for _, child := range children {
 		node, createErr := s.nodeWriter.CreateNode(c.Request.Context(), &service.CreateNodeRequest{
-			Title:      child.Title,
-			ParentID:   parentID,
-			Project:    parent.Project,
-			Prompt:     child.Prompt,
-			Acceptance: child.Acceptance,
-			Creator:    creator,
+			Title:       child.Title,
+			ParentID:    parentID,
+			Project:     parent.Project,
+			Prompt:      child.Prompt,
+			Acceptance:  child.Acceptance,
+			Description: child.Description,
+			Priority:    child.Priority,
+			Labels:      child.Labels,
+			IssueType:   child.IssueType,
+			Creator:     creator,
 		})
 		if createErr != nil {
 			HandleError(c, createErr)
@@ -234,4 +229,31 @@ func (s *Server) decomposeNode(c *gin.Context) {
 		"children":  created,
 		"total":     len(created),
 	})
+}
+
+// bindDecomposeChildren reads and validates the decompose request body. Children
+// decode strictly (unknown keys refused naming the child, "type" aliases
+// "issue_type") and are validated as one batch (MTIX-279). It writes the 400
+// response and returns false when the body is refused.
+func bindDecomposeChildren(c *gin.Context) ([]service.DecomposeInput, bool) {
+	var req struct {
+		Children []json.RawMessage `json:"children" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		HandleValidationError(c, "invalid request body: "+err.Error())
+		return nil, false
+	}
+	if len(req.Children) == 0 {
+		HandleValidationError(c, "at least one child is required")
+		return nil, false
+	}
+	children, err := service.DecodeDecomposeChildren(req.Children)
+	if err == nil {
+		err = service.ValidateDecomposeChildren(children)
+	}
+	if err != nil {
+		HandleValidationError(c, err.Error())
+		return nil, false
+	}
+	return children, true
 }

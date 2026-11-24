@@ -29,10 +29,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"sync/atomic"
 
 	"github.com/hyper-swe/mtix/internal/format"
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 	"github.com/hyper-swe/mtix/internal/relay/segment"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -54,9 +54,6 @@ func CodeOf(err error) string {
 	return ""
 }
 
-// peerIDPattern is the FR-21 §5.2 identity grammar.
-var peerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
-
 // defaultBatchLimit bounds one tick's journal read. A tick's cost
 // tracks what is new, never the length of history (FR-21 §9).
 const defaultBatchLimit = 500
@@ -77,6 +74,8 @@ type Journal interface {
 	AdvanceRelayPushCursor(ctx context.Context, seq int64, nextRS uint64) error
 	ResetRelayPublisher(ctx context.Context, floorSeq int64, baseRS uint64) error
 	ReadRelayJournalSince(ctx context.Context, seq int64, limit int) ([]sqlite.RelayJournalEvent, error)
+	MarkRelayFraming(ctx context.Context, seq int64) error
+	RelayBatchBound(ctx context.Context, seq int64, limit int) (int64, error)
 	LookupRelayJournalSeqs(ctx context.Context, eventIDs []string) (map[string]int64, error)
 	RepublishRelayFrom(ctx context.Context, floorSeq int64) error
 
@@ -159,7 +158,7 @@ func New(cfg Config) (*Publisher, error) {
 	if cfg.Journal == nil {
 		return nil, errors.New("relay publisher: journal is required")
 	}
-	if !peerIDPattern.MatchString(cfg.PeerID) {
+	if !peerid.Valid(cfg.PeerID) {
 		return nil, fmt.Errorf("relay publisher: peer id %q is malformed", cfg.PeerID)
 	}
 	if cfg.Unauthenticated == (len(cfg.Key) != 0) {
@@ -212,12 +211,9 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 	if verifyErr := p.verifyTail(ctx); verifyErr != nil {
 		return 0, verifyErr
 	}
-	rows, err := p.cfg.Journal.ReadRelayJournalSince(ctx, pos.Seq, p.cfg.BatchLimit)
-	if err != nil {
+	rows, err := p.readAndMark(ctx, pos.Seq)
+	if err != nil || len(rows) == 0 {
 		return 0, err
-	}
-	if len(rows) == 0 {
-		return 0, nil
 	}
 
 	w, err := segment.NewWriter(segment.WriterConfig{
@@ -267,6 +263,35 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 		return appended, err
 	}
 	return appended, nil
+}
+
+// readAndMark returns the rows to frame, after the published mark covers them.
+//
+// A renumber rewrites a pending create in place and re-checks the mark in its
+// own transaction. So the batch's upper bound is taken first (one indexed
+// query), the mark is raised to it, and only then is the batch read, once: a
+// renumber that committed before the mark is seen by the read, and one that
+// comes after sees the mark and holds. Reading first and marking after would
+// let a renumber commit between the two while the old number is framed. Rows
+// inserted after the bound are cut and wait for the next tick. A crash after
+// the mark but before the append only holds a later renumber, which is safe.
+func (p *Publisher) readAndMark(ctx context.Context, after int64) ([]sqlite.RelayJournalEvent, error) {
+	upTo, err := p.cfg.Journal.RelayBatchBound(ctx, after, p.cfg.BatchLimit)
+	if err != nil || upTo <= after {
+		return nil, err
+	}
+	if markErr := p.cfg.Journal.MarkRelayFraming(ctx, upTo); markErr != nil {
+		return nil, markErr
+	}
+	rows, err := p.cfg.Journal.ReadRelayJournalSince(ctx, after, p.cfg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	n := len(rows)
+	for n > 0 && rows[n-1].Seq > upTo {
+		n--
+	}
+	return rows[:n], nil
 }
 
 // bank advances the cursor over the records that did land before an
@@ -398,10 +423,17 @@ func (p *Publisher) publishedTailIDs() ([]string, error) {
 	newest := segs[len(segs)-1]
 	// The newest segment is the active tail, so a torn frame at its end
 	// is an append in flight rather than damage.
-	res, err := segment.ScanFile(newest.Path, segment.ScanOptions{
-		Key:          p.cfg.Key,
-		ExpectPeerID: p.cfg.PeerID,
-	})
+	opts := segment.ScanOptions{Key: p.cfg.Key, ExpectPeerID: p.cfg.PeerID}
+	res, err := segment.ScanFile(newest.Path, opts)
+	if errors.Is(err, segment.ErrIncomplete) && crashedHeader(newest.Path) {
+		// A kill during segment creation left a header-only newest
+		// segment (MTIX-302). It holds no record and the writer replaces
+		// it, so the published tail is the segment before it, if any.
+		if len(segs) == 1 {
+			return nil, nil
+		}
+		res, err = segment.ScanFile(segs[len(segs)-2].Path, opts)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("verify relay tail: %w", err)
 	}
@@ -481,4 +513,11 @@ func (p *Publisher) OnCommit() func() {
 				slog.String("peer", p.cfg.PeerID), slog.Any("error", err))
 		}
 	}
+}
+
+// crashedHeader reports whether path is a segment creation killed before its
+// header was whole; a read fault answers false so the scan verdict stands.
+func crashedHeader(path string) bool {
+	ok, err := segment.IsCrashedHeader(path)
+	return err == nil && ok
 }

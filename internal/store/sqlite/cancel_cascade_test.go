@@ -259,9 +259,10 @@ func cascadeProgressCases() []progressCase {
 			want: map[string]float64{"PROJ-1.1": 1.0, "PROJ-1": 1.0},
 		},
 		{
-			// PROJ-1.1 is done (1.0) over one open child; once that child is
-			// cancelled it has no counted child left (FR-5.6b: 0.0), which
-			// changes the root it rolls up into.
+			// PROJ-1.1 is done over one open child, so it earns no credit and
+			// the root is 0.5. Once that child is cancelled PROJ-1.1 has no
+			// counted child left (FR-5.6b: 0.0) but is done with all work
+			// resolved, so it counts as done for the root (FR-5.3, MTIX-294).
 			name: "ancestor above a done intermediate",
 			setup: func(t *testing.T, s *sqlite.Store) {
 				seedCascadeNodes(t, s, ccNode("PROJ-1", model.StatusOpen),
@@ -270,7 +271,7 @@ func cascadeProgressCases() []progressCase {
 				markDone(t, s, "PROJ-1.1")
 			},
 			root: "PROJ-1",
-			want: map[string]float64{"PROJ-1.1": 0.0, "PROJ-1": 0.5},
+			want: map[string]float64{"PROJ-1.1": 0.0, "PROJ-1": 1.0},
 		},
 	}
 }

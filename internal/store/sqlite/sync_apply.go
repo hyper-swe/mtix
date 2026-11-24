@@ -47,6 +47,16 @@ func IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) er
 // IdempotentApply applies an event in the caller's transaction using this
 // store's clock (FR-18.9). SetClock must be called before concurrent use.
 func (s *Store) IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
+	return s.applyIncoming(ctx, tx, event, false)
+}
+
+// ApplyRelayEvent applies a relay delivery and queues a newly mirrored event
+// for the next hub push in the same transaction (FR-21 §11.7).
+func (s *Store) ApplyRelayEvent(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
+	return s.applyIncoming(ctx, tx, event, true)
+}
+
+func (s *Store) applyIncoming(ctx context.Context, tx *sql.Tx, event *model.SyncEvent, fromRelay bool) error {
 	if event == nil {
 		return fmt.Errorf("apply: event nil: %w", model.ErrInvalidInput)
 	}
@@ -54,16 +64,21 @@ func (s *Store) IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.Sy
 	// The scope is the task the event resolves to (by uid first, as the handlers do), not its number.
 	scope := historyScope{id: replayTarget(ctx, tx, event), actor: event.AuthorID, origin: model.HistoryOriginHub, eventID: event.EventID}
 	return s.inTxHistory(ctx, tx, scope, func() error {
-		return (syncApplier{clock: clockOrDefault(s.clock), store: s}).IdempotentApply(ctx, tx, event)
+		return (syncApplier{clock: clockOrDefault(s.clock), store: s, fromRelay: fromRelay}).IdempotentApply(ctx, tx, event)
 	})
 }
 
 // syncApplier carries the apply-time clock through all replay writes.
 // Event wall-clock timestamps still determine eventTime and LWW ordering.
 type syncApplier struct {
-	clock func() time.Time
-	store *Store // records the history of tasks the replay reaches; nil outside a Store
+	fromRelay bool
+	clock     func() time.Time
+	store     *Store // records the history of tasks the replay reaches; nil outside a Store
 }
+
+// weighted reports the progress.weighted switch for this replay (FR-5.8); a
+// replay outside a Store uses the default count mode (FR-5.3).
+func (a syncApplier) weighted() bool { return a.store != nil && a.store.progressWeightedOn() }
 
 func (a syncApplier) IdempotentApply(ctx context.Context, tx *sql.Tx, event *model.SyncEvent) error {
 	if event == nil {
@@ -82,6 +97,9 @@ func (a syncApplier) IdempotentApply(ctx context.Context, tx *sql.Tx, event *mod
 		return fmt.Errorf("apply %s: dedupe check: %w", format.EventID(event.EventID), err)
 	}
 	if already {
+		if !a.fromRelay {
+			return acknowledgeRelayForward(ctx, tx, event)
+		}
 		return nil
 	}
 

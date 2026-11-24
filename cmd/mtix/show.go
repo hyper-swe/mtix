@@ -361,7 +361,7 @@ func renderListNodes(nodes []*model.Node, total int, fieldsList []string) error 
 			string(n.IssueType),
 			fmt.Sprintf("%s %s", icon, n.Status),
 			fmt.Sprintf("%d", n.Priority),
-			fmt.Sprintf("%.0f%%", n.Progress*100),
+			ProgressPercent(n.Progress),
 			Truncate(format.SafeLine(n.Title), 50),
 		})
 	}

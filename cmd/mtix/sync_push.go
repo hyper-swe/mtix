@@ -159,8 +159,8 @@ func pushAndReportState(ctx context.Context, stdout, stderr io.Writer, pool even
 
 	fmt.Fprintf(stdout,
 		"push complete: %d events pushed across %d batches (%d inserted, %d already on the hub); "+
-			"%d renumbered, %d conflicts surfaced\n",
-		tot.pushed(), tot.batches, tot.inserted, tot.present, tot.renumbered, tot.conflicts)
+			"%d renumbered%s, %d conflicts surfaced\n",
+		tot.pushed(), tot.batches, tot.inserted, tot.present, tot.renumbered, relayHeldClause(tot.relayHeld), tot.conflicts)
 	printHeldPushEvents(ctx, stdout, stderr, store)
 	return tot.drained, nil
 }
@@ -273,7 +273,7 @@ func (r *pushRun) screen(start pendingCursor, events []*model.SyncEvent) ([]*mod
 // send pushes one screened batch and folds the result into the totals. It
 // reports true when the batch made no headway.
 func (r *pushRun) send(events []*model.SyncEvent) (bool, error) {
-	res, mismatched, err := pushBatch(r.ctx, r.stderr, r.pool, r.store, events, r.tot.batches+1)
+	res, held, err := pushBatch(r.ctx, r.stderr, r.pool, r.store, events, r.tot.batches+1)
 	if err != nil {
 		return true, err
 	}
@@ -283,16 +283,17 @@ func (r *pushRun) send(events []*model.SyncEvent) (bool, error) {
 	}
 	// The renumbers moved subtrees, and a held mismatch may be a task's
 	// creation, which holds its subtree: read the held creations again.
-	r.idx.stale = r.idx.stale || len(res.Renumbers)+mismatched > 0
-	r.tot.add(res, mismatched)
+	r.idx.stale = r.idx.stale || len(res.Renumbers)+held.mismatched+held.rn.newlyHeld > 0
+	r.tot.add(res, held)
 	fmt.Fprintf(r.stderr, "push progress: batch %d (%d sent, %d accepted: %d inserted, %d already on the hub; "+
-		"%d renumbered, %d conflicts)\n", r.tot.batches, len(events), len(res.Inserted)+len(res.AlreadyPresent),
-		len(res.Inserted), len(res.AlreadyPresent), len(res.Renumbers), len(res.Conflicts))
+		"%d renumbered%s, %d conflicts)\n", r.tot.batches, len(events),
+		len(res.Inserted)+len(res.AlreadyPresent), len(res.Inserted), len(res.AlreadyPresent),
+		held.rn.local, relayHeldClause(held.rn.relay), len(res.Conflicts))
 	// No-progress guard: a batch that neither acknowledged (inserted or
 	// already on the hub, MTIX-95.3), renumbered nor held any event (e.g.
 	// pure conflicts) makes no headway — stop so the loop can never spin
 	// forever.
-	if len(res.Inserted)+len(res.AlreadyPresent)+len(res.Renumbers)+mismatched == 0 {
+	if len(res.Inserted)+len(res.AlreadyPresent)+len(res.Renumbers)+held.mismatched+held.rn.newlyHeld == 0 {
 		return true, nil
 	}
 	r.await.progressed = true
@@ -304,8 +305,26 @@ func (r *pushRun) send(events []*model.SyncEvent) (bool, error) {
 // sent; the renumbers and conflicts; and the events held because the hub
 // holds their id with other content.
 type pushTotals struct {
-	drained                                                       bool // Native queue exhausted without unresolved deferred events.
-	inserted, present, batches, conflicts, renumbered, mismatched int
+	drained                                                                  bool // Native queue exhausted without unresolved deferred events.
+	inserted, present, batches, conflicts, renumbered, mismatched, relayHeld int
+}
+
+// relayHeldClause is the summary text of relay-carried creations the hub asked
+// to renumber and push held instead; empty when there are none, so the line a
+// push without relay holds prints does not change.
+func relayHeldClause(n int) string {
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(", %d relay-carried held (never renumbered)", n)
+}
+
+// pushHeld is what one batch held or renumbered beyond the hub's own
+// acknowledgements: events held for an id mismatch, and the outcome of the
+// hub's renumber requests.
+type pushHeld struct {
+	mismatched int
+	rn         renumberOutcome
 }
 
 // pushed returns how many events the push marked pushed.
@@ -315,13 +334,14 @@ func (t pushTotals) pushed() int {
 
 // add counts one pushed batch: its result res and the mismatched events
 // it held.
-func (t *pushTotals) add(res transport.PushResult, mismatched int) {
+func (t *pushTotals) add(res transport.PushResult, h pushHeld) {
 	t.batches++
 	t.inserted += len(res.Inserted)
 	t.present += len(res.AlreadyPresent)
 	t.conflicts += len(res.Conflicts)
-	t.renumbered += len(res.Renumbers)
-	t.mismatched += mismatched
+	t.renumbered += h.rn.local
+	t.relayHeld += h.rn.relay
+	t.mismatched += h.mismatched
 }
 
 // readPendingBatch returns up to limit pending events in lamport order,
@@ -380,24 +400,23 @@ func readPendingBatchFrom(ctx context.Context, store *sqlite.Store, after pendin
 // returns the hub's result and how many events it newly held.
 func pushBatch(ctx context.Context, stderr io.Writer, pool eventPusher, store *sqlite.Store,
 	events []*model.SyncEvent, batch int,
-) (transport.PushResult, int, error) {
+) (transport.PushResult, pushHeld, error) {
 	res, err := pool.PushEventsResult(ctx, events)
 	if err != nil {
-		return transport.PushResult{}, 0, fmt.Errorf("push batch %d: %w", batch, err)
+		return transport.PushResult{}, pushHeld{}, fmt.Errorf("push batch %d: %w", batch, err)
 	}
 	if markErr := markPushed(ctx, store, res.Accepted()); markErr != nil {
-		return transport.PushResult{}, 0, fmt.Errorf("mark pushed batch %d: %w", batch, markErr)
+		return transport.PushResult{}, pushHeld{}, fmt.Errorf("mark pushed batch %d: %w", batch, markErr)
 	}
 	mismatched, err := holdMismatches(ctx, stderr, store, events, res.Mismatches)
 	if err != nil {
-		return transport.PushResult{}, 0, fmt.Errorf("hold mismatched events of batch %d: %w", batch, err)
+		return transport.PushResult{}, pushHeld{}, fmt.Errorf("hold mismatched events of batch %d: %w", batch, err)
 	}
-	for _, r := range res.Renumbers {
-		if _, err := store.RenumberForHubRejection(ctx, r.EventID); err != nil {
-			return transport.PushResult{}, 0, fmt.Errorf("resolve renumber for %s (batch %d): %w", format.EventID(r.EventID), batch, err)
-		}
+	rn, err := resolveRenumbers(ctx, stderr, store, events, res.Renumbers, batch)
+	if err != nil {
+		return transport.PushResult{}, pushHeld{}, err
 	}
-	return res, mismatched, nil
+	return res, pushHeld{mismatched: mismatched, rn: rn}, nil
 }
 
 // markPushedFailKey is the context key of a test seam (MTIX-95.3): a

@@ -35,7 +35,25 @@ func executeRenameTx(
 	if err := updateSentinelsAfterReconcile(ctx, tx, newPrefix); err != nil {
 		return count, err
 	}
-	return count, advanceRenamedCounters(ctx, tx, newPrefix) // MTIX-95.38
+	if err := advanceRenamedCounters(ctx, tx, newPrefix); err != nil { // MTIX-95.38
+		return count, err
+	}
+	return count, invalidateRenamedDecisionIndex(ctx, tx)
+}
+
+// invalidateRenamedDecisionIndex requests a full rebuild after the in-place
+// rewrite of legacy delete paths. A missing metadata row is the projector's
+// full-rebuild signal (ADR-008 §3.3). Pre-index stores have nothing to rebuild.
+func invalidateRenamedDecisionIndex(ctx context.Context, tx *sql.Tx) error {
+	present, err := tableExists(ctx, tx, "decision_index_meta")
+	if err != nil || !present {
+		return err
+	}
+	// Invalidate the journal identity in the same transaction as the rename.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM decision_index_meta WHERE id = 1`); err != nil {
+		return fmt.Errorf("invalidate decision index after rename: %w", err)
+	}
+	return nil
 }
 
 // applyRenameLoop iterates the rename mapping in long-id-first order

@@ -10,12 +10,12 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/relay/ingest"
 	"github.com/hyper-swe/mtix/internal/relay/keyring"
 	"github.com/hyper-swe/mtix/internal/relay/metadata"
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 	"github.com/hyper-swe/mtix/internal/relay/publisher"
 )
 
@@ -24,9 +24,6 @@ const PeersDirName = "peers"
 
 // SegmentsDirName is a peer's own segment directory.
 const SegmentsDirName = "segments"
-
-// peerIDPattern is the FR-21 §5.2 identity grammar.
-var peerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
 
 // StackStore is the union of what a pass needs from the store.
 type StackStore interface {
@@ -91,7 +88,7 @@ func Open(cfg StackConfig) (*Stack, error) {
 	if cfg.Store == nil {
 		return nil, errors.New("relay stack: store is required")
 	}
-	if !peerIDPattern.MatchString(cfg.PeerID) {
+	if !peerid.Valid(cfg.PeerID) {
 		return nil, fmt.Errorf("relay stack: peer id %q is malformed", cfg.PeerID)
 	}
 	log := cfg.Logger

@@ -1,0 +1,60 @@
+{
+  "schema": "mtix.decision/1",
+  "id": "01912345-6789-7abc-8123-123456789abc",
+  "short_id": "d-20544a5f",
+  "state": "open",
+  "flags": [],
+  "view_flags": [],
+  "node_id": "T-1.1",
+  "asker": {
+    "id": "asker",
+    "kind": "agent"
+  },
+  "to": "user",
+  "question": "Proceed?",
+  "context": "",
+  "options": [
+    {
+      "id": "yes",
+      "label": "Yes",
+      "input": {
+        "type": "text",
+        "required": true
+      },
+      "note_required": true
+    }
+  ],
+  "links": [
+    {
+      "kind": "review",
+      "label": "review",
+      "url": "https://example.com",
+      "open_before_answer": true
+    }
+  ],
+  "recommend": null,
+  "answerers": [],
+  "requires_outcome": true,
+  "source": {
+    "run": "r"
+  },
+  "missing_required_links": [],
+  "raised_at": "2026-10-30T12:00:00Z",
+  "effective_answer": null,
+  "agreeing_answers": [],
+  "conflicting_answers": [],
+  "refused_answers": [],
+  "outcome": null,
+  "withdrawn": null,
+  "superseded_by": [],
+  "invalid_reason": null,
+  "now": "2026-10-30T12:00:00Z",
+  "timeline": [
+    {
+      "event_id": "01912345-6789-7abc-8123-123456789abc",
+      "kind": "request",
+      "author": "asker",
+      "at": "2026-10-30T12:00:00Z"
+    }
+  ]
+}

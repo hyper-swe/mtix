@@ -139,7 +139,8 @@ func TestPendingExport_UnderLockGuardPreservesChangedBoard(t *testing.T) {
 	board := []byte("{pulled after initial guard}")
 	require.NoError(t, os.WriteFile(path, board, 0644))
 	require.NoError(t, markPendingExport(dir))
-	require.NoError(t, svc.exportBoardProtected(context.Background(), dir, true))
+	_, exportErr := svc.exportWithFileLock(t.Context(), dir, true, recordExportRequest)
+	require.NoError(t, exportErr)
 	actual, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.Equal(t, board, actual)
@@ -175,7 +176,7 @@ func testPendingUnreadableBoard(t *testing.T, trigger string) {
 	case "daemon-drain":
 		recoveryErr = svc.DrainPendingExport(context.Background(), dir)
 	case "under-lock":
-		recoveryErr = svc.exportBoardProtected(context.Background(), dir, true)
+		_, recoveryErr = svc.exportWithFileLock(t.Context(), dir, true, recordExportRequest)
 	default:
 		t.Fatalf("unknown recovery trigger %s", trigger)
 	}

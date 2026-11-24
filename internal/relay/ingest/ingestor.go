@@ -13,11 +13,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"regexp"
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 	"github.com/hyper-swe/mtix/internal/relay/segment"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 	"github.com/hyper-swe/mtix/internal/sync/validator"
@@ -44,9 +44,6 @@ const segmentsSubdir = "segments"
 // length it did not choose.
 const maxSegmentRead = 64 << 20
 
-// peerIDPattern is the FR-21 §5.2 identity grammar.
-var peerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
-
 // KeySelector resolves the key for a frame's declared epoch. It is an
 // interface so ingest carries no opinion about where keys live; the
 // epoch keyring satisfies it.
@@ -62,7 +59,7 @@ type KeySelector interface {
 // behind the shipped apply path, and this package's job is to feed that
 // path rather than to reimplement any of it.
 type Store interface {
-	IdempotentApply(context.Context, *sql.Tx, *model.SyncEvent) error
+	ApplyRelayEvent(context.Context, *sql.Tx, *model.SyncEvent) error
 	RelayIngestCursor(ctx context.Context, peerID string) (sqlite.RelayIngestPosition, error)
 	AdvanceRelayIngestCursor(ctx context.Context, peerID string, pos sqlite.RelayIngestPosition) error
 	// RelayCloneStampEpoch is the epoch a snapshot stamped for a peer, read
@@ -156,7 +153,7 @@ func New(cfg Config) (*Ingestor, error) {
 	if cfg.Store == nil {
 		return nil, errors.New("relay ingest: store is required")
 	}
-	if !peerIDPattern.MatchString(cfg.SelfPeerID) {
+	if !peerid.Valid(cfg.SelfPeerID) {
 		return nil, fmt.Errorf("relay ingest: peer id %q is malformed", cfg.SelfPeerID)
 	}
 	if cfg.Unauthenticated == (cfg.Keys != nil) {
@@ -257,10 +254,15 @@ func (in *Ingestor) ingestPeer(ctx context.Context, peer segment.PeerDir, stats 
 		position.PubEpoch = 0
 	}
 
-	for _, file := range Unread(segs, position) {
-		outcome, stop := in.ingestSegment(ctx, peer.PeerID, segmentTurn{file: file, sealed: file.No < newest, prev: position, ch: walk}, stats)
+	unread := Unread(segs, position)
+	for i, file := range unread {
+		turn := segmentTurn{file: file, sealed: file.No < newest, prev: position, ch: walk}
+		if i+1 < len(unread) {
+			turn.next = &unread[i+1]
+		}
+		outcome, stop := in.ingestSegment(ctx, peer.PeerID, turn, stats)
 		if !stop && outcome.Verdict == nil {
-			walk.advance(Position{SegmentNo: outcome.Reached.SegmentNo, RS: outcome.Reached.RS, PubEpoch: outcome.Reached.PubEpoch})
+			walk.step(outcome)
 		}
 		next, err := in.advance(ctx, peer.PeerID, position, outcome)
 		if err != nil {
@@ -322,7 +324,7 @@ func (in *Ingestor) applyRecord(ctx context.Context, peerID string, header segme
 	// derived-state recomputes. Bypassing this path would mean
 	// reimplementing all of it, differently.
 	if err := in.cfg.Store.WithTx(ctx, func(tx *sql.Tx) error {
-		return in.cfg.Store.IdempotentApply(ctx, tx, &e)
+		return in.cfg.Store.ApplyRelayEvent(ctx, tx, &e)
 	}); err != nil {
 		return in.refuse(ctx, stats, peerID, header, rec, &e, err)
 	}

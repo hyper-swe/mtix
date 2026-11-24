@@ -10,17 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"regexp"
 	"strconv"
 
 	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 )
-
-// relayPeerIDPattern is the FR-21 §5.2 identity grammar. The store
-// validates it at this boundary so a malformed id can never occupy a
-// cursor row and shadow a real peer's position.
-var relayPeerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
 
 // RelayPushPosition is this peer's durable publish position (FR-21 §6.2).
 type RelayPushPosition struct {
@@ -109,14 +104,25 @@ func (s *Store) RelayPushCursor(ctx context.Context) (RelayPushPosition, error) 
 // that were already published. Moving the cursor backwards is reserved
 // for ResetRelayPublisher, which may only do it while bumping the epoch.
 func (s *Store) AdvanceRelayPushCursor(ctx context.Context, seq int64, nextRS uint64) error {
+	tx, err := s.writeDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("advance relay push cursor: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	// #nosec G115 -- nextRS is a relay sequence bounded by the journal.
-	_, err := s.writeDB.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO relay_push_cursor (id, cursor, next_rs) VALUES (1, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			cursor  = MAX(cursor, excluded.cursor),
 			next_rs = CASE WHEN excluded.cursor > cursor THEN excluded.next_rs ELSE next_rs END`,
 		seq, int64(nextRS))
 	if err != nil {
+		return fmt.Errorf("advance relay push cursor: %w", err)
+	}
+	if hwmErr := raiseRelayPublishedHWM(ctx, tx, seq); hwmErr != nil {
+		return hwmErr
+	}
+	if err = tx.Commit(); err != nil {
 		return fmt.Errorf("advance relay push cursor: %w", err)
 	}
 	return nil
@@ -159,7 +165,7 @@ func (s *Store) ResetRelayPublisher(ctx context.Context, floorSeq int64, baseRS 
 // RelayIngestCursor returns the reader's position in one peer's stream.
 // A peer never read from reports the zero position.
 func (s *Store) RelayIngestCursor(ctx context.Context, peerID string) (RelayIngestPosition, error) {
-	if !relayPeerIDPattern.MatchString(peerID) {
+	if !peerid.Valid(peerID) {
 		return RelayIngestPosition{}, fmt.Errorf("relay ingest cursor: peer id %q is malformed: %w",
 			peerID, model.ErrInvalidInput)
 	}
@@ -209,7 +215,7 @@ type relayExecer interface {
 // advanceRelayIngestCursor is the cursor upsert, run on the write connection or
 // inside a transaction (MTIX-265: a clone seed writes cursor and stamp together).
 func advanceRelayIngestCursor(ctx context.Context, db relayExecer, peerID string, pos RelayIngestPosition) error {
-	if !relayPeerIDPattern.MatchString(peerID) {
+	if !peerid.Valid(peerID) {
 		return fmt.Errorf("advance relay ingest cursor: peer id %q is malformed: %w",
 			peerID, model.ErrInvalidInput)
 	}
@@ -292,6 +298,36 @@ func (s *Store) ReadRelayJournalSince(ctx context.Context, seq int64, limit int)
 		return nil, fmt.Errorf("read relay journal: %w", err)
 	}
 	return out, nil
+}
+
+// RelayBatchBound returns the rowid of the last row ReadRelayJournalSince would
+// return for (seq, limit), or 0 when no row is pending. It is one indexed
+// range scan over the rowid, so the publisher can raise the published mark
+// before it reads the batch (MTIX-289) without reading the journal twice.
+func (s *Store) RelayBatchBound(ctx context.Context, seq int64, limit int) (int64, error) {
+	if limit <= 0 {
+		limit = 500
+	}
+	var bound sql.NullInt64
+	// Upper rowid of the next batch: the first `limit` rows past seq in
+	// rowid order, the same range the batch read walks.
+	err := s.readDB.QueryRowContext(ctx, `
+		SELECT MAX(rowid) FROM (
+			SELECT rowid FROM sync_events WHERE rowid > ? ORDER BY rowid ASC LIMIT ?)`,
+		seq, limit).Scan(&bound)
+	if err != nil {
+		return 0, fmt.Errorf("relay batch bound: %w", err)
+	}
+	return bound.Int64, nil
+}
+
+// MarkRelayFraming records that the rows through seq are about to be framed
+// and appended. The publisher calls it after ReadRelayJournalSince and before
+// the first append, so a hub renumber cannot slip between the append and the
+// cursor advance and move a task the relay is already carrying
+// (IsRelayPublished). The mark only rises.
+func (s *Store) MarkRelayFraming(ctx context.Context, seq int64) error {
+	return raiseRelayPublishedHWM(ctx, s.writeDB, seq)
 }
 
 // LookupRelayJournalSeqs maps event ids to their local journal sequence,

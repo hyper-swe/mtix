@@ -155,44 +155,64 @@ func (s *Store) verifySequences(ctx context.Context, result *VerifyResult) error
 	return rows.Err()
 }
 
-// verifyProgress checks that parent progress is consistent with children.
-func (s *Store) verifyProgress(ctx context.Context, result *VerifyResult) error {
-	// Find parent nodes that have children with mismatched progress.
+// storedProgress is a parent id with its stored progress.
+type storedProgress struct {
+	id string
+	p  float64
+}
+
+// listProgressParents returns live parents that have at least one included child.
+func (s *Store) listProgressParents(ctx context.Context) (parents []storedProgress, err error) {
 	rows, err := s.readDB.QueryContext(ctx,
-		`SELECT p.id, p.progress,
-		        COALESCE(SUM(c.progress * c.weight) / NULLIF(SUM(c.weight), 0), 0.0) as calc_progress
-		 FROM nodes p
-		 INNER JOIN nodes c ON c.parent_id = p.id AND c.deleted_at IS NULL
-		   AND c.status NOT IN ('cancelled', 'invalidated')
+		`SELECT p.id, p.progress FROM nodes p
 		 WHERE p.deleted_at IS NULL
-		 GROUP BY p.id
-		 HAVING ABS(p.progress - calc_progress) > 0.01`)
+		   AND EXISTS (SELECT 1 FROM nodes c WHERE c.parent_id = p.id AND c.deleted_at IS NULL
+		               AND c.status NOT IN ('cancelled', 'invalidated'))`)
 	if err != nil {
-		return fmt.Errorf("query progress consistency: %w", err)
+		return nil, fmt.Errorf("query progress consistency: %w", err)
 	}
 	defer func() {
-		if closeErr := rows.Close(); closeErr != nil {
-			s.logger.Error("failed to close progress check rows", "error", closeErr)
+		if closeErr := rows.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close progress rows: %w", closeErr)
 		}
 	}()
+	for rows.Next() {
+		var st storedProgress
+		if scanErr := rows.Scan(&st.id, &st.p); scanErr != nil {
+			return nil, fmt.Errorf("scan progress: %w", scanErr)
+		}
+		parents = append(parents, st)
+	}
+	if rowsErr := rows.Err(); rowsErr != nil {
+		return nil, fmt.Errorf("iterate progress: %w", rowsErr)
+	}
+	return parents, nil
+}
+
+// verifyProgress checks that each parent's stored progress matches the rollup
+// definition (computeNodeProgress: FR-5.3 count, FR-5.8 when weighted), the
+// same computation the write path uses.
+func (s *Store) verifyProgress(ctx context.Context, result *VerifyResult) error {
+	parents, err := s.listProgressParents(ctx)
+	if err != nil {
+		return err
+	}
 
 	result.ProgressOK = true
-	for rows.Next() {
-		var id string
-		var stored, calculated float64
-		if err := rows.Scan(&id, &stored, &calculated); err != nil {
-			return fmt.Errorf("scan progress: %w", err)
+	weighted := s.progressWeightedOn()
+	for _, st := range parents {
+		calc, err := computeNodeProgress(ctx, s.readDB, weighted, st.id)
+		if err != nil {
+			return err
 		}
-
-		if math.Abs(stored-calculated) > 0.01 {
+		if math.Abs(st.p-calc) > 0.01 {
 			result.ProgressOK = false
 			result.Errors = append(result.Errors,
 				fmt.Sprintf("progress_check: node %s stored=%.4f calculated=%.4f",
-					id, stored, calculated))
+					st.id, st.p, calc))
 		}
 	}
-
-	return rows.Err()
+	return nil
 }
 
 // verifyFTS checks FTS5 index consistency via integrity-check command.

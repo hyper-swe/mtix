@@ -33,11 +33,17 @@ var ErrNumberHeldByPendingCreate = errors.New("number held by a task whose creat
 // parent_id, a link's or unlink's depends_on_node_id and the source node of a
 // link found by number.
 func refusePendingNumber(ctx context.Context, tx *sql.Tx, eventID, ref string) error {
+	return refusePendingNumberAs(ctx, tx, eventID, eventID, ref)
+}
+
+// refusePendingNumberAs is refusePendingNumber with the id the relay-forward
+// exemption is judged for; an empty exemptID exempts no pending creation.
+func refusePendingNumberAs(ctx context.Context, tx *sql.Tx, eventID, exemptID, ref string) error {
 	line := nodeLineOf(ref)
 	if len(line) == 0 {
 		return nil
 	}
-	pending, err := pendingCreationIDs(ctx, tx, line)
+	pending, err := pendingCreationIDs(ctx, tx, line, exemptID)
 	if err != nil {
 		return fmt.Errorf("event %s: check %s: %w", format.EventID(eventID), ref, err)
 	}
@@ -54,7 +60,12 @@ func refusePendingNumber(ctx context.Context, tx *sql.Tx, eventID, ref string) e
 // The error quarantines the event, which the next pulls retry. A number held
 // by any other task, as by a creation applied earlier, keeps the documented
 // first-writer-wins no-op.
-func refuseHeldNumber(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, uid string) error {
+//
+// A relay delivery gets no first-writer-wins no-op and no relay-forward
+// exemption (FR-21 §11.7): a second task at a held number is refused, so the
+// relay quarantine keeps it and its recreate fix applies, and no envelope is
+// queued for the hub for a task this replica does not hold.
+func refuseHeldNumber(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, uid string, fromRelay bool) error {
 	var holder string
 	err := tx.QueryRowContext(ctx, `SELECT COALESCE(uid, '') FROM nodes WHERE id = ?`, e.NodeID).Scan(&holder)
 	if err != nil {
@@ -63,5 +74,15 @@ func refuseHeldNumber(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, uid s
 	if holder == uid {
 		return nil // inserted just now, or the same task again
 	}
-	return refusePendingNumber(ctx, tx, e.EventID, e.NodeID)
+	if !fromRelay {
+		return refusePendingNumber(ctx, tx, e.EventID, e.NodeID)
+	}
+	if err := refusePendingNumberAs(ctx, tx, e.EventID, "", e.NodeID); err != nil {
+		return err
+	}
+	return fmt.Errorf("event %s: %s is held by task %s: %w", format.EventID(e.EventID), e.NodeID, holder, ErrNumberHeldByOtherTask)
 }
+
+// ErrNumberHeldByOtherTask is returned by relay apply for a create_node whose
+// number another task already holds (FR-21 §11.7).
+var ErrNumberHeldByOtherTask = errors.New("number held by another task")

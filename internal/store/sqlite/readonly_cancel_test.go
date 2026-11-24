@@ -45,6 +45,7 @@ func TestOpenStoreReadOnly_CancelledQuery_LeavesNoSnapshot(t *testing.T) {
 
 func sweepReadOnlyCancellation(t *testing.T, route string) {
 	t.Helper()
+	armReadCancelDeadline(t, readCancelBudget)
 	st, err := New(t.TempDir(), slog.Default())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })

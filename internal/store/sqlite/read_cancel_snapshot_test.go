@@ -18,6 +18,7 @@ import (
 // connection so the next read reuses it, and asserts the next read sees a
 // fresh write (a stale WAL snapshot would hide it) (MTIX-112.3).
 func TestReadPaths_CancelledMidQuery_LeaveNoStaleSnapshot(t *testing.T) {
+	armReadCancelDeadline(t, readCancelBudget)
 	st, err := New(t.TempDir(), slog.Default())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })

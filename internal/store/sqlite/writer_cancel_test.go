@@ -26,6 +26,7 @@ func TestWriterReads_CancelledMidQuery_LeaveNoStaleSnapshot(t *testing.T) {
 
 func sweepWriterCancellation(t *testing.T, route string) {
 	t.Helper()
+	armReadCancelDeadline(t, readCancelBudget)
 	st, err := New(t.TempDir(), slog.Default())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, st.Close()) })
@@ -34,7 +35,7 @@ func sweepWriterCancellation(t *testing.T, route string) {
 	t.Cleanup(func() { require.NoError(t, peer.Close()) })
 	seedWriterCancelFixture(t, st)
 	cancelled := 0
-	for i := 0; i < readCancelRouteIterations; i++ {
+	for i := range readCancelRouteIterations(readCancelStressIterations) {
 		ctx, cancel := context.WithCancel(t.Context())
 		done := make(chan struct{})
 		go func() {

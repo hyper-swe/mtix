@@ -46,9 +46,9 @@ func (o listenerStopOpts) diag(out io.Writer, asJSON bool) io.Writer {
 // stop ends this project's detached listener and verifies the daemon lock is
 // free (MTIX-276). It asks the listener to exit through a request file that
 // only listen mode reads, so no signal is needed on any OS. Only when that
-// times out, and only for a listener whose pid, arguments, working directory
-// and start time still match what status showed, does it send SIGTERM (never
-// on windows). Anything unverified fails closed with no signal.
+// times out, and only for a listener whose identity is re-verified by escalate,
+// does it send SIGTERM (never on Windows). Anything unverified fails closed
+// with no signal.
 func (c *listenerCtl) stop(out io.Writer, o listenerStopOpts, asJSON bool) error {
 	rep, err := c.inspect()
 	if err != nil {
@@ -97,6 +97,9 @@ func (c *listenerCtl) waitFree(d time.Duration) bool {
 
 // escalate sends SIGTERM to the listener status identified, after proving it
 // is still the same verified process, then waits for the lock to be free.
+// The working directory is checked only where the OS reports it (Linux).
+// On macOS mtix cannot check it and relies on the board's lock and PID file,
+// process arguments and start time.
 // Residual window: the identity is re-read just before the signal, and a
 // process cannot be signaled atomically with that read, so the listener could
 // exit and its pid be reused between the two. An unrelated process that took

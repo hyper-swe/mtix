@@ -15,7 +15,7 @@ import (
 )
 
 func TestDecomposeMCP_IssueTypeAndUnknownKeys(t *testing.T) {
-	reg, st, parentID := claimedParentRegistry(t)
+	reg, st, parentID := claimedParentRegistry(t, "owner", "")
 	call := func(children string) error {
 		raw, err := json.Marshal(map[string]any{"parent_id": parentID, "children": json.RawMessage(children)})
 		require.NoError(t, err)

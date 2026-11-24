@@ -163,10 +163,6 @@ func recreateRequest(row sqlite.RelayQuarantineRow, actor string, rows []sqlite.
 	if err := json.Unmarshal(ev.Payload, &p); err != nil || ev.ProjectPrefix == "" {
 		return nil, fmt.Errorf("skipped record has no usable create payload: %w", model.ErrInvalidInput)
 	}
-	creator := p.Creator
-	if creator == "" {
-		creator = actor
-	}
 	parent, err := recreateParent(row, p.ParentID, rows)
 	if err != nil {
 		return nil, err
@@ -174,7 +170,9 @@ func recreateRequest(row sqlite.RelayQuarantineRow, actor string, rows []sqlite.
 	return &CreateNodeRequest{
 		IssueType: p.IssueType, ParentID: parent, Project: ev.ProjectPrefix, Title: p.Title,
 		Description: p.Description, Prompt: p.Prompt, Acceptance: p.Acceptance,
-		Labels: p.Labels, Priority: p.Priority, Creator: creator,
+		Labels: p.Labels, Priority: p.Priority, Creator: p.Creator,
+		// The actor is audit attribution only, so it can never inherit a claim (FR-11.2a).
+		CreatorFallback: actor,
 	}, nil
 }
 

@@ -130,16 +130,17 @@ func runCreateWithProject(title, under, nodeType string, priority int,
 	}
 
 	req := &service.CreateNodeRequest{
-		ParentID:    under,
-		Project:     project,
-		Title:       title,
-		Description: description,
-		Prompt:      prompt,
-		Acceptance:  acceptance,
-		Creator:     app.authorID,
-		Assignee:    assign,
-		IssueType:   model.IssueType(nodeType),
-		Priority:    model.Priority(priority),
+		ParentID:        under,
+		Project:         project,
+		Title:           title,
+		Description:     description,
+		Prompt:          prompt,
+		Acceptance:      acceptance,
+		Creator:         configuredAuthorID(),
+		CreatorFallback: app.authorID,
+		Assignee:        assign,
+		IssueType:       model.IssueType(nodeType),
+		Priority:        model.Priority(priority),
 	}
 
 	if labels != "" {

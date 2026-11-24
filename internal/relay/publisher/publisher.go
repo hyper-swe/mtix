@@ -77,6 +77,8 @@ type Journal interface {
 	AdvanceRelayPushCursor(ctx context.Context, seq int64, nextRS uint64) error
 	ResetRelayPublisher(ctx context.Context, floorSeq int64, baseRS uint64) error
 	ReadRelayJournalSince(ctx context.Context, seq int64, limit int) ([]sqlite.RelayJournalEvent, error)
+	MarkRelayFraming(ctx context.Context, seq int64) error
+	RelayBatchBound(ctx context.Context, seq int64, limit int) (int64, error)
 	LookupRelayJournalSeqs(ctx context.Context, eventIDs []string) (map[string]int64, error)
 	RepublishRelayFrom(ctx context.Context, floorSeq int64) error
 
@@ -212,12 +214,9 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 	if verifyErr := p.verifyTail(ctx); verifyErr != nil {
 		return 0, verifyErr
 	}
-	rows, err := p.cfg.Journal.ReadRelayJournalSince(ctx, pos.Seq, p.cfg.BatchLimit)
-	if err != nil {
+	rows, err := p.readAndMark(ctx, pos.Seq)
+	if err != nil || len(rows) == 0 {
 		return 0, err
-	}
-	if len(rows) == 0 {
-		return 0, nil
 	}
 
 	w, err := segment.NewWriter(segment.WriterConfig{
@@ -267,6 +266,35 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 		return appended, err
 	}
 	return appended, nil
+}
+
+// readAndMark returns the rows to frame, after the published mark covers them.
+//
+// A renumber rewrites a pending create in place and re-checks the mark in its
+// own transaction. So the batch's upper bound is taken first (one indexed
+// query), the mark is raised to it, and only then is the batch read, once: a
+// renumber that committed before the mark is seen by the read, and one that
+// comes after sees the mark and holds. Reading first and marking after would
+// let a renumber commit between the two while the old number is framed. Rows
+// inserted after the bound are cut and wait for the next tick. A crash after
+// the mark but before the append only holds a later renumber, which is safe.
+func (p *Publisher) readAndMark(ctx context.Context, after int64) ([]sqlite.RelayJournalEvent, error) {
+	upTo, err := p.cfg.Journal.RelayBatchBound(ctx, after, p.cfg.BatchLimit)
+	if err != nil || upTo <= after {
+		return nil, err
+	}
+	if markErr := p.cfg.Journal.MarkRelayFraming(ctx, upTo); markErr != nil {
+		return nil, markErr
+	}
+	rows, err := p.cfg.Journal.ReadRelayJournalSince(ctx, after, p.cfg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	n := len(rows)
+	for n > 0 && rows[n-1].Seq > upTo {
+		n--
+	}
+	return rows[:n], nil
 }
 
 // bank advances the cursor over the records that did land before an

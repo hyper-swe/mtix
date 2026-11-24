@@ -21,7 +21,7 @@ import (
 func TestPendingCreationSQL_Plan_NeverScansTheEventLog(t *testing.T) {
 	s := newInternalTestStore(t)
 	ctx := context.Background()
-	rows, err := s.readDB.QueryContext(ctx, "EXPLAIN QUERY PLAN "+pendingCreationSQL, `["PROJ-1"]`, `["PROJ-1"]`)
+	rows, err := s.readDB.QueryContext(ctx, "EXPLAIN QUERY PLAN "+pendingCreationSQL, `["50524f4a2d31"]`, "")
 	require.NoError(t, err)
 	defer func() { _ = rows.Close() }()
 	var plan []string

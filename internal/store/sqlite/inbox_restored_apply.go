@@ -15,7 +15,7 @@ import (
 
 // upgradeRestoredInboxEvent adopts a real envelope without changing the arrival
 // rowid, ack coverage or hook suppression (FR-19.1, MTIX-112.2.1).
-func upgradeRestoredInboxEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent) (bool, error) {
+func upgradeRestoredInboxEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEvent, status model.SyncStatus) (bool, error) {
 	query, err := restoredInboxQuery(ctx, tx, `SELECT author_id,payload FROM sync_events WHERE event_id=? AND (0)`, `SELECT author_id,payload FROM sync_events WHERE event_id=? AND (EXISTS (SELECT 1 FROM inbox_restored_events r WHERE r.event_id=sync_events.event_id))`)
 	if err != nil {
 		return false, err
@@ -36,7 +36,7 @@ func upgradeRestoredInboxEvent(ctx context.Context, tx *sql.Tx, e *model.SyncEve
 	if err != nil {
 		return false, fmt.Errorf("encode restored envelope clock: %w", err)
 	}
-	_, err = tx.ExecContext(ctx, `UPDATE sync_events SET project_prefix=?,node_id=?,uid=?,payload=?,wall_clock_ts=?,lamport_clock=?,vector_clock=?,author_machine_hash=?,sync_status='applied' WHERE event_id=?`, e.ProjectPrefix, e.NodeID, nullableString(e.UID), string(e.Payload), e.WallClockTS, e.LamportClock, string(vc), e.AuthorMachineHash, e.EventID)
+	_, err = tx.ExecContext(ctx, `UPDATE sync_events SET project_prefix=?,node_id=?,uid=?,payload=?,wall_clock_ts=?,lamport_clock=?,vector_clock=?,author_machine_hash=?,sync_status=? WHERE event_id=?`, e.ProjectPrefix, e.NodeID, nullableString(e.UID), string(e.Payload), e.WallClockTS, e.LamportClock, string(vc), e.AuthorMachineHash, status, e.EventID)
 	if err != nil {
 		return false, fmt.Errorf("upgrade restored envelope: %w", err)
 	}

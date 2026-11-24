@@ -423,10 +423,17 @@ func (p *Publisher) publishedTailIDs() ([]string, error) {
 	newest := segs[len(segs)-1]
 	// The newest segment is the active tail, so a torn frame at its end
 	// is an append in flight rather than damage.
-	res, err := segment.ScanFile(newest.Path, segment.ScanOptions{
-		Key:          p.cfg.Key,
-		ExpectPeerID: p.cfg.PeerID,
-	})
+	opts := segment.ScanOptions{Key: p.cfg.Key, ExpectPeerID: p.cfg.PeerID}
+	res, err := segment.ScanFile(newest.Path, opts)
+	if errors.Is(err, segment.ErrIncomplete) && crashedHeader(newest.Path) {
+		// A kill during segment creation left a header-only newest
+		// segment (MTIX-302). It holds no record and the writer replaces
+		// it, so the published tail is the segment before it, if any.
+		if len(segs) == 1 {
+			return nil, nil
+		}
+		res, err = segment.ScanFile(segs[len(segs)-2].Path, opts)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("verify relay tail: %w", err)
 	}
@@ -506,4 +513,11 @@ func (p *Publisher) OnCommit() func() {
 				slog.String("peer", p.cfg.PeerID), slog.Any("error", err))
 		}
 	}
+}
+
+// crashedHeader reports whether path is a segment creation killed before its
+// header was whole; a read fault answers false so the scan verdict stands.
+func crashedHeader(path string) bool {
+	ok, err := segment.IsCrashedHeader(path)
+	return err == nil && ok
 }

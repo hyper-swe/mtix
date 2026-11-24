@@ -405,7 +405,9 @@ Each of them resolves the refusal. `mtix sync` shows the last refusal, its kind,
 
 ## File relay (experimental)
 
-If a peer's newest segment is empty or has a partial header, the reader retries it on the next poll. Once a later segment from that peer is visible, the earlier segment is sealed. An incomplete header there stalls ingest for that peer with `RELAY_SEGMENT_CORRUPT`, even if the later segment is complete. If the complete header of that sealed segment arrives later, it clears on the next tick without a republish or a clone. After a publisher crash or restart leaves a torn tail in a sealed segment, the reader applies every complete record once, never a partial one, and logs `reconciled torn seal` when the next segment of the same peer and publisher epoch resumes at or before the first missing record and its first record verifies. It then continues with no operator action. A torn tail the successor does not explain, and any damage inside a sealed segment, still stalls that peer with `RELAY_SEGMENT_CORRUPT` (it is never skipped).
+If a peer's newest segment is empty or has a partial header, the reader retries it on the next poll. Once a later segment from that peer is visible, the earlier segment is sealed. An incomplete header there stalls ingest for that peer with `RELAY_SEGMENT_CORRUPT`, even if the later segment is complete. If the complete header of that sealed segment arrives later, it clears on the next tick without a republish or a clone. A publisher killed while it was creating a segment file leaves a newest segment with an incomplete header and no record; on restart the publisher replaces that file itself under the same segment number (a segment holding records is never touched), so no operator step is needed and a reader that already saw the short file retries it and converges once. Short content that does not begin like a segment header is not replaced and still stops the publisher with an error naming the file. After a publisher crash or restart leaves a torn tail in a sealed segment, the reader applies every complete record once, never a partial one, and logs `reconciled torn seal` when the next segment of the same peer and publisher epoch resumes at or before the first missing record and its first record verifies. It then continues with no operator action. A torn tail the successor does not explain, and any damage inside a sealed segment, still stalls that peer with `RELAY_SEGMENT_CORRUPT` (it is never skipped).
+
+A store error while the reader applies a record is not a verdict about that record. If the local database is busy, the disk is full, an I/O error occurs or the poll is cancelled, `mtix sync relay tick` (or the daemon pass) fails with `apply relay record <peer> rs <n>: ...`. The record is not quarantined, the ingest cursor stays before it, and the next successful poll applies it exactly once. Records after it in that peer's stream wait. Only a record the apply path itself rejects as invalid is quarantined and skipped (see `relay quarantined records`). Free the disk or the lock and run `mtix sync relay tick` again; after a `fail-stop` error restart the mtix process first. There is nothing to resolve in the quarantine, and segment files are never edited or deleted for this.
 
 **Fresh late joiner (no local tasks).** On an existing peer, run `mtix sync relay tick` and `mtix sync relay clone --export` to publish a current bootstrap snapshot. In a fresh empty directory on the joining peer, use the same project prefix and a NEW peer id (never reuse an id whose store was lost). Ask the user to copy every relay key epoch file from the existing project's `.mtix/relay/keys/` to the new project's `.mtix/relay/keys/` out of band, after `init`: directory mode 0700, files mode 0600; never print keys or copy them through the relay. Before cloning, stop any daemon in the new project. Reusing the id of a lost store makes publishing stop with `RELAY_PUBLISHER_DIVERGED`. A relay made with `--no-auth` has no key files to copy, so skip the key step for it.
 
@@ -439,6 +441,16 @@ or releases leases, even with `--fix`, and this row is absent without a relay.
 Its JSON `data` carries `state`, `pid` and `waiters`; an inspection error is
 WARN, without `data`, and prints `mtix daemon status --listener`.
 
+
+### Relay record refused: `RELAY_META_CORRUPT` with `key_epochs not strictly increasing`
+
+**Symptom.** `mtix sync relay tick`, `attach`, `rotate-key` or `mtix sync doctor` (row `relay record`) fails with `RELAY_META_CORRUPT: ... key_epochs not strictly increasing: key_epochs[i] has epoch E after epoch P`.
+
+**Cause.** The relay's `relay.json` records key rotations in `key_epochs`, and the epochs must strictly increase. An entry that repeats or regresses is refused rather than sorted, because the history is append-only.
+
+**Effect.** While the file is refused, relay data flow stops on every attached peer. Each store keeps its events and nothing is lost.
+
+**Recovery.** `mtix` does not repair the file. Restore `relay.json` in the relay directory from a known-good copy of the relay medium (a backup, or the copy another peer holds) with its `key_epochs` history intact. Never sort, delete or edit `key_epochs` entries. Then run `mtix sync doctor` until the `relay record` row passes, and `mtix sync relay tick` to resume.
 
 ## Configuration Keys
 

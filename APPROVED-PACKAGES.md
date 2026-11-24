@@ -83,12 +83,12 @@
 
 | Package | `github.com/gorilla/websocket` |
 |---------|-------------------------------|
-| Version | ≥ 1.5.3 |
+| Version | v1.5.4-0.20240701034025-d67f41855da4 (pinned pseudo-version; see Notes) |
 | License | BSD-2-Clause |
 | Purpose | WebSocket event streaming (FR-7.5) |
 | Status | **APPROVED** |
-| CVE Status | CVE-2020-27813 (integer overflow DoS) fixed in 1.4.1+. Current version clean. |
-| Notes | De facto standard for Go WebSocket. Well-maintained despite gorilla org transition. |
+| CVE Status | CVE-2020-27813 (integer overflow DoS) fixed in 1.4.1+. v1.5.3 needs an upstream security fix that no tagged release carries yet; the pinned pseudo-version contains it (Go checksum database verified). |
+| Notes | De facto standard for Go WebSocket. Well-maintained despite gorilla org transition. Pinned to an untagged upstream commit (a security fix; MTIX-304, maintainer decision 2026-11-24) so govulncheck is clean with no exclusion. Move to v1.5.4, or the first tagged release containing that commit, as soon as it is tagged. |
 
 ### 6. gRPC
 

@@ -46,6 +46,12 @@ type Outcome struct {
 	// deliver records AND carry a verdict: a sealed segment hands over
 	// its clean prefix and is then condemned.
 	Verdict error
+
+	// Reconciled reports that a sealed segment ended in a torn tail its
+	// successor explains (FR-21 5.5); ResumeRS is the relay sequence just
+	// before the successor's first record, for the continuity walk only.
+	Reconciled bool
+	ResumeRS   uint64
 }
 
 // Next returns the position a reader may persist after a scan, and

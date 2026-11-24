@@ -10,17 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"regexp"
 	"strconv"
 
 	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 )
-
-// relayPeerIDPattern is the FR-21 §5.2 identity grammar. The store
-// validates it at this boundary so a malformed id can never occupy a
-// cursor row and shadow a real peer's position.
-var relayPeerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
 
 // RelayPushPosition is this peer's durable publish position (FR-21 §6.2).
 type RelayPushPosition struct {
@@ -170,7 +165,7 @@ func (s *Store) ResetRelayPublisher(ctx context.Context, floorSeq int64, baseRS 
 // RelayIngestCursor returns the reader's position in one peer's stream.
 // A peer never read from reports the zero position.
 func (s *Store) RelayIngestCursor(ctx context.Context, peerID string) (RelayIngestPosition, error) {
-	if !relayPeerIDPattern.MatchString(peerID) {
+	if !peerid.Valid(peerID) {
 		return RelayIngestPosition{}, fmt.Errorf("relay ingest cursor: peer id %q is malformed: %w",
 			peerID, model.ErrInvalidInput)
 	}
@@ -220,7 +215,7 @@ type relayExecer interface {
 // advanceRelayIngestCursor is the cursor upsert, run on the write connection or
 // inside a transaction (MTIX-265: a clone seed writes cursor and stamp together).
 func advanceRelayIngestCursor(ctx context.Context, db relayExecer, peerID string, pos RelayIngestPosition) error {
-	if !relayPeerIDPattern.MatchString(peerID) {
+	if !peerid.Valid(peerID) {
 		return fmt.Errorf("advance relay ingest cursor: peer id %q is malformed: %w",
 			peerID, model.ErrInvalidInput)
 	}

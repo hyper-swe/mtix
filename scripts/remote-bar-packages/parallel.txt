@@ -1,5 +1,6 @@
 github.com/hyper-swe/mtix
 github.com/hyper-swe/mtix/api
+github.com/hyper-swe/mtix/e2e/relaygate
 github.com/hyper-swe/mtix/internal/api/grpc
 github.com/hyper-swe/mtix/internal/api/http
 github.com/hyper-swe/mtix/internal/attach
@@ -17,6 +18,7 @@ github.com/hyper-swe/mtix/internal/relay/ingest
 github.com/hyper-swe/mtix/internal/relay/keyring
 github.com/hyper-swe/mtix/internal/relay/lifecycle
 github.com/hyper-swe/mtix/internal/relay/metadata
+github.com/hyper-swe/mtix/internal/relay/peerid
 github.com/hyper-swe/mtix/internal/relay/publisher
 github.com/hyper-swe/mtix/internal/relay/retention
 github.com/hyper-swe/mtix/internal/relay/segment

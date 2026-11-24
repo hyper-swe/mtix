@@ -94,6 +94,7 @@ type Scanner struct {
 	rec       Record
 	next      uint64 // relay sequence the next record must carry
 	delivered uint64 // relay sequence of the last delivered record
+	offset    int    // bytes of the segment consumed through the last delivered record
 	truncated bool
 	done      bool
 	err       error
@@ -140,6 +141,7 @@ func NewScanner(r io.Reader, opts ScanOptions) (*Scanner, error) {
 		buf:       make([]byte, RecordHeaderSize),
 		next:      h.FirstRS,
 		delivered: h.FirstRS - 1,
+		offset:    HeaderSize,
 	}, nil
 }
 
@@ -156,6 +158,11 @@ func (s *Scanner) Record() Record { return s.rec }
 // Err returns the verdict that stopped the scan, or nil if it stopped
 // at the end of the segment or at an unfinished active tail.
 func (s *Scanner) Err() error { return s.err }
+
+// Offset returns how many bytes of the segment end the last delivered
+// record (the header size when none was delivered). A caller holding the
+// segment bytes finds the undelivered tail there.
+func (s *Scanner) Offset() int { return s.offset }
 
 // Truncated reports whether an active segment stopped short of its end.
 func (s *Scanner) Truncated() bool { return s.truncated }
@@ -208,6 +215,7 @@ func (s *Scanner) Next() bool {
 	s.rec = rec
 	s.delivered = rec.RS
 	s.next = rec.RS + 1
+	s.offset += total
 	return true
 }
 
@@ -232,7 +240,10 @@ func (s *Scanner) stopDamaged(err error) bool {
 		return false
 	}
 	if IsIncomplete(err) {
-		err = fmt.Errorf("%w: sealed segment ends mid-frame after rs %d", ErrSegmentCorrupt, s.delivered)
+		// ErrIncomplete stays in the chain so a caller can tell a torn
+		// tail (the one shape FR-21 5.5 can excuse) from damage inside
+		// the segment, which nothing excuses.
+		err = fmt.Errorf("%w: sealed segment ends mid-frame after rs %d (%w)", ErrSegmentCorrupt, s.delivered, ErrIncomplete)
 	}
 	return s.stop(err)
 }
@@ -325,6 +336,23 @@ func ExplainsTornSeal(sealed Result, successor Header) bool {
 		successor.PubEpoch == sealed.Header.PubEpoch &&
 		successor.SegmentNo == sealed.Header.SegmentNo+1 &&
 		successor.FirstRS <= sealed.Cursor.RS+1
+}
+
+// TailIsOneFrame reports whether tail, the bytes after a sealed segment's
+// last whole record, can be the incomplete end of exactly one frame
+// (FR-21 5.5). It is false when a whole record that verifies begins
+// anywhere inside the tail: then the damage started before the final
+// frame boundary, which is damage and not a torn append.
+func TailIsOneFrame(tail []byte, h Header, key []byte) bool {
+	for i := 1; i+RecordHeaderSize <= len(tail); i++ {
+		if string(tail[i:i+4]) != MagicRecord {
+			continue
+		}
+		if _, _, err := ParseRecord(tail[i:], h, key); err == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // CheckContinuity reports whether the segment described by h may be

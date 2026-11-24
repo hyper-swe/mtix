@@ -34,6 +34,9 @@ func newStore(t *testing.T) *sqlite.Store {
 	st, err := sqlite.New(filepath.Join(t.TempDir(), "store.db"), slog.Default())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
+	// Use the fixture peer when journaling nodes, independently of host interfaces.
+	_, err = st.WriteDB().ExecContext(t.Context(), "UPDATE meta SET value = ? WHERE key = ?", peerA, "meta.sync.machine_hash")
+	require.NoError(t, err)
 	return st
 }
 

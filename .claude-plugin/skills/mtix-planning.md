@@ -107,7 +107,7 @@ Every child must add information that the parent does not have:
 ```
 mcp__mtix__mtix_decompose with parent_id and titles
 ```
-This creates child nodes with titles only.
+This creates child nodes with titles only. To classify each child at the same time, give it `issue_type` (`bug`, `feature`, `task`, `chore`, `refactor`, `test`, `doc`; `type` is accepted as an alias). On the CLI, `mtix decompose <parent_id> --file plan.jsonl` takes one JSON object per line with the keys `title` (required), `prompt`, `acceptance`, `description`, `priority`, `labels`, `issue_type`. An unknown key (a misspelling such as `acceptence`) or an invalid issue type is refused naming the line and the key, and nothing is created; fix the line and run it again. A child without `issue_type` has none set. `mtix decompose <parent_id> --file plan.jsonl --dry-run` previews the children before anything is written; add `--json` to see each child's issue type (the text preview lists the id and title only).
 
 ### Step 2: Populate Every Child
 For each child, call `mcp__mtix__mtix_update` with:

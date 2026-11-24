@@ -13,14 +13,15 @@ import (
 // ProposedNode represents a node that would be created by a decompose operation
 // but has not been persisted. Used by dry-run to preview the proposed tree.
 type ProposedNode struct {
-	ID          string         `json:"id"`
-	ParentID    string         `json:"parent_id"`
-	Title       string         `json:"title"`
-	Description string         `json:"description,omitempty"`
-	Prompt      string         `json:"prompt,omitempty"`
-	Acceptance  string         `json:"acceptance,omitempty"`
-	Priority    model.Priority `json:"priority,omitempty"`
-	Labels      []string       `json:"labels,omitempty"`
+	ID          string          `json:"id"`
+	ParentID    string          `json:"parent_id"`
+	Title       string          `json:"title"`
+	Description string          `json:"description,omitempty"`
+	Prompt      string          `json:"prompt,omitempty"`
+	Acceptance  string          `json:"acceptance,omitempty"`
+	Priority    model.Priority  `json:"priority,omitempty"`
+	Labels      []string        `json:"labels,omitempty"`
+	IssueType   model.IssueType `json:"issue_type,omitempty"`
 }
 
 // DecomposeDryRun validates the decompose inputs and computes the proposed
@@ -35,18 +36,9 @@ type ProposedNode struct {
 func (svc *NodeService) DecomposeDryRun(
 	ctx context.Context, parentID string, children []DecomposeInput,
 ) ([]ProposedNode, error) {
-	if len(children) == 0 {
-		return nil, fmt.Errorf("at least one child is required: %w", model.ErrInvalidInput)
-	}
-
-	// Validate all children upfront.
-	for i, child := range children {
-		if child.Title == "" {
-			return nil, fmt.Errorf("child %d: title is required: %w", i, model.ErrInvalidInput)
-		}
-		if len(child.Title) > model.MaxTitleLength {
-			return nil, fmt.Errorf("child %d: title too long: %w", i, model.ErrInvalidInput)
-		}
+	// Validate all children upfront (shared rule, MTIX-279).
+	if err := ValidateDecomposeChildren(children); err != nil {
+		return nil, err
 	}
 
 	// The dry run writes nothing, so a stale parent read here can only give a
@@ -83,6 +75,7 @@ func (svc *NodeService) DecomposeDryRun(
 			Acceptance:  child.Acceptance,
 			Priority:    child.Priority,
 			Labels:      child.Labels,
+			IssueType:   child.IssueType,
 		}
 	}
 

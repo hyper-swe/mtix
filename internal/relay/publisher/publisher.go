@@ -29,10 +29,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"regexp"
 	"sync/atomic"
 
 	"github.com/hyper-swe/mtix/internal/format"
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 	"github.com/hyper-swe/mtix/internal/relay/segment"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
@@ -53,9 +53,6 @@ func CodeOf(err error) string {
 	}
 	return ""
 }
-
-// peerIDPattern is the FR-21 §5.2 identity grammar.
-var peerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
 
 // defaultBatchLimit bounds one tick's journal read. A tick's cost
 // tracks what is new, never the length of history (FR-21 §9).
@@ -161,7 +158,7 @@ func New(cfg Config) (*Publisher, error) {
 	if cfg.Journal == nil {
 		return nil, errors.New("relay publisher: journal is required")
 	}
-	if !peerIDPattern.MatchString(cfg.PeerID) {
+	if !peerid.Valid(cfg.PeerID) {
 		return nil, fmt.Errorf("relay publisher: peer id %q is malformed", cfg.PeerID)
 	}
 	if cfg.Unauthenticated == (len(cfg.Key) != 0) {

@@ -37,6 +37,7 @@ func newPayloadTestStore(t *testing.T) *Store {
 	s, err := New(t.TempDir(), slog.Default())
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, s.Close()) })
+	SeedDecisionDeleteTestMachineHash(t, s.WriteDB())
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	s.clock = func() time.Time { return now }
 	for _, n := range []*model.Node{
@@ -71,8 +72,8 @@ func payloadIndependentDelete(t *testing.T, s *Store) {
 func payloadMutationCases() []payloadFailureCase {
 	ctx := context.Background()
 	return []payloadFailureCase{
-		{"delete cascade", model.OpDelete, &model.DeletePayload{}, 1, payloadIndependentDelete, func(s *Store) error { return s.DeleteNode(ctx, "TEST-1.1", true, "test-agent") }},
-		{"delete cascade descendant", model.OpDelete, &model.DeletePayload{}, 2, payloadIndependentDelete, func(s *Store) error { return s.DeleteNode(ctx, "TEST-1.1", true, "test-agent") }},
+		{"delete cascade", model.OpDelete, &model.DeletePayload{Path: "TEST-1.1", Cascade: true}, 1, payloadIndependentDelete, func(s *Store) error { return s.DeleteNode(ctx, "TEST-1.1", true, "test-agent") }},
+		{"delete cascade descendant", model.OpDelete, &model.DeletePayload{Path: "TEST-1.1.1"}, 2, payloadIndependentDelete, func(s *Store) error { return s.DeleteNode(ctx, "TEST-1.1", true, "test-agent") }},
 		{"cancel cascade descendant", model.OpTransitionStatus, &model.TransitionStatusPayload{From: model.StatusOpen, To: model.StatusCancelled, Reason: "cancelled"}, 2, payloadBlockingDependency, func(s *Store) error { return s.CancelNode(ctx, "TEST-1.1", "cancelled", "test-agent", true) }},
 		{"cancel cascade", model.OpTransitionStatus, &model.TransitionStatusPayload{From: model.StatusInProgress, To: model.StatusCancelled, Reason: "cancelled"}, 1, payloadBlockingDependency, func(s *Store) error { return s.CancelNode(ctx, "TEST-1.1", "cancelled", "test-agent", true) }},
 		{"transition", model.OpTransitionStatus, &model.TransitionStatusPayload{From: model.StatusInProgress, To: model.StatusDone, Reason: "finished"}, 1, payloadBlockingDependency, func(s *Store) error {

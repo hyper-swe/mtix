@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+
+	"github.com/hyper-swe/mtix/internal/relay/peerid"
 )
 
 // FileExt is the segment file extension (FR-21 §5.2).
@@ -20,11 +22,6 @@ const filePrefix = "seg-"
 // truncating: ordering must survive a peer that outlives the padding.
 const fileDigits = 8
 
-// peerIDPattern is the FR-21 §5.2 identity grammar: the machine-hash
-// prefix truncated to 16 hex characters, plus an optional
-// operator-assigned label for seats whose environment churns.
-var peerIDPattern = regexp.MustCompile(`^[0-9a-f]{16}(-[a-z0-9_-]{1,32})?$`)
-
 // segFilePattern matches a segment file name. The number is required to
 // be at least fileDigits wide so a hand-written "seg-1.mrseg" is a
 // foreign entry rather than a silently reordered segment 1.
@@ -35,7 +32,7 @@ var segFilePattern = regexp.MustCompile(`^seg-([0-9]{8,})\.mrseg$`)
 // no NUL, so a peer id from the medium can never escape the directory
 // it names.
 func ValidatePeerID(id string) error {
-	if !peerIDPattern.MatchString(id) {
+	if !peerid.Valid(id) {
 		return fmt.Errorf("%w: peer id %q", ErrForeignEntry, id)
 	}
 	return nil

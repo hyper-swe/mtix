@@ -55,6 +55,14 @@ type WriterConfig struct {
 	// MaxSegmentBytes is the rotation threshold; zero means
 	// DefaultMaxSegmentBytes.
 	MaxSegmentBytes int64
+
+	// AdoptAhead, when set, lets the caller vouch for records the medium
+	// holds beyond NextRS at the same publisher epoch — the FR-21 §6.2
+	// crash window, where the append landed and the cursor advance did
+	// not. It receives exactly those records, oldest first, and returns
+	// nil only when they are what the caller would have published next.
+	// Nil, or a non-nil error, keeps the §5.2 refusal.
+	AdoptAhead func(ahead []Record) error
 }
 
 // Writer appends framed records to a peer's own segment directory,
@@ -231,8 +239,7 @@ func (w *Writer) checkDeclaredCursor(cfg WriterConfig, h Header, resumeRS uint64
 		return nil
 	}
 	if cfg.NextRS != 0 && cfg.NextRS != resumeRS {
-		return fmt.Errorf("%w: cursor expects rs %d, the medium continues at rs %d",
-			ErrPeerIDConflict, cfg.NextRS, resumeRS)
+		return w.adoptOrRefuse(cfg, resumeRS)
 	}
 	return nil
 }

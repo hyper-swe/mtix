@@ -55,3 +55,18 @@ func TestOpen_MissingDirectories_AreCreated(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, fi.IsDir())
 }
+
+// TestOpen_MissingRelayRoot_RefusesWithoutCreatingIt verifies that Open
+// never invents a relay: with no relay root there is no relay.json, so it
+// fails on the metadata read and creates nothing (MTIX-305).
+func TestOpen_MissingRelayRoot_RefusesWithoutCreatingIt(t *testing.T) {
+	r := newRelay(t, false)
+	cfg := r.config()
+	cfg.RelayDir = filepath.Join(t.TempDir(), "absent", "relay")
+
+	stack, err := tick.Open(cfg)
+	require.Error(t, err)
+	assert.Nil(t, stack)
+	_, statErr := os.Lstat(cfg.RelayDir)
+	assert.True(t, os.IsNotExist(statErr), "Open must not create the relay root")
+}

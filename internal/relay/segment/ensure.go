@@ -27,9 +27,11 @@ const relayDirMode = 0o700
 // which it could be replaced by a link between creation and use. Nothing
 // is created beneath a component that has been refused.
 //
-// root is the operator-configured relay directory and is trusted as
-// given; only the components beneath it are checked. It returns the
-// joined path.
+// root is the operator-configured relay directory. It is followed, not
+// Lstat-checked: a root that does not exist yet is created with its
+// missing ancestors, at mode 0700, as os.MkdirAll did before, and a root
+// that is a symlink (for example to a mounted drive) is used as is. Only
+// the components under it are Lstat-checked. It returns the joined path.
 func EnsureDir(root string, parts ...string) (string, error) {
 	return ensureDirWith(os.Mkdir, root, parts...)
 }
@@ -38,6 +40,9 @@ func EnsureDir(root string, parts ...string) (string, error) {
 // so a test can replace a directory with a link between creation and the
 // recheck (FR-21 §5.1). EnsureDir always passes os.Mkdir.
 func ensureDirWith(mkdir func(string, os.FileMode) error, root string, parts ...string) (string, error) {
+	if err := ensureRoot(root); err != nil {
+		return "", err
+	}
 	dir := root
 	for _, part := range parts {
 		if part == "" || part == "." || part == ".." || strings.ContainsAny(part, `/\`) {
@@ -64,4 +69,16 @@ func ensureOne(mkdir func(string, os.FileMode) error, dir string) error {
 		return fmt.Errorf("create %s: %w", dir, mkErr)
 	}
 	return lstatDir(dir)
+}
+
+// ensureRoot makes sure the relay root exists. It is os.MkdirAll, as before
+// MTIX-305: a missing root and its ancestors are created at mode 0700, an
+// existing symlinked root is followed, and a root that is not a directory
+// fails with the error os.MkdirAll returns. Only the components under the
+// root are Lstat-checked (FR-21 §5.1).
+func ensureRoot(root string) error {
+	if err := os.MkdirAll(root, relayDirMode); err != nil {
+		return fmt.Errorf("create %s: %w", root, err)
+	}
+	return nil
 }

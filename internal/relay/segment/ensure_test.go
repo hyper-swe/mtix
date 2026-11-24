@@ -79,3 +79,35 @@ func TestEnsureDir_RejectsEscapingComponents(t *testing.T) {
 		assert.Error(t, err, "component %q", part)
 	}
 }
+
+// TestEnsureDir_MissingRootAndAncestors_AreCreated verifies that a relay
+// root that does not exist yet, with missing ancestors above it, is made
+// as os.MkdirAll did before MTIX-305, at mode 0700 (FR-21 §5.1).
+func TestEnsureDir_MissingRootAndAncestors_AreCreated(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "missing", "relay")
+	got, err := segment.EnsureDir(root, "bootstrap")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, "bootstrap"), got)
+	for _, dir := range []string{root, got} {
+		fi, lerr := os.Lstat(dir)
+		require.NoError(t, lerr)
+		assert.True(t, fi.IsDir())
+		assert.Equal(t, os.FileMode(0o700), fi.Mode().Perm(), dir)
+	}
+}
+
+// TestEnsureDir_SymlinkedRoot_IsFollowed verifies that a root that is
+// itself a symlink to a real directory is followed, as before MTIX-305
+// (a relay root may be a link to a mounted drive); only the components
+// under it are Lstat-checked.
+func TestEnsureDir_SymlinkedRoot_IsFollowed(t *testing.T) {
+	base, target := t.TempDir(), t.TempDir()
+	root := filepath.Join(base, "relay")
+	require.NoError(t, os.Symlink(target, root))
+	got, err := segment.EnsureDir(root, "bootstrap")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, "bootstrap"), got)
+	fi, lerr := os.Lstat(filepath.Join(target, "bootstrap"))
+	require.NoError(t, lerr)
+	assert.True(t, fi.IsDir())
+}

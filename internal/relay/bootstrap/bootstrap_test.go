@@ -542,3 +542,32 @@ func TestExportSnapshot_SymlinkedBootstrapDir_RefusesBeforeWriting(t *testing.T)
 	require.NoError(t, rerr)
 	require.Empty(t, entries)
 }
+
+// TestExportSnapshot_MissingRelayRoot_IsCreated verifies that a relay
+// root that does not exist yet is created, with its missing ancestors,
+// as before the symlink refusal (MTIX-305).
+func TestExportSnapshot_MissingRelayRoot_IsCreated(t *testing.T) {
+	relayDir := filepath.Join(t.TempDir(), "a", "relay")
+	st := newStore(t)
+	seedNodes(t, st, 1)
+
+	res, err := bootstrap.ExportSnapshot(context.Background(), exportReq(relayDir, st))
+	require.NoError(t, err)
+	require.FileExists(t, res.Path)
+	require.Equal(t, filepath.Join(relayDir, bootstrap.DirName), filepath.Dir(res.Path))
+}
+
+// TestExportSnapshot_SymlinkedRelayRoot_IsFollowed verifies a relay root
+// that is a symlink to a real directory is followed, as before MTIX-305.
+func TestExportSnapshot_SymlinkedRelayRoot_IsFollowed(t *testing.T) {
+	target := t.TempDir()
+	relayDir := filepath.Join(t.TempDir(), "relay")
+	require.NoError(t, os.Symlink(target, relayDir))
+	st := newStore(t)
+	seedNodes(t, st, 1)
+
+	res, err := bootstrap.ExportSnapshot(context.Background(), exportReq(relayDir, st))
+	require.NoError(t, err)
+	require.FileExists(t, res.Path)
+	require.FileExists(t, filepath.Join(target, bootstrap.DirName, filepath.Base(res.Path)))
+}

@@ -309,6 +309,11 @@ func (in *Ingestor) applyRecord(ctx context.Context, peerID string, header segme
 		return in.refuse(ctx, stats, peerID, header, rec, &e, err)
 	}
 	if err := in.checkUID(ctx, &e); err != nil {
+		if !errors.Is(err, model.ErrConflict) {
+			// The uid could not be read: a store failure, not a verdict
+			// about the record (MTIX-303).
+			return in.failPoll(stats, peerID, rec.RS, "check uid of", err)
+		}
 		return in.refuse(ctx, stats, peerID, header, rec, &e, err)
 	}
 
@@ -323,10 +328,17 @@ func (in *Ingestor) applyRecord(ctx context.Context, peerID string, header segme
 	// vector-clock merge, LWW with conflict recording, and the
 	// derived-state recomputes. Bypassing this path would mean
 	// reimplementing all of it, differently.
-	if err := in.cfg.Store.WithTx(ctx, func(tx *sql.Tx) error {
-		return in.cfg.Store.ApplyRelayEvent(ctx, tx, &e)
-	}); err != nil {
-		return in.refuse(ctx, stats, peerID, header, rec, &e, err)
+	//
+	// Only the apply path's own rejection is a verdict that quarantines. A
+	// store failure (busy, full disk, cancelled context) fails the poll with
+	// the cursor before this record, so a valid event is never lost to it and
+	// applies once after recovery (MTIX-303; dedupe makes the retry safe).
+	verdict, failure := in.applyEvent(ctx, &e)
+	if failure != nil {
+		return in.failPoll(stats, peerID, rec.RS, "apply", failure)
+	}
+	if verdict != nil {
+		return in.refuse(ctx, stats, peerID, header, rec, &e, verdict)
 	}
 	stats.Applied++
 	return false

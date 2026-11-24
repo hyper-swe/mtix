@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -272,10 +273,7 @@ func registerUndeleteTool(reg *ToolRegistry, svc *service.NodeService) {
 	})
 }
 
-// registerDecomposeTool registers mtix_decompose. The creator is the optional
-// creator argument, then the server process identity (WithAuthor), then "mcp";
-// it must equal the parent's claiming agent for the children to be auto-claimed
-// (FR-11.2a).
+// registerDecomposeTool uses the explicit creator or configured server author for claim inheritance.
 func registerDecomposeTool(reg *ToolRegistry, svc *service.NodeService, author string) {
 	reg.Register(ToolDef{
 		Name:        "mtix_decompose",
@@ -285,7 +283,7 @@ func registerDecomposeTool(reg *ToolRegistry, svc *service.NodeService, author s
 			Properties: map[string]SchemaProp{
 				"parent_id": {Type: "string", Description: "Parent node ID"},
 				"children":  {Type: "string", Description: "JSON array of children; keys: title (required), prompt, acceptance, description, priority, labels, issue_type (alias type; bug, feature, task, chore, refactor, test, doc). Unknown keys are refused and nothing is created"},
-				"creator":   {Type: "string", Description: "Author of the children; defaults to the server's MTIX_AUTHOR_ID or author_id, then mcp. Children are claimed only when this equals the parent's assignee"},
+				"creator":   {Type: "string", Description: "Author of the children; defaults to the server's MTIX_AUTHOR_ID or author_id, then mcp for attribution only. A supplied or configured author must match the parent's assignee to inherit its claim"},
 			},
 			Required: []string{"parent_id", "children"},
 		},
@@ -303,8 +301,8 @@ func registerDecomposeTool(reg *ToolRegistry, svc *service.NodeService, author s
 		if err != nil {
 			return nil, err
 		}
-		creator := resolveMCPCreator(p.Creator, author)
-		ids, err := svc.Decompose(ctx, p.ParentID, children, creator)
+		creator := cmp.Or(p.Creator, author)
+		ids, err := svc.DecomposeWithCreatorFallback(ctx, p.ParentID, children, creator, "mcp")
 		if err != nil {
 			return nil, err
 		}
@@ -464,17 +462,4 @@ func splitCSVParam(s string) []string {
 		return nil
 	}
 	return out
-}
-
-// resolveMCPCreator picks the creator identity for a node an MCP tool creates:
-// the explicit argument, then the server process identity (MTIX_AUTHOR_ID or
-// author_id, via WithAuthor), then "mcp" (FR-11.2a).
-func resolveMCPCreator(explicit, author string) string {
-	if explicit != "" {
-		return explicit
-	}
-	if author != "" {
-		return author
-	}
-	return "mcp"
 }

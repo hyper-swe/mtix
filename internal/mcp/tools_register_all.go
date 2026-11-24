@@ -25,7 +25,7 @@ type ToolSet struct {
 	// Primary is the default project prefix for omitted-project queries
 	// and creates (MTIX-37.5).
 	Primary string
-	// Author is the author identity workflow tools record; empty keeps
+	// Author is the configured identity for node and workflow tools; empty keeps
 	// their "mcp" default (MTIX-95.22).
 	Author string
 	// OnAddressedSend requests a push after an addressed annotation commits
@@ -41,7 +41,7 @@ type ToolSet struct {
 // guard both call it, so the guard can never disagree with the server about
 // which tools exist (MTIX-107.42).
 func RegisterAllTools(reg *ToolRegistry, s ToolSet) {
-	RegisterNodeTools(reg, s.Node, WithPrimaryProject(s.Primary))
+	RegisterNodeTools(reg, s.Node, WithPrimaryProject(s.Primary), WithAuthor(s.Author))
 	RegisterWorkflowTools(reg, s.Node, s.Background,
 		WithPrimaryProject(s.Primary), WithAuthor(s.Author))
 	RegisterContextTools(reg, s.Context, s.Prompt, WithAddressedSendHook(s.OnAddressedSend), WithReplyWindowHook(s.OnReplyWindow))

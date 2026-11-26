@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -19,6 +20,19 @@ func decisionFixture(t *testing.T, name string) []byte {
 	b, err := os.ReadFile("../../docs/schemas/fixtures/" + name + ".json")
 	require.NoError(t, err)
 	return b
+}
+
+func TestDecisionModel_NonTestDependencies_ExcludeXText(t *testing.T) {
+	// Without -test, go list checks only the production package and its dependencies.
+	out, err := exec.CommandContext(t.Context(), "go", "list", "-deps", ".").CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	const module = "golang.org/x/text"
+	for _, dep := range strings.Fields(string(out)) {
+		if dep == module || strings.HasPrefix(dep, module+"/") {
+			t.Errorf("internal/model must not depend on %s", dep)
+		}
+	}
 }
 
 func TestDecisionCanonical_TransportVectors(t *testing.T) {

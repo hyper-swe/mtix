@@ -5,6 +5,7 @@ package model
 
 // DecisionPayload is the validated v1 view. Exactly one kind-specific object is populated.
 // The hashes in DecodedDecision cover the received object, including extension fields.
+// See ADR-008 section 3.2.
 type DecisionPayload struct {
 	DecisionHeader
 	Target string `json:"target,omitempty"`
@@ -15,6 +16,7 @@ type DecisionPayload struct {
 }
 
 // DecisionHeader carries the version, kind and author-scoped idempotency key.
+// See ADR-008 section 3.2.
 type DecisionHeader struct {
 	V          int    `json:"v"`
 	Kind       string `json:"kind"`
@@ -22,6 +24,7 @@ type DecisionHeader struct {
 }
 
 // DecisionRequest describes a question and the conditions for answering it.
+// See ADR-008 section 3.2.
 type DecisionRequest struct {
 	Question        string                  `json:"question"`
 	Context         string                  `json:"context,omitempty"`
@@ -41,6 +44,7 @@ type DecisionRequest struct {
 }
 
 // DecisionOption identifies one possible response and its input requirements.
+// See ADR-008 section 3.2.
 type DecisionOption struct {
 	ID           string         `json:"id"`
 	Label        string         `json:"label"`
@@ -50,18 +54,21 @@ type DecisionOption struct {
 }
 
 // DecisionInput declares the grammar of an option’s input value.
+// See ADR-008 section 3.2.
 type DecisionInput struct {
 	Type     string `json:"type"`
 	Required bool   `json:"required"`
 }
 
 // DecisionRecommendation records the asker’s preferred option and reason.
+// See ADR-008 section 3.2.
 type DecisionRecommendation struct {
 	Option string `json:"option"`
 	Reason string `json:"reason,omitempty"`
 }
 
 // DecisionLink describes a resource referenced by the request.
+// See ADR-008 section 3.2.
 type DecisionLink struct {
 	Kind             string `json:"kind"`
 	URL              string `json:"url"`
@@ -71,6 +78,7 @@ type DecisionLink struct {
 }
 
 // DecisionTicket records the immutable ticket chain at raise time, nearest ancestor first.
+// See ADR-008 section 3.2.
 type DecisionTicket struct {
 	UID       string   `json:"uid"`
 	Ancestors []string `json:"ancestors"`
@@ -80,12 +88,14 @@ type DecisionTicket struct {
 }
 
 // DecisionActor contains a declared kind and model.
+// See ADR-008 section 3.2.
 type DecisionActor struct {
 	Kind  string `json:"kind"`
 	Model string `json:"model,omitempty"`
 }
 
 // DecisionAnswer records a response and the evidence declared by its author.
+// See ADR-008 section 3.2.
 type DecisionAnswer struct {
 	Option      string               `json:"option,omitempty"`
 	InputValue  string               `json:"input_value,omitempty"`
@@ -98,6 +108,7 @@ type DecisionAnswer struct {
 }
 
 // DecisionEvidence records declared process and terminal information. A nil TTYSession denotes no controlling terminal.
+// See ADR-008 section 3.2.
 type DecisionEvidence struct {
 	Ancestors    []string `json:"ancestors,omitempty"`
 	TTYSession   *int64   `json:"tty_session,omitempty"`
@@ -105,6 +116,7 @@ type DecisionEvidence struct {
 }
 
 // DecisionAttestation identifies the front end, user and time of a declared click.
+// See ADR-008 section 3.2.
 type DecisionAttestation struct {
 	Frontend  string `json:"frontend"`
 	User      string `json:"user"`
@@ -112,6 +124,7 @@ type DecisionAttestation struct {
 }
 
 // DecisionOutcome records whether the asker applied or refused an answer.
+// See ADR-008 section 3.2.
 type DecisionOutcome struct {
 	Answer      string           `json:"answer"`
 	SeenAnswers []string         `json:"seen_answers,omitzero"`
@@ -121,6 +134,7 @@ type DecisionOutcome struct {
 }
 
 // DecisionReceipt carries the asker’s declared evidence of an applied outcome.
+// See ADR-008 section 3.2.
 type DecisionReceipt struct {
 	Ledger string  `json:"ledger,omitempty"`
 	Run    string  `json:"run,omitempty"`
@@ -131,12 +145,14 @@ type DecisionReceipt struct {
 }
 
 // DecisionRefusal retains the verbatim explanation for a refused outcome.
+// See ADR-008 section 3.2.
 type DecisionRefusal struct {
 	Text string `json:"text"`
 	Code string `json:"code,omitempty"`
 }
 
 // DecisionWithdraw records why the asker withdrew a request.
+// See ADR-008 section 3.2.
 type DecisionWithdraw struct {
 	ReasonCode string             `json:"reason_code,omitempty"`
 	Reason     string             `json:"reason,omitempty"`
@@ -144,6 +160,7 @@ type DecisionWithdraw struct {
 }
 
 // DecisionElsewhere describes an answer the asker received outside the decision channel.
+// See ADR-008 section 3.2.
 type DecisionElsewhere struct {
 	Channel string          `json:"channel"`
 	Decider DecisionActor   `json:"decider"`

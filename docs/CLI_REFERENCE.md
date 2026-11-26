@@ -1782,7 +1782,7 @@ Show a node's details and annotations as labeled lines, in this order:
                "(until <ISO-8601 UTC timestamp>)"; no suffix without a wake
                time, or for other statuses even with a stale wake time
   Priority     priority (1 = critical ... 5 = backlog)
-  Type         node type
+  Node type    hierarchy tier (epic, story, issue, micro)
   Issue type   issue type (only when set)
   Assignee     current assignee (only when set)
   Desc         full description (only when set; omitted when it holds only

@@ -57,7 +57,7 @@ mtix create "Fix null validation in CreateNode" \
   --acceptance "Testable criteria that define done"
 ```
 
-`mtix create --type` and `mtix update --type` set work classification (bug, feature, task, chore, refactor, test, doc). Update omission preserves; `--type=` clears. `mtix list --type` filters hierarchy (epic, story, issue, micro); `mtix list --issue-type` filters work classification. Existing unclassified nodes remain unset.
+`mtix create --type` and `mtix update --type` set work classification (bug, feature, task, chore, refactor, test, doc). Update omission preserves; `--type=` clears. `mtix show` and `mtix list` display the hierarchy tier as **Node type** and the work classification as **Issue type** (`node_type` and `issue_type` in JSON). `mtix list --type` filters hierarchy (epic, story, issue, micro); use `mtix list --issue-type bug` to find bugs. Existing unclassified nodes remain unset.
 
 ### 5. Decompose Large Tasks
 

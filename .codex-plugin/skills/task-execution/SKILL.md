@@ -81,3 +81,7 @@ missing, check both `under` and the non-empty event whitelist before retrying.
 ## Reading Ticket Comments
 
 With `mtix serve`, open a ticket's **Activity** tab. **All** includes comments and other events, newest first; **Comments** filters the loaded activity pages to plain and addressed comments. Each comment shows its author and, when present, recipient. Bodies use sanitized Markdown; identities stay literal text. Use **Load more** for older entries and refresh the ticket after comments arrive from another process. Viewing a comment does not acknowledge an inbox event: acknowledge explicitly after handling it.
+
+## Reading Progress
+
+`mtix progress <id> --json` (also REST `/api/v1/progress/:id`, MCP `mtix_progress`, gRPC Progress) reports `invalidated_count` and `has_invalidated_descendants` (an invalidated task anywhere below the node), `excluded_count`, and `all_children_excluded` (every direct child is cancelled or invalidated, so the 0% means nothing is countable, not that no work was done). A failed progress call is an error: treat the progress as unknown, never as 0%, and retry or report it.

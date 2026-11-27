@@ -9,16 +9,27 @@ import (
 	"time"
 )
 
-// inboxFullReadFloor is the longest a parked policy wait goes without a full
-// policy read (MTIX-245). The per-tick probe only sees inbox counts, while
-// eligibility depends on hub state, permissions and budget windows outside the
-// inbox, so a full read still runs at least this often.
-const inboxFullReadFloor = 2 * time.Second
+// inboxSafetyFloor is the longest a parked wait goes without a full read while
+// the database is unchanged (MTIX-326). Eligibility can also move with time
+// alone (budget windows), which no commit announces, so a read still runs this
+// often; a commit that moves no inbox count gets a full read after
+// inboxDirtyReadDelay instead (hub state and permissions live in the database).
+const (
+	inboxSafetyFloor    = time.Minute
+	inboxDirtyReadDelay = 2 * time.Second
+)
 
 // wallClock returns the current time with the monotonic reading stripped, so
 // every comparison uses the wall clock. Go timers on darwin stop during system
 // sleep; a deadline checked against this clock survives it (MTIX-245).
 func wallClock() time.Time { return time.Now().Round(0) }
+
+// WithWaitSafetyFloor sets the longest an unchanged wait goes without a full
+// read; non-positive restores inboxSafetyFloor (MTIX-326).
+func (s *InboxService) WithWaitSafetyFloor(d time.Duration) *InboxService {
+	s.waitFloor = d
+	return s
+}
 
 // WithWaitClock injects the wall clock the inbox wait measures its timeout
 // against; nil restores the system wall clock (MTIX-245).
@@ -69,19 +80,39 @@ func (w waitWindow) spent(wall, mono time.Time) bool {
 	return mono.Sub(w.mono) >= w.timeout || wall.Sub(w.wall) >= w.timeout
 }
 
-// waitProbe is the cheap per-tick view of an inbox: its counts and when the
-// last full read was started, on the monotonic clock.
+// waitProbe is the cheap per-tick view of an inbox: its counts, the database
+// change token and when the last full read was started, on the monotonic
+// clock. dirty marks a commit seen that moved no count (MTIX-326).
 type waitProbe struct {
 	pending, total int64
 	at             time.Time
 	ok             bool
+	tok            string
+	tokOK          bool
+	dirty          bool
 }
 
-// probeInbox takes the counts BEFORE the full read, so an event landing between
-// the two shows as a change on the next tick. A backend without counts, or a
-// failed count, yields a probe that never matches, which forces a full read.
+// changeToken reads the store's change token; a backend without one, or a
+// failed read, reports false and the caller counts every tick instead.
+func (s *InboxService) changeToken(ctx context.Context) (string, bool) {
+	if s.changes == nil {
+		return "", false
+	}
+	tok, err := s.changes.InboxChangeToken(ctx)
+	return tok, err == nil
+}
+
+// probeInbox takes the token and then the counts BEFORE the full read, so an
+// event landing between the two shows as a change on the next tick. A backend
+// without counts, or a failed count, yields a probe that never matches, which
+// forces a full read.
 func (s *InboxService) probeInbox(ctx context.Context, agent string) waitProbe {
 	p := waitProbe{at: s.monoNow()}
+	p.tok, p.tokOK = s.changeToken(ctx)
+	return s.countInto(ctx, agent, p)
+}
+
+func (s *InboxService) countInto(ctx context.Context, agent string, p waitProbe) waitProbe {
 	if s.counter == nil {
 		return p
 	}
@@ -93,10 +124,25 @@ func (s *InboxService) probeInbox(ctx context.Context, agent string) waitProbe {
 	return p
 }
 
-// parkUntilChange sleeps tick by tick until a full read is due: the probe
-// changed or the floor passed. It reports done=true with a nil error when the
-// wait's own timeout passed on either clock, or with the caller's
-// cancellation as the error (MTIX-245, FR-19.4).
+func (s *InboxService) safetyFloor() time.Duration {
+	if s.waitFloor > 0 {
+		return s.waitFloor
+	}
+	return inboxSafetyFloor
+}
+
+// readDue reports whether the parked wait must run a full read now: the safety
+// floor passed, or an unexplained commit has waited inboxDirtyReadDelay.
+func (s *InboxService) readDue(last waitProbe, mono time.Time) bool {
+	idle := mono.Sub(last.at)
+	return !last.ok || idle >= s.safetyFloor() || (last.dirty && idle >= inboxDirtyReadDelay)
+}
+
+// parkUntilChange sleeps tick by tick until a full read is due. While the
+// change token is unchanged a tick asks the database nothing; a moved token
+// runs one count, and a moved count ends the park (MTIX-326). It reports
+// done=true with a nil error when the wait's own timeout passed on either
+// clock, or with the caller's cancellation as the error (MTIX-245, FR-19.4).
 func (s *InboxService) parkUntilChange(ctx, waitCtx context.Context, tick <-chan time.Time, agent string, last waitProbe, win waitWindow) (bool, error) {
 	for {
 		select {
@@ -111,12 +157,17 @@ func (s *InboxService) parkUntilChange(ctx, waitCtx context.Context, tick <-chan
 		if win.spent(s.wallNow(), mono) {
 			return true, nil // timeout on either clock, also after a system sleep
 		}
-		if mono.Sub(last.at) >= inboxFullReadFloor || !last.ok {
+		if s.readDue(last, mono) {
 			return false, nil
 		}
-		cur := s.probeInbox(waitCtx, agent)
+		tok, tokOK := s.changeToken(waitCtx)
+		if tokOK && last.tokOK && tok == last.tok {
+			continue // nothing was committed: no query at all
+		}
+		cur := s.countInto(waitCtx, agent, waitProbe{tok: tok, tokOK: tokOK})
 		if !cur.ok || cur.pending != last.pending || cur.total != last.total {
 			return false, nil
 		}
+		last.tok, last.tokOK, last.dirty = tok, tokOK, last.dirty || tokOK
 	}
 }

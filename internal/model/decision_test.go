@@ -96,6 +96,41 @@ func TestDecisionTTYSession_Vectors(t *testing.T) {
 	}
 }
 
+func TestDecisionFrontendAttestation(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		frontend string
+		valid    bool
+	}{
+		{"matching", "web", true},
+		{"mismatching", "desktop", false},
+		{"absent", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var answer map[string]any
+			require.NoError(t, json.Unmarshal(decisionFixture(t, "answer"), &answer))
+			answer["channel"] = "frontend:web"
+			if tc.frontend != "" {
+				answer["attestation"] = map[string]string{
+					"frontend":   tc.frontend,
+					"user":       "alice",
+					"clicked_at": "2025-01-01T00:00:00Z",
+				}
+			}
+			b, err := json.Marshal(answer)
+			require.NoError(t, err)
+
+			_, err = DecodeDecision(b, "user", true)
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, ErrInvalidInput)
+				require.ErrorContains(t, err, "decision attestation:")
+			}
+		})
+	}
+}
+
 func TestDecisionFallback_CapAndSuffix(t *testing.T) {
 	for _, q := range []string{"Proceed?", strings.Repeat("界", 2048)} {
 		b, err := DecisionFallback("d-12345678", "T-1", "asker", q)

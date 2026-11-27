@@ -71,6 +71,29 @@ func TestMCPStdio_ProjectCallbacks(t *testing.T) {
 	old, err := os.Getwd()
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, os.Chdir(old)) })
+	checkProjectCallbacks(t, old)
+}
+
+// TestMCPStdio_ProjectCallbacks_SymlinkedCwd pins MTIX-254: a tree reached
+// through a symlink (the loop's judged tree) makes os.Getwd report the
+// symlink path via $PWD, so the check must compare resolved paths.
+func TestMCPStdio_ProjectCallbacks_SymlinkedCwd(t *testing.T) {
+	physical, err := os.Getwd()
+	require.NoError(t, err)
+	link := filepath.Join(t.TempDir(), "tree-link")
+	require.NoError(t, os.Symlink(physical, link))
+	require.NoError(t, os.Chdir(link))
+	t.Setenv("PWD", link)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(physical)) })
+	old, err := os.Getwd()
+	require.NoError(t, err)
+	require.Equal(t, link, old, "setup: Getwd must report the symlink path")
+	checkProjectCallbacks(t, old)
+}
+
+// checkProjectCallbacks runs the --project PreRunE cases from the cwd old.
+func checkProjectCallbacks(t *testing.T, old string) {
+	t.Helper()
 	for _, dir := range []string{"", t.TempDir(), filepath.Join(t.TempDir(), "absent")} {
 		cmd := newMCPCmd()
 		require.NoError(t, cmd.ParseFlags([]string{"--project", dir}))
@@ -80,6 +103,8 @@ func TestMCPStdio_ProjectCallbacks(t *testing.T) {
 		} else {
 			require.NoError(t, err)
 			cwd, getErr := os.Getwd()
+			require.NoError(t, getErr)
+			cwd, getErr = filepath.EvalSymlinks(cwd) // Getwd may report a symlink via $PWD
 			require.NoError(t, getErr)
 			expected := old
 			if dir != "" {

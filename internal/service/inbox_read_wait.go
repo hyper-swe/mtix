@@ -43,19 +43,23 @@ func (s *InboxService) InboxReadWait(ctx context.Context, agent string, timeout 
 	ticker := time.NewTicker(inboxReadPollInterval)
 	defer ticker.Stop()
 	win := s.openWaitWindow(timeout)
-	readCtx := ctx // the first read follows the caller, later ones the wait budget
+	ws := &waitState{touchedAt: s.monoNow()}
 	last := emptyInboxResult()
-	for {
-		probe := s.probeInbox(readCtx, agent)
+	for n := 0; ; n++ {
+		readCtx := ctx // the first read follows the caller, later ones the wait budget
+		if n > 0 {
+			readCtx = s.parkedReadCtx(waitCtx, ws)
+		}
+		probe := s.probeInbox(readCtx, agent, ws)
 		res, err := s.InboxRead(readCtx, agent, opt)
 		if err != nil {
 			return s.waitReadFailed(ctx, waitCtx, last, err)
 		}
-		readCtx, last = waitCtx, res
+		last = res
 		if len(res.Events) > 0 || len(res.HeldEvents) > 0 {
 			return res, nil
 		}
-		if done, werr := s.parkUntilChange(ctx, waitCtx, ticker.C, agent, probe, win); done {
+		if done, werr := s.parkUntilChange(ctx, waitCtx, ticker.C, agent, probe, win, ws); done {
 			if werr != nil {
 				return InboxResult{}, werr
 			}

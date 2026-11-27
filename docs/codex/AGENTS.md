@@ -115,7 +115,7 @@ and project administration via the Model Context Protocol.
 ## Health diagnostics
 
 Plain `mtix doctor` preserves operator-local files, including stale attach shims
-and records. Use `--fix` for registered shim and glue repairs;
+and records. Use `mtix doctor --fix` for registered shim and glue repairs;
 other commands retain automatic attach refresh.
 
 An operator-local flush failure can follow publication of a complete record:
@@ -126,7 +126,7 @@ per-OS flush behavior and recovery.
 
 ## Trust and grants
 
-Registered local-only ids are implicitly wakeable unless denied. Hub or relay ids require operator-local confirmation: `mtix agent allow dev` needs a terminal, or use `mtix agent allow dev --yes` for automation. `mtix agent deny dev` never needs a terminal. Allow can precede registration; doctor counts current pending ids and prints exact revoke commands. Registration here activates a preconfirmation without another confirmation, while hub preconfirmations need matching known hub identity. The beta accepts and flags harness confirmations and records marker names without values. `mtix doctor --json` shows held ids and retained source/time/mode audit in protected operator-local `confirmations.jsonl`; `--fix` never grants permission. Empty boards record `skipped_no_node`. Share a hub only with trusted principals; this beta has no sender allowlist. Uncommitted allows remain held. Use `mtix agent permissions recover` to list stuck batches and `mtix agent permissions recover --cancel <batch-id>` to cancel with audit; accepted denies and committed grants survive, and cancelled caller ids cannot retry. A new deny quarantines older unfinished allows instead of waiting on publication. Legacy allows without committed preimages remain quarantine holds after cancellation; registration and file requests cannot clear them. Doctor and recovery list these holds; only a fresh operator allow in the matching board clears one. Setup remains future work.
+Registered local-only ids are implicitly wakeable unless denied. Hub/relay ids require operator-local confirmation: use `mtix agent allow dev` at a terminal, or `mtix agent allow dev --yes` for automation. `mtix agent deny dev` never needs a terminal. The beta records and flags harness-session confirmations without refusing them. The doctor checks above show unconfirmed ids and retained source/time/marker audit in operator-local `confirmations.jsonl`; `--fix` never grants permission. Empty boards log `skipped_no_node` instead of creating a task. There is no sender allowlist in this beta: share a hub only with trusted principals. Allow may precede registration: doctor counts active pending ids and prints their exact deny commands; a matching local registration activates the existing grant, while a hub preconfirmation still needs matching known hub identity. Uncommitted allows remain held. Use `mtix agent permissions recover` to list stuck batches and `mtix agent permissions recover --cancel <batch-id>` to cancel with audit; accepted denies and committed grants survive, and cancelled caller ids cannot retry. A new deny quarantines older unfinished allows instead of waiting on publication. Legacy allows without committed preimages remain quarantine holds after cancellation; registration and file requests cannot clear them. Doctor and recovery list these holds; only a fresh operator allow in the matching board clears one. Setup commands remain future work.
 
 ## File relay (experimental, opt-in)
 

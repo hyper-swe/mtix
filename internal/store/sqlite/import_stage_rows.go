@@ -154,13 +154,13 @@ func decodeRepeatedInto[T any](ctx context.Context, st *StagedExport, tx *sql.Tx
 	if !ok {
 		list, err := loadStaged[T](ctx, st, tx, kind)
 		if err != nil {
-			return err
+			return fmt.Errorf("load staged %s array: %w", kind, err)
 		}
 		slot = &list
 		st.replay[kind] = slot
 	}
 	if err := dec.Decode(slot); err != nil {
-		return err
+		return fmt.Errorf("decode repeated %s array: %w", kind, err)
 	}
 	return nil
 }

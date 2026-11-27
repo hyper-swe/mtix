@@ -151,7 +151,7 @@ func StageExport(ctx context.Context, r io.Reader, dir string) (*StagedExport, e
 }
 
 // openStage creates the private staging directory and database, and removes
-// the directory again when the database cannot be opened or initialised.
+// the directory again when the database cannot be opened or initialized.
 func openStage(ctx context.Context, dir string) (*StagedExport, error) {
 	made, err := os.MkdirTemp(dir, "mtix-import-stage-")
 	if err != nil {

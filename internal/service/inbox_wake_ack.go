@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
 type inboxAckCoverage interface {
@@ -45,7 +46,11 @@ func NewInboxServiceWithWakeAcks(st InboxAckStore, reader InboxReadStore, publis
 	if !ok {
 		history, _ = st.(InboxHistoryStore)
 	}
-	return &InboxService{store: st, reader: reader, counter: counter, history: history, wakeAcks: publisher}
+	changes, ok := reader.(sqlite.InboxChangeStore)
+	if !ok {
+		changes, _ = st.(sqlite.InboxChangeStore)
+	}
+	return &InboxService{store: st, reader: reader, counter: counter, changes: changes, history: history, wakeAcks: publisher}
 }
 
 // InboxAckThrough explicitly acknowledges the cumulative prefix (FR-19.5).

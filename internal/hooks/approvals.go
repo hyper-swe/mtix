@@ -138,9 +138,33 @@ func (a *Approvals) approve(name, expected string, terminal bool) error {
 }
 
 // Check reports hook decisions without creating state or migrating records.
+// A config that is absent, unreadable or malformed reports no hooks (the
+// warnings come from Load); use CheckStrict when that must be an error.
 func (a *Approvals) Check() (map[string]Decision, error) {
-	cfg, _ := Load(a.dir)
+	return a.check(false)
+}
+
+// CheckStrict is Check, except a hooks.yaml that exists but cannot be read or
+// parsed is an error, so a status listing never reads as an empty trust list.
+// An absent hooks.yaml still has no hooks (MTIX-282).
+func (a *Approvals) CheckStrict() (map[string]Decision, error) {
+	return a.check(true)
+}
+
+func (a *Approvals) check(strict bool) (map[string]Decision, error) {
 	out := map[string]Decision{}
+	raw, cfg, err := readApprovalConfig(a.dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return out, nil
+	}
+	if err != nil {
+		if strict {
+			return out, err
+		}
+		return out, nil
+	}
+	refused := envPassRefusals(cfg)
+	cfg, _ = validate(cfg)
 	for _, h := range cfg.Hooks {
 		if h.Exec != nil && slices.Contains(h.Deliver, AdapterExec) {
 			out[h.Name] = Decision{Name: h.Name, Detail: "approval required", Fix: TrustFix(h.Name)}
@@ -149,7 +173,8 @@ func (a *Approvals) Check() (map[string]Decision, error) {
 	if len(out) == 0 {
 		return out, nil
 	}
-	snap, err := approvalSnapshot(a.dir)
+	// Use the same config for the list and the approval digests.
+	snap, err := captureApprovalSnapshot(a.dir, raw, cfg, refused)
 	if err != nil {
 		return out, err
 	}

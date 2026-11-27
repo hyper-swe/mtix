@@ -95,7 +95,7 @@ Before calling `mcp__mtix__mtix_done`:
 - **No stub implementations** — functions must perform their documented purpose end-to-end. A compiling stub is not an implementation
 
 ### 8. Mark Done
-Call `mcp__mtix__mtix_done` with the node ID. Progress rolls up to parent nodes: a parent reads 100% only when every counted child is done and itself complete, so a parent shown below 100% still has open work (claiming or reopening a node removes its credit and its ancestors' in the same transaction; `progress.weighted` switches to the weighted mean).
+Call `mcp__mtix__mtix_done` with the node ID. Progress rolls up to parent nodes: a parent reads 100% only when every counted child is done and itself complete, so a parent shown below 100% still has open work (claiming or reopening a node removes its credit and its ancestors' in the same transaction; `progress.weighted` switches to the weighted mean). Progress output (`mtix progress --json`, REST `/api/v1/progress/:id`, MCP `mtix_progress`, gRPC Progress) carries the exclusion metadata: `invalidated_count` and `has_invalidated_descendants` (an invalidated task anywhere below the node), `excluded_count`, and `all_children_excluded` (every direct child is cancelled or invalidated, so the 0% is exclusion and not lack of progress). Treat a progress call that fails as unknown, never as 0%: retry or report the error.
 
 ### 9. End Session
 When all work is complete, call `mcp__mtix__mtix_session_end`.

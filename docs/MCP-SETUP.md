@@ -282,7 +282,7 @@ Call `mtix_discover` to inspect this build's registry. Tree views, backup, expor
 | Tool | Description |
 |------|-------------|
 | `mtix_stats` | Project statistics |
-| `mtix_progress` | Node progress rollup |
+| `mtix_progress` | Node progress rollup with `invalidated_count`, `has_invalidated_descendants`, `excluded_count` and `all_children_excluded`; a read error is an error, never 0% |
 | `mtix_stale` | Stale agents and tasks |
 | `mtix_orphans` | Root-level nodes |
 

@@ -6,8 +6,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
+	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"syscall"
 	"testing"
 
@@ -30,7 +34,24 @@ func startInGroup(t *testing.T, cmd *exec.Cmd) {
 	})
 }
 
-// pidAlive reports whether a process with this pid exists.
+// pidAlive reports whether a live process with this pid exists. An exited
+// but unreaped process (a zombie) is not alive: where nothing reaps orphans
+// kill(pid, 0) keeps succeeding for it (MTIX-254).
 func pidAlive(pid int) bool {
-	return syscall.Kill(pid, 0) == nil
+	if syscall.Kill(pid, 0) != nil {
+		return false
+	}
+	return !isZombie(pid)
+}
+
+// isZombie reports whether the process state is Z. It reads /proc and falls
+// back to ps where /proc is absent; an unreadable state counts as not a zombie.
+func isZombie(pid int) bool {
+	if data, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat"); err == nil {
+		// The state follows the last ")" of the "pid (comm) S ..." line.
+		i := bytes.LastIndexByte(data, ')')
+		return i >= 0 && i+2 < len(data) && data[i+2] == 'Z'
+	}
+	out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output() //nolint:gosec // G204: fixed command, numeric pid
+	return err == nil && strings.HasPrefix(strings.TrimSpace(string(out)), "Z")
 }

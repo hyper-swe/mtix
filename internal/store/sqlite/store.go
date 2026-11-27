@@ -41,6 +41,7 @@ type Store struct {
 	readDB          *readPool          // the one choke point for reader-pool reads (MTIX-250)
 	logger          *slog.Logger
 	vcReported      atomic.Bool // this Store has seen the vector-clock prune notice issued (MTIX-95.16)
+	shmReported     atomic.Bool // this Store has logged that the WAL index could not be read for the change token (MTIX-326)
 	clock           func() time.Time
 	waitClock       func() time.Time              // wall clock for the inbox wait deadline; nil uses the system clock (MTIX-245)
 	waitMono        func() time.Time              // monotonic clock for the inbox wait deadline; nil uses time.Now (MTIX-245)

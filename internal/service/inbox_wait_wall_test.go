@@ -16,9 +16,6 @@ import (
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
-// testFloor is the short safety floor the floor tests inject (MTIX-326).
-const testFloor = 2 * time.Second
-
 // waitBackend is a concurrency-safe inbox with counts, so a test can add an
 // event while a wait is parked and count the full reads the wait performs.
 type waitBackend struct {
@@ -138,7 +135,7 @@ func TestInboxReadWait_EventArrivesWhileParked_WakesWithinATick(t *testing.T) {
 	res, err := svc.InboxReadWait(t.Context(), "w", 30*time.Second, InboxReadOptions{})
 	require.NoError(t, err)
 	require.Len(t, res.Events, 1)
-	assert.Less(t, time.Since(began), testFloor, "woken by the probe, not by the floor")
+	assert.Less(t, time.Since(began), inboxFullReadFloor, "woken by the probe, not by the floor")
 }
 
 // MTIX-245 story 3: eligibility can change with no inbox change (hub state,
@@ -152,7 +149,7 @@ func TestInboxReadWait_EligibilityFlipsWithoutInboxChange_WakesWithinFloor(t *te
 		}
 		return InboxEligibility{Reason: "unconfirmed"}, nil
 	}}
-	svc := NewInboxService(backend).WithInboxPolicy(policy).WithWaitSafetyFloor(testFloor)
+	svc := NewInboxService(backend).WithInboxPolicy(policy)
 	go func() {
 		time.Sleep(400 * time.Millisecond)
 		open.Store(true)
@@ -161,7 +158,7 @@ func TestInboxReadWait_EligibilityFlipsWithoutInboxChange_WakesWithinFloor(t *te
 	res, err := svc.InboxReadWait(t.Context(), "w", 30*time.Second, InboxReadOptions{})
 	require.NoError(t, err)
 	require.Len(t, res.Events, 1)
-	assert.Less(t, time.Since(began), testFloor+inboxReadPollInterval+time.Second)
+	assert.Less(t, time.Since(began), inboxFullReadFloor+inboxReadPollInterval+time.Second)
 }
 
 // steppedBack returns a clock that reads start for its first n calls and one
@@ -189,7 +186,7 @@ func TestInboxReadWait_WallClockSteppedBack_FloorStillWakesOnEligibilityChange(t
 		return InboxEligibility{Reason: "unconfirmed"}, nil
 	}}
 	start := time.Date(2026, 11, 11, 8, 0, 0, 0, time.UTC)
-	svc := NewInboxService(backend).WithInboxPolicy(policy).WithWaitSafetyFloor(testFloor).WithWaitClock(steppedBack(start, 1))
+	svc := NewInboxService(backend).WithInboxPolicy(policy).WithWaitClock(steppedBack(start, 1))
 	go func() {
 		time.Sleep(300 * time.Millisecond)
 		open.Store(true)
@@ -200,7 +197,7 @@ func TestInboxReadWait_WallClockSteppedBack_FloorStillWakesOnEligibilityChange(t
 	res, err := svc.InboxReadWait(ctx, "w", 0, InboxReadOptions{})
 	require.NoError(t, err, "the floor must run despite the backward step, not leave the caller to time out")
 	require.Len(t, res.Events, 1)
-	assert.Less(t, time.Since(began), testFloor+inboxReadPollInterval+time.Second)
+	assert.Less(t, time.Since(began), inboxFullReadFloor+inboxReadPollInterval+time.Second)
 }
 
 // MTIX-245: the timeout also fires on the monotonic clock when the wall clock

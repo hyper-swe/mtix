@@ -171,7 +171,7 @@ func staleParagraphs(text string, pool map[string][]string) []string {
 	for _, para := range paragraphs(text) {
 		want, ok := pool[para[:staleKeyLen]]
 		if ok && !slices.Contains(want, para) {
-			stale = append(stale, para[:staleKeyLen+20])
+			stale = append(stale, para[:min(len(para), staleKeyLen+20)])
 		}
 	}
 	return stale
@@ -188,4 +188,32 @@ func paragraphs(text string) []string {
 		}
 	}
 	return out
+}
+
+// TestStaleParagraphs_ShortOrLongParagraph_ReportsExcerptWithoutPanic checks
+// that a stale paragraph shorter than the excerpt length (60 to 79 bytes) is
+// reported whole rather than slicing past its end.
+func TestStaleParagraphs_ShortOrLongParagraph_ReportsExcerptWithoutPanic(t *testing.T) {
+	key := strings.Repeat("a", staleKeyLen)
+	generated := key + strings.Repeat("b", 40)
+	pool := map[string][]string{key: {generated}}
+
+	tests := []struct {
+		name string
+		text string
+		want []string
+	}{
+		{"short stale paragraph reported whole", key + "xyz", []string{key + "xyz"}},
+		{"paragraph of exactly key length", key, []string{key}},
+		{"long stale paragraph cut to excerpt", key + strings.Repeat("c", 40), []string{key + strings.Repeat("c", 20)}},
+		{"paragraph equal to generated is not stale", generated, nil},
+		{"paragraph with unknown key is not stale", strings.Repeat("z", 70), nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.NotPanics(t, func() {
+				require.Equal(t, tt.want, staleParagraphs(tt.text, pool))
+			})
+		})
+	}
 }

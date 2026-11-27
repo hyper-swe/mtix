@@ -25,6 +25,7 @@ type InboxService struct {
 	store    InboxAckStore
 	reader   InboxReadStore
 	counter  InboxCountStore
+	changes  sqlite.InboxChangeStore // cheap change token for parked waits; nil counts every tick (MTIX-326)
 	history  InboxHistoryStore
 	wakeAcks WakeAckPublisher
 	reeval   WakeReevaluator
@@ -33,6 +34,7 @@ type InboxService struct {
 
 	waitClock func() time.Time // wall clock for the wait timeout; nil uses the system clock (MTIX-245)
 	waitMono  func() time.Time // monotonic clock for the wait timeout and floor; nil uses time.Now (MTIX-245)
+	waitFloor time.Duration    // safety-read floor for an unchanged wait; zero uses inboxSafetyFloor (MTIX-326)
 }
 
 // InboxEvent is the per-agent event contract per FR-19.4, with unchanged JSON.

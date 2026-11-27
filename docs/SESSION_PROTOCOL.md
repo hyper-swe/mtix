@@ -35,6 +35,20 @@ Or MCP: `mtix_session_end`
 - Records session summary (nodes created, completed, time spent)
 - Releases any claimed nodes
 
+## Read-only inbox counts
+
+Use `mtix inbox --agent <agent-id> --count` for pending work, or
+`mtix inbox --agent <agent-id> --count --all` for total retained local events,
+including acknowledged events. `--json` returns integer pending/total counts.
+Count makes no hub contact, never acknowledges or refreshes session `last_seen`,
+and skips automatic board import. It is not a heartbeat. Do not combine count
+with explicitly supplied wait/format flags; `--all` requires active count.
+See the multi-agent skill for the complete polling contract and startup limits.
+
+## Inbox retention
+
+An event addressed to an agent stays in that agent's inbox until the agent acks it (the exceptions are listed here): no TTL, no expiry. The journal is per store; acks are not synced, so a new checkout (`mtix sync clone`) shows acked events again (handle work idempotently). Explicit `mtix export > private-export.json` carries addressed mail and acknowledgement coverage; treat it as private and never commit it. Automatic `tasks.json` and explicit exports redirected to `.mtix/tasks.json` stay journal-free. `mtix recover` salvages readable database mail; supply `--from-export private-export.json` to fill gaps from a private export, and read its loss report. `mtix import --mode replace` on a never-synced store and `mtix sync reconcile --discard-local` remove unread events: each asks for the ticket count, typed at a terminal, and prints the unread-event count first; discard-local deletes the journal, so run `mtix sync push` first and check pending 0. Audit with `mtix inbox --agent <agent-id> --history` (read-only, no hub contact). Full boundaries: the multi-agent skill and USERMANUAL.
+
 ## Handoff Protocol
 
 When transferring work to another agent:

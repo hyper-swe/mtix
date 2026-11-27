@@ -62,8 +62,9 @@ func (s *Store) executeUpdateTx(ctx context.Context, tx *sql.Tx, id string, upda
 
 	if updates.Audit != nil {
 		entry := *updates.Audit
-		entry.ID = fmt.Sprintf("act-%d", time.Now().UnixNano())
-		entry.CreatedAt = time.Now().UTC()
+		at := s.clock().UTC() // injected store clock, one reading for ID and time (Commandment 6)
+		entry.ID = fmt.Sprintf("act-%d", at.UnixNano())
+		entry.CreatedAt = at
 		if err := appendActivityEntry(ctx, tx, id, entry); err != nil {
 			return err
 		}

@@ -23,7 +23,11 @@ import (
 // Returns ErrNotFound if the node does not exist or is soft-deleted.
 func (s *Store) UpdateNode(ctx context.Context, id string, updates *store.NodeUpdate) error {
 	// MTIX-95.31.19.2: withHistoryTx appends the task_history entries in this transaction.
-	return s.withHistoryTx(ctx, historyScope{id: id}, func(tx *sql.Tx) error {
+	scope := historyScope{id: id}
+	if updates.Audit != nil {
+		scope.actor = updates.Audit.Author
+	}
+	return s.withHistoryTx(ctx, scope, func(tx *sql.Tx) error {
 		return s.executeUpdateTx(ctx, tx, id, updates)
 	})
 }
@@ -54,6 +58,16 @@ func (s *Store) executeUpdateTx(ctx context.Context, tx *sql.Tx, id string, upda
 
 	if err := execUpdateQuery(ctx, tx, id, setClauses, args); err != nil {
 		return err
+	}
+
+	if updates.Audit != nil {
+		entry := *updates.Audit
+		at := s.clock().UTC() // injected store clock, one reading for ID and time (Commandment 6)
+		entry.ID = fmt.Sprintf("act-%d", at.UnixNano())
+		entry.CreatedAt = at
+		if err := appendActivityEntry(ctx, tx, id, entry); err != nil {
+			return err
+		}
 	}
 
 	return s.emitUpdateEvents(ctx, tx, id, updates)

@@ -73,7 +73,7 @@ func TestAgentID_CLIUpdateEmpty_ClearsAssignment(t *testing.T) {
 	n, err := app.nodeSvc.CreateNode(ctx, &service.CreateNodeRequest{Project: "TEST", Title: "existing", Assignee: "worker"})
 	require.NoError(t, err)
 	cmd := newUpdateCmd()
-	cmd.SetArgs([]string{n.ID, "--assignee", ""})
+	cmd.SetArgs([]string{n.ID, "--assignee", "", "--agent", "worker"}) // MTIX-325: the assignee clears its own claim
 	require.NoError(t, cmd.Execute())
 	got, err := app.store.GetNode(ctx, n.ID)
 	require.NoError(t, err)

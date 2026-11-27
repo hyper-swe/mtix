@@ -283,6 +283,7 @@ Verify with `mtix doctor --json`: the `wake.ledger` row is `warn` when any event
 
 ## Waiting for inbox events
 
+Holding a wait open is cheap (MTIX-326): while the database is unchanged a parked wait runs no inbox query, only a file check about four times a second; an empty inbox gets a safety read about once a minute, and a wait holding events the wake policy has not released keeps a full read every 2 seconds (grants, denies and budget windows can change outside the database). A new addressed event still wakes it within a second or two.
 An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
 zero has no limit, and already pending events return even if the initial
 database lookup outlasts a positive timeout. That lookup remains interruptible

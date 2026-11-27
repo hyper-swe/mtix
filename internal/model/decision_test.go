@@ -149,6 +149,31 @@ func TestDecisionAuthorPath_ExcessPrecisionNumber_IsRefused(t *testing.T) {
 	}
 }
 
+func TestDecisionAuthorPath_NumberWorkBounds(t *testing.T) {
+	// These spellings all represent exact values, so rounding, overflow, and
+	// underflow cannot mask a missing work bound.
+	for _, tc := range []struct {
+		name, token string
+		valid       bool
+	}{
+		{"400-byte token", "1." + strings.Repeat("0", 398), true},
+		{"401-byte token", "1." + strings.Repeat("0", 399), false},
+		{"exponent 400", "0e400", true},
+		{"exponent 401", "0e401", false},
+		{"exponent -400", "0e-400", true},
+		{"exponent -401", "0e-401", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := canonicalDecision([]byte(`{"n":`+tc.token+`}`), true)
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, ErrInvalidInput)
+			}
+		})
+	}
+}
+
 // TestDecisionWireValues_UserRename_AcceptsOnlyUserAndAny pins the DESK-1.393
 // rename: answerable_by takes exactly user or any, asker.kind takes user or
 // agent, and the retired word, other cases and qualified forms are refused.

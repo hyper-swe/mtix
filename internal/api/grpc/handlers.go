@@ -93,6 +93,17 @@ func (s *Server) HandleUndelete(ctx context.Context, id string) (*model.Node, er
 	return node, nil
 }
 
+// HandleProgress implements the Progress RPC per FR-8.2, FR-5.6a and FR-5.6b.
+// It returns the same one-snapshot report as REST, CLI and MCP; a read
+// failure is an error, never zero progress.
+func (s *Server) HandleProgress(ctx context.Context, id string) (*service.ProgressReport, error) {
+	report, err := s.nodeSvc.GetProgressReport(ctx, id)
+	if err != nil {
+		return nil, mapError(err)
+	}
+	return report, nil
+}
+
 // HandleListChildren implements the ListChildren RPC per FR-8.2.
 func (s *Server) HandleListChildren(ctx context.Context, parentID string, limit, offset int) ([]*model.Node, bool, error) {
 	children, err := s.nodeSvc.GetDirectChildren(ctx, parentID)

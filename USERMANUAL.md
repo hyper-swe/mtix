@@ -845,6 +845,8 @@ PROJ-1: Build authentication module
   Children: 3 total, 2 done, 0 blocked, 1 open
 ```
 
+`mtix progress` and the REST, MCP and gRPC progress calls read the subtree once and report the exclusion metadata from that one snapshot: `invalidated_count` and `has_invalidated_descendants` (an invalidated task at any depth below the node, FR-5.6a), `excluded_count` (direct children left out of the count), and `all_children_excluded` (every direct child is cancelled or invalidated, so the 0% means nothing is countable, FR-5.6b). The text output prints `0% (all N children excluded...)` and `WARNING: N invalidated descendants` for them. If the subtree cannot be read the command fails with an error; it never prints a zero. The gRPC `ProgressResponse` gains `has_invalidated_descendants`, `all_children_excluded` and `excluded_count`.
+
 ### How Progress Is Calculated
 
 - **Leaf nodes:** 0% when open, 100% when done

@@ -4255,6 +4255,11 @@ name; its notice says to name that file as a pinned project script. A hook that 
 each hook, and `mtix doctor` shows the `hooks.programs` check: WARN with the
 exact fix lists the approved hooks that need review and any `hooks.yaml` load
 problem, PASS means none do (no row appears when there is no `hooks.yaml`).
+If the approval records cannot be read in full (for example one record is
+invalid), the row is WARN with the error text and the fix `mtix hooks status
+--json`, even when other hooks were read; it never reports PASS on a partial
+read. In `mtix doctor --json` the row keeps the same `status`, `detail` and
+`fix` fields.
 The notice is advisory: the hook still runs as written and launch behaviour
 does not change. To clear it, run the program through a pinned project script
 and approve the hook again.

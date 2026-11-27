@@ -41,9 +41,13 @@ func hooksProgramsCheck(mtixDir string) service.DoctorCheck {
 }
 
 // programsResult builds the hooks.programs row. A trusted hook with no review
-// counts as unclassified: the check fails closed.
+// counts as unclassified: the check fails closed. Any error, even one returned
+// alongside decisions, makes the row WARN with the error text.
 func programsResult(decisions map[string]hooks.Decision, loadWarnings []string, err error) service.DoctorResult {
-	if err != nil && len(decisions) == 0 {
+	if err != nil {
+		// Check can return decisions together with an error (one invalid
+		// approval record); the decisions are then incomplete, so the row
+		// reports the error rather than a partial answer that could PASS.
 		return programsUnavailable(err)
 	}
 	var names []string

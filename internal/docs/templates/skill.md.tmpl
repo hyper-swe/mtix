@@ -103,7 +103,7 @@ CLI, REST and MCP use the configured primary project when no project is supplied
 
 ## Creating classified and assigned work
 
-`mtix create --type` selects the issue type: `bug`, `feature`, `task`, `chore`, `refactor`, `test`, or `doc`. Omission leaves `issue_type` unset; it does not default to `task`. Hierarchy `node_type` is derived from depth independently (epic, story, issue, micro). `mtix show` and `mtix list` display both classifications; JSON carries separate fields.
+`mtix create --type` selects the issue type: `bug`, `feature`, `task`, `chore`, `refactor`, `test`, or `doc`. Omission leaves `issue_type` unset; it does not default to `task`. Hierarchy `node_type` is derived from depth independently (epic, story, issue, micro). For a root node created with `mtix create --type bug`, `mtix show` displays `Node type: epic` (the hierarchy tier) and `Issue type: bug` (the work classification set by `--type bug`). `mtix list` also displays both; JSON carries separate fields.
 
 `mtix update TEST-1 --type refactor` changes work classification; `mtix update TEST-1 --type=` clears it. On updates, omission preserves the current classification; an empty string clears it to SQL NULL. CLI, MCP `mtix_update`, REST PATCH and gRPC updates validate the same seven values. Their JSON `issue_type` field may be omitted or null to preserve, or `""` to clear; the proto field uses presence and explicit `ISSUE_TYPE_UNSPECIFIED` to clear. Existing unclassified nodes remain unset; labels do not imply a type. Default node JSON omits an unset `issue_type`; explicit field projections and exports include it as an empty string.
 

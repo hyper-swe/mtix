@@ -5,12 +5,9 @@ package sqlite
 
 import (
 	"context"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -19,42 +16,44 @@ import (
 // InboxChangeStore is the cheap change detector a parked inbox wait polls
 // before it asks any inbox question (MTIX-326). The sqlite store provides it.
 type InboxChangeStore interface {
-	// InboxChangeToken returns an opaque token that differs after any commit to
-	// the database. It opens no connection and runs no query.
+	// InboxChangeToken returns an opaque token that differs after a commit to
+	// the database. It opens no connection, opens no file and runs no query.
 	InboxChangeToken(ctx context.Context) (string, error)
 }
 
-const (
-	// walIndexHeaderLen is how much of the -shm WAL index header the token
-	// reads: iVersion, unused, iChange (offset 8), isInit and flags, szPage,
-	// mxFrame (offset 16) and nPage (offset 20).
-	walIndexHeaderLen = 24
-	// dbHeaderLen covers the main database header through the file change
-	// counter at bytes 24 to 27.
-	dbHeaderLen = 28
-)
+// tokenStatFunc is the only file-system call the change token makes. It is a
+// parameter so a test can pin that rule (MTIX-326).
+type tokenStatFunc func(name string) (fs.FileInfo, error)
 
-// InboxChangeToken combines three file-level signals, none of which needs a
-// connection or a query: the size and modification time of the database and
-// its WAL, and a commit counter. In WAL mode the counter is iChange of the
-// WAL index header in the -shm file, which SQLite increments on every
-// commit, so a commit that leaves size and mtime unchanged (the WAL restarts
-// in place after a checkpoint, on a filesystem with a coarse timestamp) still
-// moves the token. Without a readable -shm (rollback-journal mode, a database
-// never opened in WAL, or a platform that refuses to open the file while
-// another process holds it) the counter is the file change counter in the main
-// database header, which rollback-journal mode bumps on every commit. The -shm
-// is only ever opened read-only. A pinned connection would starve the
-// single-connection read-only store and a pooled connection's data_version is
-// per connection, hence files. A change the token still misses is bounded by
-// the caller's safety read.
+// InboxChangeToken is the stat of the database file, its -wal and its -shm:
+// for each, whether it exists, its size and its modification time in
+// nanoseconds. It needs no connection and no query.
+//
+// DESIGN RULE (MTIX-326, review round 2 S1): this process holds the SQLite
+// connections, and SQLite takes POSIX fcntl locks on the database and -shm
+// inodes. POSIX releases every lock a process holds on an inode when ANY file
+// descriptor for that inode is closed, so opening and closing the database,
+// the -wal or the -shm here, even read-only, would silently drop SQLite's own
+// locks and can corrupt the database. The token therefore never opens, reads
+// or closes those files; it only calls os.Stat, which takes no descriptor.
+//
+// Known gap: a commit that leaves the size and the nanosecond mtime of all
+// three files unchanged (a WAL restarted in place after a checkpoint on a
+// filesystem with a coarse timestamp) does not move the token. The caller's
+// 60 second safety read (inboxSafetyFloor) catches it, and a wait that holds
+// events keeps its 2 second full read, so the miss is bounded.
 func (s *Store) InboxChangeToken(ctx context.Context) (string, error) {
+	return inboxChangeTokenFor(ctx, s.dbPath, os.Stat)
+}
+
+// inboxChangeTokenFor builds the token from stat alone (see InboxChangeToken).
+func inboxChangeTokenFor(ctx context.Context, dbPath string, stat tokenStatFunc) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", fmt.Errorf("inbox change token: %w", err)
 	}
 	var tok strings.Builder
-	for _, p := range []string{s.dbPath, s.dbPath + "-wal"} {
-		fi, err := os.Stat(p)
+	for _, p := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+		fi, err := stat(p)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
 			tok.WriteString("-|")
@@ -64,56 +63,5 @@ func (s *Store) InboxChangeToken(ctx context.Context) (string, error) {
 			tok.WriteString(strconv.FormatInt(fi.Size(), 10) + ":" + strconv.FormatInt(fi.ModTime().UnixNano(), 10) + "|")
 		}
 	}
-	if idx, ok := s.walIndexCounter(); ok {
-		tok.WriteString("shm:" + idx)
-		return tok.String(), nil
-	}
-	hdr, found, err := readHeader(s.dbPath, dbHeaderLen)
-	if err != nil {
-		return "", fmt.Errorf("inbox change token: %w", err)
-	}
-	if found {
-		tok.WriteString("chg:" + hex.EncodeToString(hdr[24:28]))
-	}
 	return tok.String(), nil
-}
-
-// walIndexCounter reads the commit counter and frame count from the -shm WAL
-// index header, read-only. It reports false when the file is absent, short or
-// cannot be opened; an open failure other than absence is logged once.
-func (s *Store) walIndexCounter() (string, bool) {
-	shm := s.dbPath + "-shm"
-	hdr, found, err := readHeader(shm, walIndexHeaderLen)
-	if err != nil {
-		if s.shmReported.CompareAndSwap(false, true) {
-			s.logger.Warn("inbox change token: WAL index unreadable, using the database change counter",
-				slog.String("path", shm), slog.Any("error", err))
-		}
-		return "", false
-	}
-	if !found {
-		return "", false
-	}
-	return hex.EncodeToString(hdr[8:12]) + hex.EncodeToString(hdr[16:24]), true
-}
-
-// readHeader reads the first n bytes of path read-only. A missing or shorter
-// file reports found=false with no error; any other failure is returned.
-func readHeader(path string, n int) (hdr []byte, found bool, err error) {
-	f, err := os.Open(path) //nolint:gosec // G304: the path is the store's own database file or its -shm sibling
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, fmt.Errorf("open %s: %w", path, err)
-	}
-	defer func() { _ = f.Close() }()
-	buf := make([]byte, n)
-	if _, err := io.ReadFull(f, buf); err != nil {
-		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-			return nil, false, nil
-		}
-		return nil, false, fmt.Errorf("read %s: %w", path, err)
-	}
-	return buf, true, nil
 }

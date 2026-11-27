@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -188,6 +189,28 @@ func TestProgramsResult_CountsUnclassifiedHooks(t *testing.T) {
 	require.Contains(t, row.Detail, "unknown")
 	require.Contains(t, row.Detail, "none", "a trusted hook with no review at all is treated as unclassified")
 	require.NotContains(t, row.Detail, " ok")
+}
+
+func TestProgramsResult_ErrorWithDecisionsIsNotDropped(t *testing.T) {
+	clean := map[string]hooks.Decision{
+		"ok": {Name: "ok", Trusted: true, ProgramReview: &hooks.ProgramReview{Class: hooks.ClassPinnedScript}},
+	}
+	cases := map[string]map[string]hooks.Decision{
+		"clean decisions": clean,
+		"empty decisions": {},
+		"nil decisions":   nil,
+		"unclassified": {
+			"none": {Name: "none", Trusted: true},
+		},
+	}
+	for name, decisions := range cases {
+		t.Run(name, func(t *testing.T) {
+			row := programsResult(decisions, nil, errors.New("approval record invalid: boom"))
+			require.Equal(t, service.DoctorWarn, row.Status, "an error must never PASS")
+			require.Contains(t, row.Detail, "approval record invalid: boom")
+			require.NotEmpty(t, row.Fix)
+		})
+	}
 }
 
 func TestDoctor_ProgramsCheckReportsALoadFailureInsteadOfDroppingTheRow(t *testing.T) {

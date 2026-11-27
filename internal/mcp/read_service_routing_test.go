@@ -32,6 +32,10 @@ func (s *mcpReadBackend) GetDirectChildren(context.Context, string) ([]*model.No
 	s.calls["children"]++
 	return []*model.Node{}, nil
 }
+func (s *mcpReadBackend) GetTree(_ context.Context, id string, _ int) ([]*model.Node, error) {
+	s.calls["tree"]++
+	return []*model.Node{{ID: id}}, nil
+}
 func (s *mcpReadBackend) GetBlockers(context.Context, string) ([]*model.Dependency, error) {
 	s.calls["blockers"]++
 	return []*model.Dependency{}, nil
@@ -46,7 +50,7 @@ func TestMCPReads_UseOwningServiceBackend(t *testing.T) {
 	for _, tt := range []struct{ tool, args, operation string }{
 		{"mtix_show", `{"id":"TEST-1"}`, "node"}, {"mtix_list", `{}`, "list"}, {"mtix_briefing", `{}`, "list"},
 		{"mtix_show", `{"id":"0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b"}`, "uid"},
-		{"mtix_stats", `{}`, "list"}, {"mtix_progress", `{"id":"TEST-1"}`, "children"}, {"mtix_orphans", `{}`, "list"},
+		{"mtix_stats", `{}`, "list"}, {"mtix_progress", `{"id":"TEST-1"}`, "tree"}, {"mtix_orphans", `{}`, "list"},
 		{"mtix_search", `{"query":"x"}`, "list"}, {"mtix_blocked", `{}`, "list"}, {"mtix_dep_show", `{"id":"TEST-1"}`, "blockers"},
 	} {
 		t.Run(tt.tool, func(t *testing.T) {

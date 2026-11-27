@@ -16,6 +16,7 @@ type NodeReader interface {
 	GetNode(context.Context, string) (*model.Node, error)
 	GetActivity(context.Context, string, int, int) ([]model.ActivityEntry, error)
 	GetDirectChildren(context.Context, string) ([]*model.Node, error)
+	GetProgressReport(context.Context, string) (*service.ProgressReport, error)
 	GetAncestorChain(context.Context, string) ([]*model.Node, error)
 	GetSiblings(context.Context, string) ([]*model.Node, error)
 	ListNodes(context.Context, service.NodeFilter, service.ListOptions) ([]*model.Node, int, error)

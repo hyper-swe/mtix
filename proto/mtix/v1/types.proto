@@ -252,6 +252,9 @@ message ProgressResponse {
   int32  done_count        = 3;
   int32  total_count       = 4;
   int32  invalidated_count = 5;  // Per FR-5.6a
+  bool   has_invalidated_descendants = 6;  // Per FR-5.6a
+  bool   all_children_excluded       = 7;  // Per FR-5.6b
+  int32  excluded_count              = 8;  // Direct children left out of total_count
 }
 
 // StatsResponse contains project-level statistics.

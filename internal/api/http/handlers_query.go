@@ -220,32 +220,17 @@ func (s *Server) projectStats(c *gin.Context) {
 	})
 }
 
-// nodeProgress handles GET /api/v1/progress/:id per FR-7.2 and FR-5.6a.
+// nodeProgress handles GET /api/v1/progress/:id per FR-7.2, FR-5.6a and FR-5.6b.
+// The whole response comes from one subtree read, so progress and the
+// exclusion metadata always describe the same tree; a read failure is an
+// error response and never a zero.
 func (s *Server) nodeProgress(c *gin.Context) {
-	nodeID := c.Param("id")
-	node, err := s.nodeSvc.GetNode(c.Request.Context(), nodeID)
+	report, err := s.nodeSvc.GetProgressReport(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		HandleError(c, err)
 		return
 	}
-
-	// Count invalidated children for FR-5.6a.
-	children, childErr := s.nodeSvc.GetDirectChildren(c.Request.Context(), nodeID)
-	invalidatedCount := 0
-	if childErr == nil {
-		for _, ch := range children {
-			if ch.InvalidatedAt != nil {
-				invalidatedCount++
-			}
-		}
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"id":                nodeID,
-		"progress":          node.Progress,
-		"status":            node.Status,
-		"invalidated_count": invalidatedCount,
-	})
+	c.JSON(http.StatusOK, report)
 }
 
 // nodeTree handles GET /api/v1/tree/:id and /api/v1/nodes/:id/tree per FR-7.2.

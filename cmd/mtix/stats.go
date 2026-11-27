@@ -11,6 +11,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store"
 )
 
@@ -93,7 +94,7 @@ func runProgress(id string) error {
 	}
 
 	ctx := context.Background()
-	node, err := app.nodeSvc.GetNode(ctx, id)
+	report, err := app.nodeSvc.GetProgressReport(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -101,13 +102,12 @@ func runProgress(id string) error {
 	out := NewOutputWriter(app.jsonOutput)
 
 	if app.jsonOutput {
-		return out.WriteJSON(map[string]any{
-			"id": id, "progress": node.Progress, "status": node.Status,
-		})
+		return out.WriteJSON(report)
 	}
 
-	icon := StatusIcon(string(node.Status))
-	out.WriteHuman("%s %s %s: %s\n", icon, id, node.Status, ProgressBar(node.Progress, 20))
+	icon := StatusIcon(string(report.Status))
+	out.WriteHuman("%s %s %s: %s\n", icon, id, report.Status, ProgressBar(report.Progress, 20))
+	writeProgressWarnings(out, report)
 
 	// Show children progress if any.
 	children, err := app.store.GetDirectChildren(ctx, id)
@@ -120,4 +120,15 @@ func runProgress(id string) error {
 		}
 	}
 	return nil
+}
+
+// writeProgressWarnings prints the FR-5.6a and FR-5.6b exclusion notes in
+// plain words, so a zero or a hidden invalidated descendant is never silent.
+func writeProgressWarnings(out OutputWriter, r *service.ProgressReport) {
+	if r.AllChildrenExcluded {
+		out.WriteHuman("  0%% (all %d children excluded: cancelled or invalidated)\n", r.ExcludedCount)
+	}
+	if r.HasInvalidatedDescendants {
+		out.WriteHuman("  WARNING: %d invalidated descendants\n", r.InvalidatedCount)
+	}
 }

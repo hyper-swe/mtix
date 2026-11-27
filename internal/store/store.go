@@ -318,4 +318,7 @@ type NodeUpdate struct {
 	AgentState  *model.AgentState `json:"agent_state,omitempty"`
 	ContentHash *string           `json:"content_hash,omitempty"`
 	UpdatedAt   *string           `json:"updated_at,omitempty"`
+	// Audit, when set, is appended to the node's activity log in the same
+	// transaction as the update (MTIX-325). Never read from the wire.
+	Audit *model.ActivityEntry `json:"-"`
 }

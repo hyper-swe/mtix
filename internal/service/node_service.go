@@ -217,6 +217,9 @@ func (svc *NodeService) UpdateNode(ctx context.Context, id string, updates *stor
 			return fmt.Errorf("update issue type: %w", err)
 		}
 	}
+	if err := svc.guardAssigneeChange(ctx, id, updates); err != nil {
+		return err
+	}
 	// Validate title length if being updated.
 	if updates.Title != nil {
 		if *updates.Title == "" {

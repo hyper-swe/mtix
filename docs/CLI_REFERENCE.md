@@ -3139,11 +3139,14 @@ Update a node's fields
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--acceptance` |  | New acceptance criteria |  |
+| `--agent` |  | Acting agent ID for an assignee change (default: MTIX_AUTHOR_ID, then the author_id config key) |  |
 | `--assignee` |  | New assignee; empty clears, omission preserves; nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters |  |
 | `--description` |  | New description |  |
+| `--force` |  | Clear or change an assignee claimed by another agent (needs --reason; recorded in the activity log) | false |
 | `--labels` |  | New labels (comma-separated) |  |
 | `--priority` |  | New priority (1-5) | 0 |
 | `--prompt` |  | New prompt |  |
+| `--reason` |  | Reason for a forced assignee change |  |
 | `--title` |  | New title |  |
 | `--type` |  | New work classification (bug, feature, task, chore, refactor, test, doc); empty clears, omission preserves; list --type filters hierarchy |  |
 ---

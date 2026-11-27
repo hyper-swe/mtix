@@ -41,13 +41,43 @@ func TestImport_TailEventRetained_PreservesDestinationAck(t *testing.T) {
 }
 
 func TestRecover_RelativeDatabasePath_PreservesMail(t *testing.T) {
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	recoverRelativeMail(t, cwd)
+}
+
+// TestRecover_RelativeDatabasePath_SymlinkedCwd pins MTIX-254: when the tree is
+// reached through a symlink, os.Getwd reports the symlink path, and a relative
+// path computed from it lexically would not resolve from the physical cwd.
+func TestRecover_RelativeDatabasePath_SymlinkedCwd(t *testing.T) {
+	physical, err := os.Getwd()
+	require.NoError(t, err)
+	link := filepath.Join(t.TempDir(), "tree-link")
+	require.NoError(t, os.Symlink(physical, link))
+	require.NoError(t, os.Chdir(link))
+	t.Setenv("PWD", link)
+	t.Cleanup(func() { require.NoError(t, os.Chdir(physical)) })
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.Equal(t, link, cwd, "setup: Getwd must report the symlink path")
+	recoverRelativeMail(t, cwd)
+}
+
+// recoverRelativeMail recovers a three-mail board through a database path
+// relative to cwd, the process working directory as Getwd reports it.
+func recoverRelativeMail(t *testing.T, cwd string) {
+	t.Helper()
 	source, raw := retentionStore(t)
 	addressThree(t, source, "recipient")
 	var dbPath string
 	require.NoError(t, raw.QueryRow("SELECT file FROM pragma_database_list WHERE name='main'").Scan(&dbPath))
-	cwd, err := os.Getwd()
+	// Relative paths resolve from the physical cwd, so compute them between
+	// resolved paths (cwd may be a symlink path from $PWD).
+	physCwd, err := filepath.EvalSymlinks(cwd)
 	require.NoError(t, err)
-	relative, err := filepath.Rel(cwd, dbPath)
+	physDB, err := filepath.EvalSymlinks(dbPath)
+	require.NoError(t, err)
+	relative, err := filepath.Rel(physCwd, physDB)
 	require.NoError(t, err)
 	recovered, err := sqlite.Recover(t.Context(), relative, filepath.Join(t.TempDir(), "missing.json"), "test", sqlite.RecoverOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
 	require.NoError(t, err)

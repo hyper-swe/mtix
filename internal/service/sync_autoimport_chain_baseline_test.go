@@ -4,7 +4,9 @@
 // Regression tests for MTIX-95.31.12 (FR-15.2h): an applied automatic import
 // refreshes the conflict baseline (.mtix/data/sync-db.sha256), so the next
 // changed board imports instead of being refused as a false conflict. 0.5.3
-// never refreshed it. Written red-first.
+// never refreshed it. A regression pin: the refresh already ships since 0.5.4
+// (recordImported), so the first test passed on the base; the second pins the
+// current refusal of a store 0.5.3 left stale when no common base exists.
 package service_test
 
 import (

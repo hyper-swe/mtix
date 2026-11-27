@@ -125,6 +125,10 @@ func (r *serviceLayerReadSpy) GetDirectChildren(ctx context.Context, id string) 
 	r.calls["GetDirectChildren"]++
 	return r.Store.GetDirectChildren(ctx, id)
 }
+func (r *serviceLayerReadSpy) GetTree(ctx context.Context, id string, depth int) ([]*model.Node, error) {
+	r.calls["GetTree"]++
+	return r.Store.GetTree(ctx, id, depth)
+}
 func (r *serviceLayerReadSpy) GetAncestorChain(ctx context.Context, id string) ([]*model.Node, error) {
 	r.calls["GetAncestorChain"]++
 	return r.Store.GetAncestorChain(ctx, id)
@@ -145,7 +149,7 @@ func TestServiceLayer_ReadHandlersInvokeNodeService(t *testing.T) {
 	for _, tt := range []struct{ path, method string }{
 		{"/nodes/TEST-1/activity", "GetActivity"}, {"/nodes/TEST-1/children", "GetDirectChildren"},
 		{"/nodes/TEST-1/ancestors", "GetAncestorChain"}, {"/context/TEST-1", "GetSiblings"},
-		{"/tree/TEST-1", "GetDirectChildren"}, {"/progress/TEST-1", "GetDirectChildren"},
+		{"/tree/TEST-1", "GetDirectChildren"}, {"/progress/TEST-1", "GetTree"},
 		{"/search?q=first", "ListNodes"}, {"/blocked", "ListNodes"}, {"/orphans", "ListNodes"},
 		{"/stats", "ListNodes"}, {"/projects", "DistinctProjects"},
 	} {

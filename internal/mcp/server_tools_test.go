@@ -482,8 +482,8 @@ func (m *mcpMockStore) DistinctProjects(_ context.Context) ([]store.ProjectInfo,
 func (m *mcpMockStore) SearchNodes(_ context.Context, _ string, _ store.NodeFilter, _ store.ListOptions) ([]*model.Node, int, error) {
 	return nil, 0, nil
 }
-func (m *mcpMockStore) GetTree(_ context.Context, _ string, _ int) ([]*model.Node, error) {
-	return nil, nil
+func (m *mcpMockStore) GetTree(_ context.Context, id string, _ int) ([]*model.Node, error) {
+	return []*model.Node{{ID: id, Title: "mock", Status: model.StatusOpen}}, nil
 }
 func (m *mcpMockStore) GetStats(_ context.Context, _ string) (*store.Stats, error) {
 	return &store.Stats{ByStatus: map[string]int{}, ByPriority: map[string]int{}, ByType: map[string]int{}}, nil

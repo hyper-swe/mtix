@@ -99,7 +99,9 @@ func TestAgentID_ServiceValidRawAndEmptyAssignment_Preserved(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, agent, n.Assignee)
 			cleared := ""
-			require.NoError(t, svc.UpdateNode(ctx, n.ID, &store.NodeUpdate{Assignee: &cleared}))
+			// MTIX-325: the assignee clears its own claim.
+			owner := service.WithUpdateIdentity(ctx, service.UpdateIdentity{Actor: agent})
+			require.NoError(t, svc.UpdateNode(owner, n.ID, &store.NodeUpdate{Assignee: &cleared}))
 			got, err := st.GetNode(ctx, n.ID)
 			require.NoError(t, err)
 			require.Empty(t, got.Assignee)

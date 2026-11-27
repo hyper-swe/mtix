@@ -551,7 +551,7 @@ Heartbeats prove agent liveness. Without them, the system assumes the agent has 
 When unclaiming a node (via `mcp__mtix__mtix_unclaim`):
 
 1. **Always provide a reason** — the next agent needs context on why you stopped
-2. **Release only your own claim** — pass your `agent_id`; mtix refuses an unclaim of another agent's claim (`ErrAlreadyClaimed`) and names the current assignee. Pass `force: true` only when that agent is stale or gone; the activity log records you, the previous assignee and your reason
+2. **Release only your own claim** — pass your `agent_id`; mtix refuses an unclaim of another agent's claim (`ErrAlreadyClaimed`) and names the current assignee. Pass `force: true` only when that agent is stale or gone; the activity log records you, the previous assignee and your reason. `mtix update --assignee` follows the same rule: clearing or changing another agent's assignee is refused with `ErrAlreadyClaimed` unless you pass `--force --reason` (the activity log records you, the previous assignee and the reason).
 3. **Document progress** — use `mcp__mtix__mtix_annotate` to record what was completed, what remains, and any issues discovered
 4. **Clean state** — ensure no partial changes are left that would confuse the next agent
 

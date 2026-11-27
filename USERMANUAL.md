@@ -643,6 +643,8 @@ mtix unclaim PROJ-1.1.1 --agent agent-lead --force --reason "agent-claude stoppe
 
 `--force` releases a claim another agent holds. The activity entry names you, the previous assignee and the reason. The REST route (`force` in the body, the agent in `X-Agent-ID`), the gRPC `Unclaim` call (`force`) and the MCP `mtix_unclaim` tool (`force`, `agent_id`) apply the same check (REST needs `X-Agent-ID` and returns 400 without it; gRPC has no fallback). The check is a coordination guard on a self-asserted identity, not authorization. The stuck-timeout auto-unclaim (`agent.stuck_timeout`) is a system action and is not subject to it.
 
+`mtix update <id> --assignee ""` (or `--assignee <other>`) applies the same ownership check: when another agent holds the claim it exits non-zero naming the assignee and `--force`. `mtix update <id> --assignee "" --agent agent-lead --force --reason "agent-claude stopped responding"` releases it and writes the same activity entry as a forced unclaim (a reassignment writes a claim entry naming the new assignee). The acting agent is `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; with none set, changing another agent's claim is refused. The assignee's own change, and assigning an unclaimed node, are unchanged. REST `PATCH /api/v1/bulk/nodes` takes the agent from `X-Agent-ID` plus `force` and `reason` in the body and reports a refusal in that item's `error`; the single-node REST, gRPC and MCP update calls do not accept an assignee.
+
 ### Done (Complete Work)
 
 ```bash

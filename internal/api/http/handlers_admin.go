@@ -329,6 +329,8 @@ func (s *Server) bulkUpdateNodes(c *gin.Context) {
 			ID     string             `json:"id" binding:"required"`
 			Fields service.NodeUpdate `json:"fields"`
 		} `json:"updates" binding:"required"`
+		Force  bool   `json:"force"`
+		Reason string `json:"reason"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		HandleValidationError(c, "invalid request body: "+err.Error())
@@ -346,8 +348,12 @@ func (s *Server) bulkUpdateNodes(c *gin.Context) {
 
 	// Apply all updates (non-atomic for now — individual per node).
 	results := make([]gin.H, 0, len(req.Updates))
+	// MTIX-325: an assignee change names the acting agent (X-Agent-ID).
+	ctx := service.WithUpdateIdentity(c.Request.Context(), service.UpdateIdentity{
+		Actor: c.GetHeader("X-Agent-ID"), Force: req.Force, Reason: req.Reason,
+	})
 	for _, upd := range req.Updates {
-		err := s.nodeWriter.ApplyUpdate(c.Request.Context(), upd.ID, &upd.Fields)
+		err := s.nodeWriter.ApplyUpdate(ctx, upd.ID, &upd.Fields)
 		if err != nil {
 			results = append(results, gin.H{
 				"id":      upd.ID,

@@ -13,6 +13,10 @@ import (
 	"github.com/hyper-swe/mtix/internal/model"
 )
 
+func TestCombiningGraphemeJoiner(t *testing.T) {
+	require.Equal(t, "\u034f", combiningGraphemeJoiner)
+}
+
 func TestNormalizeDecisionText_TrimAndNFC(t *testing.T) {
 	for _, tc := range []struct{ name, in, want string }{
 		{"decomposed equals composed", "é", "é"},

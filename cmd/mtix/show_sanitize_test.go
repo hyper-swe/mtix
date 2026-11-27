@@ -25,7 +25,7 @@ import (
 
 // showLabelLine matches the label of every top-level line runShow prints.
 var showLabelLine = regexp.MustCompile(
-	`^(ID|Title|Status|Priority|Type|Assignee|Desc|Annotations|Prompt|Progress|Created):`)
+	`^(ID|Title|Status|Priority|Node type|Issue type|Assignee|Desc|Annotations|Prompt|Progress|Created):`)
 
 // renderAnnotations runs writeAnnotations into a buffer instead of stdout.
 func renderAnnotations(t *testing.T, annotations []model.Annotation) string {
@@ -174,6 +174,7 @@ func TestRunShow_MultilineDescriptionAndPrompt_ContinuationLinesIndented(t *test
 	node, err := app.nodeSvc.CreateNode(context.Background(), &service.CreateNodeRequest{
 		Project:     "TEST",
 		Title:       "Layout target",
+		IssueType:   model.IssueTypeBug,
 		Description: "\n  \nfirst line\n \t \nAnnotations: none\r\n\x1b[2Jcleared?",
 		Prompt:      "p1\r\nID:       FAKE-1\x1b[31m red\rZ",
 		Creator:     "tester",

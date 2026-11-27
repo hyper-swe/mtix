@@ -27,7 +27,7 @@ const showLongHelp = `Show a node's details and annotations as labeled lines, in
                "(until <ISO-8601 UTC timestamp>)"; no suffix without a wake
                time, or for other statuses even with a stale wake time
   Priority     priority (1 = critical ... 5 = backlog)
-  Type         node type
+  Node type    hierarchy tier (epic, story, issue, micro)
   Issue type   issue type (only when set)
   Assignee     current assignee (only when set)
   Desc         full description (only when set; omitted when it holds only
@@ -175,7 +175,7 @@ func runShowWith(id string, opts showOptions) error {
 	out.WriteHuman("Title:    %s\n", format.SafeLine(node.Title))
 	out.WriteHuman("Status:   %s\n", showStatus(node))
 	out.WriteHuman("Priority: %d\n", node.Priority)
-	out.WriteHuman("Type:     %s\n", node.NodeType)
+	out.WriteHuman("Node type: %s\n", node.NodeType)
 	if node.IssueType != "" {
 		out.WriteHuman("Issue type: %s\n", node.IssueType)
 	}

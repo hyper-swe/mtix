@@ -22,7 +22,6 @@ func rawOpenReasons() map[string]string {
 		"backup.go:verifyDatabase":                   "one quick_check, then close on success or error; no later read",
 		"inbox_history.go:countUnackedRO":            "one count, then close; immutable fallback opens a different handle",
 		"attach_metadata.go:readStoreInstanceIDOnce": "one identity query, then close; each retry opens a new handle",
-		"import_stage.go:openStage":                  "private scratch staging database of one import, single connection, deleted on Close; never a store or reader pool (MTIX-2.3.2.1)",
 	}
 }
 

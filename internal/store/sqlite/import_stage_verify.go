@@ -17,7 +17,7 @@ import (
 
 // StagedChecksums are the digests a staged export hashes to: the same values
 // computeExportChecksumH, legacyReplacementChecksumH and computeIDsChecksum
-// give for the fully decoded export (MTIX-2.3.2.1).
+// give for the fully decoded export (MTIX-2.3.2.1, FR-7.8, FR-7.8a).
 type StagedChecksums struct {
 	Checksum string
 	// Legacy is the pre-0.5.4 digest of text holding U+FFFD, "" when none.
@@ -25,6 +25,27 @@ type StagedChecksums struct {
 	// IDs is the ids_checksum digest, "" when no value is invalid UTF-8.
 	IDs string
 }
+
+// StagedRecompute is what RecomputeExportChecksum stores for the same export
+// decoded whole: node_count, checksum and ids_checksum over the canonical
+// (sorted) order.
+type StagedRecompute struct {
+	NodeCount int
+	Checksum  string
+	IDs       string
+}
+
+// Staged row reads, in the two orders the checksum is taken in. Both read one
+// kind's rows; the canonical one follows RecomputeExportChecksum's sorts.
+const (
+	// Read one kind's staged rows in file order (the order the file spelled
+	// them), as VerifyExportChecksum hashes a decoded file.
+	stagedRowsInFileOrderSQL = `SELECT body FROM stage_rows WHERE kind = ? ORDER BY ord`
+	// Read one kind's staged rows in canonical order: nodes by id, dependencies
+	// by from then to, history by task uid, time then id (sortHistory), all
+	// bytewise (BINARY collation), ties in file order.
+	stagedRowsInCanonicalOrderSQL = `SELECT body FROM stage_rows WHERE kind = ? ORDER BY k1, k2, k3, ord`
+)
 
 // checksumStream hashes the checksum document {"nodes":..,"deps":..,
 // "history":..} piece by piece: canonical is the reader-view digest, legacy
@@ -50,27 +71,46 @@ func (c *checksumStream) writeElement(first []byte, decode func([]byte) ([]byte,
 	replacement := []byte(string(utf8.RuneError))
 	if bytes.Contains(first, replacement) {
 		c.sawReplacement = true
-		first = bytes.ReplaceAll(first, replacement, []byte(`\ufffd`))
+		first = bytes.ReplaceAll(first, replacement, []byte("\\ufffd"))
 	}
 	_, _ = c.legacy.Write(first)
 	return nil
 }
 
 // Checksums computes the digests of the staged export, reading the staged
-// rows back in file order, one at a time.
+// rows back in file order, one at a time (FR-7.8).
 func (st *StagedExport) Checksums(ctx context.Context) (StagedChecksums, error) {
+	return st.checksums(ctx, stagedRowsInFileOrderSQL)
+}
+
+// Recompute computes what RecomputeExportChecksum stores for this export
+// (FR-7.8, MTIX-26.5): the rows read back in canonical sorted order, so the
+// recovery and rewrite paths can use the staged rows instead of a decoded
+// board. Elements whose sort keys are equal keep file order, where
+// RecomputeExportChecksum's unstable sort leaves them unspecified.
+func (st *StagedExport) Recompute(ctx context.Context) (StagedRecompute, error) {
+	got, err := st.checksums(ctx, stagedRowsInCanonicalOrderSQL)
+	if err != nil {
+		return StagedRecompute{}, fmt.Errorf("recompute checksum: %w", err)
+	}
+	return StagedRecompute{NodeCount: st.NodeCount(), Checksum: got.Checksum, IDs: got.IDs}, nil
+}
+
+// checksums hashes the staged rows read with query (one of the two constants
+// above).
+func (st *StagedExport) checksums(ctx context.Context, query string) (StagedChecksums, error) {
 	cs := &checksumStream{canonical: sha256.New(), legacy: sha256.New()}
 	cs.write(`{"nodes":`)
-	if err := st.hashArray(ctx, cs, stageNodes, nodeFirstEncoding, reencode[exportNode]); err != nil {
+	if err := st.hashArray(ctx, cs, stageNodes, query, nodeFirstEncoding, reencode[exportNode]); err != nil {
 		return StagedChecksums{}, err
 	}
 	cs.write(`,"deps":`)
-	if err := st.hashArray(ctx, cs, stageDeps, depFirstEncoding, reencode[exportDep]); err != nil {
+	if err := st.hashArray(ctx, cs, stageDeps, query, depFirstEncoding, reencode[exportDep]); err != nil {
 		return StagedChecksums{}, err
 	}
 	if st.counts[stageHistory] > 0 {
 		cs.write(`,"history":`)
-		if err := st.hashArray(ctx, cs, stageHistory, historyFirstEncoding, reencode[exportHistoryEntry]); err != nil {
+		if err := st.hashArray(ctx, cs, stageHistory, query, historyFirstEncoding, reencode[exportHistoryEntry]); err != nil {
 			return StagedChecksums{}, err
 		}
 	}
@@ -88,37 +128,37 @@ func (st *StagedExport) Checksums(ctx context.Context) (StagedChecksums, error) 
 }
 
 // hashArray streams one staged array into cs as a JSON array (null when the
-// file had none).
-func (st *StagedExport) hashArray(ctx context.Context, cs *checksumStream, kind stageKind,
+// file had none), reading its rows with query.
+func (st *StagedExport) hashArray(ctx context.Context, cs *checksumStream, kind stageKind, query string,
 	first func([]byte) ([]byte, error), again func([]byte) ([]byte, error)) error {
 	if st.presence[kind] == arrayAbsent {
 		cs.write("null")
 		return nil
 	}
 	cs.write("[")
-	rows, err := st.db.QueryContext(ctx, `SELECT body FROM stage_rows WHERE kind = ? ORDER BY ord`, int(kind))
+	rows, err := st.db.QueryContext(ctx, query, int(kind))
 	if err != nil {
-		return fmt.Errorf("read staged rows: %w", err)
+		return fmt.Errorf("read staged %s rows: %w", kind, err)
 	}
 	defer func() { _ = rows.Close() }()
 	for i := 0; rows.Next(); i++ {
 		var body []byte
 		if err := rows.Scan(&body); err != nil {
-			return fmt.Errorf("scan staged row: %w", err)
+			return fmt.Errorf("scan staged %s row %d: %w", kind, i, err)
 		}
 		if i > 0 {
 			cs.write(",")
 		}
 		enc, err := first(body)
-		if err != nil {
-			return err
+		if err == nil {
+			err = cs.writeElement(enc, again)
 		}
-		if err := cs.writeElement(enc, again); err != nil {
-			return err
+		if err != nil {
+			return fmt.Errorf("hash staged %s row %d: %w", kind, i, err)
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("read staged rows: %w", err)
+		return fmt.Errorf("read staged %s rows: %w", kind, err)
 	}
 	cs.write("]")
 	return nil
@@ -167,6 +207,8 @@ func reencode[T any](first []byte) ([]byte, error) {
 // idsChecksum hashes the sorted non-UTF-8 id tuples as computeIDsChecksum
 // does, reading them back in order from the staging database.
 func (st *StagedExport) idsChecksum(ctx context.Context) (string, error) {
+	// Read every staged non-UTF-8 id tuple in the order computeIDsChecksum
+	// sorts them (kind, key, hex), bytewise.
 	rows, err := st.db.QueryContext(ctx,
 		`SELECT kind, key, hex FROM stage_ids ORDER BY kind, key, hex`)
 	if err != nil {
@@ -202,9 +244,9 @@ func (st *StagedExport) idsChecksum(ctx context.Context) (string, error) {
 }
 
 // Verify applies the checks Import makes on the decoded export, on the staged
-// rows: node_count matches, and the checksum and ids_checksum verify
-// (ValidateExport's first two checks; VerifyExportChecksum's rule for the
-// legacy digest).
+// rows (FR-7.8, FR-7.8a): node_count matches, and the checksum and
+// ids_checksum verify (ValidateExport's first two checks;
+// VerifyExportChecksum's rule for the legacy digest).
 func (st *StagedExport) Verify(ctx context.Context) error {
 	if st.Header.NodeCount != st.NodeCount() {
 		return fmt.Errorf("node count mismatch: declared %d, actual %d: %w",

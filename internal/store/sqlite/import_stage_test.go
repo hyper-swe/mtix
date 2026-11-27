@@ -119,13 +119,24 @@ func TestStageExport_ChecksumsMatchTextVariants(t *testing.T) {
 }
 
 func TestStageExport_HeaderMatchesHistoricalDecode(t *testing.T) {
-	raw := []byte(`{"version":2,"schema_version":"2.0.0","project":"P","node_count":1,` +
-		`"checksum":"c","ids_checksum":"i","agents":[{"agent_id":"a"}],"sessions":[],"nodes":[{"id":"x"}]}`)
+	raw := []byte(`{"version":2,"schema_version":"2.0.0","exported_at":"2026-01-02T03:04:05Z","mtix_version":"0.6.0",` +
+		`"project":"P","node_count":1,"checksum":"c","ids_checksum":"i",` +
+		`"inbox_journal":{"version":1,"events":[{"event_id":"ev1","project":"P","node_id":"P-1","author":"a","payload":"p"}],"checksum":"jc"},` +
+		`"agents":[{"agent_id":"a","state":"idle","current_node_id":"P-1"},{"agent_id":"b"}],` +
+		`"AGENTS":[{"agent_id":"c"}],"sessions":[{"id":"s"}],"nodes":[{"id":"x"}]}`)
 	st, _ := stagedDigests(t, raw)
 	old, err := DecodeExportData(bytes.NewReader(raw))
 	require.NoError(t, err)
 	old.Nodes = nil
 	assert.Equal(t, *old, st.Header)
+	// The fields the comparison above must not hold vacuously.
+	require.NotNil(t, st.Header.InboxJournal)
+	assert.Equal(t, "ev1", st.Header.InboxJournal.Events[0].EventID)
+	assert.Equal(t, "2026-01-02T03:04:05Z", st.Header.ExportedAt)
+	assert.Equal(t, "0.6.0", st.Header.MtixVersion)
+	require.Len(t, st.Header.Agents, 1, "the repeated agents key decodes onto the first array")
+	assert.Equal(t, "c", st.Header.Agents[0].AgentID)
+	assert.Equal(t, "idle", st.Header.Agents[0].State)
 }
 
 func TestStageExport_VerifyAgreesWithVerifyExportChecksum(t *testing.T) {
@@ -226,4 +237,62 @@ func TestStageExport_CloseRemovesStagingFiles(t *testing.T) {
 	require.DirExists(t, dir)
 	require.NoError(t, st.Close())
 	assert.NoDirExists(t, dir)
+}
+
+// The staging database always lives in a fresh private directory under the
+// caller's dir, so a file the caller (or another staging) put there is never
+// opened, shared or removed.
+func TestStageExport_CallerDir_LeavesExistingFilesAndRemovesOwnDirectory(t *testing.T) {
+	dir := t.TempDir()
+	foreign := filepath.Join(dir, "stage.db")
+	require.NoError(t, os.WriteFile(foreign, []byte("not a database"), 0o600))
+
+	a, err := StageExport(context.Background(), strings.NewReader(`{"nodes":[{"id":"a"}]}`), dir)
+	require.NoError(t, err)
+	b, err := StageExport(context.Background(), strings.NewReader(`{"nodes":[{"id":"b"},{"id":"c"}]}`), dir)
+	require.NoError(t, err)
+	assert.NotEqual(t, a.dir, b.dir)
+	assert.Equal(t, 1, a.NodeCount())
+	assert.Equal(t, 2, b.NodeCount())
+	require.NoError(t, a.Close())
+	assert.Equal(t, 2, b.NodeCount())
+	_, err = b.Checksums(context.Background())
+	require.NoError(t, err, "closing one staging must not touch the other")
+	require.NoError(t, b.Close())
+
+	content, err := os.ReadFile(foreign)
+	require.NoError(t, err, "the caller's own file must survive")
+	assert.Equal(t, "not a database", string(content))
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Len(t, entries, 1, "only the caller's file remains")
+}
+
+func TestStageExport_Failure_LeavesNoStagingDirectory(t *testing.T) {
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, tc := range map[string]struct {
+		ctx  context.Context
+		text string
+	}{
+		"cancelled context": {cancelled, `{"nodes":[{"id":"x"}]}`},
+		"bad document":      {context.Background(), `{"nodes":[{"id":5}]}`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			st, err := StageExport(tc.ctx, strings.NewReader(tc.text), dir)
+			require.Error(t, err)
+			assert.Nil(t, st)
+			entries, readErr := os.ReadDir(dir)
+			require.NoError(t, readErr)
+			assert.Empty(t, entries)
+		})
+	}
+}
+
+func TestStageExport_MissingDirectory_ReturnsError(t *testing.T) {
+	st, err := StageExport(context.Background(), strings.NewReader(`{}`),
+		filepath.Join(t.TempDir(), "absent"))
+	require.Error(t, err)
+	assert.Nil(t, st)
 }

@@ -1052,7 +1052,7 @@ Inspect and test FR-19 event hooks (.mtix/hooks.yaml)
 - `log` — Show recent hook firings (audit trail, newest first)
 - `status` — Show operator-local state and per-hook approvals
 - `strict <on|off|status>` — Show or change strict program mode for exec hooks on this host
-- `trust <hook>` — Review and approve one exec hook on this host
+- `trust [hook]` — Review or inspect exec hook approvals on this host
 ---
 
 ## allow-origin
@@ -1147,18 +1147,18 @@ Strict program mode is an opt-in, host-level setting stored in operator-local st
 
 ## trust
 
-**Usage:** `trust <hook>`
+**Usage:** `trust [hook]`
 
-Review and approve one exec hook on this host
+Review or inspect exec hook approvals on this host
 
-Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. With --program, instead approve the hook's program for strict program mode (see mtix hooks strict); the approval is bound to the symlink-resolved program path, the hook and the project. Use hooks status --json for corrective guidance.
+Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. With --program, instead approve the hook's program for strict program mode (see mtix hooks strict); the approval is bound to the symlink-resolved program path, the hook and the project. Use --status without a hook name to list all trusted exec hooks, or with a name to inspect one. Use hooks status --json for corrective guidance.
 
 ### Flags
 
 | Flag | Short | Description | Default |
 |------|-------|-------------|---------|
 | `--program` |  | Approve the hook's program for strict program mode | false |
-| `--status` |  | Show this hook's approval without changing it | false |
+| `--status` |  | Show one hook's approval, or list all trusted hooks if no name is given | false |
 ---
 
 ## import

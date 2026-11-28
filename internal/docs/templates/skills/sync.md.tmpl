@@ -226,6 +226,12 @@ repair of a legacy winner emits a terminal event without it, and that stamp is
 still excused when the other conditions hold. Treat any other `closed_at`
 refusal as a real difference, not as clock skew.
 
+A soft-deleted node is never excused: enrollment compares its `closed_at`
+exactly, so a plain 0.5.4 done that crossed a second still refuses and names
+`closed_at`. This is the intended fail-closed rule, because enrollment cannot
+tell that skew from a changed stamp on a node nobody is looking at. Follow the
+printed fix.
+
 Only enrolled checkouts contact the hub under `sync.hub_contact`: activity,
 interval or manual. Activity lets an idle scale-to-zero database sleep; interval
 keeps it awake, and manual makes no automatic hub contact. Contact costs apply

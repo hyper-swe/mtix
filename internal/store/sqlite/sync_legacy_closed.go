@@ -58,6 +58,17 @@ func (s *Store) nodeWinner(ctx context.Context, n stampedNode) (heldWorkflow, bo
 }
 
 // stampedNodes lists the live nodes that hold a completion stamp.
+//
+// Soft-deleted nodes are left out on purpose (FR-20.4, MTIX-112.17.16.19.1.1,
+// DESK-1.248). The board export keeps deleted nodes and compares deleted_at for
+// presence only, so a deleted node's closed_at is compared exactly. A deleted
+// node whose plain 0.5.4 done crossed a second therefore still refuses
+// enrolment, naming closed_at. That is the intended fail-closed rule: the
+// one-second excuse rests on evidence about a live node, and a false refusal
+// costs only the printed recovery, where a wrong excuse would hide a real
+// difference on a node nobody is looking at. The operator rule is in the sync
+// skill, the manual and the troubleshooting page. Do not add deleted nodes here
+// without changing those and TestLegacyClosedStamps_SoftDeletedPlainDone_IsComparedExactly.
 func (s *Store) stampedNodes(ctx context.Context) (out []stampedNode, err error) {
 	// Live nodes holding a closed_at, with the uid that scopes their events.
 	rows, err := s.ReadDB().QueryContext(ctx, `

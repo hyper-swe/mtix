@@ -155,56 +155,6 @@ type ImportReconcileReport struct {
 	Applied bool
 }
 
-// String renders a loud, human-readable summary of the reconciliation
-// (ADR-003 §6). Every conflict, remap, re-stamp and uid adoption
-// (MTIX-95.31.6) is listed so the operator can audit exactly what the import
-// did or would do.
-func (r *ImportReconcileReport) String() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "import reconciliation report (applied=%t):\n", r.Applied)
-	fmt.Fprintf(&b, "  idempotent no-ops: %d\n", r.Idempotent)
-	if len(r.Conflicts) > 0 {
-		fmt.Fprintf(&b, "  REJECTED uid conflicts: %d\n", len(r.Conflicts))
-		for _, c := range r.Conflicts {
-			fmt.Fprintf(&b, "    - uid=%s import=%s local=%s (%s)\n",
-				c.UID, c.ImportPath, c.LocalPath, c.Kind)
-		}
-	}
-	if len(r.Remaps) > 0 {
-		fmt.Fprintf(&b, "  renumbered provisional nodes: %d\n", len(r.Remaps))
-		for _, m := range r.Remaps {
-			fmt.Fprintf(&b, "    - uid=%s %s -> %s\n", m.UID, m.OldPath, m.NewPath)
-		}
-	}
-	if len(r.Renamed) > 0 {
-		fmt.Fprintf(&b, "  force-renamed (re-stamped) nodes: %d\n", len(r.Renamed))
-		for _, m := range r.Renamed {
-			fmt.Fprintf(&b, "    - %s re-stamped (was uid=%s)\n", m.NewPath, m.UID)
-		}
-	}
-	if len(r.LocalRenumbers) > 0 {
-		fmt.Fprintf(&b, "  local tasks renumbered, the file holds a different task under their id: %d\n",
-			len(r.LocalRenumbers))
-		for _, m := range r.LocalRenumbers {
-			fmt.Fprintf(&b, "    - uid=%s %s -> %s\n", shownUID(m), m.OldPath, m.NewPath) // MTIX-95.31.9
-		}
-		if !r.Applied {
-			b.WriteString("  not applied: review the renumbering above, then rerun the import with --confirm\n")
-		}
-	}
-	writeTitleMismatches(&b, r.TitleMismatches) // MTIX-95.31.9
-	if len(r.Moved) > 0 {
-		fmt.Fprintf(&b, "  local tasks moved to the id the file holds them under (renumbered elsewhere): %d\n",
-			len(r.Moved))
-		for _, m := range r.Moved {
-			fmt.Fprintf(&b, "    - uid=%s %s -> %s\n", m.UID, m.OldPath, m.NewPath)
-		}
-	}
-	writeUIDAdoptions(&b, r.UIDAdoptions)                      // MTIX-95.31.6
-	writeWorkflowConflicts(&b, r.WorkflowConflicts, r.Applied) // MTIX-95.31.13
-	return b.String()
-}
-
 // ImportReconcile validates an import at the boundary and applies it with
 // offline/export-import reconciliation (ADR-003 §6, audit F-3). It is the
 // reconciling counterpart to Store.Import:
@@ -226,6 +176,14 @@ func (r *ImportReconcileReport) String() string {
 //
 // Every uid a merge adopts (the same task under another uid, FR-7.8) is
 // listed in the report, applied or not, and in the result (MTIX-95.31.6).
+//
+// PlanImportStaged (import_plan.go, MTIX-2.3.2.2) is the bounded-memory
+// equivalent of the planning above for a staged export: it runs the same
+// phases in the same order, with the same errors and the same report, from the
+// staged rows and indexed queries instead of the decoded ExportData. It does
+// not apply the import. The TestPlanImportStaged_* tests in import_plan_test.go
+// (through planMatchesReconcile) pin the equality, decision by decision,
+// against this function.
 // The returned report is always non-nil when data is non-nil, even on error, so
 // callers can surface the loud report. The ImportResult is nil unless the import
 // was applied; it is also returned with ErrImportIncomplete, which means

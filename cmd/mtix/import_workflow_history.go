@@ -4,7 +4,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 
@@ -13,17 +12,15 @@ import (
 
 // writeImportWorkflowReport preserves the human refusal on stderr and exposes
 // its per-side history to --json callers even though no import result exists.
-func writeImportWorkflowReport(report *sqlite.ImportReconcileReport) error {
-	_, err := fmt.Fprint(os.Stderr, report.String())
-	if err == nil && app.jsonOutput && !report.Applied && len(report.WorkflowConflicts) > 0 {
-		err = json.NewEncoder(os.Stdout).Encode(struct {
-			Applied   bool                      `json:"applied"`
-			Conflicts []sqlite.WorkflowConflict `json:"workflow_conflicts"`
-		}{Applied: false, Conflicts: report.WorkflowConflicts})
+// Both are streamed from the report, one entry at a time (MTIX-2.3.2.2).
+func writeImportWorkflowReport(report sqlite.ReportSource) error {
+	err := report.WriteReport(os.Stderr)
+	if err == nil && app.jsonOutput {
+		err = report.WriteWorkflowJSON(os.Stdout)
 	}
 	if err != nil {
 		err = fmt.Errorf("write import report: %w", err)
-		if !report.Applied {
+		if !report.IsApplied() {
 			return nothingWritten(err)
 		}
 		return err
@@ -32,8 +29,10 @@ func writeImportWorkflowReport(report *sqlite.ImportReconcileReport) error {
 }
 
 // writeImportReport publishes the report and remap while preserving whether
-// the import already applied when an output error is returned.
-func writeImportReport(report *sqlite.ImportReconcileReport, remapFile string) error {
+// the import already applied when an output error is returned. The report
+// may be the in-memory one or a plan read from the staged export: neither is
+// built as a whole here.
+func writeImportReport(report sqlite.ReportSource, remapFile string) error {
 	if report == nil {
 		return nil
 	}
@@ -41,7 +40,7 @@ func writeImportReport(report *sqlite.ImportReconcileReport, remapFile string) e
 		return err
 	}
 	if err := writeRemapFile(remapFile, report); err != nil {
-		if !report.Applied {
+		if !report.IsApplied() {
 			return nothingWritten(err)
 		}
 		return err

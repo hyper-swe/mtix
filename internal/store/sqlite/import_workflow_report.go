@@ -6,7 +6,7 @@ package sqlite
 import (
 	"errors"
 	"fmt"
-	"strings"
+	"io"
 
 	"github.com/hyper-swe/mtix/internal/format"
 )
@@ -22,38 +22,48 @@ func (r *ImportReconcileReport) noteWorkflowConflicts(err error) {
 	}
 }
 
-// writeWorkflowConflicts renders the workflow conflicts: per task, every
+// writeWorkflowSection renders the workflow conflicts: per task, every
 // differing field with the local and the file's value and the activity
 // hint, and, for a merge not applied, how to choose (MTIX-95.31.13).
-func writeWorkflowConflicts(b *strings.Builder, conflicts []WorkflowConflict, applied bool) {
-	if len(conflicts) == 0 {
-		return
+func writeWorkflowSection(ew *errWriter, v reportView) error {
+	total, applied := v.rowCount(secWorkflow), v.isApplied()
+	if total == 0 {
+		return nil
 	}
 	if applied {
-		fmt.Fprintf(b, "  workflow values settled by your choice: %d task(s)\n", len(conflicts))
+		fmt.Fprintf(ew, "  workflow values settled by your choice: %d task(s)\n", total)
 	} else {
-		fmt.Fprintf(b, "  WORKFLOW CONFLICTS: %d task(s) have a status, assignee, agent state, wake time or deletion state "+
-			"that differs from the file's\n", len(conflicts))
+		fmt.Fprintf(ew, "  WORKFLOW CONFLICTS: %d task(s) have a status, assignee, agent state, wake time or deletion state "+
+			"that differs from the file's\n", total)
 	}
-	for i := range conflicts {
-		c := &conflicts[i]
-		fmt.Fprintf(b, "    - %s %q", c.ID, c.Title)
-		if c.Choice != "" {
-			fmt.Fprintf(b, " -> kept %s", c.Choice)
-		}
-		b.WriteString("\n")
-		for _, f := range c.Fields {
-			fmt.Fprintf(b, "        %s: yours %s, the file's %s\n", f.Field, shownValue(f.Local), shownValue(f.File))
-			writeWorkflowHistory(b, "yours", f.LocalHistory, f.LocalHistoryMore)
-			writeWorkflowHistory(b, "file", f.FileHistory, f.FileHistoryMore)
-		}
-		fmt.Fprintf(b, "        history (a hint, not a verdict): %s\n", format.SafeLine(c.Hint))
+	err := v.eachWorkflow(func(c *WorkflowConflict) error {
+		writeWorkflowConflict(ew, c)
+		return ew.err
+	})
+	if err != nil {
+		return err
 	}
 	if !applied {
-		b.WriteString("  not applied: nothing was written. Decide per task which values to keep, then rerun the " +
+		ew.WriteString("  not applied: nothing was written. Decide per task which values to keep, then rerun the " +
 			"import with --prefer theirs (take the file's) or --prefer ours (keep yours) for all of them, or " +
 			"--theirs ID,ID and --ours ID,ID for specific tasks\n")
 	}
+	return nil
+}
+
+// writeWorkflowConflict renders one conflicting task.
+func writeWorkflowConflict(b io.Writer, c *WorkflowConflict) {
+	fmt.Fprintf(b, "    - %s %q", c.ID, c.Title)
+	if c.Choice != "" {
+		fmt.Fprintf(b, " -> kept %s", c.Choice)
+	}
+	_, _ = io.WriteString(b, "\n")
+	for _, f := range c.Fields {
+		fmt.Fprintf(b, "        %s: yours %s, the file's %s\n", f.Field, shownValue(f.Local), shownValue(f.File))
+		writeWorkflowHistory(b, "yours", f.LocalHistory, f.LocalHistoryMore)
+		writeWorkflowHistory(b, "file", f.FileHistory, f.FileHistoryMore)
+	}
+	fmt.Fprintf(b, "        history (a hint, not a verdict): %s\n", format.SafeLine(c.Hint))
 }
 
 // shownValue renders an empty workflow value as (none).

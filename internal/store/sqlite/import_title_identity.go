@@ -7,7 +7,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
@@ -178,28 +177,4 @@ func refuseTitleMismatch(local, in *exportNode) error {
 	return fmt.Errorf("merge node %s: the file holds a task with another title under this id (%q, local %q) and "+
 		"no uid to compare; mtix import renumbers the local task first: %w", in.ID, in.Title, local.Title,
 		model.ErrConflict)
-}
-
-// shownUID is how a report shows the uid of a renumbered local task
-// (MTIX-95.31.9): uid=(new) for one this import minted, which a later run
-// mints again.
-func shownUID(m ImportRemapEntry) string {
-	if m.NewUID {
-		return "(new)"
-	}
-	return m.UID
-}
-
-// writeTitleMismatches renders, after the renumbered local tasks, those
-// renumbered because the file holds their id with another title and no uid
-// to compare, with both titles (MTIX-95.31.9).
-func writeTitleMismatches(b *strings.Builder, mismatches []ImportTitleMismatch) {
-	if len(mismatches) == 0 {
-		return
-	}
-	fmt.Fprintf(b, "  of these, a task under this id with a different title and no uid to compare: %d\n",
-		len(mismatches))
-	for _, m := range mismatches {
-		fmt.Fprintf(b, "    - %s (local %q, file %q)\n", m.ID, m.LocalTitle, m.FileTitle)
-	}
 }

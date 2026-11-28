@@ -7,11 +7,18 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
+
+// workflowHistoryReader is what reads a task's stored history: the import
+// transaction, or the store's read connection while a plan is made.
+type workflowHistoryReader interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
 
 // workflowHistoryLimit bounds each side of each conflicting field's report.
 const workflowHistoryLimit = 5
@@ -20,7 +27,7 @@ const workflowHistoryLimit = 5
 // shared entries are the available base and are omitted from both sides.
 // Missing history proves nothing about who changed a field. Report planning
 // reads inside the import transaction and never changes the history union.
-func addWorkflowHistory(ctx context.Context, tx *sql.Tx, local, file *exportNode, diffs []WorkflowFieldDiff) error {
+func addWorkflowHistory(ctx context.Context, tx workflowHistoryReader, local, file *exportNode, diffs []WorkflowFieldDiff) error {
 	entries, err := readWorkflowHistory(ctx, tx, taskHistoryKey(local))
 	if err != nil {
 		return err
@@ -36,7 +43,7 @@ func addWorkflowHistory(ctx context.Context, tx *sql.Tx, local, file *exportNode
 
 // readWorkflowHistory reads the task's stored history independent of the
 // export switch; history.export controls sharing, not local visibility.
-func readWorkflowHistory(ctx context.Context, tx *sql.Tx, uid string) (out []exportHistoryEntry, err error) {
+func readWorkflowHistory(ctx context.Context, tx workflowHistoryReader, uid string) (out []exportHistoryEntry, err error) {
 	// Stable task identity isolates the report from other tasks and renumbers.
 	rows, err := tx.QueryContext(ctx, `SELECT entry_id, task_uid, ts, actor, origin, kind, field,
   old_value, new_value, event_id FROM task_history WHERE task_uid = ?`, uid)
@@ -129,10 +136,10 @@ func appendWorkflowResolution(ctx context.Context, tx *sql.Tx, n *exportNode, c 
 
 // writeWorkflowHistory quotes every stored string at the terminal boundary;
 // JSON retains the original structured entries and explicit truncation counts.
-func writeWorkflowHistory(b *strings.Builder, side string, entries []exportHistoryEntry, more int) {
+func writeWorkflowHistory(b io.Writer, side string, entries []exportHistoryEntry, more int) {
 	fmt.Fprintf(b, "        %s history (entries outside shared history):\n", side)
 	if len(entries) == 0 {
-		b.WriteString("          no entries supplied outside shared history; not proof of no changes\n")
+		_, _ = io.WriteString(b, "          no entries supplied outside shared history; not proof of no changes\n")
 	}
 	for _, e := range entries {
 		fmt.Fprintf(b, "          %q %q by %q (%q, %q)", e.TS, e.ID, e.Actor, e.Origin, e.Kind)
@@ -142,7 +149,7 @@ func writeWorkflowHistory(b *strings.Builder, side string, entries []exportHisto
 		if e.New != nil {
 			fmt.Fprintf(b, " new=%q", *e.New)
 		}
-		b.WriteString("\n")
+		_, _ = io.WriteString(b, "\n")
 	}
 	if more > 0 {
 		fmt.Fprintf(b, "          %d more\n", more)

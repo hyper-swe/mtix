@@ -176,52 +176,31 @@ func TestInboxWait_NegativeTimeout_Refused(t *testing.T) {
 	}
 }
 
+// MTIX-328 (replaces the MTIX-112 version that pinned a query, and a session
+// touch, every 250 ms): the old test required five polls 250 ms apart as proof
+// of "no busy loop". An idle wait now parks on the database change token, so
+// the stronger no-spin property is that it runs NO query after the entry read
+// until the safety floor; the 250 ms tick only stats three files.
 func TestInboxWait_TimeoutZero_NoBusyLoop(t *testing.T) {
 	s := inboxWaitStore(t)
+	reads := countWaitReads(s)
 	ctx := WithSessionTouch(t.Context(), SessionTouch{HostID: "test-host", UID: "test-user", Handle: "test-session"})
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	polls := make(chan time.Time)
-	var setupReads atomic.Int64
-	s.SetClock(func() time.Time {
-		// The wait's own setup reads the clock twice before its first query
-		// (last-read stamp, waiter row; MTIX-112.3): those are not polls.
-		if setupReads.Add(1) <= 2 {
-			return inboxWaitTime()
-		}
-		// Observe each actual query at its session touch. Cancellation also
-		// releases a sender if the test fails before receiving the next poll.
-		select {
-		case polls <- time.Now():
-		case <-ctx.Done():
-		}
-		return inboxWaitTime()
-	})
-	started := time.Now()
 	out := startInboxWait(ctx, t, s, 0)
-	guard := time.NewTimer(30 * time.Second) // failure ceiling, never a sampling window
-	defer guard.Stop()
-	const wantPolls = 5
-	var lastPoll time.Time
-	for poll := 1; poll <= wantPolls; poll++ {
-		select {
-		case lastPoll = <-polls:
-		case result := <-out:
-			t.Fatalf("unbounded wait returned before poll %d: %+v", poll, result)
-		case <-guard.C:
-			t.Fatalf("unbounded wait did not reach poll %d", poll)
-		}
+	time.Sleep(1300 * time.Millisecond) // five old polls
+	assert.EqualValues(t, 1, reads.Load(), "an unbounded idle wait queries once, at entry")
+	select {
+	case result := <-out:
+		t.Fatalf("unbounded wait returned before cancellation: %+v", result)
+	default:
 	}
-	// Four 250 ms ticks must separate the immediate query from the fifth
-	// poll. Scheduling delays only increase elapsed time; they cannot reduce
-	// the observed count as they did in the old fixed 875 ms sample.
-	assert.GreaterOrEqual(t, lastPoll.Sub(started), time.Duration(wantPolls-1)*250*time.Millisecond, "250ms polling must not spin")
 	cancel()
 	select {
 	case result := <-out:
 		require.ErrorIs(t, result.err, context.Canceled)
 		assert.Empty(t, result.events)
-	case <-guard.C:
+	case <-time.After(30 * time.Second):
 		t.Fatal("unbounded wait did not return after cancellation")
 	}
 }

@@ -172,9 +172,6 @@ func registrationEpoch(ctx context.Context, key service.WakeLeaseKey) (int64, er
 // returns the function that ends the join.
 type claudeHookJoin func(agent string, out io.Writer) func()
 
-// claudeHookPollInterval matches the poll of `mtix inbox --wait`.
-const claudeHookPollInterval = 250 * time.Millisecond
-
 // claudeHookWait is the level-triggered wait of `mtix inbox --wait`, including
 // the board listener lease (MTIX-112.20.4), except that events for which skip
 // is true do not end it: a re-arm waits for new mail only. A signal or the
@@ -183,41 +180,31 @@ func claudeHookWait(ctx context.Context, agent string, timeout time.Duration, sk
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	defer join(agent, io.Discard)()
-	waitCtx := ctx
-	if timeout > 0 {
-		var cancel context.CancelFunc
-		waitCtx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	ticker := time.NewTicker(claudeHookPollInterval)
-	defer ticker.Stop()
 	svc := newPolicyInboxService() // the wake policy applies to priming reads too (ADR-007 A12)
 	held := 0
-	for {
-		res, err := svc.InboxRead(ctx, agent, service.InboxReadOptions{})
+	var fresh []sqlite.InboxEvent
+	// Parked wait (MTIX-328): the service re-reads only when the database
+	// change token moves, on its safety floor, and touches the session at most
+	// once per InboxReadThrottle, instead of a full read every 250 ms.
+	_, err := svc.InboxReadUntil(ctx, agent, timeout, service.InboxReadOptions{}, func(res service.InboxResult) bool {
 		held = max(held, res.Held.Count)
-		events := inboxShown(res)
-		if err != nil {
-			if ctx.Err() != nil {
-				return nil, nil
-			}
-			return nil, fmt.Errorf("list inbox: %w", err)
-		}
-		var fresh []sqlite.InboxEvent
-		for _, e := range events {
+		fresh = fresh[:0]
+		for _, e := range inboxShown(res) {
 			if !skip(e) {
 				fresh = append(fresh, e)
 			}
 		}
-		if len(fresh) > 0 {
-			writeInboxHeldNotice(os.Stderr, service.InboxHeld{Count: held})
-			return fresh, nil
-		}
-		select {
-		case <-waitCtx.Done():
-			writeInboxHeldNotice(os.Stderr, service.InboxHeld{Count: held})
+		return len(fresh) > 0
+	})
+	if err != nil {
+		if ctx.Err() != nil {
 			return nil, nil
-		case <-ticker.C:
 		}
+		return nil, fmt.Errorf("list inbox: %w", err)
 	}
+	writeInboxHeldNotice(os.Stderr, service.InboxHeld{Count: held})
+	if len(fresh) > 0 {
+		return fresh, nil
+	}
+	return nil, nil
 }

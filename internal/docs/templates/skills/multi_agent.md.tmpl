@@ -299,8 +299,10 @@ exits 5 within about one tick of the deadline once the machine is awake. With a
 wake policy, a parked wait is cheap: each tick only counts the inbox, and the
 full read with the wake policy runs when the counts change and at least every 2
 seconds, so a change in hub state, permissions or budget window is noticed
-within about 2 seconds. Without a wake policy, each tick runs the plain inbox
-list query.
+within about 2 seconds. Without a wake policy the wait parks the same way (MTIX-328): a tick stats
+the database files and runs the plain inbox list query only after a commit or at
+the one-minute safety read, and the session touch is committed at most every 30
+seconds. The Claude hook waiter (`mtix hook claude-session`) parks the same way.
 Events mean exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM
 means exit 7.
 A negative timeout is refused. Keep foreground waits within the harness's tool

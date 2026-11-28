@@ -13,7 +13,7 @@ import (
 )
 
 // MTIX-245: every copy of the inbox wait guidance states that --timeout is
-// wall-clock time that survives sleep, and how the idle wait polls.
+// wall-clock time that survives sleep, and how the idle wait parks.
 func TestInboxWaitTimeoutDocs_AllCopiesStateWallClockSemantics(t *testing.T) {
 	paths := []string{
 		"internal/docs/templates/skills/multi_agent.md.tmpl",
@@ -35,7 +35,9 @@ func TestInboxWaitTimeoutDocs_AllCopiesStateWallClockSemantics(t *testing.T) {
 			"whichever comes first",
 			"monotonic time covers a wall clock stepped backwards",
 			"With a wake policy, a parked wait is cheap",
-			"Without a wake policy, each tick runs the plain inbox list query",
+			// MTIX-328: the no-policy wait parks too, so the old "each tick runs
+			// the plain inbox list query" sentence became false and is replaced.
+			"Without a wake policy the wait parks the same way (MTIX-328)",
 		} {
 			require.Contains(t, text, phrase, path)
 		}

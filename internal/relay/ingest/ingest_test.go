@@ -1012,6 +1012,7 @@ func TestRelayIngest_UnreadableSegmentStalls(t *testing.T) {
 	stats, err := in.IngestAll(context.Background())
 	require.NoError(t, err)
 	require.Len(t, stats.Stalls, 1)
-	require.Empty(t, stats.Stalls[0].Code, "an unreadable file is a medium problem, not a verdict")
+	require.Equal(t, "RELAY_MEDIUM_UNREADABLE", stats.Stalls[0].Code,
+		"an unreadable file is a medium fault: RELAY_MEDIUM_UNREADABLE, never RELAY_SEGMENT_CORRUPT")
 	require.Zero(t, stats.Applied)
 }

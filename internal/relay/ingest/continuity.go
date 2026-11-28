@@ -104,9 +104,9 @@ func (c *chain) advance(reached Position) {
 // returned as incomplete so the caller retries on the next poll (FR-21 5.3,
 // MTIX-288).
 func (in *Ingestor) openSegment(peerID string, t segmentTurn) ([]byte, segment.Header, []byte, error) {
-	raw, err := readSegment(t.file.Path)
+	raw, err := in.read(t.file.Path)
 	if err != nil {
-		return nil, segment.Header{}, nil, err
+		return nil, segment.Header{}, nil, mediumErr(in.cfg.PeersDir, t.file.Path, err)
 	}
 	header, err := segment.ParseHeader(raw)
 	if t.sealed && segment.IsIncomplete(err) {

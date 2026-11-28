@@ -146,6 +146,8 @@ type Stats struct {
 type Ingestor struct {
 	cfg Config
 	log *slog.Logger
+	// read opens one segment; readSegment unless a test injects a fault.
+	read func(path string) ([]byte, error)
 }
 
 // New builds an ingestor, refusing a configuration that could not poll.
@@ -163,7 +165,7 @@ func New(cfg Config) (*Ingestor, error) {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Ingestor{cfg: cfg, log: log}, nil
+	return &Ingestor{cfg: cfg, log: log, read: readSegment}, nil
 }
 
 // IngestAll polls every peer directory once.
@@ -220,6 +222,7 @@ func (in *Ingestor) ingestPeer(ctx context.Context, peer segment.PeerDir, stats 
 			// A peer directory without segments has published nothing.
 			return nil
 		}
+		err = mediumErr(in.cfg.PeersDir, dir, err)
 		in.stall(stats, peer.PeerID, 0, segment.CodeOf(err), err)
 		return nil
 	}

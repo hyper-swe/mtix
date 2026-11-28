@@ -1093,6 +1093,107 @@ func TestVerifyTail_RefusesAnUnreadableTail(t *testing.T) {
 	require.NotErrorIs(t, err, publisher.ErrPublisherDiverged)
 }
 
+// writeShortSegment leaves segment no holding only the first cut bytes of a
+// valid header: what a kill -9 during segment creation leaves behind.
+func (r *rig) writeShortSegment(t *testing.T, no uint64, cut int) {
+	t.Helper()
+	h := segment.Header{FormatVersion: segment.FormatVersion, PeerID: testPeerID, KeyEpoch: 1,
+		PubEpoch: 1, SegmentNo: no, FirstRS: 1, Flags: segment.FlagAuthenticated}
+	raw, err := h.MarshalBinary()
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(r.segDir, segment.FileName(no)), raw[:cut], 0o600))
+}
+
+// TestPublishPending_NewestSegmentWithIncompleteHeader_RecoversAtEveryCut
+// is MTIX-302: a kill during the first segment's creation must not stall
+// every pass on "verify relay tail".
+func TestPublishPending_NewestSegmentWithIncompleteHeader_RecoversAtEveryCut(t *testing.T) {
+	for _, cut := range []int{0, 1, 46, segment.HeaderSize - 1} {
+		t.Run(fmt.Sprintf("first_segment_cut_%d", cut), func(t *testing.T) {
+			r := newRig(t)
+			r.journalEvents(t, 2)
+			r.writeShortSegment(t, 1, cut)
+			p, err := publisher.New(r.config())
+			require.NoError(t, err)
+			n, err := p.PublishPending(context.Background())
+			require.NoError(t, err)
+			require.Equal(t, 2, n)
+			require.Equal(t, r.journalIDs(t), r.publishedEvents(t))
+		})
+	}
+}
+
+// TestVerifyTail_NewestSegmentWithIncompleteHeaderVerifiesThePreviousTail
+// checks the divergence guard still sees the records published before a
+// rotation crash instead of skipping verification.
+func TestVerifyTail_NewestSegmentWithIncompleteHeaderVerifiesThePreviousTail(t *testing.T) {
+	r := newRig(t)
+	r.journalEvents(t, 1)
+	p, err := publisher.New(r.config())
+	require.NoError(t, err)
+	_, err = p.PublishPending(context.Background())
+	require.NoError(t, err)
+	r.writeShortSegment(t, 2, 46)
+	r.journalEvents(t, 1)
+
+	restarted, err := publisher.New(r.config())
+	require.NoError(t, err)
+	n, err := restarted.PublishPending(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	require.Equal(t, r.journalIDs(t), r.publishedEvents(t))
+}
+
+// TestVerifyTail_RestoreAfterARotationCrashStillRefusesDivergence proves the
+// previous segment is really scanned when the newest one is a header-only
+// leftover: a restore must not slip past the divergence guard (MTIX-302).
+func TestVerifyTail_RestoreAfterARotationCrashStillRefusesDivergence(t *testing.T) {
+	r := newRig(t)
+	r.journalEvents(t, 3)
+	ctx := context.Background()
+	p, err := publisher.New(r.config())
+	require.NoError(t, err)
+	_, err = p.PublishPending(ctx)
+	require.NoError(t, err)
+	before := r.publishedEvents(t)
+	r.writeShortSegment(t, 2, 46)
+
+	restored := newRigAt(t, r.segDir)
+	restored.journalEvents(t, 2)
+	p2, err := publisher.New(restored.config())
+	require.NoError(t, err)
+	n, err := p2.PublishPending(ctx)
+	require.ErrorIs(t, err, publisher.ErrPublisherDiverged)
+	require.Zero(t, n)
+	entries, err := os.ReadDir(r.segDir)
+	require.NoError(t, err)
+	require.Len(t, entries, 2, "a refused publish writes nothing")
+	require.Len(t, before, 3)
+}
+
+// TestVerifyTail_ForeignShortNewestSegmentIsRefused guards the crashedHeader
+// check: a short newest segment that is not a header prefix is not a crash
+// leftover, so verification reports it instead of reading past it (MTIX-302).
+func TestVerifyTail_ForeignShortNewestSegmentIsRefused(t *testing.T) {
+	r := newRig(t)
+	r.journalEvents(t, 1)
+	p, err := publisher.New(r.config())
+	require.NoError(t, err)
+	_, err = p.PublishPending(context.Background())
+	require.NoError(t, err)
+	path := filepath.Join(r.segDir, segment.FileName(2))
+	require.NoError(t, os.WriteFile(path, []byte("operator notes"), 0o600))
+
+	restarted, err := publisher.New(r.config())
+	require.NoError(t, err)
+	_, err = restarted.PublishPending(context.Background())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "verify relay tail")
+	got, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	require.Equal(t, "operator notes", string(got))
+}
+
 // The publisher marks the rows it read as being framed before it appends the
 // first one, and a failed mark appends nothing (a renumber must never miss a
 // row the relay may already carry).

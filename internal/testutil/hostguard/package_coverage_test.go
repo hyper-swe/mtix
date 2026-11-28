@@ -4,6 +4,8 @@
 package hostguard_test
 
 import (
+	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,11 +31,8 @@ func listPackages(t *testing.T, repo string) map[string]listedPackage {
 	if err != nil {
 		t.Skip("go tool not on PATH")
 	}
-	cmd := exec.Command(goTool, "list", "-test", "-deps", "-tags", "e2e faultinject",
-		"-f", "{{.ImportPath}}|{{.Dir}}|{{join .Imports \",\"}}", "./...")
-	cmd.Dir = repo
-	out, err := cmd.Output()
-	require.NoError(t, err, "go list")
+	out, err := runGoList(goTool, repo)
+	require.NoError(t, err)
 	pkgs := map[string]listedPackage{}
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		parts := strings.SplitN(line, "|", 3)
@@ -47,6 +46,31 @@ func listPackages(t *testing.T, repo string) map[string]listedPackage {
 		pkgs[parts[0]] = listedPackage{dir: parts[1], imports: imports}
 	}
 	return pkgs
+}
+
+// runGoList lists the repository's packages. A failure carries go's stderr
+// and the environment the walk assumes, so a box-only failure is diagnosable.
+func runGoList(goTool, repo string) ([]byte, error) {
+	cmd := exec.Command(goTool, "list", "-test", "-deps", "-tags", "e2e faultinject",
+		"-f", "{{.ImportPath}}|{{.Dir}}|{{join .Imports \",\"}}", "./...")
+	cmd.Dir = repo
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("go list in %s failed (needs a resolvable module graph; environment: "+
+			"GOFLAGS=%q GOPROXY=%q GOMODCACHE=%q GOTOOLCHAIN=%q): %w\nstderr: %s",
+			repo, os.Getenv("GOFLAGS"), os.Getenv("GOPROXY"), os.Getenv("GOMODCACHE"),
+			os.Getenv("GOTOOLCHAIN"), err, strings.TrimSpace(stderr.String()))
+	}
+	return out, nil
+}
+
+// zeroCheckedMessage explains an empty walk as an environment problem.
+func zeroCheckedMessage(repo string) string {
+	return "no test binary reached oplocal: the graph walk is broken; go list under " + repo +
+		" (-tags \"e2e faultinject\") returned no repository test binaries; check GOFLAGS, " +
+		"the repository path and build tags"
 }
 
 func reachesOplocal(pkgs map[string]listedPackage, start string) bool {
@@ -104,6 +128,6 @@ func TestTestBinaries_ReachingOplocal_InstallTheGuard(t *testing.T) {
 		}
 	}
 	sort.Strings(missing)
-	require.NotZero(t, checked, "no test binary reached oplocal: the graph walk is broken")
+	require.NotZero(t, checked, zeroCheckedMessage(repo))
 	require.Empty(t, missing, "test packages that reach internal/oplocal but have no TestMain calling hostguard.Run")
 }

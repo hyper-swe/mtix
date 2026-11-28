@@ -11,7 +11,7 @@ internal/service/decompose.go:prepareDecomposeChildren:Errorf:251aba9d7de8cf11 |
 internal/service/truncation.go:buildEntrySection:Fprintf:b4b3ca9f38b5c436 | assembles the data/API prompt; CLI runContext applies displayText at the terminal boundary. JSON retains stored text.
 internal/service/truncation.go:buildTitleOnlySection:Sprintf:262fa275fdea6714 | assembles the data/API prompt; CLI runContext applies displayText at the terminal boundary. JSON retains stored text.
 internal/store/sqlite/import_title_identity.go:refuseTitleMismatch:Errorf:60bff35e88e35b81 | both titles use %q, which escapes control and invisible characters in Go quoted-string syntax.
-internal/store/sqlite/import_workflow_report.go:writeWorkflowConflicts:Fprintf:33e5c7d6f24c9e83 | title uses %q, which escapes control and invisible characters in Go quoted-string syntax.
+internal/store/sqlite/import_workflow_report.go:writeWorkflowConflict:Fprintf:33e5c7d6f24c9e83 | title uses %q, which escapes control and invisible characters in Go quoted-string syntax.
 cmd/mtix/relay_phase.go:runRelayPhase:Fprintf:7daed9048802c0c9 | tracked: MTIX-187.7.25
 cmd/mtix/sync.go:printAutoImportState:Printf:42e26db5d69953aa | tracked: MTIX-187.7.25
 cmd/mtix/sync_collisions.go:resolveConnectedCollision:Fprintf:73fcc02deae0285f | tracked: MTIX-187.7.25

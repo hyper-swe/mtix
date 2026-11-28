@@ -6,13 +6,45 @@ package main
 import (
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/hyper-swe/mtix/internal/hooks"
 	"github.com/hyper-swe/mtix/internal/oplocal"
 	"github.com/spf13/cobra"
 )
+
+func runHooksTrustStatus(approvals *hooks.Approvals) error {
+	decisions, err := approvals.CheckStrict()
+	if err != nil {
+		// CheckStrict can return decisions alongside an error. Do not print a partial list.
+		return err
+	}
+	trusted := make([]hooks.Decision, 0, len(decisions))
+	for _, decision := range decisions {
+		if decision.Trusted {
+			trusted = append(trusted, decision)
+		}
+	}
+	sort.Slice(trusted, func(i, j int) bool { return trusted[i].Name < trusted[j].Name })
+	if app.jsonOutput {
+		return newJSONOutputWriter(os.Stdout).WriteJSON(trusted)
+	}
+	var text strings.Builder
+	if len(trusted) == 0 {
+		text.WriteString("(no trusted hooks)\n")
+	}
+	for _, decision := range trusted {
+		fmt.Fprintf(&text, "%+q: trusted=true\n", decision.Name)
+	}
+	if _, err := io.WriteString(os.Stdout, text.String()); err != nil {
+		return fmt.Errorf("write trust status: %w", err)
+	}
+	return nil
+}
 
 func newHooksStatusCmd() *cobra.Command {
 	return &cobra.Command{Use: "status", Short: "Show operator-local state and per-hook approvals", Long: "Validate operator-local state and report its path, availability, per-hook approvals, legacy workspace records, and exact corrective commands. This command does not create state or grant hook approval.", Args: cobra.NoArgs, RunE: func(_ *cobra.Command, _ []string) error {

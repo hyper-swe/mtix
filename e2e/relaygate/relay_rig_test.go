@@ -99,11 +99,11 @@ func (g gateRelay) createNodes(t *testing.T, i, first, last int) {
 	}
 }
 
-// nodeIDs returns the sorted node ids stored on peer i, "TEST-n" for n in 1..count.
-func (g gateRelay) storedNodes(t *testing.T, i, count int) []string {
+// storedNodes returns the node ids stored on peer i, "TEST-n" for n in 1..last.
+func (g gateRelay) storedNodes(t *testing.T, i, last int) []string {
 	t.Helper()
 	var out []string
-	for seq := 1; seq <= count; seq++ {
+	for seq := 1; seq <= last; seq++ {
 		id := fmt.Sprintf("TEST-%d", seq)
 		n, err := g.sql(i).GetNode(t.Context(), id)
 		if err != nil {

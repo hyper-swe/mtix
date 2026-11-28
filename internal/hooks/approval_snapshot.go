@@ -24,17 +24,29 @@ type hookSnapshot struct {
 	digests map[string]string
 }
 
-func approvalSnapshot(dir string) (*hookSnapshot, error) {
+func readApprovalConfig(dir string) ([]byte, Config, error) {
 	raw, err := os.ReadFile(filepath.Join(dir, "hooks.yaml"))
 	if err != nil {
-		return nil, fmt.Errorf("read hooks: %w", err)
+		return nil, Config{}, fmt.Errorf("read hooks: %w", err)
 	}
 	var cfg Config
-	if parseErr := yaml.Unmarshal(raw, &cfg); parseErr != nil {
-		return nil, fmt.Errorf("parse hooks: %w", parseErr)
+	if err := yaml.Unmarshal(raw, &cfg); err != nil {
+		return nil, Config{}, fmt.Errorf("parse hooks.yaml: %w", err)
+	}
+	return raw, cfg, nil
+}
+
+func approvalSnapshot(dir string) (*hookSnapshot, error) {
+	raw, cfg, err := readApprovalConfig(dir)
+	if err != nil {
+		return nil, err
 	}
 	refused := envPassRefusals(cfg)
 	cfg, _ = validate(cfg)
+	return captureApprovalSnapshot(dir, raw, cfg, refused)
+}
+
+func captureApprovalSnapshot(dir string, raw []byte, cfg Config, refused map[string]error) (*hookSnapshot, error) {
 	legacy := sha256.New()
 	legacy.Write(raw)
 	snap := &hookSnapshot{errors: map[string]error{}, digests: map[string]string{}, stanzas: map[string]string{}}

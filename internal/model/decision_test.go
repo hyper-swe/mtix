@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -19,6 +20,19 @@ func decisionFixture(t *testing.T, name string) []byte {
 	b, err := os.ReadFile("../../docs/schemas/fixtures/" + name + ".json")
 	require.NoError(t, err)
 	return b
+}
+
+func TestDecisionModel_NonTestDependencies_ExcludeXText(t *testing.T) {
+	// Without -test, go list checks only the production package and its dependencies.
+	out, err := exec.CommandContext(t.Context(), "go", "list", "-deps", ".").CombinedOutput()
+	require.NoError(t, err, string(out))
+
+	const module = "golang.org/x/text"
+	for _, dep := range strings.Fields(string(out)) {
+		if dep == module || strings.HasPrefix(dep, module+"/") {
+			t.Errorf("internal/model must not depend on %s", dep)
+		}
+	}
 }
 
 func TestDecisionCanonical_TransportVectors(t *testing.T) {
@@ -82,6 +96,41 @@ func TestDecisionTTYSession_Vectors(t *testing.T) {
 	}
 }
 
+func TestDecisionFrontendAttestation(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		frontend string
+		valid    bool
+	}{
+		{"matching", "web", true},
+		{"mismatching", "desktop", false},
+		{"absent", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var answer map[string]any
+			require.NoError(t, json.Unmarshal(decisionFixture(t, "answer"), &answer))
+			answer["channel"] = "frontend:web"
+			if tc.frontend != "" {
+				answer["attestation"] = map[string]string{
+					"frontend":   tc.frontend,
+					"user":       "alice",
+					"clicked_at": "2025-01-01T00:00:00Z",
+				}
+			}
+			b, err := json.Marshal(answer)
+			require.NoError(t, err)
+
+			_, err = DecodeDecision(b, "user", true)
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, ErrInvalidInput)
+				require.ErrorContains(t, err, "decision attestation:")
+			}
+		})
+	}
+}
+
 func TestDecisionFallback_CapAndSuffix(t *testing.T) {
 	for _, q := range []string{"Proceed?", strings.Repeat("界", 2048)} {
 		b, err := DecisionFallback("d-12345678", "T-1", "asker", q)
@@ -132,6 +181,31 @@ func TestDecisionAuthorPath_ExcessPrecisionNumber_IsRefused(t *testing.T) {
 			_, _, err = canonicalDecision(in, false)
 			require.NoError(t, err, "ingest "+tc.token)
 		}
+	}
+}
+
+func TestDecisionAuthorPath_NumberWorkBounds(t *testing.T) {
+	// These spellings all represent exact values, so rounding, overflow, and
+	// underflow cannot mask a missing work bound.
+	for _, tc := range []struct {
+		name, token string
+		valid       bool
+	}{
+		{"400-byte token", "1." + strings.Repeat("0", 398), true},
+		{"401-byte token", "1." + strings.Repeat("0", 399), false},
+		{"exponent 400", "0e400", true},
+		{"exponent 401", "0e401", false},
+		{"exponent -400", "0e-400", true},
+		{"exponent -401", "0e-401", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := canonicalDecision([]byte(`{"n":`+tc.token+`}`), true)
+			if tc.valid {
+				require.NoError(t, err)
+			} else {
+				require.ErrorIs(t, err, ErrInvalidInput)
+			}
+		})
 	}
 }
 

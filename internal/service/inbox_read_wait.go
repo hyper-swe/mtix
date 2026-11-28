@@ -30,32 +30,48 @@ func (s *InboxService) InboxReadWait(ctx context.Context, agent string, timeout 
 	if s.reader == nil || timeout < 0 {
 		return InboxResult{}, wrapAPIOperation("wait inbox", model.ErrInvalidInput)
 	}
+	if s.policy.Eligibility == nil {
+		return s.waitUnpolicied(ctx, agent, timeout) // no policy: the store's own wait
+	}
+	defer s.registerParked(ctx, agent)() // parked for the whole policy wait, removed on every exit (MTIX-112.3)
+	return s.InboxReadUntil(ctx, agent, timeout, opt, func(res InboxResult) bool {
+		return len(res.Events) > 0 || len(res.HeldEvents) > 0
+	})
+}
+
+// InboxReadUntil is the parked wait loop shared by the policy wait and the
+// Claude hook waiter (MTIX-328, FR-19.4): it reads, asks done whether the result ends
+// the wait, and otherwise parks on the change token (see parkUntilChange)
+// instead of re-reading every tick. The timeout is measured from entry (0 = no
+// limit); an expired wait returns the last result with a nil error and the
+// caller's cancellation is an error.
+func (s *InboxService) InboxReadUntil(ctx context.Context, agent string, timeout time.Duration, opt InboxReadOptions, done func(InboxResult) bool) (InboxResult, error) {
 	waitCtx := ctx
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		waitCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	if s.policy.Eligibility == nil {
-		return s.waitUnpolicied(ctx, agent, timeout) // no policy: the store's own wait
-	}
-	defer s.registerParked(ctx, agent)() // parked for the whole policy wait, removed on every exit (MTIX-112.3)
 	ticker := time.NewTicker(inboxReadPollInterval)
 	defer ticker.Stop()
 	win := s.openWaitWindow(timeout)
-	readCtx := ctx // the first read follows the caller, later ones the wait budget
+	ws := &waitState{touchedAt: s.monoNow()}
 	last := emptyInboxResult()
-	for {
-		probe := s.probeInbox(readCtx, agent)
+	for n := 0; ; n++ {
+		readCtx := ctx // the first read follows the caller, later ones the wait budget
+		if n > 0 {
+			readCtx = s.parkedReadCtx(waitCtx, ws)
+		}
+		probe := s.probeInbox(readCtx, agent, ws)
 		res, err := s.InboxRead(readCtx, agent, opt)
 		if err != nil {
 			return s.waitReadFailed(ctx, waitCtx, last, err)
 		}
-		readCtx, last = waitCtx, res
-		if len(res.Events) > 0 || len(res.HeldEvents) > 0 {
+		last = res
+		if done(res) {
 			return res, nil
 		}
-		if done, werr := s.parkUntilChange(ctx, waitCtx, ticker.C, agent, probe, win); done {
+		if fin, werr := s.parkUntilChange(ctx, waitCtx, ticker.C, agent, probe, win, ws); fin {
 			if werr != nil {
 				return InboxResult{}, werr
 			}

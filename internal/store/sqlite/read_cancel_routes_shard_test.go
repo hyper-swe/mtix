@@ -154,7 +154,7 @@ func routeTestBodies(t *testing.T) map[string][]ast.Stmt {
 
 func TestReadRouteShards_RouteTests_AreBoundToTheirTableEntry(t *testing.T) {
 	require.Len(t, readRouteTests, 8, "the table must hold all eight routes")
-	require.Equal(t, 20000, readCancelRouteIterations)
+	require.Equal(t, 20000, readCancelStressIterations)
 	families := map[string]bool{}
 	for name, e := range readRouteTests {
 		require.Equal(t, 20000, e.iterations, "%s must sweep 20000 iterations", name)

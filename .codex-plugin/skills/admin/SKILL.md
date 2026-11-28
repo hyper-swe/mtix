@@ -915,7 +915,15 @@ mtix hooks trust -- 'wake'
 Standard input must be a real terminal. Pipes, redirected input, and agent
 session markers refuse new approvals. Existing validated approvals remain
 usable in agent sessions. Status commands report decisions without writing
-approval state; `mtix hooks trust <hook> --status` inspects one hook.
+approval state. `mtix hooks trust <hook> --status` inspects one hook;
+`mtix hooks trust --status` lists all currently trusted exec hooks. With a held
+sync lock, the list still prints in full and exits 0 if approvals can be read.
+The lock notice goes to stderr. With `--json` the top level is a bare array of
+trusted hook decisions, or, if auto-import was skipped, an object with the
+array under `data` plus `stale: true` and `stale_reason: "sync_lock_busy"`.
+If `.mtix/hooks.yaml` cannot be read or parsed, or any approval check fails,
+the command exits 1 with no list on stdout. A missing `hooks.yaml`
+is treated as an empty configuration, not an error.
 
 On the first eligible run outside an agent session, an untracked legacy
 `.mtix/hooks.trust` with a matching content hash can be converted once. A
@@ -1084,6 +1092,11 @@ name; its notice says to name that file as a pinned project script. A hook that 
 each hook, and `mtix doctor` shows the `hooks.programs` check: WARN with the
 exact fix lists the approved hooks that need review and any `hooks.yaml` load
 problem, PASS means none do (no row appears when there is no `hooks.yaml`).
+If the approval records cannot be read in full (for example one record is
+invalid), the row is WARN with the error text and the fix `mtix hooks status
+--json`, even when other hooks were read; it never reports PASS on a partial
+read. In `mtix doctor --json` the row keeps the same `status`, `detail` and
+`fix` fields.
 The notice is advisory: the hook still runs as written and launch behaviour
 does not change. To clear it, run the program through a pinned project script
 and approve the hook again.

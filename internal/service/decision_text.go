@@ -14,7 +14,7 @@ import (
 
 // combiningGraphemeJoiner is the code point x/text inserts when a run of
 // combining marks exceeds the stream-safe limit.
-const combiningGraphemeJoiner = "͏"
+const combiningGraphemeJoiner = "\u034f"
 
 // NormalizeDecisionText returns the comparison value of a decision answer's
 // free text: surrounding Unicode white space trimmed, then exact Unicode NFC

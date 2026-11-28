@@ -35,6 +35,7 @@ import (
 
 	"github.com/hyper-swe/mtix/internal/model"
 	"github.com/hyper-swe/mtix/internal/relay/peerid"
+	"github.com/hyper-swe/mtix/internal/relay/segment"
 	"github.com/hyper-swe/mtix/internal/store/sqlite"
 )
 
@@ -169,9 +170,9 @@ func ExportSnapshot(ctx context.Context, req ExportRequest) (ExportResult, error
 			ErrSnapshotTooLarge, len(body), maxBytes)
 	}
 
-	dir := filepath.Join(req.RelayDir, DirName)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return ExportResult{}, fmt.Errorf("create %s: %w", dir, err)
+	dir, err := segment.EnsureDir(req.RelayDir, DirName)
+	if err != nil {
+		return ExportResult{}, fmt.Errorf("export snapshot: %w", err)
 	}
 	path := filepath.Join(dir, snapshotName(req.CreatedAt.UTC(), req.ExportedBy))
 	if err := os.WriteFile(path, body, snapshotFileMode); err != nil {

@@ -17,7 +17,8 @@ import (
 )
 
 // ErrDecisionUnsupported distinguishes a future version or authority enum from
-// malformed v1 data. Callers retain the underlying comment in either case.
+// malformed v1 data under ADR-008 section 3.2. Callers retain the underlying
+// comment in either case.
 var ErrDecisionUnsupported = fmt.Errorf("unsupported decision: %w", ErrInvalidInput)
 
 // DecodedDecision retains the canonical digests and the raw duplicate-member signal.
@@ -29,8 +30,9 @@ type DecodedDecision struct {
 	Duplicates     bool
 }
 
-// DecodeDecision validates the decision member of a comment. Supply the journal
-// author for the answerer exclusion. Set authoring on the author and push paths.
+// DecodeDecision validates the decision member of a comment (MTIX-219.4).
+// Supply the journal author for the answerer exclusion. Set authoring on the
+// author and push paths.
 func DecodeDecision(raw []byte, author string, authoring bool) (DecodedDecision, error) {
 	canonical, duplicates, err := canonicalDecision(raw, authoring)
 	if err != nil {
@@ -166,13 +168,13 @@ func (r DecisionRequest) validate(author string) error {
 	return nil
 }
 
-// DecisionNormalizer yields the comparison value of an answer's free text. It
-// never changes the wire hash. The model stays free of Unicode tables: the
-// service layer supplies the trim-plus-NFC implementation.
+// DecisionNormalizer yields the comparison value of an answer's free text under
+// ADR-008 section 3.2. It never changes the wire hash. The model stays free of
+// Unicode tables: the service layer supplies the trim-plus-NFC implementation.
 type DecisionNormalizer func(string) (string, error)
 
-// ValidateDecisionAnswer checks request-dependent wire fields. Authorisation
-// and journal references are resolved separately by the service and fold.
+// ValidateDecisionAnswer checks request-dependent wire fields (MTIX-219.4).
+// Authorisation and journal references are resolved separately by the service and fold.
 // Text that cannot be normalized is ErrInvalidInput.
 func ValidateDecisionAnswer(request, answer DecisionPayload, normalize DecisionNormalizer) error {
 	if request.DecisionRequest == nil || answer.DecisionAnswer == nil {
@@ -259,7 +261,8 @@ func decisionInputValid(kind, input string) bool {
 	}
 }
 
-// DecisionFallback renders the legacy comment body with its complete response instructions.
+// DecisionFallback renders the legacy comment body with its complete response
+// instructions under MTIX-219.4.
 func DecisionFallback(shortID, ticket, asker, question string) (string, error) {
 	prefix := "DECISION NEEDED (" + shortID + "): "
 	suffix := "\nAnswer with `mtix decisions answer " + shortID + "` (needs mtix 0.7.0 or later), or reply with `mtix comment " + ticket + " --to " + asker + " \"…\"`."

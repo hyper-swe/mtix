@@ -91,39 +91,22 @@ func registerProgressTool(reg *ToolRegistry, svc *service.NodeService) {
 			return nil, fmt.Errorf("parse progress args: %w", err)
 		}
 
-		node, err := svc.GetNode(ctx, p.ID)
+		report, err := svc.GetProgressReport(ctx, p.ID)
 		if err != nil {
 			return nil, err
 		}
-
-		children, err := svc.GetDirectChildren(ctx, p.ID)
-		if err != nil {
-			return nil, err
-		}
-
-		type childProgress struct {
-			ID       string  `json:"id"`
-			Title    string  `json:"title"`
-			Status   string  `json:"status"`
-			Progress float64 `json:"progress"`
-		}
-
-		childList := make([]childProgress, 0, len(children))
-		for _, c := range children {
-			childList = append(childList, childProgress{
-				ID:       c.ID,
-				Title:    c.Title,
-				Status:   string(c.Status),
-				Progress: c.Progress,
-			})
-		}
-
 		result := map[string]any{
-			"id":       node.ID,
-			"title":    node.Title,
-			"progress": node.Progress,
-			"status":   string(node.Status),
-			"children": childList,
+			"id":                          report.ID,
+			"title":                       report.Title,
+			"progress":                    report.Progress,
+			"status":                      string(report.Status),
+			"done_count":                  report.DoneCount,
+			"total_count":                 report.TotalCount,
+			"excluded_count":              report.ExcludedCount,
+			"invalidated_count":           report.InvalidatedCount,
+			"has_invalidated_descendants": report.HasInvalidatedDescendants,
+			"all_children_excluded":       report.AllChildrenExcluded,
+			"children":                    report.Children,
 		}
 
 		data, _ := json.MarshalIndent(result, "", "  ")

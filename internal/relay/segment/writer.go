@@ -135,7 +135,7 @@ func NewWriter(cfg WriterConfig) (*Writer, error) {
 		}
 		return w, nil
 	}
-	if err := w.openNew(tail.segmentNo, tail.nextRS); err != nil {
+	if err := w.openNew(tail.segmentNo, tail.nextRS, tail.replace); err != nil {
 		return nil, err
 	}
 	return w, nil
@@ -164,6 +164,7 @@ type tailState struct {
 	records   int64  // set when open
 	segmentNo uint64 // the segment to open or continue
 	nextRS    uint64 // the relay sequence the next record carries
+	replace   bool   // segmentNo names a header-incomplete file to overwrite
 }
 
 // inspectTail reads this peer's newest segment and decides whether to
@@ -173,6 +174,20 @@ func (w *Writer) inspectTail(cfg WriterConfig) (tailState, error) {
 	if err != nil {
 		return tailState{}, err
 	}
+	return w.tailOf(cfg, segs, true)
+}
+
+// tailOf decides from segs, whose last element is the newest segment.
+//
+// A newest segment whose header is incomplete was caught by a kill
+// between its creation and its header write (FR-21 §5.5). It holds no
+// record, so nothing is lost by replacing it: the decision is taken from
+// the segment before it, and the stream continues under the very same
+// segment number. Rotating past it instead would leave a sealed short
+// header, which readers rightly treat as corruption (MTIX-288). Only the
+// newest segment qualifies — allowShort is false for the one before it,
+// so two short headers, or a short header with a successor, stay refused.
+func (w *Writer) tailOf(cfg WriterConfig, segs []File, allowShort bool) (tailState, error) {
 	if len(segs) == 0 {
 		return w.freshStream(cfg)
 	}
@@ -182,6 +197,14 @@ func (w *Writer) inspectTail(cfg WriterConfig) (tailState, error) {
 		Key:          cfg.Key,
 		ExpectPeerID: cfg.PeerID,
 	})
+	if allowShort && err != nil && errors.Is(err, ErrIncomplete) && crashedHeader(newest.Path) {
+		tail, prevErr := w.tailOf(cfg, segs[:len(segs)-1], false)
+		if prevErr != nil {
+			return tailState{}, prevErr
+		}
+		tail.open, tail.replace, tail.segmentNo = false, true, newest.No
+		return tail, nil
+	}
 	if err != nil {
 		// A header this peer cannot read leaves no safe continuation
 		// to infer, and guessing one would publish under relay
@@ -214,6 +237,13 @@ func (w *Writer) inspectTail(cfg WriterConfig) (tailState, error) {
 		segmentNo: newest.No,
 		nextRS:    resumeRS,
 	}, nil
+}
+
+// crashedHeader reports whether the newest segment is a crash leftover; a
+// read fault answers false so the original verdict is reported.
+func crashedHeader(path string) bool {
+	ok, err := IsCrashedHeader(path)
+	return err == nil && ok
 }
 
 // freshStream decides where a peer with no segments starts.
@@ -268,7 +298,10 @@ func (w *Writer) reopen(tail tailState) error {
 // FR-21 does not trust the medium to make it atomic, and the design
 // removes the need for cross-host mutual exclusion rather than
 // attempting it. It still catches the local mistakes it can.
-func (w *Writer) openNew(segmentNo, firstRS uint64) error {
+//
+// With replace set, the file is a header-incomplete leftover of a crashed
+// creation and is overwritten from its first byte; it holds no record.
+func (w *Writer) openNew(segmentNo, firstRS uint64, replace bool) error {
 	h := w.header
 	h.SegmentNo = segmentNo
 	h.FirstRS = firstRS
@@ -277,7 +310,11 @@ func (w *Writer) openNew(segmentNo, firstRS uint64) error {
 		return err
 	}
 	path := filepath.Join(w.dir, FileName(segmentNo))
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, segmentFileMode) // #nosec G304 -- name is rendered by FileName from a validated segment number
+	flags := os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	if replace {
+		flags = os.O_WRONLY | os.O_TRUNC
+	}
+	f, err := os.OpenFile(path, flags, segmentFileMode) // #nosec G304 -- name is rendered by FileName from a validated segment number
 	if err != nil {
 		return fmt.Errorf("create segment %s: %w", path, err)
 	}
@@ -368,7 +405,7 @@ func (w *Writer) Rotate() error {
 	if err := f.Close(); err != nil {
 		return w.fail(fmt.Errorf("close segment %d: %w", w.header.SegmentNo, err))
 	}
-	if err := w.openNew(w.header.SegmentNo+1, w.nextRS); err != nil {
+	if err := w.openNew(w.header.SegmentNo+1, w.nextRS, false); err != nil {
 		return w.fail(err)
 	}
 	return nil

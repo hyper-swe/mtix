@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/hyper-swe/mtix/internal/model"
+	"github.com/hyper-swe/mtix/internal/service"
 	"github.com/hyper-swe/mtix/internal/store"
 )
 
@@ -25,6 +27,7 @@ func newUpdateCmd() *cobra.Command {
 		labels      string
 		assignee    string
 		issueType   string
+		auth        cliUpdateAuth
 	)
 
 	cmd := &cobra.Command{
@@ -40,7 +43,7 @@ func newUpdateCmd() *cobra.Command {
 				kind := model.IssueType(issueType)
 				updates.IssueType = &kind
 			}
-			return applyCLIUpdate(args[0], updates)
+			return applyCLIUpdate(args[0], updates, auth)
 		}),
 	}
 
@@ -52,8 +55,17 @@ func newUpdateCmd() *cobra.Command {
 	cmd.Flags().IntVar(&priority, "priority", 0, "New priority (1-5)")
 	cmd.Flags().StringVar(&labels, "labels", "", "New labels (comma-separated)")
 	cmd.Flags().StringVar(&assignee, "assignee", "", "New assignee; empty clears, omission preserves; nonempty raw IDs: max 64 UTF-8 bytes, no whitespace-only, control or invisible format characters")
+	cmd.Flags().StringVar(&auth.agent, "agent", "", "Acting agent ID for an assignee change (default: MTIX_AUTHOR_ID, then the author_id config key)")
+	cmd.Flags().BoolVar(&auth.force, "force", false, "Clear or change an assignee claimed by another agent (needs --reason; recorded in the activity log)")
+	cmd.Flags().StringVar(&auth.reason, "reason", "", "Reason for a forced assignee change")
 
 	return cmd
+}
+
+// cliUpdateAuth carries who changes an assignee and whether it is forced (MTIX-325).
+type cliUpdateAuth struct {
+	agent, reason string
+	force         bool
 }
 
 // cliUpdateInput carries the legacy CLI update values without changing wire APIs.
@@ -101,14 +113,14 @@ func buildCLIUpdate(in cliUpdateInput) *store.NodeUpdate {
 	return updates
 }
 
-func applyCLIUpdate(id string, updates *store.NodeUpdate) error {
+func applyCLIUpdate(id string, updates *store.NodeUpdate, auth ...cliUpdateAuth) error {
 	if app.nodeSvc == nil {
 		return fmt.Errorf("not in an mtix project")
 	}
 	if updates.IssueType == nil && updates.Title == nil && updates.Description == nil && updates.Prompt == nil && updates.Acceptance == nil && updates.Priority == nil && updates.Labels == nil && updates.Assignee == nil {
 		return fmt.Errorf("no fields to update (use flags like --title, --priority)")
 	}
-	ctx := mutationContext()
+	ctx := updateContext(mutationContext(), auth)
 	if err := app.nodeSvc.UpdateNode(ctx, id, updates); err != nil {
 		return err
 	}
@@ -128,4 +140,18 @@ func splitAndTrim(s string) []string {
 		parts[i] = strings.TrimSpace(parts[i])
 	}
 	return parts
+}
+
+// updateContext attaches the acting identity: --agent, else the configured
+// author ID. With neither, the service refuses an assignee change on a claim
+// held by someone else (MTIX-325).
+func updateContext(ctx context.Context, auth []cliUpdateAuth) context.Context {
+	var a cliUpdateAuth
+	if len(auth) > 0 {
+		a = auth[0]
+	}
+	if a.agent == "" {
+		a.agent = configuredAuthorID()
+	}
+	return service.WithUpdateIdentity(ctx, service.UpdateIdentity{Actor: a.agent, Force: a.force, Reason: a.reason})
 }

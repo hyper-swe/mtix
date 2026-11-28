@@ -4,6 +4,7 @@
 package service
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -31,6 +32,9 @@ type CreateNodeRequest struct {
 	Priority    model.Priority  `json:"priority,omitempty"`
 	Creator     string          `json:"creator"`
 	DeferUntil  *time.Time      `json:"defer_until,omitempty"`
+
+	// CreatorFallback is transport attribution when no author was supplied (FR-11.2a).
+	CreatorFallback string `json:"-"`
 }
 
 // NodeService orchestrates node business logic per MTIX-3.1.1.
@@ -139,10 +143,10 @@ func (svc *NodeService) CreateNodeInTx(ctx context.Context, req *CreateNodeReque
 		return nil, err
 	}
 
-	if err := svc.persistCreatedNode(ctx, node, req.Assignee, inTx); err != nil {
+	if err := svc.persistCreatedNode(ctx, node, req, inTx); err != nil {
 		return nil, fmt.Errorf("create node: %w", err)
 	}
-	svc.broadcastCreatedNode(ctx, node, req.Creator)
+	svc.broadcastCreatedNode(ctx, node)
 
 	// Eagerly settle against the hub in the BACKGROUND (ADR-003 §4): the create
 	// call must not block on the network. An offline node simply stays
@@ -152,20 +156,25 @@ func (svc *NodeService) CreateNodeInTx(ctx context.Context, req *CreateNodeReque
 	return node, nil
 }
 
+// canInheritClaim keeps audit-only transport defaults out of the transactional assignee match.
+func (svc *NodeService) canInheritClaim(creator string) bool {
+	return creator != "" && svc.config.AutoClaim()
+}
+
 // persistCreatedNode allocates and optionally claims atomically (FR-2.7/FR-11.2a).
-func (svc *NodeService) persistCreatedNode(ctx context.Context, node *model.Node, assignee string,
+func (svc *NodeService) persistCreatedNode(ctx context.Context, node *model.Node, req *CreateNodeRequest,
 	inTx func(ctx context.Context, tx *sql.Tx, node *model.Node) error) error {
 	return svc.store.CreateNodeAllocated(ctx, node, store.CreateNodeOptions{
-		Assignee:            assignee,
-		ClaimParentAssignee: svc.config.AutoClaim(),
+		Assignee:            req.Assignee,
+		ClaimParentAssignee: svc.canInheritClaim(req.Creator),
 		Provisional:         node.ParentID != "" && svc.settlement.Enabled() && !svc.settlement.Reachable(),
 		InTx:                inTx,
 	})
 }
 
 // broadcastCreatedNode publishes creation and its committed initial claim in order.
-func (svc *NodeService) broadcastCreatedNode(ctx context.Context, node *model.Node, creator string) {
-	svc.broadcastEvent(ctx, EventNodeCreated, node.ID, creator, nil)
+func (svc *NodeService) broadcastCreatedNode(ctx context.Context, node *model.Node) {
+	svc.broadcastEvent(ctx, EventNodeCreated, node.ID, node.Creator, nil)
 	if node.Assignee != "" {
 		svc.broadcastEvent(ctx, EventNodeClaimed, node.ID, node.Assignee, nil)
 	}
@@ -207,6 +216,9 @@ func (svc *NodeService) UpdateNode(ctx context.Context, id string, updates *stor
 		if err := model.ValidateIssueType(*updates.IssueType); err != nil {
 			return fmt.Errorf("update issue type: %w", err)
 		}
+	}
+	if err := svc.guardAssigneeChange(ctx, id, updates); err != nil {
+		return err
 	}
 	// Validate title length if being updated.
 	if updates.Title != nil {
@@ -359,7 +371,7 @@ func (svc *NodeService) buildNode(
 		Labels:      req.Labels,
 		Priority:    priority,
 		Status:      model.StatusOpen,
-		Creator:     req.Creator,
+		Creator:     cmp.Or(req.Creator, req.CreatorFallback),
 		Weight:      1.0,
 		CreatedAt:   now,
 		UpdatedAt:   now,

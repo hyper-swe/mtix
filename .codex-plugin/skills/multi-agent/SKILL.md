@@ -5,7 +5,7 @@ description: Coordinate multiple agents working on mtix tasks. Manage claiming, 
 
 # Multi-Agent Coordination with mtix
 
-Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled: the child is claimed for the parent's assignee only when the creator is that assignee, otherwise it is created open and unassigned. The creator is your author identity (MTIX_AUTHOR_ID, else the author_id config key, else cli), and it must equal the --agent you used to claim the parent; set MTIX_AUTHOR_ID to that agent id. If you claim with --agent X while MTIX_AUTHOR_ID is unset, your creator is cli, so the children come out open and unassigned; set MTIX_AUTHOR_ID to the same id you pass to --agent. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
+Nonempty agent IDs and assignees must fit in 64 UTF-8 bytes and must not be whitespace-only or contain control or invisible format characters (including bidi controls and zero-width characters). Accepted raw values are preserved unchanged. An empty create assignee means no explicit assignment: parent auto-claim still applies when enabled: the child is claimed for the parent's assignee only when the creator is that assignee, otherwise it is created open and unassigned. Set `MTIX_AUTHOR_ID` or the `author_id` config key to the agent that claimed the parent to inherit its claim on create or decompose. With no supplied or configured author, the child stays open and unassigned even if the recorded creator (`cli` on the CLI or `mcp` on MCP) matches the parent’s assignee. A present empty update assignee clears the assignment; omission preserves it. Claim requires an agent ID. Unclaim acts as the given agent. The CLI uses `--agent`, else `MTIX_AUTHOR_ID`, else the `author_id` config key; MCP uses `agent_id`, with the same fallbacks; REST requires the `X-Agent-ID` header and returns 400 without it; gRPC has no fallback and needs the agent in the request. It is refused when no agent is set. Only the assignee can release a claim unless force is given. This check is a coordination guard on a self-asserted identity (any caller can name the assignee), not authorization. These checks apply to existing CLI, REST, gRPC and MCP inputs; they do not rewrite historical imported or synchronized identities.
 
 ## Health checks
 
@@ -283,6 +283,7 @@ Verify with `mtix doctor --json`: the `wake.ledger` row is `warn` when any event
 
 ## Waiting for inbox events
 
+Holding a wait open is cheap (MTIX-326): while the database is unchanged a parked wait runs no inbox query, only a file check about four times a second; an empty inbox gets a safety read about once a minute, and a wait holding events the wake policy has not released keeps a full read every 2 seconds (grants, denies and budget windows can change outside the database). A new addressed event still wakes it within a second or two.
 An optional background park is `mtix inbox --agent <agent-id> --wait --timeout 0`:
 zero has no limit, and already pending events return even if the initial
 database lookup outlasts a positive timeout. That lookup remains interruptible
@@ -297,8 +298,12 @@ exits 5 within about one tick of the deadline once the machine is awake. With a
 wake policy, a parked wait is cheap: each tick only counts the inbox, and the
 full read with the wake policy runs when the counts change and at least every 2
 seconds, so a change in hub state, permissions or budget window is noticed
-within about 2 seconds. Without a wake policy, each tick runs the plain inbox
-list query.
+within about 2 seconds. Without a wake policy the wait parks the same way (MTIX-328): a tick stats
+the database files and runs the plain inbox list query only after a commit or at
+the one-minute safety read, and the session touch is committed at most every 30
+seconds. The Claude hook waiter (`mtix hook claude-session`) parks the same way,
+but while delivered or held mail is still unacknowledged it re-reads every 2
+seconds instead of once a minute.
 Events mean exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM
 means exit 7.
 A negative timeout is refused. Keep foreground waits within the harness's tool
@@ -520,7 +525,7 @@ mtix stale          # Tasks with inactive agents
 
 - Check task status before claiming: `mtix show <id>`
 - Never modify tasks claimed by other agents
-- Release only your own claim: `mtix unclaim <id> --agent <agent-name> --reason "..."`. mtix refuses to release another agent's claim and names the current assignee; add `--force` only when that agent is stale or gone, and the activity log records you, the previous assignee and the reason
+- Release only your own claim: `mtix unclaim <id> --agent <agent-name> --reason "..."`. mtix refuses to release another agent's claim and names the current assignee; add `--force` only when that agent is stale or gone, and the activity log records you, the previous assignee and the reason. `mtix update --assignee` follows the same rule: clearing or changing another agent's assignee is refused with `ErrAlreadyClaimed` unless you pass `--force --reason` (the activity log records you, the previous assignee and the reason). The ownership check and the write are one atomic step: if another agent claims or reassigns the node in between, your update or unclaim is refused with `ErrAlreadyClaimed` and changes nothing; re-read the node and decide again.
 - Use comments to coordinate: `mtix comment <id> "message"`
 
 ## Reference Wake Routine

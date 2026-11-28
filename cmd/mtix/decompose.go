@@ -110,7 +110,7 @@ func runDecomposeChildren(parentID string, children []service.DecomposeInput) er
 	}
 
 	ctx := mutationContext()
-	ids, err := app.nodeSvc.Decompose(ctx, parentID, children, app.authorID)
+	ids, err := app.nodeSvc.DecomposeWithCreatorFallback(ctx, parentID, children, configuredAuthorID(), app.authorID)
 	if err != nil {
 		return err
 	}

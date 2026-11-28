@@ -6,7 +6,6 @@ package sqlite
 import (
 	"context"
 	"fmt"
-	"strings"
 )
 
 // ImportUIDAdoption is one local task that a merge import gives the file's
@@ -105,30 +104,4 @@ func (s *Store) loadLocalIdentities(ctx context.Context) ([]localIdentity, error
 		return nil, fmt.Errorf("read the local nodes for the uid adoptions: %w", err)
 	}
 	return nodes, nil
-}
-
-// writeUIDAdoptions renders the uid adoptions of an import report
-// (MTIX-95.31.6): each one with the id, both uids and both titles, and,
-// when the titles of one differ, that the two may be different tasks and
-// where the local one is kept.
-func writeUIDAdoptions(b *strings.Builder, adoptions []ImportUIDAdoption) {
-	if len(adoptions) == 0 {
-		return
-	}
-	fmt.Fprintf(b, "  uids adopted from the file (the same task under another uid): %d\n", len(adoptions))
-	titlesDiffer := false
-	for _, a := range adoptions {
-		local := a.LocalUID
-		if local == "" {
-			local = "(new)" // the merge gave the task a backfill uid first (stampMissingUIDs)
-		}
-		fmt.Fprintf(b, "    - %s local uid=%s -> file uid=%s (local %q, file %q)\n",
-			a.ID, local, a.FileUID, a.LocalTitle, a.FileTitle)
-		titlesDiffer = titlesDiffer || a.LocalTitle != a.FileTitle
-	}
-	if titlesDiffer {
-		b.WriteString("  a task above whose titles differ may be two different tasks created in the same second " +
-			"whose create event at least one clone's event log lacks (for example, created before 0.2): the " +
-			"merge keeps the file's under the id, and the backup taken before the merge holds the local one\n")
-	}
 }

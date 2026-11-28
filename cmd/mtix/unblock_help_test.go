@@ -196,20 +196,26 @@ func TestUnblockHelp_CLIReferenceMatchesActualGenerator(t *testing.T) {
 
 func TestUnblockCmd_StillBlockedGuidanceResolvesRealCommand(t *testing.T) {
 	initTestApp(t)
-	for _, title := range []string{"blocked", "blocker"} {
+	for _, title := range []string{"blocker", "first dependent", "second dependent"} {
 		require.NoError(t, runCreate(title, "", "", 3, "", "", "", "", ""))
 	}
-	require.NoError(t, runDepAdd("TEST-1", "TEST-2", "blocks"))
-	var err error
-	output := captureStdout(t, func() { _, err = executeCmd(newUnblockCmd(), "TEST-2") })
-	require.NoError(t, err)
-	require.Contains(t, output, "still blocked")
-	require.Contains(t, output, "mtix dep show TEST-2")
-	paths := commandReferencePaths(output)
-	require.Len(t, paths, 1)
-	// The concrete ID is an argument, so resolve the two-word command path.
-	require.Equal(t, []string{"dep", "show", "TEST-2"}, paths[0])
-	require.True(t, resolvesCompleteCommandPath(paths[0][:2]))
+	for _, id := range []string{"TEST-2", "TEST-3"} {
+		t.Run(id, func(t *testing.T) {
+			require.NoError(t, runDepAdd("TEST-1", id, "blocks"))
+			var err error
+			output := captureStdout(t, func() { _, err = executeCmd(newUnblockCmd(), id) })
+			require.NoError(t, err)
+			require.Contains(t, output, id+" is still blocked")
+			hints := regexp.MustCompile("`([^`]+)`").FindAllStringSubmatch(output, -1)
+			require.Len(t, hints, 1)
+			hint := hints[0][1]
+			require.Equal(t, "mtix dep show "+id, hint)
+			cmd, operands, err := newRootCmd().Find(strings.Fields(hint)[1:])
+			require.NoError(t, err)
+			require.Equal(t, "mtix dep show", cmd.CommandPath())
+			require.Equal(t, []string{id}, operands)
+		})
+	}
 }
 
 // Ordinary matching quote forms must retain every referenced command, including

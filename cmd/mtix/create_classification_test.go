@@ -42,6 +42,29 @@ func TestCreateCLI_ClassificationAndAssignment(t *testing.T) {
 		})
 	}
 }
+func TestShowCLI_DistinguishesNodeTypeFromIssueType(t *testing.T) {
+	initTestApp(t)
+	create := newCreateCmd()
+	create.SetArgs([]string{"Classified root", "--type", "bug", "--prompt", "Report a regression", "--acceptance", "The regression is fixed"})
+	captureStdout(t, func() { require.NoError(t, create.Execute()) })
+
+	show := func() string {
+		cmd := newShowCmd()
+		cmd.SetArgs([]string{"TEST-1"})
+		return captureStdout(t, func() { require.NoError(t, cmd.Execute()) })
+	}
+	text := show()
+	assert.Regexp(t, `(?m)^Node type: +epic$`, text)
+	assert.Regexp(t, `(?m)^Issue type: +bug$`, text)
+	assert.NotRegexp(t, `(?m)^Type:`, text)
+
+	app.jsonOutput = true
+	var node map[string]any
+	require.NoError(t, json.Unmarshal([]byte(show()), &node))
+	assert.Equal(t, "epic", node["node_type"])
+	assert.Equal(t, "bug", node["issue_type"])
+}
+
 func TestCreateCLI_InvalidIssueType_ReturnsAllowedList(t *testing.T) {
 	initTestApp(t)
 	err := runCreate("Bad classification", "", "epic", 3, "", "", "", "", "worker")

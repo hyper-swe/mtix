@@ -15,12 +15,15 @@ import (
 // pins the table and that every route test makes exactly this call.
 func sweepRouteByTestName(t *testing.T) {
 	t.Helper()
+	armReadCancelDeadline(t, readCancelBudget)
 	entry, ok := readRouteTests[t.Name()]
 	require.True(t, ok, "%s has no entry in readRouteTests", t.Name())
-	sweepCancelledFamily(t, entry.family, entry.iterations)
+	iterations := readCancelRouteIterations(entry.iterations)
+	t.Logf("%s: %d iterations", entry.family, iterations)
+	sweepCancelledFamily(t, entry.family, iterations)
 }
 
-// One top-level test per route family, each with the full
+// One top-level test per route family, each with the selected
 // readCancelRouteIterations sweep, so the CI shard hash (scripts/ci-go-shards.sh,
 // djb2 of the test name) can place their cost on chosen SQLite shards instead of
 // putting all of it in one: two on each of the four shards, by measured route

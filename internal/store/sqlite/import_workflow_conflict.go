@@ -80,20 +80,26 @@ type WorkflowConflict struct {
 // conflicts; it lists every conflicting task, with the choice made for each
 // one already settled (MTIX-95.31.13).
 type WorkflowConflictError struct {
-	Conflicts []WorkflowConflict
+	// Conflicts lists the tasks; nil for the error of a staged plan
+	// (PlanImportStaged), which keeps them in its report and counts them.
+	Conflicts   []WorkflowConflict
+	total, open int
 }
 
 // Error names how many tasks conflict and how to settle them.
 func (e *WorkflowConflictError) Error() string {
-	open := 0
+	total, open := len(e.Conflicts), 0
 	for i := range e.Conflicts {
 		if e.Conflicts[i].Choice == "" {
 			open++
 		}
 	}
+	if e.Conflicts == nil { // a staged plan keeps the conflicts on disk and the counts here
+		total, open = e.total, e.open
+	}
 	return fmt.Sprintf("nothing was imported: %d task(s) have a status, assignee, agent state, wake time or deletion state that "+
 		"differs from the file's (%d still need a choice); rerun with --prefer theirs|ours, or "+
-		"--theirs ID,ID and --ours ID,ID", len(e.Conflicts), open)
+		"--theirs ID,ID and --ours ID,ID", total, open)
 }
 
 // Unwrap lets errors.Is match ErrWorkflowConflict and model.ErrConflict.

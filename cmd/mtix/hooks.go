@@ -88,9 +88,14 @@ func runHooksLog(limit int) error {
 func newHooksTrustCmd() *cobra.Command {
 	var status, program bool
 	cmd := &cobra.Command{
-		Use: "trust <hook>", Short: "Review and approve one exec hook on this host",
-		Long: "Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. With --program, instead approve the hook's program for strict program mode (see mtix hooks strict); the approval is bound to the symlink-resolved program path, the hook and the project. Use hooks status --json for corrective guidance.",
-		Args: cobra.ExactArgs(1),
+		Use: "trust [hook]", Short: "Review or inspect exec hook approvals on this host",
+		Long: "Review one configured exec hook and save its host-specific approval outside the project. Requires terminal stdin outside an agent session. Editing that hook or its project scripts requires another review. With --program, instead approve the hook's program for strict program mode (see mtix hooks strict); the approval is bound to the symlink-resolved program path, the hook and the project. Use --status without a hook name to list all trusted exec hooks, or with a name to inspect one. Use hooks status --json for corrective guidance.",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if status && !program {
+				return cobra.MaximumNArgs(1)(cmd, args)
+			}
+			return cobra.ExactArgs(1)(cmd, args)
+		},
 		RunE: func(_ *cobra.Command, args []string) error {
 			if app.mtixDir == "" {
 				return fmt.Errorf("not in an mtix project")
@@ -99,13 +104,16 @@ func newHooksTrustCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if status && len(args) == 0 {
+				return runHooksTrustStatus(approvals)
+			}
 			if program {
 				return runHooksTrustProgram(approvals, args[0], status, hookStdinTerminal())
 			}
 			return runHooksTrustInput(approvals, args[0], status, hookStdinTerminal())
 		},
 	}
-	cmd.Flags().BoolVar(&status, "status", false, "Show this hook's approval without changing it")
+	cmd.Flags().BoolVar(&status, "status", false, "Show one hook's approval, or list all trusted hooks if no name is given")
 	cmd.Flags().BoolVar(&program, "program", false, "Approve the hook's program for strict program mode")
 	return cmd
 }

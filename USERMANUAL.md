@@ -1752,7 +1752,7 @@ hook command; it is not meant to be typed by hand, except to re-run a failed hoo
   them, so it does not clear by itself: judge it by whether the counts grow between `mtix doctor` runs.
 - If the wake is won but a later step fails (a further claim, or recording the delivered outcome), the envelope is still
   delivered and the failure is recorded for doctor, so a claimed event is never silently lost.
-- The waiter is a local wait on the board's inbox. It parks on the database change marker (a read only after a commit, and a safety read about once a minute, MTIX-328) and, like `mtix inbox --wait`,
+- The waiter is a local wait on the board's inbox. It parks on the database change marker (a read only after a commit, and a safety read about once a minute, MTIX-328; while delivered or held mail is still unacknowledged it re-reads every 2 seconds) and, like `mtix inbox --wait`,
   joins the board listener for the length of the wait: it starts the listener if none runs, and on a board that syncs
   through a relay the listener (and so its hub connection) stays up while the waiter lives. The waiter renews its own
   lease every 5 minutes, and it exits 0 after `--timeout` seconds in total (default 3600, `0` = until woken); the next
@@ -3823,7 +3823,9 @@ seconds, so a change in hub state, permissions or budget window is noticed
 within about 2 seconds. Without a wake policy the wait parks the same way (MTIX-328): a tick stats
 the database files and runs the plain inbox list query only after a commit or at
 the one-minute safety read, and the session touch is committed at most every 30
-seconds. The Claude hook waiter (`mtix hook claude-session`) parks the same way.
+seconds. The Claude hook waiter (`mtix hook claude-session`) parks the same way,
+but while delivered or held mail is still unacknowledged it re-reads every 2
+seconds instead of once a minute.
 Events mean exit 0; an empty positive timeout means exit 5; SIGINT or SIGTERM
 means exit 7.
 A negative timeout is refused. Keep foreground waits within the harness's tool

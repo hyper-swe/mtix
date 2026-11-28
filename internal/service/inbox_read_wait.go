@@ -40,7 +40,7 @@ func (s *InboxService) InboxReadWait(ctx context.Context, agent string, timeout 
 }
 
 // InboxReadUntil is the parked wait loop shared by the policy wait and the
-// Claude hook waiter (MTIX-328): it reads, asks done whether the result ends
+// Claude hook waiter (MTIX-328, FR-19.4): it reads, asks done whether the result ends
 // the wait, and otherwise parks on the change token (see parkUntilChange)
 // instead of re-reading every tick. The timeout is measured from entry (0 = no
 // limit); an expired wait returns the last result with a nil error and the

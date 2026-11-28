@@ -168,13 +168,7 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 	park := &waitPark{touchedAt: s.waitMonoNow()} // the entry stamp and first read touch
 	queryCtx := ctx
 	for {
-		// The token is taken BEFORE the query, so a commit landing between the
-		// two shows as a change on the next tick (MTIX-328).
-		tok, tokOK := s.waitToken(queryCtx, park)
-		readAt := s.waitMonoNow()
-		if s.onWaitRead != nil {
-			s.onWaitRead()
-		}
+		s.beginWaitRead(queryCtx, park) // the token is taken BEFORE the query (MTIX-328)
 		events, err := s.inboxList(queryCtx, agentID)
 		if err != nil {
 			return nil, inboxWaitError(ctx, queryCtx, err)
@@ -184,7 +178,7 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 		}
 		// MTIX-245: the context timer stops while the system sleeps, so the
 		// timeout is also checked on both clocks every tick.
-		spent, perr := s.parkUntilMoved(waitCtx, ticker.C, win, park, tok, tokOK, readAt)
+		spent, perr := s.parkUntilMoved(waitCtx, ticker.C, win, park)
 		if perr != nil {
 			return nil, inboxWaitError(ctx, waitCtx, perr)
 		}

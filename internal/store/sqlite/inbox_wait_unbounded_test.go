@@ -180,16 +180,24 @@ func TestInboxWait_NegativeTimeout_Refused(t *testing.T) {
 // touch, every 250 ms): the old test required five polls 250 ms apart as proof
 // of "no busy loop". An idle wait now parks on the database change token, so
 // the stronger no-spin property is that it runs NO query after the entry read
-// until the safety floor; the 250 ms tick only stats three files.
+// until the safety floor; the 250 ms tick only stats three files. The tick
+// pacing is pinned too (FR-19.4): the change-token reads are bounded per elapsed
+// tick, so a wait that dropped its tick and spun on stat would fail.
 func TestInboxWait_TimeoutZero_NoBusyLoop(t *testing.T) {
 	s := inboxWaitStore(t)
 	reads := countWaitReads(s)
+	tokenReads := countTokenStats(s)
 	ctx := WithSessionTouch(t.Context(), SessionTouch{HostID: "test-host", UID: "test-user", Handle: "test-session"})
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	started := time.Now()
 	out := startInboxWait(ctx, t, s, 0)
 	time.Sleep(1300 * time.Millisecond) // five old polls
+	elapsed := time.Since(started)
 	assert.EqualValues(t, 1, reads.Load(), "an unbounded idle wait queries once, at entry")
+	ticks := int64(elapsed / inboxPollInterval)
+	assert.GreaterOrEqual(t, tokenReads.Load(), int64(3), "the wait checks the token about once per tick")
+	assert.LessOrEqual(t, tokenReads.Load(), ticks+2, "one token read per elapsed tick plus the entry read: no stat spin")
 	select {
 	case result := <-out:
 		t.Fatalf("unbounded wait returned before cancellation: %+v", result)

@@ -45,6 +45,7 @@ type Store struct {
 	waitClock       func() time.Time              // wall clock for the inbox wait deadline; nil uses the system clock (MTIX-245)
 	waitFloor       time.Duration                 // idle safety-read floor of InboxWait; 0 uses inboxWaitSafetyFloor (MTIX-328)
 	onWaitRead      func()                        // test seam: called per parked InboxWait query (MTIX-328)
+	tokenStat       tokenStatFunc                 // test seam: the stat of the inbox change token; nil uses os.Stat (MTIX-328)
 	waitMono        func() time.Time              // monotonic clock for the inbox wait deadline; nil uses time.Now (MTIX-245)
 	waitSeq         atomic.Int64                  // per-process token that gives each inbox wait its own waiter row (MTIX-112.3)
 	startTimeFn     func(pid int) (string, error) // process start-time reader for waiter liveness; nil uses procinfo.StartTime (MTIX-112.3)

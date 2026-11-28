@@ -198,6 +198,9 @@ func claudeHookWait(ctx context.Context, agent string, timeout time.Duration, sk
 	})
 	if err != nil {
 		if ctx.Err() != nil {
+			// A signal ends the wait quietly but still reports the held count, as
+			// the 250 ms loop did before MTIX-328 (FR-19.4).
+			writeInboxHeldNotice(os.Stderr, service.InboxHeld{Count: held})
 			return nil, nil
 		}
 		return nil, fmt.Errorf("list inbox: %w", err)

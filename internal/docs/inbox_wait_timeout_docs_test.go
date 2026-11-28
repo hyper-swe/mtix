@@ -38,6 +38,8 @@ func TestInboxWaitTimeoutDocs_AllCopiesStateWallClockSemantics(t *testing.T) {
 			// MTIX-328: the no-policy wait parks too, so the old "each tick runs
 			// the plain inbox list query" sentence became false and is replaced.
 			"Without a wake policy the wait parks the same way (MTIX-328)",
+			// MTIX-328 review F7: the re-arm case keeps the 2 second read.
+			"while delivered or held mail is still unacknowledged it re-reads every 2 seconds",
 		} {
 			require.Contains(t, text, phrase, path)
 		}

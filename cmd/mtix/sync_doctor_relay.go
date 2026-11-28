@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,9 +25,6 @@ import (
 // relayQuarantineCheckName is the name of the doctor's relay quarantine row
 // (MTIX-268; sync_doctor_relay_quarantine.go builds it).
 const relayQuarantineCheckName = "relay quarantined records"
-
-// relayMediumRow is the name of the doctor's medium-readability row (MTIX-290).
-const relayMediumRow = "relay medium"
 
 // relayVerdictCodes is the FR-21 §9 registry, pinned.
 //
@@ -52,7 +50,6 @@ var relayVerdictCodes = []string{
 	"RELAY_NO_SHARED_PROJECT",
 	"RELAY_PUBLISHER_DIVERGED",
 	"RELAY_AUTH_FAIL",
-	"RELAY_MEDIUM_UNREADABLE",
 }
 
 // cloudDriveMarkers are path fragments that indicate a third-party
@@ -106,7 +103,6 @@ func appendRelayChecks(ctx context.Context, report DoctorReport) DoctorReport {
 		{"relay key", func() (bool, string) { return checkRelayKey(doc) }, nil},
 		{"relay publishing", func() (bool, string) { return checkRelayPublishing(ctx) }, nil},
 		{"relay peers", func() (bool, string) { return checkRelayPeers(dir, doc) }, nil},
-		{relayMediumRow, nil, func() DoctorCheck { return checkRelayMedium(ctx, dir) }},
 		{"relay continuity", nil, func() DoctorCheck { return checkRelayContinuity(ctx, dir, doc) }},
 		{"relay poll cadence", checkRelayPollCadence, nil},
 		{"relay snapshots", func() (bool, string) { return checkRelaySnapshots(dir) }, nil},
@@ -182,6 +178,9 @@ func checkRelayPublishing(ctx context.Context) (bool, string) {
 		return false, relayDoctorHint(err)
 	}
 	if _, err := stack.Publisher.PublishPending(ctx); err != nil {
+		if errors.Is(err, publisher.ErrPublishBusy) {
+			return true, "publishing (another publisher holds the publish lock)"
+		}
 		return false, relayDoctorHint(err)
 	}
 	return true, "publishing"

@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync/atomic"
+	"time"
 
 	"github.com/hyper-swe/mtix/internal/format"
 	"github.com/hyper-swe/mtix/internal/relay/peerid"
@@ -109,6 +110,15 @@ type Config struct {
 	BatchLimit int
 
 	Logger *slog.Logger
+
+	// Lock is the per-store publish lock (FR-21 §6.2a item 7), shared by
+	// every process that publishes for this store. Nil takes an
+	// in-process lock per journal.
+	Lock PublishLock
+
+	// LockWait bounds how long an entry point waits for the lock; zero
+	// takes five seconds. The on-commit trigger never waits.
+	LockWait time.Duration
 }
 
 // Stats are the counters `relay status` reports.
@@ -189,6 +199,17 @@ func (p *Publisher) Stats() Stats {
 // The order is load-bearing: read the cursor, verify the tail once per
 // run, read the journal, append, and only then advance the cursor.
 func (p *Publisher) PublishPending(ctx context.Context) (int, error) {
+	release, err := p.lockStore(ctx, p.waitFor())
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	return p.publishLocked(ctx)
+}
+
+// publishLocked is PublishPending for a caller already holding the
+// publish lock.
+func (p *Publisher) publishLocked(ctx context.Context) (int, error) {
 	n, err := p.publish(ctx)
 	if err != nil {
 		p.failures++
@@ -216,6 +237,7 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 		return 0, err
 	}
 
+	adopted := &adoption{}
 	w, err := segment.NewWriter(segment.WriterConfig{
 		Dir:             p.cfg.SegmentsDir,
 		PeerID:          p.cfg.PeerID,
@@ -225,6 +247,7 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 		PubEpoch:        pos.PubEpoch,
 		NextRS:          pos.NextRS,
 		MaxSegmentBytes: p.cfg.MaxSegmentBytes,
+		AdoptAhead:      adopted.verifier(ctx, p.cfg.Journal, pos.Seq),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("open relay segment writer: %w", err)
@@ -245,6 +268,18 @@ func (p *Publisher) publish(ctx context.Context) (int, error) {
 			slog.String("peer", p.cfg.PeerID), slog.Uint64("segment", w.SegmentNo()))
 	}
 
+	// §6.2: records already on the medium past the cursor are the crash
+	// window; they were verified against the journal, so the cursor moves
+	// over them and only what follows is appended.
+	rows, err = p.fastForward(ctx, adopted, rows, w)
+	if err != nil || len(rows) == 0 {
+		return 0, err
+	}
+	return p.appendRows(ctx, rows, w)
+}
+
+// appendRows frames each row and advances the cursor behind the batch.
+func (p *Publisher) appendRows(ctx context.Context, rows []sqlite.RelayJournalEvent, w *segment.Writer) (int, error) {
 	appended := 0
 	for _, row := range rows {
 		payload, marshalErr := json.Marshal(row.Event)
@@ -472,6 +507,11 @@ func (p *Publisher) divergedError(detail string) error {
 // arrive at a (pub_epoch, rs) nobody has consumed — so nothing is
 // silently dropped and nothing is auto-picked.
 func (p *Publisher) ResetPeer(ctx context.Context, floorSeq int64, baseRS uint64) error {
+	release, lockErr := p.lockStore(ctx, p.waitFor())
+	if lockErr != nil {
+		return lockErr
+	}
+	defer release()
 	// Read the witness BEFORE mutating anything: a reset that succeeded
 	// but could not be attested would re-verify on the next publish,
 	// find the pre-reset history absent, and diverge again — making the
@@ -508,7 +548,17 @@ func (p *Publisher) OnCommit() func() {
 			return
 		}
 		defer p.inFlight.Store(false)
-		if _, err := p.PublishPending(context.Background()); err != nil {
+		release, err := p.lockStore(context.Background(), 0)
+		if err != nil {
+			// A holder is mid-batch; the tick is the guarantee.
+			if !errors.Is(err, ErrPublishBusy) {
+				p.log.Warn("relay publish lock unavailable; retrying next tick",
+					slog.String("peer", p.cfg.PeerID), slog.Any("error", err))
+			}
+			return
+		}
+		defer release()
+		if _, err := p.publishLocked(context.Background()); err != nil {
 			p.log.Warn("relay publish failed; retrying next tick",
 				slog.String("peer", p.cfg.PeerID), slog.Any("error", err))
 		}

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/hyper-swe/mtix/internal/relay/bootstrap"
-	"github.com/hyper-swe/mtix/internal/relay/ingest"
 	"github.com/hyper-swe/mtix/internal/relay/metadata"
 	"github.com/hyper-swe/mtix/internal/relay/retention"
 	"github.com/hyper-swe/mtix/internal/relay/segment"
@@ -29,10 +28,6 @@ type relayPeerStatus struct {
 	Retired   bool   `json:"retired"`
 	Silent    bool   `json:"silent"`
 	Self      bool   `json:"self"`
-	// StallCode and StallReason are set while the peer's stream is stalled
-	// by an unreadable relay medium (RELAY_MEDIUM_UNREADABLE).
-	StallCode   string `json:"stall_code,omitempty"`
-	StallReason string `json:"stall_reason,omitempty"`
 }
 
 // relayStatusReport is what `relay status` shows, and what --json emits.
@@ -109,14 +104,10 @@ func collectRelayStatus(ctx context.Context) (relayStatusReport, error) {
 		silent[s.PeerID] = s.Silent
 	}
 
-	stalled := relayMediumStallsByPeer(ctx, dir)
 	for _, id := range ids {
 		line := relayPeerStatus{PeerID: id, Retired: retired[id], Silent: silent[id], Self: id == self}
 		if pos, err := app.store.RelayIngestCursor(ctx, id); err == nil {
 			line.SegmentNo, line.RS, line.PubEpoch = pos.SegmentNo, pos.RS, pos.PubEpoch
-		}
-		if st, ok := stalled[id]; ok {
-			line.StallCode, line.StallReason = st.Code, st.Reason
 		}
 		rep.Peers = append(rep.Peers, line)
 	}
@@ -182,9 +173,6 @@ func printRelayStatus(cmd *cobra.Command, rep relayStatusReport) {
 		}
 		fmt.Fprintf(out, "  %s  ingested segment %d rs %d (epoch %d)%s\n",
 			p.PeerID, p.SegmentNo, p.RS, p.PubEpoch, marks)
-		if p.StallCode != "" {
-			fmt.Fprintf(out, "    STALLED (%s): %s\n    fix: %s\n", p.StallCode, oneLine(p.StallReason), relayStallRecovery(p.StallCode))
-		}
 	}
 	for _, name := range rep.Snapshots {
 		fmt.Fprintf(out, "bootstrap snapshot present: %s\n", name)
@@ -202,19 +190,4 @@ func relayStat(path string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return info.ModTime(), nil
-}
-
-// relayMediumStallsByPeer maps each peer stalled by an unreadable medium to
-// its stall. A probe that cannot run leaves status without the field rather
-// than failing the whole report.
-func relayMediumStallsByPeer(ctx context.Context, dir string) map[string]ingest.Stall {
-	out := map[string]ingest.Stall{}
-	stalls, err := relayMediumStalls(ctx, dir)
-	if err != nil {
-		return out
-	}
-	for _, s := range stalls {
-		out[s.PeerID] = s
-	}
-	return out
 }

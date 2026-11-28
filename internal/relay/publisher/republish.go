@@ -28,6 +28,11 @@ func (p *Publisher) RepublishFrom(ctx context.Context, fromRS uint64) (int, erro
 	if fromRS == 0 {
 		return 0, fmt.Errorf("republish: relay sequence 0 is not a position")
 	}
+	release, lockErr := p.lockStore(ctx, p.waitFor())
+	if lockErr != nil {
+		return 0, lockErr
+	}
+	defer release()
 	floor, err := p.journalFloorForRS(ctx, fromRS)
 	if err != nil {
 		return 0, err
@@ -42,7 +47,7 @@ func (p *Publisher) RepublishFrom(ctx context.Context, fromRS uint64) (int, erro
 	// byte-identical, so a reader that already read one sees no change
 	// under it while the repair arrives alongside.
 	p.forceRotate = true
-	return p.PublishPending(ctx)
+	return p.publishLocked(ctx)
 }
 
 // journalFloorForRS finds the journal position just before the event

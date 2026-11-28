@@ -17,6 +17,7 @@ import (
 	"github.com/hyper-swe/mtix/internal/relay/peerid"
 	"github.com/hyper-swe/mtix/internal/relay/publisher"
 	"github.com/hyper-swe/mtix/internal/relay/segment"
+	"github.com/hyper-swe/mtix/internal/sync/pushlock"
 )
 
 // PeersDirName is the relay subdirectory holding one directory per peer.
@@ -51,6 +52,12 @@ type StackConfig struct {
 	BatchLimit      int
 
 	Logger *slog.Logger
+
+	// LockDir is the project's .mtix directory, where the per-store
+	// publish lock lives (FR-21 §6.2a item 7). Every process that
+	// publishes for one store must name the same directory; empty falls
+	// back to an in-process lock, which does not cover other processes.
+	LockDir string
 
 	// Now stamps quarantined records at ingest (MTIX-268); nil takes the wall clock.
 	Now func() time.Time
@@ -134,6 +141,7 @@ func Open(cfg StackConfig) (*Stack, error) {
 		MaxSegmentBytes: cfg.MaxSegmentBytes,
 		BatchLimit:      cfg.BatchLimit,
 		Logger:          log,
+		Lock:            publishLock(cfg.LockDir),
 	})
 	if err != nil {
 		return nil, err
@@ -165,4 +173,25 @@ func Open(cfg StackConfig) (*Stack, error) {
 // Pass runs one publish-then-ingest pass over this stack.
 func (s *Stack) Pass(ctx context.Context) (Result, error) {
 	return Run(ctx, s.Publisher, s.Ingestor)
+}
+
+// PublishLockName is the per-store publish lock file under .mtix/data.
+const PublishLockName = "relay-publish.lock"
+
+// publishLock builds the cross-process publish lock for lockDir, or nil
+// (the in-process lock) when no directory is configured.
+func publishLock(lockDir string) publisher.PublishLock {
+	if lockDir == "" {
+		return nil
+	}
+	return func() (func() error, error) {
+		l, err := pushlock.AcquireNamed(lockDir, PublishLockName)
+		if errors.Is(err, pushlock.ErrLockHeld) {
+			return nil, publisher.ErrPublishBusy
+		}
+		if err != nil {
+			return nil, err
+		}
+		return l.Release, nil
+	}
 }

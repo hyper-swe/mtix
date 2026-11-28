@@ -99,7 +99,6 @@ func TestAppendRelayChecks_AuthenticatedRelay_ReportsEveryCheck(t *testing.T) {
 		{Name: "relay key", Pass: true, Detail: "key epoch 1 present, mode 0600"},
 		{Name: "relay publishing", Pass: true, Detail: "publishing"},
 		{Name: "relay peers", Pass: true, Detail: "1 peer(s), 0 retired"},
-		{Name: "relay medium", Pass: true, Detail: "every peer's unread segments are readable"},
 		{Name: "relay continuity", Pass: true, Detail: "every peer's segments are contiguous from this peer's position"},
 		{Name: "relay poll cadence", Pass: true, Detail: "poll every 5s"},
 		{Name: "relay snapshots", Pass: true, Detail: "no stale bootstrap snapshots"},

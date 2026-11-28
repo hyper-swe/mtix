@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -115,32 +114,4 @@ func (g gateRelay) storedNodes(t *testing.T, i, last int) []string {
 		out = append(out, id)
 	}
 	return out
-}
-
-// newRelayGateStore opens a test store whose machine identity is seeded, so
-// local event emission has no host network dependency.
-func newRelayGateStore(t *testing.T, id string, now func() time.Time) *sqlite.Store {
-	t.Helper()
-	st := testutil.NewTestStore(t).(*sqlite.Store)
-	st.SetClock(now)
-	result, err := st.WriteDB().ExecContext(t.Context(), `UPDATE meta SET value = ? WHERE key = ?`,
-		id, "meta.sync.machine_hash")
-	require.NoError(t, err)
-	rows, err := result.RowsAffected()
-	require.NoError(t, err)
-	require.EqualValues(t, 1, rows)
-	return st
-}
-
-func crashSegments(cfg tick.StackConfig) string {
-	return filepath.Join(cfg.RelayDir, tick.PeersDirName, cfg.PeerID, tick.SegmentsDirName)
-}
-
-func createCrashNode(t *testing.T, st *sqlite.Store, seq int) {
-	t.Helper()
-	id := fmt.Sprintf("TEST-%d", seq)
-	node := testutil.MakeNode(t, testutil.WithTitle(id))
-	node.ID, node.Seq, node.Creator, node.NodeType = id, seq, "planner", model.NodeTypeStory
-	node.ContentHash = model.ComputeContentHash(id, "", "", "", nil)
-	require.NoError(t, st.CreateNode(t.Context(), node))
 }

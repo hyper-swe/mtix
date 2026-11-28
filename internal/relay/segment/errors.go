@@ -155,8 +155,6 @@ func CodeOf(err error) string {
 		return CodeGap
 	case errors.Is(err, ErrPeerIDConflict):
 		return CodePeerIDConflict
-	case errors.Is(err, ErrMediumUnreadable):
-		return CodeMediumUnreadable
 	case errors.Is(err, ErrSegmentCorrupt):
 		return CodeSegmentCorrupt
 	default:

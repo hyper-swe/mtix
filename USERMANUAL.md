@@ -3325,6 +3325,12 @@ repair of a legacy winner emits a terminal event without it, and that stamp is
 still excused when the other conditions hold. Treat any other `closed_at`
 refusal as a real difference, not as clock skew.
 
+A soft-deleted node is never excused: enrollment compares its `closed_at`
+exactly, so a plain 0.5.4 done that crossed a second still refuses and names
+`closed_at`. This is the intended fail-closed rule, because enrollment cannot
+tell that skew from a changed stamp on a node nobody is looking at. Follow the
+printed fix.
+
 A 0.5.x per-project service (the `mtix daemon` unit or a running per-project
 daemon) keeps pull and hook duty for its board until that board is migrated.
 While one is live the host dispatcher runs only the wake scanner for the board:

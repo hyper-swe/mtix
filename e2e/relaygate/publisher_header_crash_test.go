@@ -4,67 +4,15 @@
 package relaygate_test
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"os"
 	"testing"
 
 	"github.com/hyper-swe/mtix/internal/relay/segment"
-	"github.com/hyper-swe/mtix/internal/relay/tick"
 	"github.com/stretchr/testify/require"
 )
 
-var errKilled = errors.New("process killed (-9 simulation)")
-
-// killStore makes the publisher die after appending, before its cursor
-// advance, as a kill -9 would.
-type killStore struct{ tick.StackStore }
-
-func (k *killStore) AdvanceRelayPushCursor(context.Context, int64, uint64) error {
-	panic(errKilled)
-}
-
-// survive runs one pass of a process that is killed: nothing after the
-// panic of that process runs.
-func survive(t *testing.T, stack *tick.Stack) {
-	t.Helper()
-	defer func() {
-		if r := recover(); r != nil {
-			if err, ok := r.(error); ok && errors.Is(err, errKilled) {
-				return
-			}
-			panic(r)
-		}
-	}()
-	_, _ = stack.Pass(t.Context())
-}
-
-// killedPublishKeeping publishes peer i's pending events with the publisher
-// dying before the cursor advance, then keeps keep(newBytes) bytes of what
-// it appended: the file a kill -9 mid-write leaves behind. When the kill
-// came while a new segment was created, the whole file counts as new.
-func killedPublishKeeping(t *testing.T, g gateRelay, i int, keep func(newBytes int64) int64) {
-	t.Helper()
-	files := g.segments(t, i)
-	var before, beforeNo int64
-	if len(files) > 0 {
-		before, beforeNo = files[len(files)-1].Size, int64(files[len(files)-1].No)
-	}
-	cfg := g.peers[i]
-	cfg.Store = &killStore{StackStore: cfg.Store}
-	stack, err := tick.Open(cfg)
-	require.NoError(t, err)
-	survive(t, stack)
-	files = g.segments(t, i)
-	last := files[len(files)-1]
-	if int64(last.No) != beforeNo {
-		before = 0
-	}
-	if last.Size > before {
-		require.NoError(t, os.Truncate(last.Path, before+keep(last.Size-before)))
-	}
-}
+// The kill harness (errKilled, killStore, survive, killedPublishKeeping) lives
+// in publisher_kill_harness_test.go (MTIX-301); these tests reuse it.
 
 var headerCuts = []int64{0, 1, segment.HeaderSize / 2, segment.HeaderSize - 1}
 

@@ -52,7 +52,9 @@ func checkRelayMedium(ctx context.Context, dir string) DoctorCheck {
 		lines[i] = fmt.Sprintf("peer %s: %s", oneLine(s.PeerID), oneLine(s.Reason))
 	}
 	row.Fix = relayMediumRecovery
-	row.Detail = fmt.Sprintf("%d peer(s) stalled, the relay medium cannot be read:\n    %s\n    fix: %s",
-		len(stalls), strings.Join(lines, "\n    "), relayMediumRecovery)
+	// The fix lives in Fix only: the text printer prints it under the row, and
+	// --json carries it as its own field, so it is never said twice.
+	row.Detail = fmt.Sprintf("%d peer(s) stalled, the relay medium cannot be read:\n    %s",
+		len(stalls), strings.Join(lines, "\n    "))
 	return row
 }

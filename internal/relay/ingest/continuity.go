@@ -179,7 +179,7 @@ func FindGaps(ctx context.Context, peersDir, selfPeerID string,
 		if curErr != nil {
 			return GapReport{}, fmt.Errorf("read ingest cursor for peer %s: %w", peer.PeerID, curErr)
 		}
-		gap, unchecked, walkErr := peerGap(ctx, peer, pos, keys)
+		gap, unchecked, walkErr := peerGap(ctx, peersDir, peer, pos, keys)
 		if walkErr != nil {
 			return GapReport{}, walkErr
 		}
@@ -194,11 +194,16 @@ func FindGaps(ctx context.Context, peersDir, selfPeerID string,
 }
 
 // peerGap walks one peer's unread segments exactly as ingestPeer does. It
-// returns a gap, or an Unchecked when the walk stopped early, or neither.
-func peerGap(ctx context.Context, peer segment.PeerDir, pos Position, keys KeySelector) (*Gap, *Unchecked, error) {
-	segs, _, err := segment.ListSegments(filepath.Join(peer.Path, segmentsSubdir))
+// returns a gap, or an Unchecked when the walk stopped early, or neither. A
+// segments directory or segment that cannot be read is reported with
+// RELAY_MEDIUM_UNREADABLE and its relay-relative path, as tick reports it
+// (FR-21 section 9, MTIX-290).
+func peerGap(ctx context.Context, peersDir string, peer segment.PeerDir, pos Position, keys KeySelector) (*Gap, *Unchecked, error) {
+	dir := filepath.Join(peer.Path, segmentsSubdir)
+	segs, _, err := segment.ListSegments(dir)
 	if err != nil {
-		return nil, &Unchecked{PeerID: peer.PeerID, Reason: fmt.Sprintf("segments directory unreadable: %s", err)}, nil
+		return nil, &Unchecked{PeerID: peer.PeerID,
+			Reason: unreadableReason(peersDir, dir, "segments directory unreadable", err)}, nil
 	}
 	if len(segs) == 0 {
 		return nil, nil, nil
@@ -212,7 +217,7 @@ func peerGap(ctx context.Context, peer segment.PeerDir, pos Position, keys KeySe
 		}
 		raw, err := readSegment(f.Path)
 		if err != nil {
-			return nil, stoppedAt(peer.PeerID, f.No, "unreadable: "+err.Error()), nil
+			return nil, stoppedAt(peer.PeerID, f.No, unreadableReason(peersDir, f.Path, "unreadable", err)), nil
 		}
 		h, err := segment.ParseHeader(raw)
 		if err != nil {
@@ -222,7 +227,7 @@ func peerGap(ctx context.Context, peer segment.PeerDir, pos Position, keys KeySe
 			return &Gap{PeerID: peer.PeerID, Reason: cErr.Error()}, nil, nil
 		}
 		in := scanInput{raw: raw, header: h, prev: ch.pos,
-			sealed: f.No < newest, peerID: peer.PeerID, keys: keys}
+			sealed: f.No < newest, peerID: peer.PeerID, keys: keys, peersDir: peersDir}
 		if i+1 < len(unread) {
 			in.next = &unread[i+1]
 		}
@@ -253,6 +258,8 @@ type scanInput struct {
 	peerID string
 	keys   KeySelector
 	next   *segment.File
+	// peersDir names a medium fault by its relay-relative path.
+	peersDir string
 }
 
 // keyFor resolves the key a segment's records are authenticated with.
@@ -268,6 +275,14 @@ func (in scanInput) keyFor(h segment.Header) ([]byte, error) {
 		return nil, fmt.Errorf("key epoch %d unavailable: %w", h.KeyEpoch, err)
 	}
 	return k, nil
+}
+
+// nextPath is the successor segment's path, or "" when there is none.
+func (in scanInput) nextPath() string {
+	if in.next == nil {
+		return ""
+	}
+	return in.next.Path
 }
 
 // reachedScan is where a read-only scan ended. torn marks a sealed segment
@@ -305,7 +320,11 @@ func scanReached(in scanInput) (reachedScan, error) {
 	scErr := sc.Err()
 	if scErr != nil && in.sealed && segment.IsIncomplete(scErr) {
 		ts := newTornSeal(in.peerID, in.raw, sc, in.next, in.keyFor)
-		if succ, ok := ts.explain(); ok {
+		succ, ok, readErr := ts.explain()
+		if mv := mediumVerdict(in.peersDir, in.nextPath(), readErr); readErr != nil && mv != nil {
+			return reachedScan{}, mv // the successor could not be read: not a corrupt tail
+		}
+		if ok {
 			return reachedScan{pos: reached, torn: true, resumeRS: succ.FirstRS - 1}, nil
 		}
 	}

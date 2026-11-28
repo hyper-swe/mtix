@@ -49,6 +49,21 @@ func TestCheckRelayMedium_UnreadableSegment_NamesCodeAndFixInJSON(t *testing.T) 
 	require.True(t, checkRelayMedium(t.Context(), dir).Pass, "clears once the medium reads")
 }
 
+func TestCheckRelayMedium_UnreadableSegment_TextOutputPrintsTheFixOnce(t *testing.T) {
+	dir, _ := unreadableSegment(t)
+	row := checkRelayMedium(t.Context(), dir)
+	require.NotContains(t, row.Detail, "fix:", "the fix is in Fix only")
+
+	var out bytes.Buffer
+	printDoctorTable(&out, DoctorReport{Checks: []DoctorCheck{row}})
+	text := out.String()
+	require.Contains(t, text, "[FAIL] "+relayMediumRow)
+	require.Contains(t, text, "RELAY_MEDIUM_UNREADABLE")
+	require.Equal(t, 1, strings.Count(text, "mounted and readable by this user"),
+		"the recovery text appears exactly once")
+	require.Equal(t, 1, strings.Count(text, "fix:"), "one fix line")
+}
+
 func TestCheckRelayMedium_Healthy_Passes(t *testing.T) {
 	dir, _ := initDiagnosticRelay(t, false)
 	diagnosticSegment(t, dir, diagnosticOther, 1, diagnosticCurrent())

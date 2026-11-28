@@ -144,3 +144,29 @@ func TestInboxReadWait_HeldEligibilityFlipsWithoutCommit_WakesWithinFullReadFloo
 	require.Len(t, res.Events, 1)
 	assert.Less(t, time.Since(began), inboxFullReadFloor+inboxReadPollInterval+time.Second)
 }
+
+// MTIX-328 acceptance (Claude hook waiter): InboxReadUntil parks without a
+// policy too, so an idle hook wait asks the backend nothing after its entry
+// read and probe, for longer than five old 250 ms polls.
+func TestInboxReadUntil_IdleNoPolicy_NoReadOrCountAfterEntry(t *testing.T) {
+	b := newWatchBackend()
+	svc := NewInboxService(b)
+	res, err := svc.InboxReadUntil(t.Context(), "w", 1300*time.Millisecond, InboxReadOptions{},
+		func(r InboxResult) bool { return len(r.Events) > 0 })
+	require.NoError(t, err)
+	assert.Empty(t, res.Events)
+	assert.Equal(t, 1, b.listCalls(), "the entry read only")
+	assert.Equal(t, 1, b.countCalls(), "the entry probe only")
+}
+
+// A held or skipped event keeps the 2 s full read of MTIX-245: the waiter does
+// not end (done is false) and re-reads at the floor, not every tick.
+func TestInboxReadUntil_PendingButSkipped_ReadsAtTheFloorNotEveryTick(t *testing.T) {
+	b := newWatchBackend()
+	b.add(sqlite.InboxEvent{Seq: 1, Body: "already delivered"})
+	svc := NewInboxService(b)
+	_, err := svc.InboxReadUntil(t.Context(), "w", idleWaitLong, InboxReadOptions{},
+		func(InboxResult) bool { return false })
+	require.NoError(t, err)
+	assert.Equal(t, 2, b.listCalls(), "entry read plus one floor read, not ten tick reads")
+}

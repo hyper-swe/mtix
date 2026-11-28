@@ -164,27 +164,28 @@ func (s *Store) InboxWait(ctx context.Context, agentID string, timeout time.Dura
 	}
 	ticker := time.NewTicker(inboxPollInterval)
 	defer ticker.Stop()
-	queryCtx := ctx
 	win := s.openWaitWindow(timeout)
+	park := &waitPark{touchedAt: s.waitMonoNow()} // the entry stamp and first read touch
+	queryCtx := ctx
 	for {
+		s.beginWaitRead(queryCtx, park) // the token is taken BEFORE the query (MTIX-328)
 		events, err := s.inboxList(queryCtx, agentID)
 		if err != nil {
 			return nil, inboxWaitError(ctx, queryCtx, err)
 		}
-		queryCtx = waitCtx
 		if len(events) > 0 {
 			return events, nil
 		}
-		select {
-		case <-waitCtx.Done():
-			return nil, inboxWaitError(ctx, waitCtx, waitCtx.Err())
-		case <-ticker.C:
-			// MTIX-245: the context timer stops while the system sleeps, so the
-			// timeout is also checked on both clocks every tick.
-			if win.spent(s.waitNow(), s.waitMonoNow()) {
-				return nil, nil
-			}
+		// MTIX-245: the context timer stops while the system sleeps, so the
+		// timeout is also checked on both clocks every tick.
+		spent, perr := s.parkUntilMoved(waitCtx, ticker.C, win, park)
+		if perr != nil {
+			return nil, inboxWaitError(ctx, waitCtx, perr)
 		}
+		if spent {
+			return nil, nil
+		}
+		queryCtx = s.waitReadCtx(waitCtx, park)
 	}
 }
 

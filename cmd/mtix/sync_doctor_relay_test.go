@@ -46,6 +46,7 @@ func TestRelayVerdictRegistry_MatchesTheSpecExactly(t *testing.T) {
 		lifecycle.CodeNoSharedProject:   true,
 		publisher.CodePublisherDiverged: true,
 		ingest.CodeAuthFail:             true,
+		segment.CodeMediumUnreadable:    true,
 	}
 
 	pinned := map[string]bool{}
@@ -80,6 +81,7 @@ func TestRelayCodeOf_ResolvesEveryOwningPackage(t *testing.T) {
 		{segment.ErrSymlink, segment.CodeSymlink},
 		{segment.ErrForeignEntry, segment.CodeForeignEntry},
 		{segment.ErrPeerIDConflict, segment.CodePeerIDConflict},
+		{segment.ErrMediumUnreadable, segment.CodeMediumUnreadable},
 		{keyring.ErrKeyAbsent, keyring.CodeKeyAbsent},
 		{keyring.ErrKeyPerms, keyring.CodeKeyPerms},
 		{keyring.ErrKeyInvalid, keyring.CodeKeyInvalid},

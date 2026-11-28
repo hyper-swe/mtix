@@ -261,6 +261,8 @@ func relayStallRecovery(code string) string {
 		return relayMetaCorruptRecovery
 	case "RELAY_KEY_ABSENT":
 		return "install the missing key epoch under the relay keys directory (mode 0600)"
+	case "RELAY_MEDIUM_UNREADABLE":
+		return relayMediumRecovery
 	case "RELAY_SYMLINK", "RELAY_FOREIGN_ENTRY":
 		return "remove the offending entry from the relay directory; mtix never follows or deletes it"
 	default:

@@ -31,7 +31,7 @@ var historyCensus = map[string]struct {
 	state string
 }{
 	"node_update.go:execUpdateQuery": {1, censusWired}, "claim.go:Store.claimNodeTx": {1, censusWired},
-	"claim.go:Store.UnclaimNode": {1, censusWired}, "claim.go:Store.ForceReclaimNode": {1, censusWired},
+	"claim.go:Store.unclaimNode": {1, censusWired}, "claim.go:Store.ForceReclaimNode": {1, censusWired},
 	"transition.go:applyTransitionUpdate": {1, censusWired}, "transition.go:appendActivityEntry": {1, censusExcluded},
 	"defer.go:Store.executeDeferTx": {1, censusWired}, "defer.go:redeferTx": {1, censusWired},
 	"cancel.go:applyCancelUpdate": {1, censusWired}, "cancel.go:cancelDescendants": {1, censusWired},

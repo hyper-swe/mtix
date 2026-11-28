@@ -135,12 +135,25 @@ func (s *Store) checkDeferExpired(id string, deferUntil sql.NullString) error {
 // UnclaimNode releases a node assignment per FR-10.4.
 // Requires a mandatory reason. Sets status back to open.
 func (s *Store) UnclaimNode(ctx context.Context, id, reason, author string) error {
+	return s.unclaimNode(ctx, id, reason, author, nil)
+}
+
+// UnclaimNodeExpecting is UnclaimNode with a compare-and-set on the assignee,
+// checked inside the unclaim transaction (MTIX-325.1).
+func (s *Store) UnclaimNodeExpecting(ctx context.Context, id, reason, author, expected string) error {
+	return s.unclaimNode(ctx, id, reason, author, &expected)
+}
+
+func (s *Store) unclaimNode(ctx context.Context, id, reason, author string, expected *string) error {
 	if reason == "" {
 		return fmt.Errorf("unclaim reason is required: %w", model.ErrInvalidInput)
 	}
 
 	return s.withHistoryTx(ctx, historyScope{id: id, actor: author}, func(tx *sql.Tx) error {
 		if err := validateUnclaimStatus(ctx, tx, id); err != nil {
+			return err
+		}
+		if err := checkExpectedAssignee(ctx, tx, id, expected); err != nil {
 			return err
 		}
 

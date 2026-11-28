@@ -175,8 +175,9 @@ func (m *dbMockStore) RestoreInvalidated(_ context.Context, _, _ string) (model.
 func (m *dbMockStore) WakeDeferredNode(_ context.Context, _ string, _ time.Time) (bool, error) {
 	return false, nil
 }
-func (m *dbMockStore) ClaimNode(_ context.Context, _, _ string) error      { return nil }
-func (m *dbMockStore) UnclaimNode(_ context.Context, _, _, _ string) error { return nil }
+func (m *dbMockStore) ClaimNode(_ context.Context, _, _ string) error                  { return nil }
+func (m *dbMockStore) UnclaimNode(_ context.Context, _, _, _ string) error             { return nil }
+func (m *dbMockStore) UnclaimNodeExpecting(_ context.Context, _, _, _, _ string) error { return nil }
 func (m *dbMockStore) ForceReclaimNode(_ context.Context, _, _ string, _ time.Duration) error {
 	return nil
 }

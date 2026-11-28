@@ -4,6 +4,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -252,7 +253,11 @@ func runImport(filePath string, f importFlags) error {
 
 	// The report is loud whether or not the import applied (ADR-003 §6): always
 	// surface it, and persist the uid-keyed remap when one was produced.
-	if reportErr := writeImportReport(report, f.remapFile); reportErr != nil {
+	var shown sqlite.ReportSource // a nil report must not become a non-nil interface
+	if report != nil {
+		shown = report
+	}
+	if reportErr := writeImportReport(shown, f.remapFile); reportErr != nil {
 		return reportErr
 	}
 
@@ -347,35 +352,33 @@ func importOptions(ctx context.Context, mode sqlite.ImportMode, f importFlags) s
 // had none (NewUID) is written only once the import is applied: a run
 // without --confirm leaves it out, since the confirmed run mints another
 // (MTIX-95.31.9).
-func writeRemapFile(path string, report *sqlite.ImportReconcileReport) error {
-	var moved []sqlite.ImportRemapEntry
-	for _, list := range [][]sqlite.ImportRemapEntry{report.Remaps, report.LocalRenumbers, report.Moved} {
-		for _, m := range list {
-			if report.Applied || !m.NewUID {
-				moved = append(moved, m)
-			}
-		}
-	}
-	for _, a := range report.UIDAdoptions {
-		if a.LocalUID != "" {
-			moved = append(moved, sqlite.ImportRemapEntry{UID: a.LocalUID, OldPath: a.ID, NewPath: a.ID})
-		}
-	}
-	if path == "" || len(moved) == 0 {
+func writeRemapFile(path string, report sqlite.ReportSource) error {
+	if path == "" {
 		return nil
 	}
-	remap := make(map[string]string, len(moved))
-	for _, m := range moved {
-		if m.UID != "" {
-			remap[m.UID] = m.NewPath
-		}
-	}
-	out, err := json.MarshalIndent(remap, "", "  ")
+	has, err := report.HasRemap()
 	if err != nil {
-		return fmt.Errorf("encode remap file: %w", err)
+		return fmt.Errorf("read remap entries: %w", err)
 	}
-	if writeErr := os.WriteFile(path, out, 0o600); writeErr != nil {
-		return fmt.Errorf("write remap file %s: %w", path, writeErr)
+	if !has {
+		return nil
+	}
+	// #nosec G304 -- path is the --remap-file the operator named, written at their request.
+	out, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return fmt.Errorf("write remap file %s: %w", path, err)
+	}
+	w := bufio.NewWriter(out)
+	// The remap is streamed to the file one entry at a time, never built in memory.
+	err = report.WriteRemap(w)
+	if err == nil {
+		err = w.Flush()
+	}
+	if closeErr := out.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("write remap file %s: %w", path, err)
 	}
 	return nil
 }

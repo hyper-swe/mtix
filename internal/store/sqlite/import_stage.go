@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"github.com/hyper-swe/mtix/internal/model"
 )
@@ -99,6 +100,7 @@ type StagedExport struct {
 	presence [stageKindCount]arrayPresence
 	seen     [stageKindCount]bool // the array key has occurred in the file
 	replay   [stageKindCount]any  // *[]T decoded in memory, for a repeated array key
+	planned  atomic.Bool          // PlanImportStaged created its plan tables here (once)
 }
 
 // NodeCount returns the number of staged nodes.

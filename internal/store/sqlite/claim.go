@@ -156,61 +156,84 @@ func (s *Store) unclaimNode(ctx context.Context, id, reason, author string, expe
 		if err := checkExpectedAssignee(ctx, tx, id, expected); err != nil {
 			return err
 		}
-
-		now := s.clock()
-		nowStr := now.Format(time.RFC3339)
-
-		// Get the current assignee before clearing.
-		var assignee sql.NullString
-		_ = tx.QueryRowContext(ctx,
-			`SELECT assignee FROM nodes WHERE id = ? AND deleted_at IS NULL`, id,
-		).Scan(&assignee)
-
-		_, err := tx.ExecContext(ctx,
-			`UPDATE nodes SET status = ?, assignee = NULL, agent_state = NULL,
-			 updated_at = ?
-			 WHERE id = ? AND deleted_at IS NULL`,
-			string(model.StatusOpen), nowStr, id,
-		)
-		if err != nil {
-			return fmt.Errorf("unclaim node %s: %w", id, err)
-		}
-
-		// MTIX-294 / FR-5.2, FR-5.7: the status changed from in_progress to
-		// open, so re-derive this node and every ancestor in the same
-		// transaction, as the claim and transition paths do.
-		if err := recalculateProgress(ctx, tx, s.progressWeightedOn(), id); err != nil {
-			return fmt.Errorf("recalculate progress after unclaim of %s: %w", id, err)
-		}
-
-		// FR-10.1b: Reset agent state on unclaim.
-		if assignee.Valid && assignee.String != "" {
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE agents SET current_node_id = NULL, state = 'idle', state_changed_at = ?
-				 WHERE agent_id = ?`,
-				nowStr, assignee.String,
-			); err != nil {
-				return fmt.Errorf("reset agent %s on unclaim: %w", assignee.String, err)
-			}
-		}
-
-		if err := appendActivityEntry(ctx, tx, id, model.ActivityEntry{
-			ID:        fmt.Sprintf("act-%d", now.UnixNano()),
-			Type:      model.ActivityTypeUnclaim,
-			Author:    author,
-			Text:      reason,
-			CreatedAt: now,
-		}); err != nil {
-			return err
-		}
-
-		return s.emitPayload(ctx, tx, emitParams{
-			NodeID:      id,
-			ProjectCode: projectPrefixFromNodeID(id),
-			OpType:      model.OpUnclaim,
-			Author:      author,
-		}, &model.UnclaimPayload{})
+		return s.applyUnclaim(ctx, tx, id, reason, author)
 	})
+}
+
+// applyUnclaim performs the writes of an unclaim inside the caller's
+// transaction, after the status and compare-and-set checks passed (FR-10.4).
+func (s *Store) applyUnclaim(ctx context.Context, tx *sql.Tx, id, reason, author string) error {
+	now := s.clock()
+	nowStr := now.Format(time.RFC3339)
+
+	assignee, err := releaseNodeRow(ctx, tx, id, nowStr)
+	if err != nil {
+		return err
+	}
+
+	// MTIX-294 / FR-5.2, FR-5.7: the status changed from in_progress to
+	// open, so re-derive this node and every ancestor in the same
+	// transaction, as the claim and transition paths do.
+	if err := recalculateProgress(ctx, tx, s.progressWeightedOn(), id); err != nil {
+		return fmt.Errorf("recalculate progress after unclaim of %s: %w", id, err)
+	}
+	if err := resetAgentOnUnclaim(ctx, tx, assignee, nowStr); err != nil {
+		return err
+	}
+
+	if err := appendActivityEntry(ctx, tx, id, model.ActivityEntry{
+		ID:        fmt.Sprintf("act-%d", now.UnixNano()),
+		Type:      model.ActivityTypeUnclaim,
+		Author:    author,
+		Text:      reason,
+		CreatedAt: now,
+	}); err != nil {
+		return err
+	}
+
+	return s.emitPayload(ctx, tx, emitParams{
+		NodeID:      id,
+		ProjectCode: projectPrefixFromNodeID(id),
+		OpType:      model.OpUnclaim,
+		Author:      author,
+	}, &model.UnclaimPayload{})
+}
+
+// releaseNodeRow reads the current assignee, then sets the node back to open
+// with no assignee. It returns the assignee that was released.
+func releaseNodeRow(ctx context.Context, tx *sql.Tx, id, nowStr string) (sql.NullString, error) {
+	// Get the current assignee before clearing.
+	var assignee sql.NullString
+	_ = tx.QueryRowContext(ctx,
+		`SELECT assignee FROM nodes WHERE id = ? AND deleted_at IS NULL`, id,
+	).Scan(&assignee)
+
+	_, err := tx.ExecContext(ctx,
+		`UPDATE nodes SET status = ?, assignee = NULL, agent_state = NULL,
+		 updated_at = ?
+		 WHERE id = ? AND deleted_at IS NULL`,
+		string(model.StatusOpen), nowStr, id,
+	)
+	if err != nil {
+		return assignee, fmt.Errorf("unclaim node %s: %w", id, err)
+	}
+	return assignee, nil
+}
+
+// resetAgentOnUnclaim returns the released assignee's agent row to idle
+// (FR-10.1b). A node with no assignee has no agent to reset.
+func resetAgentOnUnclaim(ctx context.Context, tx *sql.Tx, assignee sql.NullString, nowStr string) error {
+	if !assignee.Valid || assignee.String == "" {
+		return nil
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE agents SET current_node_id = NULL, state = 'idle', state_changed_at = ?
+		 WHERE agent_id = ?`,
+		nowStr, assignee.String,
+	); err != nil {
+		return fmt.Errorf("reset agent %s on unclaim: %w", assignee.String, err)
+	}
+	return nil
 }
 
 // validateUnclaimStatus verifies the assignment can be released before writes.

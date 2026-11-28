@@ -309,6 +309,14 @@ acknowledgment coverage as unverified and redelivers mail as unread. Export
 again afterwards. `mtix export --board-only` and the automatic `.mtix/tasks.json`
 mirror carry no mail and are not refused.
 
+## Worktree enrollment refuses on `closed_at` for a deleted task
+A soft-deleted node is never excused: enrollment compares its `closed_at`
+exactly, so a plain 0.5.4 done that crossed a second still refuses and names
+`closed_at`. This is the intended fail-closed rule, because enrollment cannot
+tell that skew from a changed stamp on a node nobody is looking at. Follow the
+printed fix.
+Every other `closed_at` refusal is a real difference; see the sync skill.
+
 ## Common Errors
 
 ### Pull sync lock is busy

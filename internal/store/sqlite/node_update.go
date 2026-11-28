@@ -37,6 +37,9 @@ func (s *Store) executeUpdateTx(ctx context.Context, tx *sql.Tx, id string, upda
 	if err := verifyNodeExists(ctx, tx, id); err != nil {
 		return err
 	}
+	if err := checkExpectedAssignee(ctx, tx, id, updates.ExpectAssignee); err != nil {
+		return err
+	}
 
 	setClauses, args := buildUpdateClauses(updates)
 	if len(setClauses) == 0 {

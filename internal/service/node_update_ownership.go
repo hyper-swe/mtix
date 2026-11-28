@@ -31,7 +31,12 @@ func WithUpdateIdentity(ctx context.Context, id UpdateIdentity) context.Context 
 // agent's claim unless the identity is the assignee, a system actor, or
 // forced with a reason (MTIX-325). A forced change attaches an audit entry
 // that the store writes with the update. It fails closed without identity.
+// The assignee it read rides in updates.ExpectAssignee so the store re-checks
+// it inside the update transaction (compare-and-set, MTIX-325.1); a claim or
+// reassign landing after this read makes the store refuse with
+// ErrAlreadyClaimed instead of being overwritten.
 func (svc *NodeService) guardAssigneeChange(ctx context.Context, id string, updates *store.NodeUpdate) error {
+	updates.ExpectAssignee = nil // never trust a caller-set value
 	if updates.Assignee == nil {
 		return nil
 	}
@@ -44,6 +49,7 @@ func (svc *NodeService) guardAssigneeChange(ctx context.Context, id string, upda
 		return wrapAPIOperation(fmt.Sprintf("update node %s", id), err)
 	}
 	prev := node.Assignee
+	updates.ExpectAssignee = &prev
 	if prev == "" || prev == *updates.Assignee || prev == ident.Actor {
 		return nil
 	}

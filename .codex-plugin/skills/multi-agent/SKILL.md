@@ -521,7 +521,7 @@ mtix stale          # Tasks with inactive agents
 
 - Check task status before claiming: `mtix show <id>`
 - Never modify tasks claimed by other agents
-- Release only your own claim: `mtix unclaim <id> --agent <agent-name> --reason "..."`. mtix refuses to release another agent's claim and names the current assignee; add `--force` only when that agent is stale or gone, and the activity log records you, the previous assignee and the reason. `mtix update --assignee` follows the same rule: clearing or changing another agent's assignee is refused with `ErrAlreadyClaimed` unless you pass `--force --reason` (the activity log records you, the previous assignee and the reason).
+- Release only your own claim: `mtix unclaim <id> --agent <agent-name> --reason "..."`. mtix refuses to release another agent's claim and names the current assignee; add `--force` only when that agent is stale or gone, and the activity log records you, the previous assignee and the reason. `mtix update --assignee` follows the same rule: clearing or changing another agent's assignee is refused with `ErrAlreadyClaimed` unless you pass `--force --reason` (the activity log records you, the previous assignee and the reason). The ownership check and the write are one atomic step: if another agent claims or reassigns the node in between, your update or unclaim is refused with `ErrAlreadyClaimed` and changes nothing; re-read the node and decide again.
 - Use comments to coordinate: `mtix comment <id> "message"`
 
 ## Reference Wake Routine

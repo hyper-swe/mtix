@@ -220,6 +220,12 @@ type Store interface {
 	// Requires a reason. Sets status back to open.
 	UnclaimNode(ctx context.Context, id, reason, author string) error
 
+	// UnclaimNodeExpecting is UnclaimNode with a compare-and-set on the
+	// assignee read inside the transaction: it returns ErrAlreadyClaimed
+	// unless the current assignee equals expected ("" means unclaimed)
+	// (MTIX-325.1).
+	UnclaimNodeExpecting(ctx context.Context, id, reason, author, expected string) error
+
 	// ForceReclaimNode reclaims a node from a stale agent per FR-10.4a.
 	// Succeeds only if the current assignee's last heartbeat exceeds staleThreshold.
 	ForceReclaimNode(ctx context.Context, id, agentID string, staleThreshold time.Duration) error
@@ -321,4 +327,9 @@ type NodeUpdate struct {
 	// Audit, when set, is appended to the node's activity log in the same
 	// transaction as the update (MTIX-325). Never read from the wire.
 	Audit *model.ActivityEntry `json:"-"`
+	// ExpectAssignee, when set, makes the update a compare-and-set: the store
+	// refuses with ErrAlreadyClaimed unless the node's current assignee equals
+	// it ("" means unclaimed). Checked in the update transaction (MTIX-325.1).
+	// Never read from the wire.
+	ExpectAssignee *string `json:"-"`
 }

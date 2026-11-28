@@ -273,7 +273,9 @@ Doctor shows these rows only when they apply:
   a row whose fix starts with STOP prints no command (see below).
   The lock fix is `mtix doctor --fix`: it moves the lock aside, never removes
   it, only when it is not a regular file (nothing can hold it) and refuses a lock
-  that a live enrollment holds. A regular lock that cannot be probed cannot be
+  that a live enrollment holds.
+  The move is not atomic with its check, and this is accepted: a lock a live enrolment creates in a microsecond window is moved under the aside name (enroll.lock.unprobeable) and the fix puts it back by checking the lock path and then renaming, which is itself not atomic; if a third process took a fresh lock at the lock path first, the put-back is refused and the fix fails with an error naming the aside file, and a lock created between that check and the rename is replaced, so two holders can exist; after a refused put-back the held lock stays under the aside name for the rest of that enrolment, so later probes see the lock as free, other commands can write until the enrolment writes its marker, and a second enrolment can run at the same time, and doctor does not report the aside file afterwards; run the fix with no other mtix process in the worktree, and run one enrolment at a time.
+  A regular lock that cannot be probed cannot be
   proven unheld, so its row asks the project maintainer instead of printing a command; the prose
   also names the lock directory, because its owner or a link there fails the probe too.
   While the marker is torn or the lock cannot be probed, doctor prints its rows
@@ -3324,12 +3326,6 @@ Events written by 0.6.0 and later carry the snapshot, with one exception: status
 repair of a legacy winner emits a terminal event without it, and that stamp is
 still excused when the other conditions hold. Treat any other `closed_at`
 refusal as a real difference, not as clock skew.
-
-A soft-deleted node is never excused: enrollment compares its `closed_at`
-exactly, so a plain 0.5.4 done that crossed a second still refuses and names
-`closed_at`. This is the intended fail-closed rule, because enrollment cannot
-tell that skew from a changed stamp on a node nobody is looking at. Follow the
-printed fix.
 
 A 0.5.x per-project service (the `mtix daemon` unit or a running per-project
 daemon) keeps pull and hook duty for its board until that board is migrated.

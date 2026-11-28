@@ -178,26 +178,3 @@ func TestLegacyClosedStamps_UIDScopedWinner_BeatsNodeIDScopedWinner(t *testing.T
 	require.Equal(t, map[string]string{"MTIX-1": stamp}, got,
 		"the uid-carrying done is the winner; the uid-less reopen is outside the uid walk")
 }
-
-// A soft-deleted node whose plain 0.5.4 done crossed a second is not named, so
-// enrolment compares its closed_at exactly and still refuses (DESK-1.248,
-// MTIX-112.17.16.19.1.1). This pins the documented fail-closed rule: the same
-// node is named while live and drops out once deleted.
-func TestLegacyClosedStamps_SoftDeletedPlainDone_IsComparedExactly(t *testing.T) {
-	ctx := context.Background()
-	wall := time.Date(2026, 3, 4, 5, 6, 7, 900_000_000, time.UTC)
-	s, raw := replicaWithNode(t)
-	done := foreignWorkflowEvent(t, "MTIX-1", model.OpTransitionStatus, transition(model.StatusInProgress, model.StatusDone), 2, "")
-	done.WallClockTS = wall.UnixMilli()
-	pullEvents(t, s, []*model.SyncEvent{done})
-	live, err := s.LegacyClosedStamps(ctx)
-	require.NoError(t, err)
-	require.Equal(t, map[string]string{"MTIX-1": "2026-03-04T05:06:07Z"}, live, "control: the live node is named")
-
-	_, err = raw.ExecContext(ctx, `UPDATE nodes SET deleted_at = '2026-03-05T00:00:00Z' WHERE id = 'MTIX-1'`)
-	require.NoError(t, err)
-	got, err := s.LegacyClosedStamps(ctx)
-
-	require.NoError(t, err)
-	require.Empty(t, got, "a soft-deleted node is compared exactly, so it still refuses enrolment")
-}

@@ -88,3 +88,31 @@ func TestMoveEnrolLockAside_DirectoryMoved_Succeeds(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, info.IsDir())
 }
+
+// Pins the accepted move-then-recheck order (MTIX-112.17.16.21.2.2, founder
+// decision DESK-1.248): if a third process creates a fresh lock at the lock
+// path inside the window, the held lock cannot be put back. The move fails
+// closed with ErrConflict and ErrAlreadyExists, the held lock stays under the
+// aside name with its content, and the fresh lock is not replaced. The fresh
+// lock here exists before the put-back's check; a lock created between that
+// check and the rename is not covered (documented residual window).
+func TestMoveEnrolLockAside_ThirdActorLockInWindow_HeldLockStaysAside(t *testing.T) {
+	dir := t.TempDir()
+	lock, aside := filepath.Join(dir, "enroll.lock"), filepath.Join(dir, "enroll.lock.unprobeable")
+	require.NoError(t, os.WriteFile(lock, []byte("held"), 0o600))
+	thirdActor := func(path string) (os.FileInfo, error) {
+		require.NoError(t, os.WriteFile(lock, []byte("fresh"), 0o600))
+		return os.Lstat(path)
+	}
+
+	err := moveEnrolLockAsideWith(lock, aside, thirdActor)
+	require.ErrorIs(t, err, model.ErrConflict)
+	require.ErrorIs(t, err, model.ErrAlreadyExists)
+	assert.Contains(t, err.Error(), aside)
+	fresh, readErr := os.ReadFile(lock)
+	require.NoError(t, readErr)
+	assert.Equal(t, "fresh", string(fresh), "the third actor's lock is never replaced")
+	held, readErr := os.ReadFile(aside)
+	require.NoError(t, readErr)
+	assert.Equal(t, "held", string(held), "the held lock stays under the aside name")
+}

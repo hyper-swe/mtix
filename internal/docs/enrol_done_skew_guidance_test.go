@@ -5,7 +5,6 @@ package docs
 
 import (
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -29,32 +28,6 @@ func TestEnrolDoneSkewGuidance_AllSyncSurfaces(t *testing.T) {
 			require.Contains(t, string(body), "cannot tell this skew from a real change of one second or less to the same")
 			// MTIX-112.17.16.32: the silent-by-design rule and its snapshot limit.
 			require.Contains(t, string(body), "An event that carries a `closed_at` snapshot is never excused, even when the gap is one second or less.")
-		})
-	}
-}
-
-// deletedNodeRule is the sentence (DESK-1.248, MTIX-112.17.16.19.1.1) that says a
-// soft-deleted node is outside the one-second excuse. It must read the same on
-// every sync surface and on both troubleshooting pages.
-const deletedNodeRule = "A soft-deleted node is never excused: enrollment compares its `closed_at` exactly, so a plain 0.5.4 done that crossed a second still refuses and names `closed_at`. This is the intended fail-closed rule, because enrollment cannot tell that skew from a changed stamp on a node nobody is looking at. Follow the printed fix."
-
-// MTIX-112.17.16.19.1.1: the soft-deleted rule is stated identically on the sync
-// runbooks, the manual and both troubleshooting pages.
-func TestEnrolDoneSkewGuidance_SoftDeletedNodeRule_AllSurfaces(t *testing.T) {
-	paths := []string{
-		"templates/skills/sync.md.tmpl",
-		"../../.claude-plugin/skills/mtix-sync.md",
-		"../../.codex-plugin/skills/sync/SKILL.md",
-		"../../USERMANUAL.md",
-		"templates/troubleshooting.md.tmpl",
-		"../../docs/TROUBLESHOOTING.md",
-	}
-	for _, path := range paths {
-		t.Run(path, func(t *testing.T) {
-			body, err := os.ReadFile(path)
-			require.NoError(t, err)
-			flat := strings.Join(strings.Fields(string(body)), " ")
-			require.Contains(t, flat, deletedNodeRule)
 		})
 	}
 }

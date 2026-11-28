@@ -43,7 +43,11 @@ type tokenStatFunc func(name string) (fs.FileInfo, error)
 // 60 second safety read (inboxSafetyFloor) catches it, and a wait that holds
 // events keeps its 2 second full read, so the miss is bounded.
 func (s *Store) InboxChangeToken(ctx context.Context) (string, error) {
-	return inboxChangeTokenFor(ctx, s.dbPath, os.Stat)
+	stat := s.tokenStat // a test may count or fake the stat; production uses os.Stat
+	if stat == nil {
+		stat = os.Stat
+	}
+	return inboxChangeTokenFor(ctx, s.dbPath, stat)
 }
 
 // inboxChangeTokenFor builds the token from stat alone (see InboxChangeToken).

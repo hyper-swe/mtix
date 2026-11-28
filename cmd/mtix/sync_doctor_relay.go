@@ -25,6 +25,9 @@ import (
 // (MTIX-268; sync_doctor_relay_quarantine.go builds it).
 const relayQuarantineCheckName = "relay quarantined records"
 
+// relayMediumRow is the name of the doctor's medium-readability row (MTIX-290).
+const relayMediumRow = "relay medium"
+
 // relayVerdictCodes is the FR-21 §9 registry, pinned.
 //
 // Doctor reports against exactly this list. A code that appears without
@@ -49,6 +52,7 @@ var relayVerdictCodes = []string{
 	"RELAY_NO_SHARED_PROJECT",
 	"RELAY_PUBLISHER_DIVERGED",
 	"RELAY_AUTH_FAIL",
+	"RELAY_MEDIUM_UNREADABLE",
 }
 
 // cloudDriveMarkers are path fragments that indicate a third-party
@@ -102,6 +106,7 @@ func appendRelayChecks(ctx context.Context, report DoctorReport) DoctorReport {
 		{"relay key", func() (bool, string) { return checkRelayKey(doc) }, nil},
 		{"relay publishing", func() (bool, string) { return checkRelayPublishing(ctx) }, nil},
 		{"relay peers", func() (bool, string) { return checkRelayPeers(dir, doc) }, nil},
+		{relayMediumRow, nil, func() DoctorCheck { return checkRelayMedium(ctx, dir) }},
 		{"relay continuity", nil, func() DoctorCheck { return checkRelayContinuity(ctx, dir, doc) }},
 		{"relay poll cadence", checkRelayPollCadence, nil},
 		{"relay snapshots", func() (bool, string) { return checkRelaySnapshots(dir) }, nil},

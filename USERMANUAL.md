@@ -2838,6 +2838,8 @@ pull's position either, so later changes keep arriving.
 
   After a publisher crash or restart leaves a torn tail in a sealed segment, the reader applies every complete record once, never a partial one, and logs `reconciled torn seal` when the next segment of the same peer and publisher epoch resumes at or before the first missing record and its first record verifies. It then continues with no operator action. A torn tail the successor does not explain, and any damage inside a sealed segment, still stalls that peer with `RELAY_SEGMENT_CORRUPT` (it is never skipped).
 
+  **An unreadable relay medium stops only that peer.** A relay file or directory that cannot be opened, listed or read because of a permission or I/O error stalls only that peer with `RELAY_MEDIUM_UNREADABLE` (never `RELAY_SEGMENT_CORRUPT`: the bytes were never read; a file that does not exist keeps its own meaning). The message names the relay-relative path and the error class (for example `permission denied` or `input/output error`), never file content. Other peers keep ingesting, the stalled peer keeps its banked position, and the code clears on the next successful read with no republish or clone. `mtix sync relay tick` and `mtix sync relay status` (text and `--json`, as `stall_code`) name it, and `mtix sync doctor` fails the `relay medium` row with the fix: check that the relay directory is mounted and readable by this user, then rerun `mtix sync relay tick`.
+
   **A missing relay segment stops that peer's stream.** If a segment of a
   peer's stream is missing from the relay (deleted, lost by the medium, or never
   published), this peer does not read past the hole: `mtix sync relay tick`

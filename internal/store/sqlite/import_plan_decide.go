@@ -24,7 +24,7 @@ func (p *ImportPlan) planUIDAdoptions(ctx context.Context) error {
 		if f.fUID == "" {
 			continue
 		}
-		l, held, err := p.localWhere(ctx, "final = ?", f.fID)
+		l, held, err := p.localBy(ctx, localByFinal, f.fID)
 		if err != nil {
 			return err
 		}

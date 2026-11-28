@@ -23,8 +23,6 @@ type planLocal struct {
 	stamp, renumbered                         bool
 }
 
-const planLocalColumns = `pos, id, uid0, uid, project, parent_id, seq, created_at, title, stamp, final, final_seq, renumbered`
-
 func scanPlanLocal(row rowScanner) (planLocal, error) {
 	var l planLocal
 	err := row.Scan(&l.pos, &l.id, &l.uid0, &l.uid, &l.project, &l.parent, &l.seq, &l.createdAt, &l.title,
@@ -32,11 +30,30 @@ func scanPlanLocal(row rowScanner) (planLocal, error) {
 	return l, err
 }
 
-// localWhere reads the plan_local row a query selects, if any.
-func (p *ImportPlan) localWhere(ctx context.Context, where string, arg any) (planLocal, bool, error) {
-	// A local plan row by one indexed column.
-	l, err := scanPlanLocal(p.q.QueryRowContext(ctx,
-		`SELECT `+planLocalColumns+` FROM plan_local WHERE `+where+` LIMIT 1`, arg))
+// localKey names the column a plan_local row is looked up by.
+type localKey int
+
+const (
+	localByPos   localKey = iota // the position in plan order
+	localByID                    // the id the node has now
+	localByFinal                 // the id the plan leaves it at
+)
+
+// localQuery returns the constant statement that looks local rows up by key.
+func localQuery(key localKey) string {
+	switch key {
+	case localByID:
+		return planLocalByIDSQL
+	case localByFinal:
+		return planLocalByFinalSQL
+	default:
+		return planLocalByPosSQL
+	}
+}
+
+// localBy reads the plan_local row the key selects, if any.
+func (p *ImportPlan) localBy(ctx context.Context, key localKey, arg any) (planLocal, bool, error) {
+	l, err := scanPlanLocal(p.q.QueryRowContext(ctx, localQuery(key), arg))
 	if errors.Is(err, sql.ErrNoRows) {
 		return l, false, nil
 	}
@@ -49,10 +66,7 @@ func (p *ImportPlan) localWhere(ctx context.Context, where string, arg any) (pla
 // loadLocal copies every local node, soft-deleted ones included, shallowest
 // first and then by id, into plan_local (loadLocalNodes, on disk).
 func (p *ImportPlan) loadLocal(ctx context.Context) error {
-	// Every node a merge may move: deleted rows still own their ids.
-	rows, err := p.s.readDB.QueryContext(ctx,
-		`SELECT id, COALESCE(uid, ''), project, COALESCE(parent_id, ''), seq, COALESCE(created_at, ''), title
-		   FROM nodes ORDER BY depth, id`)
+	rows, err := p.s.readDB.QueryContext(ctx, planLoadLocalSQL)
 	if err != nil {
 		return fmt.Errorf("read the local nodes for the merge plan: %w", err)
 	}
@@ -66,10 +80,7 @@ func (p *ImportPlan) loadLocal(ctx context.Context) error {
 		if err := rows.Scan(&l.id, &l.uid0, &l.project, &l.parent, &l.seq, &l.createdAt, &l.title); err != nil {
 			return fmt.Errorf("read the local nodes for the merge plan: %w", err)
 		}
-		// One local node, ending where it is until the plan moves it.
-		if _, err := p.q.ExecContext(ctx,
-			`INSERT INTO plan_local (pos, id, uid0, uid, project, parent_id, seq, created_at, title, stamp,
-			   final, final_seq, renumbered) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, 0)`,
+		if _, err := p.q.ExecContext(ctx, planInsertLocalSQL,
 			p.localCount, l.id, l.uid0, l.uid0, l.project, l.parent, l.seq, l.createdAt, l.title, l.id, l.seq); err != nil {
 			return fmt.Errorf("copy a local node to the merge plan: %w", err)
 		}
@@ -81,11 +92,10 @@ func (p *ImportPlan) loadLocal(ctx context.Context) error {
 // stampMissingUIDs gives every local node without a uid a backfill uid before
 // any identity is decided (stampMissingUIDs, MTIX-95.31.9).
 func (p *ImportPlan) stampMissingUIDs(ctx context.Context) error {
-	for {
+	for last := -1; ; {
 		var pos int
 		var id string
-		// A local node still without a uid.
-		err := p.q.QueryRowContext(ctx, `SELECT pos, id FROM plan_local WHERE uid = '' ORDER BY pos LIMIT 1`).Scan(&pos, &id)
+		err := p.q.QueryRowContext(ctx, planStampNextSQL, last).Scan(&pos, &id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -96,18 +106,16 @@ func (p *ImportPlan) stampMissingUIDs(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("mint a uid for local task %s before it is renumbered: %w", id, err)
 		}
-		// The minted uid, marked as the import's.
-		if _, err := p.q.ExecContext(ctx, `UPDATE plan_local SET uid = ?, stamp = 1 WHERE pos = ?`, uid, pos); err != nil {
+		if _, err := p.q.ExecContext(ctx, planStampSetSQL, uid, pos); err != nil {
 			return fmt.Errorf("record the uid minted for %s: %w", id, err)
 		}
+		last = pos
 	}
 }
 
 // saveFinal stores where the merge leaves local node l.
 func (p *ImportPlan) saveFinal(ctx context.Context, l *planLocal) error {
-	// The id, number and renumbered mark the plan gave the node.
-	if _, err := p.q.ExecContext(ctx, `UPDATE plan_local SET final = ?, final_seq = ?, renumbered = ? WHERE pos = ?`,
-		l.final, l.finalSeq, l.renumbered, l.pos); err != nil {
+	if _, err := p.q.ExecContext(ctx, planSaveFinalSQL, l.final, l.finalSeq, l.renumbered, l.pos); err != nil {
 		return fmt.Errorf("record where %s ends: %w", l.id, err)
 	}
 	return nil
@@ -115,7 +123,7 @@ func (p *ImportPlan) saveFinal(ctx context.Context, l *planLocal) error {
 
 // finalOf returns the id local node id ends at, or id when it is not local.
 func (p *ImportPlan) finalOf(ctx context.Context, id string) (string, error) {
-	up, ok, err := p.localWhere(ctx, "id = ?", id)
+	up, ok, err := p.localBy(ctx, localByID, id)
 	if err != nil || !ok {
 		return id, err
 	}
@@ -167,7 +175,7 @@ func (p *ImportPlan) planLocalRenumbers(ctx context.Context) error {
 // its turn comes so earlier rows' updates are seen.
 func (p *ImportPlan) eachLocal(ctx context.Context, fn func(context.Context, *planLocal) error) error {
 	for pos := 0; pos < p.localCount; pos++ {
-		l, ok, err := p.localWhere(ctx, "pos = ?", pos)
+		l, ok, err := p.localBy(ctx, localByPos, pos)
 		if err != nil || !ok {
 			return errors.Join(err, notFoundIf(!ok, "local plan row"))
 		}
@@ -193,7 +201,7 @@ func (p *ImportPlan) follow(ctx context.Context, l *planLocal) error {
 	if err != nil {
 		return err
 	}
-	f, ok, err := p.incomingWhere(ctx, "f_uid = ?", l.uid)
+	f, ok, err := p.incomingBy(ctx, incomingByFUID, l.uid)
 	if err != nil {
 		return err
 	}
@@ -216,7 +224,7 @@ func (p *ImportPlan) follow(ctx context.Context, l *planLocal) error {
 // renumber moves the local node off an id the file gives to a different
 // task, to the next number free in both (renumber).
 func (p *ImportPlan) renumber(ctx context.Context, l *planLocal) error {
-	up, ok, err := p.localWhere(ctx, "id = ?", l.parent)
+	up, ok, err := p.localBy(ctx, localByID, l.parent)
 	if err != nil {
 		return err
 	}
@@ -227,7 +235,7 @@ func (p *ImportPlan) renumber(ctx context.Context, l *planLocal) error {
 	if err != nil {
 		return err
 	}
-	f, held, err := p.incomingWhere(ctx, "id = ?", l.final)
+	f, held, err := p.incomingBy(ctx, incomingByID, l.final)
 	if err != nil {
 		return err
 	}

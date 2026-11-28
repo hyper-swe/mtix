@@ -42,9 +42,9 @@ CREATE TABLE plan_in (ord INTEGER PRIMARY KEY, id TEXT NOT NULL, uid TEXT NOT NU
 	title TEXT NOT NULL, prov INTEGER NOT NULL, f_id TEXT NOT NULL, f_uid TEXT NOT NULL,
 	f_parent TEXT NOT NULL, f_seq INTEGER NOT NULL);
 CREATE INDEX plan_in_id ON plan_in (id, ord);
-CREATE INDEX plan_in_uid ON plan_in (uid, ord) WHERE uid <> '';
-CREATE INDEX plan_in_fuid ON plan_in (f_uid, ord) WHERE f_uid <> '';
-CREATE INDEX plan_in_parent ON plan_in (project, parent_id);
+CREATE INDEX plan_in_uid ON plan_in (uid, ord);
+CREATE INDEX plan_in_fuid ON plan_in (f_uid, ord);
+CREATE INDEX plan_in_parent ON plan_in (project, parent_id, seq);
 CREATE TABLE plan_local (pos INTEGER PRIMARY KEY, id TEXT NOT NULL, uid0 TEXT NOT NULL, uid TEXT NOT NULL,
 	project TEXT NOT NULL, parent_id TEXT NOT NULL, seq INTEGER NOT NULL, created_at TEXT NOT NULL,
 	title TEXT NOT NULL, stamp INTEGER NOT NULL, final TEXT NOT NULL, final_seq INTEGER NOT NULL,
@@ -79,16 +79,28 @@ type ImportPlan struct {
 // PlanImportStaged plans the reconciliation of the staged export with the
 // store, deciding what ImportReconcile decides (ADR-003 §6, FR-7.8), in the
 // same order and with the same errors, in memory bounded by one node: the
-// result is the same report. The plan is returned, never nil, even with an
-// error (as ImportReconcile returns its report), so the loud report of a
-// rejected or withheld import can be written. It writes nothing to the store.
+// result is the same report. ImportReconcile's own steps are the equivalent
+// ones (ImportReconcile in import_uid.go names the equality test). It does not
+// repeat the checks ImportReconcile makes of the file before it writes
+// (ValidateExport and the refusal of an empty import): those stay with
+// StagedExport.Verify and the slice 3 wiring of the staged plan into the import.
+//
+// The plan is returned, never nil, even with an error (as ImportReconcile
+// returns its report), so the loud report of a rejected or withheld import can
+// be written; only a nil or an already planned StagedExport returns no plan,
+// with ErrInvalidInput: the plan lives in the staging database, so stage the
+// file again to plan it again. It writes nothing to the store.
 func (s *Store) PlanImportStaged(ctx context.Context, st *StagedExport, opts ImportReconcileOptions) (*ImportPlan, error) {
 	if st == nil {
 		return nil, fmt.Errorf("staged import is nil: %w", model.ErrInvalidInput)
 	}
+	if !st.planned.CompareAndSwap(false, true) {
+		return nil, fmt.Errorf("staged import is already planned; stage the file again to plan it again: %w", model.ErrInvalidInput)
+	}
 	p := &ImportPlan{s: s, st: st, opts: opts}
 	tx, err := st.db.BeginTx(ctx, nil)
 	if err != nil {
+		st.planned.Store(false) // no plan table exists yet
 		return p, fmt.Errorf("begin import plan: %w", err)
 	}
 	p.q = tx
@@ -134,9 +146,7 @@ func (p *ImportPlan) IsApplied() bool { return p.applied }
 
 // add appends one entry to a report list.
 func (p *ImportPlan) add(ctx context.Context, sec reportSection, r reportRow) error {
-	// One entry of a report list, numbered after the entries before it.
-	if _, err := p.q.ExecContext(ctx,
-		`INSERT INTO plan_rows (sec, ord, c1, c2, c3, c4, c5, n) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+	if _, err := p.q.ExecContext(ctx, planAddRowSQL,
 		int(sec), p.counts[sec], r.c[0], r.c[1], r.c[2], r.c[3], r.c[4], r.n); err != nil {
 		return fmt.Errorf("record plan entry: %w", err)
 	}
@@ -155,8 +165,7 @@ func (p *ImportPlan) addRemap(ctx context.Context, sec reportSection, uid, oldPa
 
 // take records number seq as taken under the parent key (see takenKey).
 func (p *ImportPlan) take(ctx context.Context, key string, seq int) error {
-	// A number the plan took under a parent.
-	if _, err := p.q.ExecContext(ctx, `INSERT OR IGNORE INTO plan_taken (k, seq) VALUES (?, ?)`, key, seq); err != nil {
+	if _, err := p.q.ExecContext(ctx, planTakeSQL, key, seq); err != nil {
 		return fmt.Errorf("record a taken number: %w", err)
 	}
 	return nil
@@ -165,8 +174,7 @@ func (p *ImportPlan) take(ctx context.Context, key string, seq int) error {
 // isTaken reports whether the plan took number seq under the parent key.
 func (p *ImportPlan) isTaken(ctx context.Context, key string, seq int) (bool, error) {
 	var one int
-	// Whether the plan took this number under this parent.
-	err := p.q.QueryRowContext(ctx, `SELECT 1 FROM plan_taken WHERE k = ? AND seq = ?`, key, seq).Scan(&one)
+	err := p.q.QueryRowContext(ctx, planTakenSQL, key, seq).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}

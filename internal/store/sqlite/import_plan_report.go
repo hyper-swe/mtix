@@ -5,7 +5,6 @@ package sqlite
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 )
@@ -59,9 +58,7 @@ func (p *ImportPlan) eachPlanRow(ctx context.Context, sec reportSection, fn func
 // readPlanPage reads one page of a section's rows after place after, and
 // closes the cursor before returning.
 func (p *ImportPlan) readPlanPage(ctx context.Context, sec reportSection, after int) ([]reportRow, error) {
-	// A page of one report list, in order.
-	rows, err := p.q.QueryContext(ctx, `SELECT c1, c2, c3, c4, c5, n FROM plan_rows
-		WHERE sec = ? AND ord > ? ORDER BY ord LIMIT ?`, int(sec), after, reportPageRows)
+	rows, err := p.q.QueryContext(ctx, planPageSQL, int(sec), after, reportPageRows)
 	if err != nil {
 		return nil, fmt.Errorf("read the import plan: %w", err)
 	}
@@ -86,9 +83,9 @@ func (p *ImportPlan) eachRow(sec reportSection, fn func(reportRow) error) error 
 
 func (p *ImportPlan) eachWorkflow(fn func(*WorkflowConflict) error) error {
 	return p.eachPlanRow(context.Background(), secWorkflow, func(r reportRow) error {
-		var c WorkflowConflict
-		if err := json.Unmarshal([]byte(r.c[0]), &c); err != nil {
-			return fmt.Errorf("decode workflow conflict: %w", err)
+		c, err := decodeWorkflowConflict(r.c[0])
+		if err != nil {
+			return err
 		}
 		c.Choice = WorkflowChoice(r.c[1])
 		return fn(&c)
@@ -96,16 +93,34 @@ func (p *ImportPlan) eachWorkflow(fn func(*WorkflowConflict) error) error {
 }
 
 // buildRemap fills plan_remap with the pairs a remap file is written for, in
-// the order of ImportReconcileReport.remapPairs, and returns how many.
+// the order of ImportReconcileReport.remapPairs, and returns how many. It
+// rewrites the table in one transaction on the staging database, so a failure
+// leaves the pairs as they were.
 func (p *ImportPlan) buildRemap(ctx context.Context, applied bool) (int, error) {
-	if _, err := p.q.ExecContext(ctx, `DELETE FROM plan_remap`); err != nil {
+	tx, err := p.st.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("begin the remap pairs: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }() // no-op after Commit
+	total, err := fillRemap(ctx, tx, applied)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, fmt.Errorf("commit the remap pairs: %w", err)
+	}
+	return total, nil
+}
+
+// fillRemap clears plan_remap and collects the pairs of the plan rows into it.
+func fillRemap(ctx context.Context, q planQuerier, applied bool) (int, error) {
+	if _, err := q.ExecContext(ctx, planRemapClearSQL); err != nil {
 		return 0, fmt.Errorf("clear the remap pairs: %w", err)
 	}
 	total := 0
 	for _, sec := range []reportSection{secRemap, secLocalRenumber, secMoved} {
 		// A minted uid is listed only once the import is applied (MTIX-95.31.9).
-		res, err := p.q.ExecContext(ctx, `INSERT INTO plan_remap (uid, path)
-			SELECT c1, c3 FROM plan_rows WHERE sec = ? AND (? OR n = 0) ORDER BY ord`, int(sec), applied)
+		res, err := q.ExecContext(ctx, planRemapFillSQL, int(sec), applied)
 		if err != nil {
 			return 0, fmt.Errorf("collect the remap pairs: %w", err)
 		}
@@ -113,8 +128,7 @@ func (p *ImportPlan) buildRemap(ctx context.Context, applied bool) (int, error) 
 		total += int(n)
 	}
 	// The local uids a merge gave up map to the id their task keeps (MTIX-95.31.6).
-	res, err := p.q.ExecContext(ctx, `INSERT INTO plan_remap (uid, path)
-		SELECT c2, c1 FROM plan_rows WHERE sec = ? AND c2 <> '' ORDER BY ord`, int(secAdoption))
+	res, err := q.ExecContext(ctx, planRemapAdoptSQL, int(secAdoption))
 	if err != nil {
 		return 0, fmt.Errorf("collect the adopted uids: %w", err)
 	}
@@ -151,9 +165,7 @@ func (p *ImportPlan) eachRemapPair(applied bool, fn func(uid, path string) error
 // readRemapPage reads the next pairs after uid last, one per uid, the last
 // entry of a uid winning, in uid order.
 func (p *ImportPlan) readRemapPage(ctx context.Context, last string) ([][2]string, error) {
-	// One pair per uid: the path of its last entry.
-	rows, err := p.q.QueryContext(ctx, `SELECT uid, path, MAX(k) FROM plan_remap
-		WHERE uid <> '' AND uid > ? GROUP BY uid ORDER BY uid LIMIT ?`, last, reportPageRows)
+	rows, err := p.q.QueryContext(ctx, planRemapPageSQL, last, reportPageRows)
 	if err != nil {
 		return nil, fmt.Errorf("read the remap pairs: %w", err)
 	}

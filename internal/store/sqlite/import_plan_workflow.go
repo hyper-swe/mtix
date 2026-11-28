@@ -6,7 +6,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -42,11 +41,11 @@ func (p *ImportPlan) workflowConflictAt(ctx context.Context, ord int, carries bo
 	if err != nil {
 		return err
 	}
-	l, held, err := p.localWhere(ctx, "final = ?", f.fID)
+	l, held, err := p.localBy(ctx, localByFinal, f.fID)
 	if err != nil || !held {
 		return err
 	}
-	local, err := scanExportNode(p.s.readDB.QueryRowContext(ctx, exportNodeSelectSQL+" WHERE id = ?", l.id))
+	local, err := scanExportNode(p.s.readDB.QueryRowContext(ctx, planLocalNodeSQL, l.id))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -74,11 +73,11 @@ func (p *ImportPlan) recordWorkflow(ctx context.Context, local, n *exportNode, c
 	if err := addWorkflowHistory(ctx, p.s.readDB, local, n, diffs); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(WorkflowConflict{ID: n.ID, Title: local.Title, Fields: diffs, Hint: activityHint(local, n, carries)})
+	raw, err := encodeWorkflowConflict(WorkflowConflict{ID: n.ID, Title: local.Title, Fields: diffs, Hint: activityHint(local, n, carries)})
 	if err != nil {
 		return fmt.Errorf("encode workflow conflict %s: %w", n.ID, err)
 	}
-	return p.add(ctx, secWorkflow, reportRow{c: [5]string{string(raw), "", n.ID}, n: boolInt(n.UID != "" && n.UID == local.UID)})
+	return p.add(ctx, secWorkflow, reportRow{c: [5]string{raw, "", n.ID}, n: boolInt(n.UID != "" && n.UID == local.UID)})
 }
 
 // boolInt is 1 for true and 0 for false.
@@ -120,13 +119,13 @@ func (p *ImportPlan) setChoice(ctx context.Context, id string, choice WorkflowCh
 	if choice == "" {
 		return nil
 	}
-	query, args := `UPDATE plan_rows SET c2 = ? WHERE sec = ?`, []any{string(choice), int(secWorkflow)}
-	if id != "" {
-		// The conflicts of one named task.
-		query, args = query+` AND c3 = ?`, append(args, id)
+	var res sql.Result
+	var err error
+	if id == "" {
+		res, err = p.q.ExecContext(ctx, planChoiceAllSQL, string(choice), int(secWorkflow))
+	} else { // the last conflict of the task: the in-memory plan keys them by id
+		res, err = p.q.ExecContext(ctx, planChoiceTaskSQL, string(choice), int(secWorkflow), id)
 	}
-	// Give the conflicts the chosen side.
-	res, err := p.q.ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("settle the workflow conflicts: %w", err)
 	}
@@ -140,9 +139,7 @@ func (p *ImportPlan) setChoice(ctx context.Context, id string, choice WorkflowCh
 // the conflicts in the report; otherwise it counts the no-ops they replace.
 func (p *ImportPlan) refuseUnsettled(ctx context.Context) error {
 	var open int
-	// The conflicts still without a choice, and those that were counted as no-ops.
-	if err := p.q.QueryRowContext(ctx, `SELECT COUNT(*) FILTER (WHERE c2 = ''), COUNT(*) FILTER (WHERE n = 1)
-		FROM plan_rows WHERE sec = ?`, int(secWorkflow)).Scan(&open, &p.wfIdempotent); err != nil {
+	if err := p.q.QueryRowContext(ctx, planCountOpenSQL, int(secWorkflow)).Scan(&open, &p.wfIdempotent); err != nil {
 		return fmt.Errorf("count the workflow conflicts: %w", err)
 	}
 	if open == 0 {

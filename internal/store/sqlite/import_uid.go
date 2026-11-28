@@ -176,6 +176,14 @@ type ImportReconcileReport struct {
 //
 // Every uid a merge adopts (the same task under another uid, FR-7.8) is
 // listed in the report, applied or not, and in the result (MTIX-95.31.6).
+//
+// PlanImportStaged (import_plan.go, MTIX-2.3.2.2) is the bounded-memory
+// equivalent of the planning above for a staged export: it runs the same
+// phases in the same order, with the same errors and the same report, from the
+// staged rows and indexed queries instead of the decoded ExportData. It does
+// not apply the import. The TestPlanImportStaged_* tests in import_plan_test.go
+// (through planMatchesReconcile) pin the equality, decision by decision,
+// against this function.
 // The returned report is always non-nil when data is non-nil, even on error, so
 // callers can surface the loud report. The ImportResult is nil unless the import
 // was applied; it is also returned with ErrImportIncomplete, which means

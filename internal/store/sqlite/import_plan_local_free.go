@@ -18,17 +18,10 @@ import (
 // node and no file node holds (nextSeqFreeInBoth), and takes it.
 func (p *ImportPlan) nextSeqFreeInBoth(ctx context.Context, project, parent string) (int, error) {
 	var local, file int
-	// The highest number a local node holds, now or after its move, under the
-	// parent: the nodes whose parent ends at parent, or is parent and not local.
-	if err := p.q.QueryRowContext(ctx, `SELECT COALESCE(MAX(MAX(seq, final_seq)), 0) FROM plan_local
-		WHERE project = ?1 AND (parent_id IN (SELECT id FROM plan_local WHERE final = ?2)
-		  OR (parent_id = ?2 AND NOT EXISTS (SELECT 1 FROM plan_local WHERE id = ?2)))`,
-		project, parent).Scan(&local); err != nil {
+	if err := p.q.QueryRowContext(ctx, planLocalMaxSQL, project, parent).Scan(&local); err != nil {
 		return 0, fmt.Errorf("read the highest local number under %q: %w", parent, err)
 	}
-	// The highest number a file node holds under the parent.
-	if err := p.q.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq), 0) FROM plan_in WHERE project = ? AND parent_id = ?`,
-		project, parent).Scan(&file); err != nil {
+	if err := p.q.QueryRowContext(ctx, planFileMaxSQL, project, parent).Scan(&file); err != nil {
 		return 0, fmt.Errorf("read the highest file number under %q: %w", parent, err)
 	}
 	for seq := max(local, file) + 1; ; seq++ {
@@ -42,14 +35,21 @@ func (p *ImportPlan) nextSeqFreeInBoth(ctx context.Context, project, parent stri
 	}
 }
 
+// namespaceQuery returns the constant statement that looks for the namespace in
+// the file's nodes (inFile) or in the local ones.
+func namespaceQuery(inFile bool) string {
+	if inFile {
+		return planNamespaceInSQL
+	}
+	return planNamespaceLocalSQL
+}
+
 // namespaceHeld reports whether a local node or a file node holds id or an id
 // under it (a node whose parent is gone keeps its id).
 func (p *ImportPlan) namespaceHeld(ctx context.Context, id string) (bool, error) {
-	for _, table := range []string{"plan_local", "plan_in"} {
+	for _, inFile := range []bool{false, true} {
 		var one int
-		// Whether a node of the table is id or under it (ids from id. up to id/).
-		err := p.q.QueryRowContext(ctx, `SELECT 1 FROM `+table+` WHERE id = ?1 OR (id >= ?1 || '.' AND id < ?1 || '/') LIMIT 1`,
-			id).Scan(&one)
+		err := p.q.QueryRowContext(ctx, namespaceQuery(inFile), id).Scan(&one)
 		if err == nil {
 			return true, nil
 		}
@@ -64,9 +64,7 @@ func (p *ImportPlan) namespaceHeld(ctx context.Context, id string) (bool, error)
 // (checkFinals).
 func (p *ImportPlan) checkFinals(ctx context.Context) error {
 	var first, second, final string
-	// The first local node, in plan order, that ends where an earlier one does.
-	err := p.q.QueryRowContext(ctx, `SELECT a.id, b.id, b.final FROM plan_local b
-		JOIN plan_local a ON a.final = b.final AND a.pos < b.pos ORDER BY b.pos, a.pos LIMIT 1`).Scan(&first, &second, &final)
+	err := p.q.QueryRowContext(ctx, planCheckFinalsSQL).Scan(&first, &second, &final)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

@@ -77,8 +77,19 @@ func planMatchesReconcile(t *testing.T, local *sqlite.Store, file func() *sqlite
 	wantText, wantRemap, wantDoc, wantHas := outputsOf(t, report)
 	gotText, gotRemap, gotDoc, gotHas := outputsOf(t, plan)
 	if mask {
-		for _, s := range []*string{&wantText, &gotText, &wantRemap, &gotRemap} {
+		for _, s := range []*string{&wantRemap, &gotRemap} {
 			*s = uuidText.ReplaceAllString(*s, "UID")
+		}
+		// In the report a minted uid is numbered by its first appearance, so a
+		// minted uid read where another uid belongs still shows.
+		for _, s := range []*string{&wantText, &gotText} {
+			seen := map[string]int{}
+			*s = uuidText.ReplaceAllStringFunc(*s, func(u string) string {
+				if _, ok := seen[u]; !ok {
+					seen[u] = len(seen) + 1
+				}
+				return fmt.Sprintf("UID%d", seen[u])
+			})
 		}
 	}
 	assert.Equal(t, wantText, gotText)
@@ -270,6 +281,80 @@ func TestPlanImportStaged_WorkflowConflicts(t *testing.T) {
 			sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge, Workflow: res}, false)
 		require.ErrorIs(t, err, model.ErrInvalidInput)
 	})
+}
+
+// A local title and assignee with invalid UTF-8 print in the staged report as
+// the in-memory report prints them: quoted from the stored bytes (MTIX-2.3.2.2).
+func TestPlanImportStaged_InvalidUTF8WorkflowText_ReportEqualsInMemory(t *testing.T) {
+	for name, res := range map[string]sqlite.WorkflowResolution{
+		"unresolved": {}, "theirs": {Prefer: sqlite.WorkflowTheirs}} {
+		t.Run(name, func(t *testing.T) {
+			local, _, file := workflowStores(t, workflowCases()[0])
+			_, err := local.WriteDB().ExecContext(context.Background(),
+				`UPDATE nodes SET title = ?, assignee = ? WHERE id = 'REC-1'`, "Shared \xff task", "ali\xc3ce")
+			require.NoError(t, err)
+			report, _ := planMatchesReconcile(t, local, func() *sqlite.ExportData { return file },
+				sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge, Workflow: res}, false)
+			assert.Contains(t, report.String(), `\xff`, "the case must carry the invalid bytes into the report")
+		})
+	}
+}
+
+// A file that repeats a task id: --theirs and --ours by id settle the last
+// conflict of the id only, as the in-memory plan (which keys them by id) does.
+func TestPlanImportStaged_RepeatedTaskID_ChoiceByIDEqualsInMemory(t *testing.T) {
+	for name, res := range map[string]sqlite.WorkflowResolution{
+		"theirs by id":            {Theirs: []string{"REC-1"}},
+		"ours by id":              {Ours: []string{"REC-1"}},
+		"a task with no conflict": {Prefer: sqlite.WorkflowOurs, Theirs: []string{"REC-99"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			local, _, file := workflowStores(t, workflowCases()[0])
+			dup := file.Nodes[0]
+			dup.UID, dup.Status = "", "blocked"
+			file.Nodes = append(file.Nodes, dup)
+			require.NoError(t, sqlite.RecomputeExportChecksum(file))
+			_, err := planMatchesReconcile(t, local, func() *sqlite.ExportData { return file },
+				sqlite.ImportReconcileOptions{Mode: sqlite.ImportModeMerge, Workflow: res}, false)
+			if res.Prefer == "" {
+				require.Error(t, err, "the earlier conflict of the repeated id is left without a choice")
+			}
+		})
+	}
+}
+
+// A force-rename that goes past the rejection: the fresh uid flows into the
+// provisional remap, the uid adoptions and the identity decisions, in a merge
+// and in a replace, as in the in-memory plan.
+func TestPlanImportStaged_ForceRename_FreshUIDReachesRemapsAndAdoptions(t *testing.T) {
+	build := func(t *testing.T) (*sqlite.Store, func() *sqlite.ExportData) {
+		local := newTestStore(t)
+		uidA, uidV, uidX, uidY := taskUID(t), taskUID(t), taskUID(t), taskUID(t)
+		for i, uid := range []string{uidA, uidV, uidX, uidY} {
+			createSameIDTask(t, local, fmt.Sprintf("REC-%d", i+1), "", i+1, uid, fmt.Sprintf("Local %d", i+1))
+		}
+		node := func(id, parent string, depth, seq int, uid string) sqlite.TestExportNode {
+			return sqlite.TestExportNode{ID: id, ParentID: parent, Depth: depth, Seq: seq, Project: "REC", Title: id,
+				ContentHash: "h" + id, UID: uid, CreatedAt: sameIDTime, UpdatedAt: sameIDTime}
+		}
+		return local, func() *sqlite.ExportData {
+			return reconcileExport(t, "REC", node("REC-1", "", 0, 1, uidA), node("REC-2", "", 0, 2, backfilledUID(t)),
+				node("REC-3", "", 0, 3, uidV), node(provisionalPath(t, "REC-1", uidY), "REC-1", 1, 1, uidY))
+		}
+	}
+	for name, mode := range map[string]sqlite.ImportMode{"merge": sqlite.ImportModeMerge, "replace": sqlite.ImportModeReplace} {
+		t.Run(name, func(t *testing.T) {
+			local, file := build(t)
+			report, err := planMatchesReconcile(t, local, file,
+				sqlite.ImportReconcileOptions{Mode: mode, ForceRename: true, Confirm: true}, true)
+			require.NoError(t, err)
+			assert.Len(t, report.Renamed, 2)
+			assert.Len(t, report.Remaps, 1, "the provisional node is renumbered under its fresh uid")
+			if mode == sqlite.ImportModeMerge {
+				assert.Len(t, report.UIDAdoptions, 2, "the re-stamped and the backfilled uid are adopted")
+			}
+		})
+	}
 }
 
 // A nil staged export is an invalid input, not a panic.

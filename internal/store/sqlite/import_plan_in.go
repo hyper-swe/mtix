@@ -27,10 +27,7 @@ type stagedBody struct {
 // readNodePage reads up to stagePageRows staged nodes after ord after, and
 // closes the cursor before returning, so the caller can write meanwhile.
 func readNodePage(ctx context.Context, q planQuerier, after int) ([]stagedBody, error) {
-	// A page of staged nodes in file order.
-	rows, err := q.QueryContext(ctx,
-		`SELECT ord, body FROM stage_rows WHERE kind = ? AND ord > ? ORDER BY ord LIMIT ?`,
-		int(stageNodes), after, stagePageRows)
+	rows, err := q.QueryContext(ctx, stageNodePageSQL, int(stageNodes), after, stagePageRows)
 	if err != nil {
 		return nil, fmt.Errorf("read staged nodes: %w", err)
 	}
@@ -76,9 +73,7 @@ func (st *StagedExport) eachStagedNode(ctx context.Context, q planQuerier, fn fu
 func (st *StagedExport) stagedNodeAt(ctx context.Context, q planQuerier, ord int) (exportNode, error) {
 	var body []byte
 	var n exportNode
-	// One staged node by its place in the file.
-	err := q.QueryRowContext(ctx, `SELECT body FROM stage_rows WHERE kind = ? AND ord = ?`,
-		int(stageNodes), ord).Scan(&body)
+	err := q.QueryRowContext(ctx, stageNodeAtSQL, int(stageNodes), ord).Scan(&body)
 	if err != nil {
 		return n, fmt.Errorf("read staged node %d: %w", ord, err)
 	}
@@ -91,11 +86,7 @@ func (st *StagedExport) stagedNodeAt(ctx context.Context, q planQuerier, ord int
 // loadIncoming indexes the identity columns of every staged node in plan_in.
 func (p *ImportPlan) loadIncoming(ctx context.Context) error {
 	return p.st.eachStagedNode(ctx, p.q, func(ord int, n *exportNode) error {
-		// The identity of one incoming node, and the id, uid, parent and
-		// number the reconcile will leave it with (the same until a rewrite).
-		if _, err := p.q.ExecContext(ctx,
-			`INSERT INTO plan_in (ord, id, uid, parent_id, project, depth, seq, created_at, title, prov,
-			   f_id, f_uid, f_parent, f_seq) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		if _, err := p.q.ExecContext(ctx, planInsertIncomingSQL,
 			ord, n.ID, n.UID, n.ParentID, n.Project, n.Depth, n.Seq, n.CreatedAt, n.Title,
 			model.IsProvisional(n.ID), n.ID, n.UID, n.ParentID, n.Seq); err != nil {
 			return fmt.Errorf("index incoming node %d: %w", ord, err)
@@ -112,8 +103,6 @@ type inNode struct {
 	depth, seq, fSeq                    int
 }
 
-const inNodeColumns = `ord, id, uid, parent_id, project, depth, seq, created_at, title, f_id, f_uid, f_parent, f_seq`
-
 func scanInNode(row rowScanner) (inNode, error) {
 	var n inNode
 	err := row.Scan(&n.ord, &n.id, &n.uid, &n.parent, &n.project, &n.depth, &n.seq, &n.createdAt,
@@ -121,12 +110,31 @@ func scanInNode(row rowScanner) (inNode, error) {
 	return n, err
 }
 
-// incomingWhere returns the incoming node a query selects (the last one of a
+// incomingKey names the column an incoming node is looked up by.
+type incomingKey int
+
+const (
+	incomingByOrd  incomingKey = iota // the place in the file
+	incomingByID                      // the id the file holds it under (the last of a repeated id)
+	incomingByFUID                    // the uid it ends with (the last)
+)
+
+// incomingQuery returns the constant statement that looks incoming nodes up by key.
+func incomingQuery(key incomingKey) string {
+	switch key {
+	case incomingByID:
+		return planIncomingByIDSQL
+	case incomingByFUID:
+		return planIncomingByFUIDSQL
+	default:
+		return planIncomingByOrdSQL
+	}
+}
+
+// incomingBy returns the incoming node the key selects (the last one of a
 // repeated id, as the in-memory plan's maps keep it), and whether there is one.
-func (p *ImportPlan) incomingWhere(ctx context.Context, where string, arg any) (inNode, bool, error) {
-	// An incoming node by one indexed column, the last in the file.
-	n, err := scanInNode(p.q.QueryRowContext(ctx,
-		`SELECT `+inNodeColumns+` FROM plan_in WHERE `+where+` ORDER BY ord DESC LIMIT 1`, arg))
+func (p *ImportPlan) incomingBy(ctx context.Context, key incomingKey, arg any) (inNode, bool, error) {
+	n, err := scanInNode(p.q.QueryRowContext(ctx, incomingQuery(key), arg))
 	if errors.Is(err, sql.ErrNoRows) {
 		return n, false, nil
 	}
@@ -138,7 +146,7 @@ func (p *ImportPlan) incomingWhere(ctx context.Context, where string, arg any) (
 
 // incomingAt reads the plan_in row at ord.
 func (p *ImportPlan) incomingAt(ctx context.Context, ord int) (inNode, error) {
-	n, ok, err := p.incomingWhere(ctx, "ord = ?", ord)
+	n, ok, err := p.incomingBy(ctx, incomingByOrd, ord)
 	if err == nil && !ok {
 		err = fmt.Errorf("incoming node %d: %w", ord, model.ErrNotFound)
 	}
@@ -162,12 +170,7 @@ func (p *ImportPlan) validateUIDs(ctx context.Context) error {
 // more than one node of the export, at its second node, pointing at the first
 // (exportDuplicateUIDConflicts).
 func (p *ImportPlan) exportDuplicateUIDConflicts(ctx context.Context) error {
-	// For each uid held by more than one node: the second node and the first.
-	res, err := p.q.ExecContext(ctx, `
-		INSERT INTO plan_rows (sec, ord, c1, c2, c3, c4, c5, n)
-		SELECT ?1, ROW_NUMBER() OVER (ORDER BY b.ord) - 1 + ?2, b.uid, b.id, a.id, '', '', ?3
-		FROM plan_in b JOIN plan_in a ON a.ord = (SELECT MIN(ord) FROM plan_in WHERE uid = b.uid)
-		WHERE b.uid <> '' AND b.ord = (SELECT MIN(ord) FROM plan_in WHERE uid = b.uid AND ord > a.ord)`,
+	res, err := p.q.ExecContext(ctx, planDuplicateUIDsSQL,
 		int(secConflict), p.counts[secConflict], int(ConflictExportDuplicateUID))
 	if err != nil {
 		return fmt.Errorf("find duplicate uids in the export: %w", err)
@@ -222,7 +225,7 @@ func (p *ImportPlan) classifyOne(ctx context.Context, n *inNode) error {
 		return err
 	}
 	// The incoming node takes the fresh uid.
-	if _, err := p.q.ExecContext(ctx, `UPDATE plan_in SET f_uid = ? WHERE ord = ?`, freshUID, n.ord); err != nil {
+	if _, err := p.q.ExecContext(ctx, planRestampSQL, freshUID, n.ord); err != nil {
 		return fmt.Errorf("re-stamp incoming node %s: %w", n.id, err)
 	}
 	return nil
@@ -233,20 +236,16 @@ func (p *ImportPlan) classifyOne(ctx context.Context, n *inNode) error {
 // planProvisionalRemaps does, recording each move in the remap list and the
 // new id, parent and number in plan_in.
 func (p *ImportPlan) planProvisionalRemaps(ctx context.Context) error {
-	// The provisional nodes, shallowest first, then by id and place.
-	if _, err := p.q.ExecContext(ctx, `INSERT INTO plan_order (pos, ord)
-		SELECT ROW_NUMBER() OVER (ORDER BY depth, id, ord) - 1, ord FROM plan_in WHERE prov = 1`); err != nil {
+	if _, err := p.q.ExecContext(ctx, planProvOrderSQL); err != nil {
 		return fmt.Errorf("order the provisional nodes: %w", err)
 	}
 	var count int
-	// How many provisional nodes there are.
-	if err := p.q.QueryRowContext(ctx, `SELECT COUNT(*) FROM plan_order`).Scan(&count); err != nil {
+	if err := p.q.QueryRowContext(ctx, planProvCountSQL).Scan(&count); err != nil {
 		return fmt.Errorf("count the provisional nodes: %w", err)
 	}
 	for pos := 0; pos < count; pos++ {
 		var ord int
-		// The node renumbered at this position.
-		if err := p.q.QueryRowContext(ctx, `SELECT ord FROM plan_order WHERE pos = ?`, pos).Scan(&ord); err != nil {
+		if err := p.q.QueryRowContext(ctx, planProvAtSQL, pos).Scan(&ord); err != nil {
 			return fmt.Errorf("read the provisional order: %w", err)
 		}
 		if err := p.remapProvisional(ctx, ord); err != nil {
@@ -274,13 +273,10 @@ func (p *ImportPlan) remapProvisional(ctx context.Context, ord int) error {
 		return err
 	}
 	newID := model.BuildID(n.project, newParent, seq)
-	// The node's new id, parent and number; descendants follow through plan_rebase.
-	if _, err := p.q.ExecContext(ctx, `UPDATE plan_in SET f_id = ?, f_parent = ?, f_seq = ? WHERE ord = ?`,
-		newID, newParent, seq, ord); err != nil {
+	if _, err := p.q.ExecContext(ctx, planRenumberInSQL, newID, newParent, seq, ord); err != nil {
 		return fmt.Errorf("renumber incoming node %s: %w", n.id, err)
 	}
-	// Descendants of this node follow it to its new path.
-	if _, err := p.q.ExecContext(ctx, `INSERT OR REPLACE INTO plan_rebase (old, new) VALUES (?, ?)`, n.id, newID); err != nil {
+	if _, err := p.q.ExecContext(ctx, planRebaseSetSQL, n.id, newID); err != nil {
 		return fmt.Errorf("record the renumbered path of %s: %w", n.id, err)
 	}
 	return p.addRemap(ctx, secRemap, n.fUID, n.id, newID, false)
@@ -294,8 +290,7 @@ func (p *ImportPlan) applyRebase(ctx context.Context, path string) (string, erro
 	}
 	for end := len(path); end > 0; {
 		var mapped string
-		// The new path of the renumbered ancestor holding this prefix, if any.
-		err := p.q.QueryRowContext(ctx, `SELECT new FROM plan_rebase WHERE old = ?`, path[:end]).Scan(&mapped)
+		err := p.q.QueryRowContext(ctx, planRebaseGetSQL, path[:end]).Scan(&mapped)
 		if err == nil {
 			return mapped + path[end:], nil
 		}
@@ -317,8 +312,7 @@ func (p *ImportPlan) applyRebase(ctx context.Context, path string) (string, erro
 // siblings stays linear.
 func (p *ImportPlan) nextFreeChildSeq(ctx context.Context, parentID string) (int, error) {
 	start := 1
-	// Where to start looking under this parent.
-	err := p.q.QueryRowContext(ctx, `SELECT next FROM plan_hint WHERE k = ?`, parentID).Scan(&start)
+	err := p.q.QueryRowContext(ctx, planHintGetSQL, parentID).Scan(&start)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return 0, fmt.Errorf("read the number hint under %s: %w", parentID, err)
 	}
@@ -338,7 +332,7 @@ func (p *ImportPlan) nextFreeChildSeq(ctx context.Context, parentID string) (int
 			continue
 		}
 		// Every number below seq is unavailable now; seq is taken.
-		if _, err := p.q.ExecContext(ctx, `INSERT OR REPLACE INTO plan_hint (k, next) VALUES (?, ?)`, parentID, seq+1); err != nil {
+		if _, err := p.q.ExecContext(ctx, planHintSetSQL, parentID, seq+1); err != nil {
 			return 0, fmt.Errorf("record the number hint under %s: %w", parentID, err)
 		}
 		return seq, p.take(ctx, parentID, seq)

@@ -61,7 +61,7 @@ func (svc *NodeService) UnclaimNode(ctx context.Context, id, reason, actor strin
 		}
 		reason = fmt.Sprintf("forced unclaim by %s of claim held by %s: %s", actor, node.Assignee, reason)
 	}
-	if err := svc.store.UnclaimNode(ctx, id, reason, actor); err != nil {
+	if err := svc.store.UnclaimNodeExpecting(ctx, id, reason, actor, node.Assignee); err != nil {
 		return wrapAPIOperation(fmt.Sprintf("unclaim node %s", id), err)
 	}
 	svc.broadcastEvent(ctx, EventNodeUnclaimed, id, actor, nil)

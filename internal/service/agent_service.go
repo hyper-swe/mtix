@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -273,13 +274,33 @@ func (svc *AgentService) CheckStuckTimeouts(ctx context.Context) error {
 
 	cutoff := svc.clock().Add(-timeout).UTC().Format(time.RFC3339)
 
+	agents, err := svc.loadStuckAgents(ctx, cutoff)
+	if err != nil {
+		return err
+	}
+	for _, sa := range agents {
+		svc.autoUnclaimStuck(ctx, sa)
+	}
+	return nil
+}
+
+// stuckAgent is an agent stuck past the timeout and the node it holds.
+type stuckAgent struct {
+	agentID string
+	nodeID  string
+}
+
+// loadStuckAgents lists the agents stuck since before cutoff that hold a node
+// (FR-10.3a). It reads outside any write transaction, so the node's assignee
+// may change before the caller acts: autoUnclaimStuck re-checks it atomically.
+func (svc *AgentService) loadStuckAgents(ctx context.Context, cutoff string) ([]stuckAgent, error) {
 	rows, err := svc.store.Query(ctx,
 		`SELECT agent_id, current_node_id FROM agents
 		 WHERE state = 'stuck' AND state_changed_at < ? AND current_node_id IS NOT NULL`,
 		cutoff,
 	)
 	if err != nil {
-		return fmt.Errorf("query stuck agents: %w", err)
+		return nil, fmt.Errorf("query stuck agents: %w", err)
 	}
 	defer func() {
 		if closeErr := rows.Close(); closeErr != nil {
@@ -287,48 +308,54 @@ func (svc *AgentService) CheckStuckTimeouts(ctx context.Context) error {
 		}
 	}()
 
-	type stuckAgent struct {
-		agentID string
-		nodeID  string
-	}
 	var agents []stuckAgent
-
 	for rows.Next() {
 		var sa stuckAgent
 		if err := rows.Scan(&sa.agentID, &sa.nodeID); err != nil {
-			return fmt.Errorf("scan stuck agent: %w", err)
+			return nil, fmt.Errorf("scan stuck agent: %w", err)
 		}
 		agents = append(agents, sa)
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate stuck agents: %w", err)
+		return nil, fmt.Errorf("iterate stuck agents: %w", err)
+	}
+	return agents, nil
+}
+
+// autoUnclaimStuck releases the node a stuck agent holds (FR-10.3a). The
+// release is a compare-and-set on the stuck agent as assignee, checked inside
+// the unclaim transaction (MTIX-325.1): if the claim was forced away or
+// re-claimed since the stuck query, the store refuses with ErrAlreadyClaimed;
+// the sweep logs it and skips, writing nothing, so the new owner's claim and
+// agent row stay intact. Other errors are logged and skipped too.
+func (svc *AgentService) autoUnclaimStuck(ctx context.Context, sa stuckAgent) {
+	svc.logger.Info("auto-unclaiming stuck agent",
+		"agent_id", sa.agentID, "node_id", sa.nodeID)
+
+	err := svc.store.UnclaimNodeExpecting(ctx, sa.nodeID, "auto-unclaimed: stuck timeout", sa.agentID, sa.agentID)
+	if errors.Is(err, model.ErrAlreadyClaimed) {
+		svc.logger.Info("skipping auto-unclaim: the claim moved on",
+			"agent_id", sa.agentID, "node_id", sa.nodeID, "error", err)
+		return
+	}
+	if err != nil {
+		svc.logger.Error("failed to auto-unclaim",
+			"agent_id", sa.agentID, "node_id", sa.nodeID, "error", err)
+		return
 	}
 
-	for _, sa := range agents {
-		svc.logger.Info("auto-unclaiming stuck agent",
-			"agent_id", sa.agentID, "node_id", sa.nodeID)
-
-		if err := svc.store.UnclaimNode(ctx, sa.nodeID, "auto-unclaimed: stuck timeout", sa.agentID); err != nil {
-			svc.logger.Error("failed to auto-unclaim",
-				"agent_id", sa.agentID, "node_id", sa.nodeID, "error", err)
-			continue
-		}
-
-		// Reset agent state.
-		db := svc.store.WriteDB()
-		now := svc.clock().UTC().Format(time.RFC3339)
-		if _, err := db.ExecContext(ctx,
-			`UPDATE agents SET state = 'idle', current_node_id = NULL, state_changed_at = ? WHERE agent_id = ?`,
-			now, sa.agentID,
-		); err != nil {
-			svc.logger.Error("failed to reset stuck agent",
-				"agent_id", sa.agentID, "error", err)
-		}
-
-		svc.broadcastAgentEvent(ctx, EventNodeUnclaimed, sa.nodeID, nil)
+	// Reset agent state.
+	db := svc.store.WriteDB()
+	now := svc.clock().UTC().Format(time.RFC3339)
+	if _, err := db.ExecContext(ctx,
+		`UPDATE agents SET state = 'idle', current_node_id = NULL, state_changed_at = ? WHERE agent_id = ?`,
+		now, sa.agentID,
+	); err != nil {
+		svc.logger.Error("failed to reset stuck agent",
+			"agent_id", sa.agentID, "error", err)
 	}
 
-	return nil
+	svc.broadcastAgentEvent(ctx, EventNodeUnclaimed, sa.nodeID, nil)
 }
 
 // isValidAgentTransition checks if a state transition is allowed per FR-10.2.

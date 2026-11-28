@@ -30,6 +30,23 @@ func renameThenRecheck(oldPath, newPath string) error {
 // moved is a regular file, an enrolment created a real lock after the type
 // check: it is put back and the move is refused, so a held lock is never moved
 // (MTIX-112.17.16.21.2).
+//
+// Accepted order (founder decision DESK-1.248, MTIX-112.17.16.21.2.2): the
+// object is moved first and its type re-checked after, not locked or re-checked
+// before. The window is the span between the caller's type check and the
+// re-check, a few microseconds, and needs three actors: a live enrolment that
+// creates a regular lock inside it, then a third process that creates a fresh
+// lock at the lock path. The held lock then sits under the aside name, and the
+// fresh lock is a different inode, so two holders are briefly possible. A racing
+// process can achieve no more than that: it cannot remove or replace the held
+// lock (RENAME_NOREPLACE never overwrites the aside, the put-back never
+// overwrites the fresh lock), and the move itself fails closed with ErrConflict
+// (and ErrAlreadyExists when the put-back is refused), naming where the held
+// lock is. The lock only serializes enrolments and writes no data, so the
+// overlap loses nothing, and it needs a process that takes the lock after the
+// operator started the fix; the operator docs say to run the fix with no other
+// mtix process in the worktree.
+// TestMoveEnrolLockAside_ThirdActorLockInWindow_HeldLockStaysAside pins this.
 func moveEnrolLockAside(lock, aside string) error {
 	return moveEnrolLockAsideWith(lock, aside, os.Lstat)
 }

@@ -201,7 +201,9 @@ Doctor shows these rows only when they apply:
   a row whose fix starts with STOP prints no command (see below).
   The lock fix is `mtix doctor --fix`: it moves the lock aside, never removes
   it, only when it is not a regular file (nothing can hold it) and refuses a lock
-  that a live enrollment holds. A regular lock that cannot be probed cannot be
+  that a live enrollment holds.
+  The move is not atomic with its check: a lock created in a microsecond window can sit under the aside name until it is put back, and a third process taking a fresh lock then can briefly hold alongside it; this is accepted, so run the fix with no other mtix process in the worktree.
+  A regular lock that cannot be probed cannot be
   proven unheld, so its row asks the project maintainer instead of printing a command; the prose
   also names the lock directory, because its owner or a link there fails the probe too.
   While the marker is torn or the lock cannot be probed, doctor prints its rows

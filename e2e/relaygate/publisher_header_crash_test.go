@@ -115,11 +115,3 @@ func TestRelayGate_PublisherKilledMidRotationHeader_RestartRecovers(t *testing.T
 		})
 	}
 }
-
-// eventCounts returns the journal rows and distinct event ids on peer i.
-func eventCounts(t *testing.T, g gateRelay, i int) (rows, distinct int) {
-	t.Helper()
-	require.NoError(t, g.sql(i).ReadDB().QueryRowContext(t.Context(),
-		`SELECT COUNT(*), COUNT(DISTINCT event_id) FROM sync_events`).Scan(&rows, &distinct))
-	return rows, distinct
-}
